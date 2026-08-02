@@ -60,6 +60,19 @@ describe("submission static validation retained from main", () => {
     }
   });
 
+  it("accepts an empty author list", () => {
+    const findings = new FindingCollector("static");
+    const parsed = validateManifest(
+      manifest("lax-261").replace("authors:\n  - name: Alice Example\n    github: alice", "authors: []"),
+      "lax-261",
+      RUNTIME,
+      findings,
+    );
+
+    expect(findings.violations).toEqual([]);
+    expect(parsed?.authors).toEqual([]);
+  });
+
   it("accepts concept and proof lakefiles and warns about proof-package dependencies", () => {
     const concepts = new FindingCollector("static");
     const concept = validateLakefile(
