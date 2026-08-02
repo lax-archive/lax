@@ -39,11 +39,12 @@ unchanged as a design input.
 
 The router runs with the repository-scoped `GITHUB_TOKEN`, reads a pinned
 public database snapshot, and never receives Archive credentials. Only the
-protected `lax-database-publish` job can mint short-lived GitHub App tokens:
-one restricted to `lax-database` contents and one restricted to the Website
-dispatch. It re-reads the latest database head, repeats issue binding, numeric
-owner, state, schema, and stale-write checks, then advances the default branch
-without force.
+protected `lax-database-publish` jobs can mint short-lived Database Publisher
+installation tokens restricted to `lax-database`. They re-read the latest
+database head, repeat issue binding, numeric owner, state, schema, and
+stale-write checks, then advance the default branch without force. A separate
+post-publication job in the `lax-website-dispatch` environment can mint only a
+Website Dispatcher token restricted to `lax-website`.
 
 Configure the workflow with:
 
@@ -51,25 +52,46 @@ Configure the workflow with:
   `lax-archive/lax` (`1320232165`);
 - repository variable `LAX_VALIDATION_IMAGE`: the reviewed validation runtime
   pinned as `ghcr.io/...@sha256:<digest>`;
-- protected-environment secrets `LAX_APP_ID` and `LAX_APP_PRIVATE_KEY` for the
-  publisher GitHub App;
-- publisher App installation access only to `lax-database` and `lax-website`,
-  with repository `Contents: write`; and
+- `lax-database-publish` environment variable `LAX_DATABASE_APP_ID` and secret
+  `LAX_DATABASE_APP_PRIVATE_KEY` for the Database Publisher App;
+- Database Publisher installation access only to `lax-database`, with
+  repository `Contents: write` and `Administration: read` so the trusted
+  publisher can verify that immutable releases remain enabled;
+- `lax-website-dispatch` environment variable `LAX_WEBSITE_APP_ID` and secret
+  `LAX_WEBSITE_APP_PRIVATE_KEY` for the Website Dispatcher App;
+- Website Dispatcher installation access only to `lax-website`, with
+  repository `Contents: write`; and
 - immutable releases enabled for `lax-database`. Publication fails closed
   before any database commit if this repository setting is disabled.
+
+### Validation infrastructure
+
+Issue creation and `/lax` issue comments start `submission.yml`; it is the only
+issue-event entry point. Validation runs on the standard `ubuntu-latest`
+GitHub-hosted runner and pulls the reviewed runtime by the immutable digest in
+`LAX_VALIDATION_IMAGE`. The workflow reclaims unused hosted-runner SDK space
+before pulling the large runtime image.
+
+`validation-runtime.yml` is intentionally not issue-triggered: it builds
+trusted infrastructure only when its reviewed runtime sources change on
+`main`, or when a maintainer dispatches it manually. It builds and pushes the
+runtime, smoke-tests the pushed digest, and uploads `validation-image.txt`.
+Only promote that exact `ghcr.io/...@sha256:<digest>` value after review.
+`release-cli.yml` is similarly restricted to version tags, while CI runs for
+pushes and pull requests.
 
 `lax-database` must also have an initial commit and a real default branch before
 the control plane can pin a snapshot. An empty newly created repository has no
 branch ref for the Git Data API to read; seed it once, then apply the default
 branch protection before accepting submissions.
 
-One publisher GitHub App registration is sufficient for both installation
-tokens; each workflow token is still narrowed to one repository. Protect the
-`lax-database-publish` environment so only reviewed workflow code can access
-the App private key, and protect the database default branch against force
+Use three GitHub App registrations: the CLI App for user-authorized issue
+operations, the Database Publisher, and the Website Dispatcher. Protect both
+credential environments so only reviewed workflow code can access their one
+App private key, and protect the database default branch against force
 updates.
 
-The CLI bundles only the public client ID for this App's user-authorization
+The CLI bundles only the public client ID for the CLI App's user-authorization
 flow and narrows device authorization to `lax`. Users can run `lax login`
 without configuration. A user access token is distinct from the App
 installation tokens and never receives the private key or the installation's

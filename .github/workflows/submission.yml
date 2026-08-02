@@ -68,7 +68,8 @@ jobs:
         run: node dist/workflows/submission.js route
 
   # This job checks out and executes only trusted lax source. It never checks
-  # out a submission. The protected environment owns the GitHub App key.
+  # out a submission. The database publication environment owns only the
+  # lax-database Publisher App key.
   publish:
     needs: route
     if: needs.route.outputs.operation == 'publish'
@@ -97,10 +98,11 @@ jobs:
         id: database-token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ secrets.LAX_APP_ID }}
-          private-key: ${{ secrets.LAX_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.LAX_DATABASE_APP_ID }}
+          private-key: ${{ secrets.LAX_DATABASE_APP_PRIVATE_KEY }}
           owner: lax-archive
           repositories: lax-database
+          permission-administration: read
           permission-contents: write
 
       - name: Revalidate and publish lax-database
@@ -112,12 +114,12 @@ jobs:
           PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
         run: node dist/workflows/submission.js publish
 
-  # The runner keeps the immutable image warm. Every validation phase still
-  # gets a fresh, credential-free container from that same digest.
+  # Each validation phase gets a fresh, credential-free container from the
+  # reviewed immutable digest on an ephemeral GitHub-hosted runner.
   validate-submission:
     needs: route
     if: needs.route.outputs.operation == 'validate'
-    runs-on: [self-hosted, linux, x64, lax-validation]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
@@ -125,6 +127,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Reclaim hosted-runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          docker system prune --all --force
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -208,10 +214,11 @@ jobs:
         id: database-token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ secrets.LAX_APP_ID }}
-          private-key: ${{ secrets.LAX_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.LAX_DATABASE_APP_ID }}
+          private-key: ${{ secrets.LAX_DATABASE_APP_PRIVATE_KEY }}
           owner: lax-archive
           repositories: lax-database
+          permission-administration: read
           permission-contents: write
       - name: Promote capture and publish trusted update
         if: steps.prepare-update.outputs.should_publish == 'true'
@@ -238,7 +245,7 @@ jobs:
          (needs.publish-update.result == 'success' && needs.publish-update.outputs.archive_commit != ''))
       }}
     runs-on: ubuntu-latest
-    environment: lax-database-publish
+    environment: lax-website-dispatch
     permissions:
       contents: read
       issues: write
@@ -256,8 +263,8 @@ jobs:
         id: website-token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ secrets.LAX_APP_ID }}
-          private-key: ${{ secrets.LAX_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.LAX_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.LAX_WEBSITE_APP_PRIVATE_KEY }}
           owner: lax-archive
           repositories: lax-website
           permission-contents: write

@@ -9,7 +9,13 @@ import {
   requestDeviceToken,
 } from "./github-app.js";
 
+export const GITHUB_LOGIN_ACCESS_NOTICE = `Lax requests GitHub authorization to:
+  - read your public GitHub profile to verify your identity; and
+  - read and write issues and issue comments in lax-archive/lax.
+This token cannot write repository contents or access lax-database or lax-website.`;
+
 export async function login(): Promise<void> {
+  console.log(GITHUB_LOGIN_ACCESS_NOTICE);
   const device = await requestDeviceCode(GITHUB_APP_CLIENT_ID);
   console.log(`Open ${device.verification_uri} and enter code ${device.user_code}`);
   const deadline = Date.now() + device.expires_in * 1_000;

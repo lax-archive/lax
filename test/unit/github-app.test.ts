@@ -15,6 +15,7 @@ import {
   requestDeviceToken,
   validateGitHubAppUserToken,
 } from "../../src/cli/github-app.js";
+import { GITHUB_LOGIN_ACCESS_NOTICE } from "../../src/cli/login.js";
 import { GitHubClient } from "../../src/shared/github.js";
 
 describe.sequential("GitHub App CLI authentication", () => {
@@ -39,6 +40,15 @@ describe.sequential("GitHub App CLI authentication", () => {
 
   it("bundles the official GitHub App client id", () => {
     expect(GITHUB_APP_CLIENT_ID).toBe("Iv23lil5NgwdGZfM911w");
+  });
+
+  it("explains the CLI App access before device authorization", () => {
+    expect(GITHUB_LOGIN_ACCESS_NOTICE).toContain("read your public GitHub profile");
+    expect(GITHUB_LOGIN_ACCESS_NOTICE).toContain(
+      "read and write issues and issue comments in lax-archive/lax",
+    );
+    expect(GITHUB_LOGIN_ACCESS_NOTICE).toContain("cannot write repository contents");
+    expect(GITHUB_LOGIN_ACCESS_NOTICE).toContain("lax-database or lax-website");
   });
 
   it("accepts only GitHub App user access tokens", async () => {
