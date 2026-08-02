@@ -23,10 +23,11 @@ describe("submission workflow definition", () => {
     expect(workflow).toContain("if: needs.precheck.outputs.should_run == 'true'");
   });
 
-  it("routes updates to an isolated warm-runtime validation job", () => {
+  it("routes updates to an isolated hosted-runner validation job", () => {
     expect(workflow).toContain("validate-submission:");
     expect(workflow).toContain("needs.route.outputs.operation == 'validate'");
-    expect(workflow).toContain("runs-on: [self-hosted, linux, x64, lax-validation]");
+    expect(workflow).toContain("runs-on: ubuntu-latest");
+    expect(workflow).toContain("Reclaim hosted-runner disk");
     expect(workflow).toContain("LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}");
     expect(workflow).toContain("node dist/submission-validation/run.js");
     expect(workflow).toContain(".build/submission-validation/validation-report.json");
@@ -40,12 +41,22 @@ describe("submission workflow definition", () => {
     const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  validate-submission:"));
     const website = workflow.slice(workflow.indexOf("  website:"), workflow.indexOf("  report-validation:"));
     expect(publish).toContain("Mint lax-database token");
+    expect(publish).toContain("environment: lax-database-publish");
+    expect(publish).toContain("vars.LAX_DATABASE_APP_ID");
+    expect(publish).toContain("secrets.LAX_DATABASE_APP_PRIVATE_KEY");
+    expect(publish).toContain("permission-administration: read");
     expect(publish).not.toContain("Mint lax-website dispatch token");
     expect(publish).not.toContain("LAX_WEBSITE_TOKEN");
     expect(website).toContain("needs: [route, publish, publish-update]");
     expect(website).toContain("needs.publish.outputs.archive_commit != ''");
     expect(website).toContain("needs.publish-update.outputs.archive_commit != ''");
     expect(website).toContain("Mint lax-website dispatch token");
+    expect(website).toContain("environment: lax-website-dispatch");
+    expect(website).toContain("vars.LAX_WEBSITE_APP_ID");
+    expect(website).toContain("secrets.LAX_WEBSITE_APP_PRIVATE_KEY");
+    expect(website).not.toContain("LAX_DATABASE_APP_PRIVATE_KEY");
+    expect(workflow).not.toContain("secrets.LAX_APP_ID");
+    expect(workflow).not.toContain("secrets.LAX_APP_PRIVATE_KEY");
   });
 
   it("checks update artifacts and fresh state before minting the database token", () => {
@@ -59,6 +70,7 @@ describe("submission workflow definition", () => {
     expect(update).toContain("steps.prepare-update.outputs.should_publish == 'true'");
     expect(update).toContain("GENERATED_BUILD_OUTPUT_PATH:");
     expect(update).toContain("VALIDATION_CAPTURE_PATH:");
+    expect(update).toContain("permission-administration: read");
     expect(update).toContain("permission-contents: write");
   });
 
@@ -80,12 +92,20 @@ describe("validation runtime workflow definition", () => {
   it("tests the built digest before publishing it as a usable runtime artifact", () => {
     expect(runtimeWorkflow).toContain("src/submission-validation/**");
     expect(runtimeWorkflow).toContain("test/smoke/**");
+    expect(runtimeWorkflow).toContain("runs-on: ubuntu-latest");
+    expect(runtimeWorkflow).toContain("Reclaim hosted-runner disk");
+    expect(runtimeWorkflow).toContain(
+      "org.opencontainers.image.source=https://github.com/${{ github.repository }}",
+    );
     expect(runtimeWorkflow).toContain(
       "LAX_VALIDATION_IMAGE: ghcr.io/${{ github.repository_owner }}/submission-validation-runtime@${{ steps.image.outputs.digest }}",
     );
     expect(runtimeWorkflow).toContain("npm run smoke:submission-validation");
     expect(runtimeWorkflow.indexOf("npm run smoke:submission-validation")).toBeLessThan(
       runtimeWorkflow.indexOf("Record the immutable image reference"),
+    );
+    expect(runtimeWorkflow.indexOf("Record the immutable image reference")).toBeLessThan(
+      runtimeWorkflow.indexOf("name: validation-image"),
     );
   });
 });

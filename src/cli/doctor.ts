@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GitHubClient, GitHubError } from "../shared/github.js";
+import { CONTROL_REPOSITORY } from "../shared/constants.js";
+import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import { configuredRuntime } from "../submission-validation/config.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, databaseFreshness } from "./database.js";
@@ -135,12 +136,31 @@ async function githubCheck(): Promise<Check> {
       ? "LAX_GITHUB_APP_USER_TOKEN"
       : credentialsFile();
   try {
-    const user = await GitHubClient.forGitHubAppUser(token).request<{ login: string }>(
+    const github = GitHubClient.forGitHubAppUser(token);
+    const user = await github.request<{ login: string }>(
       "GET",
       "/user",
       undefined,
       { timeoutMs: 10_000 },
     );
+    try {
+      await github.request(
+        "GET",
+        `${repositoryPath(CONTROL_REPOSITORY)}/issues?per_page=1`,
+        undefined,
+        { timeoutMs: 10_000 },
+      );
+    } catch (error) {
+      if (error instanceof GitHubError && (error.status === 403 || error.status === 404)) {
+        return {
+          name: "github auth",
+          status: "fail",
+          detail: `credentials do not authorize the current ${CONTROL_REPOSITORY} repository`,
+          fix: "run `lax logout`, `lax upgrade`, then `lax login` again",
+        };
+      }
+      throw error;
+    }
     const client =
       process.env.LAX_GITHUB_APP_USER_TOKEN !== undefined
         ? "environment App token"
