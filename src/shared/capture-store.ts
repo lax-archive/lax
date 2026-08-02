@@ -98,9 +98,9 @@ export class GitHubReleaseCaptureStore {
           capturePath,
           CAPTURE_ASSET_NAME,
         );
-        validateAsset(asset, manifest.digest, stat.size, tag);
+        validateAssetMetadata(asset, manifest.digest, stat.size);
       } else {
-        validateAsset(release.assets[0]!, manifest.digest, stat.size, tag);
+        validateAssetMetadata(release.assets[0]!, manifest.digest, stat.size);
       }
       release = await this.github.request<Release>("PATCH", `${this.base}/releases/${release.id}`, {
         draft: false,
@@ -131,13 +131,19 @@ export class GitHubReleaseCaptureStore {
 }
 
 function validateAsset(asset: ReleaseAsset, digest: string, size: number, tag: string): void {
+  validateAssetMetadata(asset, digest, size);
   const expectedUrl = `https://github.com/${DATABASE_REPOSITORY}/releases/download/${tag}/${CAPTURE_ASSET_NAME}`;
+  if (asset.browser_download_url !== expectedUrl) {
+    throw new ValidationError("capture release asset does not match the validated archive");
+  }
+}
+
+function validateAssetMetadata(asset: ReleaseAsset, digest: string, size: number): void {
   if (
     asset.name !== CAPTURE_ASSET_NAME ||
     asset.state !== "uploaded" ||
     asset.size !== size ||
-    asset.digest !== `sha256:${digest}` ||
-    asset.browser_download_url !== expectedUrl
+    asset.digest !== `sha256:${digest}`
   ) {
     throw new ValidationError("capture release asset does not match the validated archive");
   }
