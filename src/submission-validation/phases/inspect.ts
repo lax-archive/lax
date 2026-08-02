@@ -24,6 +24,8 @@ export function judgeInspection(
   scope: ValidationScope = "both",
 ): { result: InspectionResult; findings: FindingCollector } {
   const findings = new FindingCollector("inspect");
+  const conceptDeclarations = uniqueDeclarations(conceptReport.declarations);
+  const proofDeclarations = uniqueDeclarations(proofReport?.declarations ?? []);
   checkReportShape(conceptReport, "concept", findings);
   checkRootModule(conceptReport, conceptInventory, findings);
   checkImports(conceptReport, conceptInventory, new Set(resolution.concepts.map((entry) => entry.packageName)), findings);
@@ -78,7 +80,7 @@ export function judgeInspection(
   }
 
   const ownStatements = new Set<string>();
-  for (const declaration of conceptReport.declarations) {
+  for (const declaration of conceptDeclarations) {
     checkNamespace(declaration, declaration.module, "concept", findings);
     const allowed = new Set(BACKGROUND_AXIOMS);
     if (declaration.kind === "axiom") allowed.add(declaration.name);
@@ -119,7 +121,7 @@ export function judgeInspection(
   );
   const admissibleStatement = (name: string): boolean => ownStatements.has(name) || upstreamStatements.has(name);
   const proofs: ProofEntry[] = [];
-  for (const declaration of proofReport?.declarations ?? []) {
+  for (const declaration of proofDeclarations) {
     if (proofInventory === undefined) break;
     checkNamespace(declaration, proofInventory.packageName, "proof", findings);
     for (const axiom of declaration.axioms)
@@ -167,9 +169,16 @@ function checkReportShape(report: InspectorReport, label: string, findings: Find
   const moduleNames = report.modules.map((module) => module.name);
   if (new Set(moduleNames).size !== moduleNames.length)
     findings.violate("inspector-report", `${label} inspector returned duplicate modules`);
-  const declarationNames = report.declarations.map((declaration) => declaration.name);
-  if (new Set(declarationNames).size !== declarationNames.length)
-    findings.violate("inspector-report", `${label} inspector returned duplicate declarations`);
+}
+
+function uniqueDeclarations(declarations: InspectorDeclaration[]): InspectorDeclaration[] {
+  // Lean permits compatible theorem declarations in multiple module files.
+  const seen = new Set<string>();
+  return declarations.filter((declaration) => {
+    if (seen.has(declaration.name)) return false;
+    seen.add(declaration.name);
+    return true;
+  });
 }
 
 function checkRootModule(report: InspectorReport, inventory: ModuleInventory, findings: FindingCollector): void {

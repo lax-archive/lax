@@ -158,6 +158,24 @@ describe("inspection judgments retained from main", () => {
     ]);
   });
 
+  it("deduplicates declarations reported by multiple modules", () => {
+    const fixture = reports();
+    fixture.concepts.declarations.push({ ...fixture.concepts.declarations[0]! });
+    fixture.proofs.declarations.push({ ...fixture.proofs.declarations[0]! });
+
+    const judged = judgeInspection(
+      fixture.concepts,
+      fixture.proofs,
+      fixture.conceptInventory,
+      fixture.proofInventory,
+      EMPTY_RESOLUTION,
+    );
+
+    expect(judged.findings.violations).toEqual([]);
+    expect(judged.result.concepts[0]?.statements).toHaveLength(1);
+    expect(judged.result.proofs).toHaveLength(1);
+  });
+
   it("splits named sections, detects duplicates, and ignores fenced headings", () => {
     const duplicated = reports();
     duplicated.concepts.modules[1]!.moduleDocs[0]!.description =
