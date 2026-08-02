@@ -49,6 +49,7 @@ export async function runInspector(
       ...(ownConceptLibrary === undefined ? [] : [{ source: ownConceptLibrary, target: "/own-concepts" }]),
       ...(fs.existsSync(dependencyRoot) ? [{ source: dependencyRoot, target: "/deps" }] : []),
     ],
+    env: { LEAN_NUM_THREADS: String(limits.leanThreads) },
     timeoutMs: limits.checkTimeoutMs,
     maxOutputBytes: limits.maxOutputBytes,
   });

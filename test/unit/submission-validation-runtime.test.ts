@@ -74,6 +74,7 @@ describe("validation runtime boundaries retained from main", () => {
     expect(calls[0]).toMatchObject({
       label: "replay-concepts",
       args: ["node", "/opt/lax-runtime/bin/run-check.mjs", "/out/plan.json"],
+      env: { LEAN_NUM_THREADS: "2" },
     });
     const plan = JSON.parse(
       fs.readFileSync(path.join(job, "checks", "replay-concepts", "plan.json"), "utf8"),
@@ -140,6 +141,7 @@ describe("validation runtime boundaries retained from main", () => {
       "--cap-drop=ALL",
       "--security-opt=no-new-privileges",
       "--network=none",
+      `--memory=${16 * 1024 * 1024 * 1024}`,
       "--workdir=/input",
       "--env",
       "ALPHA=first",
