@@ -19,6 +19,7 @@ describe("CLI issue references", () => {
   it("accepts numbers, canonical ids and authoritative issue URLs", () => {
     expect(parseIssueReference("42")).toBe(42);
     expect(parseIssueReference("lax-42")).toBe(42);
+    expect(parseIssueReference("Lax42")).toBe(42);
     expect(parseIssueReference("https://github.com/lax-archive/lax/issues/42")).toBe(42);
   });
 
@@ -37,6 +38,13 @@ describe("CLI issue references", () => {
     expect(fs.readFileSync(path.join(root, "manifest.yaml"), "utf8")).toContain("id: lax-42");
     expect(fs.existsSync(path.join(root, "concepts", "Lax42.lean"))).toBe(true);
     expect(fs.existsSync(path.join(root, "proofs", "Lax42Proofs.lean"))).toBe(true);
+
+    fs.writeFileSync(
+      path.join(root, "manifest.yaml"),
+      fs.readFileSync(path.join(root, "manifest.yaml"), "utf8").replace("id: lax-42", "id: Lax42"),
+    );
+    expect(issueNumberFromFolder(root)).toBe(42);
+    expect(resolveIssueReference(root)).toBe(42);
   });
 
   it("refuses to scaffold over an existing folder", () => {

@@ -41,6 +41,11 @@ describe("submission static validation retained from main", () => {
     expect(parsed).toMatchObject({ id: "lax-261", title: "Test submission" });
     expect(parsed?.authors).toEqual([{ name: "Alice Example", github: "alice" }]);
 
+    const legacyFindings = new FindingCollector("static");
+    const legacy = validateManifest(manifest("Lax261"), "lax-261", RUNTIME, legacyFindings);
+    expect(legacyFindings.violations).toEqual([]);
+    expect(legacy?.id).toBe("lax-261");
+
     for (const [content, expected] of [
       [manifest("lax-261") + "extra: true\n", "unknown key"],
       [manifest("lax-261").replace("id: lax-261", "id: lax-26"), "id must be lax-261"],

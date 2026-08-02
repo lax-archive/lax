@@ -70,6 +70,24 @@ describe("sibling path resolution retained from main", () => {
     expect(graph.closure.has("Lax1")).toBe(true);
   });
 
+  it("normalizes legacy ids while resolving sibling submissions", () => {
+    const top = monorepo([
+      { id: "lax-1", folder: "a" },
+      { id: "lax-2", folder: "b" },
+    ]);
+    const dependencyManifest = path.join(top, "a", "manifest.yaml");
+    fs.writeFileSync(
+      dependencyManifest,
+      fs.readFileSync(dependencyManifest, "utf8").replace("id: lax-1", "id: Lax1"),
+    );
+    appendRequirement(top, "b", "concepts", 'name = "Lax1"\npath = "../../a/concepts"');
+    initializeGit(top);
+
+    const { graph, findings } = resolve(path.join(top, "b"), "lax-2");
+    expect(findings.violations).toEqual([]);
+    expect(graph.concepts[0]?.targetId).toBe("lax-1");
+  });
+
   it("rejects missing targets, non-submissions, and manifest-id mismatches", () => {
     const top = monorepo([
       { id: "lax-3", folder: "a" },

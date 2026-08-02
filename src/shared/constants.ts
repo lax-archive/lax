@@ -16,6 +16,7 @@ export const GITHUB_ACTIONS_BOT_ID = 41_898_282;
 export const GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]";
 
 export const SUBMISSION_ID_PATTERN = /^lax-[1-9][0-9]*$/;
+export const LEGACY_SUBMISSION_ID_PATTERN = /^Lax([1-9][0-9]*)$/;
 export const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 export const HANDLE_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
 

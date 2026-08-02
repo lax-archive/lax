@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeUtf8,
+  normalizeSubmissionId,
   normalizeTitle,
   submissionId,
   validateCommit,
@@ -65,6 +66,13 @@ describe("shared input validation", () => {
     expect(submissionId(42)).toBe("lax-42");
     expect(packageNameForSubmission("lax-42")).toBe("Lax42");
     expect(() => submissionId(0)).toThrow("positive integer");
+  });
+
+  it("normalizes legacy source ids without relaxing canonical archive ids", () => {
+    expect(normalizeSubmissionId("lax-42")).toBe("lax-42");
+    expect(normalizeSubmissionId("Lax42")).toBe("lax-42");
+    expect(() => normalizeSubmissionId("Lax-42")).toThrow("lax-<positive decimal>");
+    expect(() => normalizeSubmissionId("lax-0")).toThrow("lax-<positive decimal>");
   });
 
   it("accepts only canonical HTTPS GitHub repository URLs", () => {
