@@ -66,10 +66,12 @@ RUN --mount=type=cache,target=/opt/lax-runtime/home/.cache \
     lake update && \
     test "$(git -C .lake/packages/mathlib rev-parse HEAD)" = "${MATHLIB_COMMIT}" && \
     lake exe cache get && \
-    lake build
+    lake build && \
+    chmod -R a+rX /opt/lax-runtime/warm
 
 # Validation containers run as the invoking host user, while these immutable
-# package checkouts are owned by root in the image. Trust only these exact
+# package checkouts are owned by root in the image. The warm build above makes
+# their immutable artifacts readable, and this config trusts only these exact
 # repositories so Lake can inspect their pinned remotes without cloning them.
 RUN git_config=/opt/lax-runtime/warm-gitconfig && \
     for package in /opt/lax-runtime/warm/.lake/packages/*; do \

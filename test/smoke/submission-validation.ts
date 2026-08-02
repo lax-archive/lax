@@ -115,6 +115,14 @@ function fixtures(): SmokeFixture[] {
       },
     },
     {
+      name: "warm-cache-permissions",
+      id: "lax-42",
+      files: warmCachePermissionFiles(),
+      check(report) {
+        assertSuccessful(report);
+      },
+    },
+    {
       name: "mutual-inductive-axiom-closure",
       id: "lax-23",
       files: mutualInductiveFiles(),
@@ -221,6 +229,25 @@ ${title} smoke fixture.
 -/
 
 ${body}`;
+}
+
+function warmCachePermissionFiles(): Record<string, string> {
+  return {
+    "concepts/Lax42.lean": "import Lax42.WarmCache\n",
+    "concepts/Lax42/WarmCache.lean": `import Mathlib.Data.List.Basic
+import Mathlib.Data.Set.Basic
+
+${conceptModule(
+  "Warm cache availability",
+  `namespace Lax42.WarmCache
+
+/-- A small statement that exercises the prebuilt Mathlib dependency graph. -/
+axiom cache_readable : [0, 1].length = 2 ∧ (0 : Nat) ∈ ({0} : Set Nat)
+
+end Lax42.WarmCache
+`,
+)}`,
+  };
 }
 
 function mutualInductiveFiles(): Record<string, string> {

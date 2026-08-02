@@ -82,6 +82,13 @@ jobs:
             ELAN_COMMIT=${{ steps.pins.outputs.elan_commit }}
           cache-from: type=gha,scope=submission-validation-runtime
           cache-to: type=gha,mode=max,scope=submission-validation-runtime
+      - name: Ensure the built runtime is local
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/submission-validation-runtime@${{ steps.image.outputs.digest }}
+        run: |
+          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            docker pull "$IMAGE"
+          fi
       - name: Exercise the validation pipeline against the built runtime
         env:
           LAX_VALIDATION_IMAGE: ghcr.io/${{ github.repository_owner }}/submission-validation-runtime@${{ steps.image.outputs.digest }}
