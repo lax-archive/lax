@@ -1,11 +1,29 @@
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 
+const workflowsDirectory = new URL("../../.github/workflows/", import.meta.url);
+const workflowFiles = fs
+  .readdirSync(workflowsDirectory)
+  .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"));
 const workflow = fs.readFileSync(new URL("../../.github/workflows/submission.yml", import.meta.url), "utf8");
 const runtimeWorkflow = fs.readFileSync(
   new URL("../../.github/workflows/validation-runtime.yml", import.meta.url),
   "utf8",
 );
+
+describe("GitHub Actions dependency pins", () => {
+  it.each(workflowFiles)("pins every external action in %s to a full commit SHA", (file) => {
+    const definition = fs.readFileSync(new URL(file, workflowsDirectory), "utf8");
+    const references = [...definition.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/gmu)].map(
+      (match) => match[1],
+    );
+
+    for (const reference of references) {
+      if (reference.startsWith("./")) continue;
+      expect(reference, `${file}: ${reference}`).toMatch(/^[^@\s]+@[0-9a-f]{40}$/u);
+    }
+  });
+});
 
 describe("submission workflow definition", () => {
   it("queues per-issue and global publication runs", () => {
@@ -82,7 +100,9 @@ describe("submission workflow definition", () => {
   it("has a correlated fallback for setup and action failures", () => {
     const fallback = workflow.slice(workflow.indexOf("  report-workflow-failure:"));
     expect(fallback).toContain("always()");
-    expect(fallback).toContain("actions/github-script@v7");
+    expect(fallback).toContain(
+      "actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b",
+    );
     expect(fallback).toContain("lax-result-comment-id");
     expect(fallback).toContain("lax-workflow-run-id");
   });
