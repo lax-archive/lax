@@ -60,7 +60,9 @@ Configure the workflow with:
 - `lax-website-dispatch` environment variable `LAX_WEBSITE_APP_ID` and secret
   `LAX_WEBSITE_APP_PRIVATE_KEY` for the Website Dispatcher App;
 - Website Dispatcher installation access only to `lax-website`, with
-  repository `Contents: write`; and
+  repository `Contents: write`;
+- the repository Actions policy **Require actions to be pinned to a full-length
+  commit SHA** enabled; and
 - immutable releases enabled for `lax-database`. Publication fails closed
   before any database commit if this repository setting is disabled.
 
