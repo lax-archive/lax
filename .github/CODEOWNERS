@@ -1,0 +1,20 @@
+# Trusted publication and authorization boundaries.
+/.github/workflows/submission.yml @lax-archive/maintainers
+/src/workflows/ @lax-archive/maintainers
+/src/shared/archive.ts @lax-archive/maintainers
+/src/shared/archive-schema.ts @lax-archive/maintainers
+/src/shared/capture-store.ts @lax-archive/maintainers
+/src/shared/control-plane.ts @lax-archive/maintainers
+/src/shared/github.ts @lax-archive/maintainers
+/src/shared/publisher.ts @lax-archive/maintainers
+/src/shared/update-publisher.ts @lax-archive/maintainers
+
+# Lean validation implementation and its trusted publication boundary.
+/src/submission-validation/ @lax-archive/lean-check
+/test/submission-validation/ @lax-archive/lean-check
+/src/submission-validation/artifact-schema.ts @lax-archive/maintainers
+/src/submission-validation/capture-archive.ts @lax-archive/maintainers
+/test/workflows/artifact-schema.test.ts @lax-archive/maintainers
+/test/workflows/capture-archive.test.ts @lax-archive/maintainers
+/test/workflows/capture-store.test.ts @lax-archive/maintainers
+/test/workflows/update-publisher.test.ts @lax-archive/maintainers

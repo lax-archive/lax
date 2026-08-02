@@ -1,0 +1,36 @@
+name: release CLI
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm install --global npm@latest
+      - run: npm ci
+      - name: Check release tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          package_version=$(node -p "require('./package.json').version")
+          test "$version" = "$package_version"
+      - run: npm run check
+      - name: Import pinned page-builder
+        run: |
+          npm run page-builder:fetch
+          npm run page-builder:package
+          npm run page-builder:verify
+      - name: Pack deterministic CLI artifact
+        run: npm pack --ignore-scripts
+      - name: Publish with npm trusted publishing
+        run: npm publish "lax-archive-${GITHUB_REF_NAME#v}.tgz"

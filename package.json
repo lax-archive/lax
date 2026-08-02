@@ -1,0 +1,55 @@
+{
+  "name": "lax-archive",
+  "version": "0.1.17",
+  "description": "Issue-driven control plane and CLI for the Lax archive",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "lax": "bin/lax.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "assets",
+    "spec.md",
+    "spec_conceptdialect.md"
+  ],
+  "scripts": {
+    "build": "node --eval \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "check": "npm run build && npm test",
+    "prepack": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke:submission-validation": "tsx test/smoke/submission-validation.ts",
+    "lax": "tsx src/cli/main.ts",
+    "workflow": "tsx src/workflows/submission.ts",
+    "page-builder:fetch": "tsx src/cli/deployment/fetch-page-builder.ts",
+    "page-builder:package": "tsx src/cli/deployment/package.ts",
+    "page-builder:verify": "tsx src/cli/deployment/verify.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "katex": "^0.18.1",
+    "marked": "^15.0.0",
+    "shiki": "^4.3.1",
+    "smol-toml": "^1.7.1",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lax-archive/lax.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lax-archive/lax/issues"
+  },
+  "homepage": "https://github.com/lax-archive/lax#readme"
+}

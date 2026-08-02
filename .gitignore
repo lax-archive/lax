@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.build/
+inspector/.lake/
+*.tgz
+.DS_Store

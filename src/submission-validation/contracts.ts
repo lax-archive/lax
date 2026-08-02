@@ -1,0 +1,279 @@
+import type { SourceLocation } from "../shared/types.js";
+import {
+  isObject,
+  requireExactKeys,
+  validateCommit,
+  validateFolder,
+  validateRepositoryUrl,
+  validateSubmissionId,
+  ValidationError,
+} from "../shared/validation.js";
+
+export type ValidationPhase =
+  | "source"
+  | "static"
+  | "resolution"
+  | "provision"
+  | "compile-concepts"
+  | "compile-proofs"
+  | "replay"
+  | "inspect"
+  | "emit";
+
+export type ValidationScope = "both" | "concepts" | "proofs";
+
+export interface ValidationRequest {
+  requestVersion: 1;
+  id: string;
+  source: SourceLocation;
+  archiveSha: string;
+}
+
+export interface ValidationFinding {
+  phase: ValidationPhase;
+  rule: string;
+  message: string;
+}
+
+export interface ValidationRuntimeIdentity {
+  image: string;
+  imageDigest: string;
+  layoutVersion: number;
+  leanToolchain: string;
+  leanVersion: string;
+  mathlibRepository: string;
+  mathlibCommit: string;
+}
+
+export interface SubmissionAuthor {
+  name: string;
+  orcid?: string;
+  github?: string;
+}
+
+export interface SubmissionManifest {
+  specVersion: string;
+  id: string;
+  leanVersion: string;
+  mathlibVersion: string;
+  title: string;
+  authors: SubmissionAuthor[];
+  bibEntries: string[];
+}
+
+export interface GitRequire {
+  name: string;
+  git: string;
+  rev: string;
+  subDir?: string;
+}
+
+export interface PathRequire {
+  name: string;
+  path: string;
+}
+
+export interface ValidatedLakefile {
+  packageName: string;
+  gitRequires: GitRequire[];
+  pathRequires: PathRequire[];
+  hasConceptPathRequire: boolean;
+}
+
+export interface ModuleInventory {
+  packageName: string;
+  packageDir: string;
+  rootModule: string;
+  modules: string[];
+  paths: Map<string, string>;
+}
+
+export interface StaticPackage {
+  lakefile: ValidatedLakefile;
+  inventory: ModuleInventory;
+}
+
+export interface StaticResult {
+  manifest?: SubmissionManifest;
+  abstract?: string;
+  concepts?: StaticPackage;
+  proofs?: StaticPackage;
+}
+
+export interface ArchiveSourceRecord {
+  id: string;
+  state: "init" | "draft" | "registered" | "deleted";
+  source?: SourceLocation;
+  buildOutput?: Record<string, unknown>;
+}
+
+export interface ResolvedDependency {
+  packageName: string;
+  submissionId: string;
+  kind: "concepts" | "proofs";
+  source: SourceLocation;
+  state: "draft" | "registered";
+  capture?: PublishedCapture;
+  statements: string[];
+  requiredPackages: string[];
+}
+
+export interface ResolutionResult {
+  concepts: ResolvedDependency[];
+  proofs: ResolvedDependency[];
+  all: ResolvedDependency[];
+}
+
+export interface CapturedFile {
+  path: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface CaptureManifest {
+  formatVersion: 1;
+  digest: string;
+  sourceCommit: string;
+  leanToolchain: string;
+  mathlibCommit: string;
+  files: CapturedFile[];
+}
+
+export interface PublishedCapture extends CaptureManifest {
+  downloadUrl: string;
+}
+
+export interface StatementEntry {
+  id: string;
+  signature: string;
+  startLine?: number;
+  endLine?: number;
+  doc?: string;
+}
+
+export interface AnnotationSection {
+  title: string;
+  markdown: string;
+}
+
+export interface ConceptEntry {
+  id: string;
+  path: string;
+  title: string;
+  type: string;
+  description: string;
+  sections?: AnnotationSection[];
+  imports: string[];
+  mathlibImports: string[];
+  sourceText: string;
+  statements: StatementEntry[];
+}
+
+export interface ProofEntry {
+  id: string;
+  path: string;
+  conclusion: string;
+  assumptions: string[];
+  description: string;
+  sections?: AnnotationSection[];
+}
+
+export interface ParsedDoc {
+  hasFrontmatter: boolean;
+  scalars: [string, string][];
+  lists: [string, string[]][];
+  description: string;
+  error?: string;
+}
+
+export interface InspectorModule {
+  name: string;
+  imports: string[];
+  moduleDocs: ParsedDoc[];
+  declCount: number;
+}
+
+export interface ConclusionFacts {
+  resolves: boolean;
+  isAxiom: boolean;
+  originModule?: string;
+  originReachable: boolean;
+  defeq: boolean;
+}
+
+export interface InspectorDeclaration {
+  name: string;
+  kind: string;
+  module: string;
+  axioms: string[];
+  userName?: string;
+  doc?: ParsedDoc;
+  conclusionFacts?: ConclusionFacts;
+  signature?: string;
+  startLine?: number;
+  endLine?: number;
+}
+
+export interface InspectorReport {
+  modules: InspectorModule[];
+  declarations: InspectorDeclaration[];
+}
+
+export interface InspectionResult {
+  concepts: ConceptEntry[];
+  proofs: ProofEntry[];
+}
+
+export interface BuildOutputPayload {
+  inputs: {
+    manifest: SubmissionManifest;
+    abstract: string;
+  };
+  requiredByConcepts: string[];
+  requiredByProofs: string[];
+  concepts: ConceptEntry[];
+  proofs: ProofEntry[];
+  capture: CaptureManifest;
+}
+
+export interface ValidationReport {
+  reportVersion: 1;
+  ok: boolean;
+  request: ValidationRequest;
+  runtime: ValidationRuntimeIdentity;
+  dependencies: ResolvedDependency[];
+  warnings: ValidationFinding[];
+  violations: ValidationFinding[];
+  buildOutput?: BuildOutputPayload;
+  capture?: CaptureManifest;
+}
+
+export function validationRequestFromUnknown(value: unknown): ValidationRequest {
+  if (!isObject(value)) throw new ValidationError("validation request must be an object");
+  requireExactKeys(value, ["requestVersion", "id", "source", "archiveSha"], "validation request");
+  if (value.requestVersion !== 1) throw new ValidationError("validation requestVersion must be 1");
+  if (typeof value.id !== "string") throw new ValidationError("validation request id must be a string");
+  validateSubmissionId(value.id);
+  if (!isObject(value.source)) throw new ValidationError("validation request source must be an object");
+  requireExactKeys(value.source, ["repository", "commit", "folder"], "validation request source");
+  const source = {
+    repository: validateRepositoryUrl(value.source.repository),
+    commit: validateCommit(value.source.commit),
+    folder: validateFolder(value.source.folder),
+  };
+  if (typeof value.archiveSha !== "string") throw new ValidationError("archiveSha must be a string");
+  const archiveSha = validateCommit(value.archiveSha);
+  return { requestVersion: 1, id: value.id, source, archiveSha };
+}
+
+/** Lean and Lake identifiers cannot contain the hyphen used by Archive ids. */
+export function packageNameForSubmission(id: string): string {
+  validateSubmissionId(id);
+  return `Lax${id.slice("lax-".length)}`;
+}
+
+export function submissionIdForPackage(name: string): string | undefined {
+  const base = name.endsWith("Proofs") ? name.slice(0, -"Proofs".length) : name;
+  const match = /^Lax([1-9][0-9]*)$/u.exec(base);
+  return match === null ? undefined : `lax-${match[1]}`;
+}

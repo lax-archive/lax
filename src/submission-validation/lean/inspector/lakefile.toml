@@ -1,0 +1,6 @@
+name = "laxinspector"
+defaultTargets = ["laxinspector"]
+
+[[lean_exe]]
+name = "laxinspector"
+root = "Main"

@@ -1,0 +1,372 @@
+name: submission control plane
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: lax-submission-${{ github.repository_id }}-${{ github.event.issue.number }}
+  queue: max
+
+jobs:
+  # Reject unrelated issue comments before checkout or dependency installation.
+  precheck:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.command.outputs.should_run }}
+    steps:
+      - name: Check event kind and command prefix
+        id: command
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import { TextDecoder } from "node:util";
+
+          const bytes = fs.readFileSync(process.env.GITHUB_EVENT_PATH);
+          const event = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+          const shouldRun = process.env.EVENT_NAME === "issues" ||
+            (process.env.EVENT_NAME === "issue_comment" &&
+              typeof event.comment?.body === "string" && event.comment.body.slice(0, 4) === "/lax");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `should_run=${shouldRun}\n`, "utf8");
+          NODE
+
+  route:
+    needs: precheck
+    if: needs.precheck.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      operation: ${{ steps.route.outputs.operation }}
+      action: ${{ steps.route.outputs.action }}
+      validation_request: ${{ steps.route.outputs.validation_request }}
+      publish_request: ${{ steps.route.outputs.publish_request }}
+      context: ${{ steps.route.outputs.context }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Validate and route the event
+        id: route
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Repository variables are configuration, not event input. Pin this
+          # to the numeric id of the one authoritative lax repository.
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+        run: node dist/workflows/submission.js route
+
+  # This job checks out and executes only trusted lax source. It never checks
+  # out a submission. The protected environment owns the GitHub App key.
+  publish:
+    needs: route
+    if: needs.route.outputs.operation == 'publish'
+    runs-on: ubuntu-latest
+    environment: lax-database-publish
+    concurrency:
+      group: lax-archive-publish
+      queue: max
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      archive_commit: ${{ steps.publish.outputs.archive_commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Mint lax-database token
+        id: database-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LAX_APP_ID }}
+          private-key: ${{ secrets.LAX_APP_PRIVATE_KEY }}
+          owner: lax-archive
+          repositories: lax-database
+          permission-contents: write
+
+      - name: Revalidate and publish lax-database
+        id: publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
+        run: node dist/workflows/submission.js publish
+
+  # The runner keeps the immutable image warm. Every validation phase still
+  # gets a fresh, credential-free container from that same digest.
+  validate-submission:
+    needs: route
+    if: needs.route.outputs.operation == 'validate'
+    runs-on: [self-hosted, linux, x64, lax-validation]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Ensure the pinned warm runtime is local
+        env:
+          IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+        run: |
+          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            docker pull "$IMAGE"
+          fi
+      - name: Validate in isolated phase containers
+        env:
+          VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
+          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/run.js
+      - name: Preserve the report, generated build output, and capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: submission-validation-${{ github.event.issue.number }}
+          path: |
+            .build/submission-validation/validation-report.json
+            .build/submission-validation/generated-build-output.json
+            .build/submission-validation/capture.tar
+          if-no-files-found: warn
+          retention-days: 30
+
+  # The first step has only the lax workflow token. It parses and hashes the
+  # downloaded files and repeats all authorization, issue, state, stale-write,
+  # and dependency checks before the protected App key is used.
+  publish-update:
+    needs: [route, validate-submission]
+    if: needs.route.outputs.operation == 'validate' && needs.validate-submission.result == 'success'
+    runs-on: ubuntu-latest
+    environment: lax-database-publish
+    concurrency:
+      group: lax-archive-publish
+      queue: max
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      archive_commit: ${{ steps.publish-update.outputs.archive_commit }}
+      title_sync_error: ${{ steps.publish-update.outputs.title_sync_error }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: submission-validation-${{ github.event.issue.number }}
+          path: .build/submission-validation
+      - name: Parse artifacts and revalidate current state without Archive credentials
+        id: prepare-update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
+          VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
+          GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
+          VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
+        run: node dist/workflows/submission.js prepare-update
+      - name: Mint lax-database token
+        if: steps.prepare-update.outputs.should_publish == 'true'
+        id: database-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LAX_APP_ID }}
+          private-key: ${{ secrets.LAX_APP_PRIVATE_KEY }}
+          owner: lax-archive
+          repositories: lax-database
+          permission-contents: write
+      - name: Promote capture and publish trusted update
+        if: steps.prepare-update.outputs.should_publish == 'true'
+        id: publish-update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
+          VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
+          GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
+          VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
+        run: node dist/workflows/submission.js publish-update
+
+  # Website credentials do not exist until lax-database has advanced. This job
+  # receives no Archive token and can only dispatch the complete rebuild.
+  website:
+    needs: [route, publish, publish-update]
+    if: >-
+      ${{
+        always() &&
+        ((needs.publish.result == 'success' && needs.publish.outputs.archive_commit != '') ||
+         (needs.publish-update.result == 'success' && needs.publish-update.outputs.archive_commit != ''))
+      }}
+    runs-on: ubuntu-latest
+    environment: lax-database-publish
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Mint lax-website dispatch token
+        id: website-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LAX_APP_ID }}
+          private-key: ${{ secrets.LAX_APP_PRIVATE_KEY }}
+          owner: lax-archive
+          repositories: lax-website
+          permission-contents: write
+      - name: Dispatch Website and report the final result
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_WEBSITE_TOKEN: ${{ steps.website-token.outputs.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
+          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
+          TITLE_SYNC_ERROR: ${{ needs.publish-update.outputs.title_sync_error }}
+        run: node dist/workflows/submission.js website
+
+  report-validation:
+    needs: [route, validate-submission]
+    if: always() && needs.route.outputs.operation == 'validate' && needs.validate-submission.result != 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: submission-validation-${{ github.event.issue.number }}
+          path: .build/submission-validation
+      - name: Report the validation result
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          VALIDATION_CONTEXT: ${{ needs.route.outputs.context }}
+          VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
+        run: node dist/workflows/submission.js report-validation
+
+  # TypeScript reports structured routing/publication failures. This final
+  # fallback also covers failures before the handlers can run: checkout,
+  # dependency installation, compilation, and App-token actions.
+  report-workflow-failure:
+    needs:
+      - precheck
+      - route
+      - publish
+      - publish-update
+      - website
+      - validate-submission
+      - report-validation
+    if: >-
+      ${{
+        always() &&
+        (needs.precheck.result == 'failure' ||
+         needs.route.result == 'failure' ||
+         needs.publish.result == 'failure' ||
+         needs.publish-update.result == 'failure' ||
+         needs.website.result == 'failure' ||
+         needs.validate-submission.result == 'failure' ||
+         needs.report-validation.result == 'failure')
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Post a correlated operational failure
+        uses: actions/github-script@v7
+        env:
+          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
+          OPERATION: ${{ needs.route.outputs.operation }}
+          VALIDATION_RESULT: ${{ needs.validate-submission.result }}
+        with:
+          script: |
+            const issueNumber = context.payload.issue?.number;
+            if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) return;
+            const commentId = context.payload.comment?.id;
+            const marker = Number.isSafeInteger(commentId) && commentId > 0
+              ? `<!-- lax-result-comment-id:${commentId} -->`
+              : `<!-- lax-initialization-issue:${issueNumber} -->`;
+            const runMarker = `<!-- lax-workflow-run-id:${context.runId} -->`;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { ...context.repo, issue_number: issueNumber, per_page: 100 },
+            );
+            const alreadyReported = comments.some((comment) =>
+              comment.user?.id === 41898282 &&
+              comment.user?.login === "github-actions[bot]" &&
+              comment.user?.type === "Bot" &&
+              comment.body?.includes(marker) &&
+              comment.body?.includes(runMarker)
+            );
+            if (alreadyReported) return;
+            const commit = process.env.ARCHIVE_COMMIT;
+            const summary = commit
+                ? `lax-database changed at commit \`${commit}\`, but Website dispatch or final reporting did not complete. Inspect this run before retrying.`
+                : process.env.OPERATION === "validate" && process.env.VALIDATION_RESULT === "success"
+                  ? "Validation succeeded, but trusted update publication did not complete; no lax-database commit was created."
+                  : process.env.OPERATION === "validate"
+                    ? "Validation or result reporting failed; no trustworthy validation result was produced. lax-database was not changed."
+                : "The workflow failed before publication completed; no lax-database commit was created by this run.";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: `${summary}\n\nWorkflow run: [#${context.runId}](${runUrl}).\n\n${marker}\n${runMarker}`,
+            });
