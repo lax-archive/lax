@@ -1,7 +1,7 @@
 import { parse } from "yaml";
 import type { SubmissionManifest, ValidationRuntimeIdentity } from "../contracts.js";
 import type { FindingCollector } from "../findings.js";
-import { normalizeTitle } from "../../shared/validation.js";
+import { normalizeSubmissionId, normalizeTitle } from "../../shared/validation.js";
 
 const MANIFEST_KEYS = new Set([
   "specVersion",
@@ -57,7 +57,15 @@ export function validateManifest(
   };
 
   const specVersion = stringField("specVersion", 32);
-  const id = stringField("id", 64);
+  const rawId = stringField("id", 64);
+  let id: string | undefined;
+  if (rawId !== undefined) {
+    try {
+      id = normalizeSubmissionId(rawId);
+    } catch (error) {
+      findings.violate("manifest", `manifest.yaml: ${(error as Error).message}`);
+    }
+  }
   const leanVersion = stringField("leanVersion", 64);
   const mathlibVersion = stringField("mathlibVersion", 64);
   const rawTitle = stringField("title", 512);
@@ -73,7 +81,10 @@ export function validateManifest(
     findings.violate("manifest", "manifest.yaml: specVersion must be \"1\"");
   const expectedId = submissionId;
   if (id !== undefined && id !== expectedId)
-    findings.violate("manifest", `manifest.yaml: id must be ${expectedId}, got ${id}`);
+    findings.violate(
+      "manifest",
+      `manifest.yaml: id must be ${expectedId} or Lax${expectedId.slice("lax-".length)}, got ${rawId}`,
+    );
   if (leanVersion !== undefined && leanVersion !== runtime.leanVersion)
     findings.violate("manifest", `manifest.yaml: leanVersion must be ${runtime.leanVersion}`);
   if (mathlibVersion !== undefined && mathlibVersion !== runtime.mathlibCommit)
