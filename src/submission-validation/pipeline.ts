@@ -193,8 +193,10 @@ export async function validateSubmission(
 
   if (options.replay !== false) {
     try {
-      const replay: Promise<void>[] = [];
-      if (scope !== "proofs") replay.push(phase("replay concepts", () =>
+      // Each checker receives the full container budget, so keep the two
+      // heavyweight replays from stacking their limits against the host.
+      const replay: Array<() => Promise<void>> = [];
+      if (scope !== "proofs") replay.push(() => phase("replay concepts", () =>
         replayPackage(
           "concepts",
           conceptWorkspace,
@@ -205,7 +207,7 @@ export async function validateSubmission(
           runner,
           limits,
         )));
-      if (scope !== "concepts") replay.push(phase("replay proofs", () =>
+      if (scope !== "concepts") replay.push(() => phase("replay proofs", () =>
         replayPackage(
           "proofs",
           proofWorkspace!,
@@ -217,7 +219,7 @@ export async function validateSubmission(
           limits,
           path.join(captureRoot, "concepts", "lib"),
         )));
-      await Promise.all(replay);
+      for (const check of replay) await check();
     } catch (error) {
       return fail("replay", "kernel-replay", error);
     }
@@ -226,31 +228,28 @@ export async function validateSubmission(
   let conceptReport;
   let proofReport;
   try {
-    const reports = await Promise.all([
-      phase("inspect concepts", () => runInspector(
-        "concepts",
-        conceptWorkspace,
-        staticCheck.result.concepts!.inventory,
-        resolution.result,
-        jobDir,
-        dependencyRoot,
-        runner,
-        limits,
-      )),
-      ...(scope === "concepts" ? [] : [phase("inspect proofs", () => runInspector(
-          "proofs",
-          proofWorkspace!,
-          staticCheck.result.proofs!.inventory,
-          resolution.result,
-          jobDir,
-          dependencyRoot,
-          runner,
-          limits,
-          path.join(captureRoot, "concepts", "lib"),
-        ))]),
-    ]);
-    conceptReport = reports[0]!;
-    proofReport = reports[1];
+    // Inspection has the same heavyweight container budget as replay.
+    conceptReport = await phase("inspect concepts", () => runInspector(
+      "concepts",
+      conceptWorkspace,
+      staticCheck.result.concepts!.inventory,
+      resolution.result,
+      jobDir,
+      dependencyRoot,
+      runner,
+      limits,
+    ));
+    proofReport = scope === "concepts" ? undefined : await phase("inspect proofs", () => runInspector(
+      "proofs",
+      proofWorkspace!,
+      staticCheck.result.proofs!.inventory,
+      resolution.result,
+      jobDir,
+      dependencyRoot,
+      runner,
+      limits,
+      path.join(captureRoot, "concepts", "lib"),
+    ));
   } catch (error) {
     return fail("inspect", "inspector", error);
   }
