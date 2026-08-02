@@ -2,7 +2,7 @@ export const SPEC_VERSION = "1";
 
 export const CONTROL_REPOSITORY =
   process.env.LAX_CONTROL_REPOSITORY ?? "lax-archive/lax";
-export const CONTROL_REPOSITORY_ID = 1_312_595_743;
+export const CONTROL_REPOSITORY_ID = 1_320_232_165;
 export const DATABASE_REPOSITORY =
   process.env.LAX_DATABASE_REPOSITORY ?? "lax-archive/lax-database";
 export const WEBSITE_REPOSITORY =

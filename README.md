@@ -48,7 +48,7 @@ without force.
 Configure the workflow with:
 
 - repository variable `LAX_REPOSITORY_ID`: the immutable numeric id of
-  `lax-archive/lax` (`1312595743`);
+  `lax-archive/lax` (`1320232165`);
 - repository variable `LAX_VALIDATION_IMAGE`: the reviewed validation runtime
   pinned as `ghcr.io/...@sha256:<digest>`;
 - protected-environment secrets `LAX_APP_ID` and `LAX_APP_PRIVATE_KEY` for the
