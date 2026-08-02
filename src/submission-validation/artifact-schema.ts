@@ -32,6 +32,7 @@ const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ENTRIES = 100_000;
 const MAX_DEPENDENCIES = 10_000;
 const MAX_FINDINGS = 10_000;
+const LEAN_NAME = /^(?:[\p{L}_][\p{L}\p{N}\p{M}_']*)(?:\.(?:[\p{L}_][\p{L}\p{N}\p{M}_']*))*$/u;
 const PHASES = new Set([
   "source",
   "static",
@@ -481,7 +482,7 @@ function requireUnique(values: string[], label: string): void {
 
 function identifier(value: unknown, label: string, maxBytes: number): string {
   const result = nonemptyText(value, label, maxBytes, false);
-  if (/\s/u.test(result)) throw new ValidationError(`${label} must not contain whitespace`);
+  if (!LEAN_NAME.test(result)) throw new ValidationError(`${label} must be a canonical Lean name`);
   return result;
 }
 
