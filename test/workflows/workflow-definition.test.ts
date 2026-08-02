@@ -26,10 +26,14 @@ describe("GitHub Actions dependency pins", () => {
 });
 
 describe("submission workflow definition", () => {
-  it("queues per-issue and global publication runs", () => {
+  it("queues workflow and publication runs per issue", () => {
     expect(workflow.match(/queue: max/gu)).toHaveLength(3);
     expect(workflow).not.toContain("cancel-in-progress");
-    expect(workflow).toContain("group: lax-archive-publish");
+    expect(
+      workflow.match(
+        /group: lax-archive-publish-\$\{\{ github\.repository_id \}\}-\$\{\{ github\.event\.issue\.number \}\}/gu,
+      ),
+    ).toHaveLength(2);
   });
 
   it("checks the first four comment characters before checkout", () => {

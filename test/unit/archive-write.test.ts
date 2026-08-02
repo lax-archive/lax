@@ -97,6 +97,87 @@ describe("protected Archive publication", () => {
     ]);
     expect(requests.some((request) => request.method === "DELETE")).toBe(true);
   });
+
+  it("rebases and revalidates after an unrelated publisher advances the branch", async () => {
+    const advancedSha = "b".repeat(40);
+    const firstCandidate = "c".repeat(40);
+    const secondCandidate = "d".repeat(40);
+    const candidates = [firstCandidate, secondCandidate];
+    const commitParents: string[][] = [];
+    let branchSha = baseSha;
+    let commitIndex = 0;
+
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+
+      if (method === "GET" && url.pathname === "/repos/example/database") {
+        return json({ default_branch: "main" });
+      }
+      if (method === "GET" && url.pathname === "/repos/example/database/git/ref/heads/main") {
+        return json({ object: { sha: branchSha } });
+      }
+      if (method === "GET" && url.pathname.startsWith("/repos/example/database/git/commits/")) {
+        const sha = url.pathname.split("/").at(-1)!;
+        return json({ sha, tree: { sha: `root-${sha}` } });
+      }
+      if (method === "GET" && url.pathname.startsWith("/repos/example/database/git/trees/root-")) {
+        return json({ truncated: false, tree: [] });
+      }
+      if (method === "POST" && url.pathname === "/repos/example/database/git/blobs") {
+        return json({ sha: `blob-${commitIndex}` });
+      }
+      if (method === "POST" && url.pathname === "/repos/example/database/git/trees") {
+        return json({ sha: `tree-${commitIndex}` });
+      }
+      if (method === "POST" && url.pathname === "/repos/example/database/git/commits") {
+        commitParents.push(body.parents);
+        const sha = candidates[commitIndex]!;
+        commitIndex += 1;
+        return json({ sha });
+      }
+      if (method === "POST" && url.pathname === "/repos/example/database/git/refs") {
+        return json({ ref: body.ref }, 201);
+      }
+      if (method === "PATCH" && url.pathname === "/repos/example/database/git/refs/heads/main") {
+        if (body.sha === firstCandidate) {
+          branchSha = advancedSha;
+          return json({ message: "Reference update conflict" }, 422);
+        }
+        branchSha = body.sha;
+        return json({ ref: "refs/heads/main" });
+      }
+      if (method === "DELETE" && url.pathname.startsWith("/repos/example/database/git/refs/heads/")) {
+        return new Response(null, { status: 204 });
+      }
+      return json({ message: `unhandled ${method} ${url.pathname}` }, 500);
+    }));
+
+    const repository = new ArchiveRepository(
+      new GitHubClient("test-token", "https://api.example.test"),
+      "example/database",
+      { attempts: 1, intervalMs: 0, conflictAttempts: 2, conflictIntervalMs: 0 },
+    );
+    const validateCurrent = vi.fn((current) => expect(current).toBeUndefined());
+    const files = initialFiles(
+      "lax-42",
+      { repositoryId: 123, number: 42 },
+      { githubId: 10, handle: "alice" },
+      "2026-08-02T12:00:00Z",
+    );
+
+    await expect(repository.writeFiles({
+      id: "lax-42",
+      changes: files,
+      message: "Initialize lax-42",
+      validateCurrent,
+    })).resolves.toBe(secondCandidate);
+
+    expect(validateCurrent).toHaveBeenCalledTimes(2);
+    expect(commitParents).toEqual([[baseSha], [advancedSha]]);
+    expect(branchSha).toBe(secondCandidate);
+  });
 });
 
 function json(value: unknown, status = 200): Response {

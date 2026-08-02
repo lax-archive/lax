@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: lax-database-publish
     concurrency:
-      group: lax-archive-publish
+      group: lax-archive-publish-${{ github.repository_id }}-${{ github.event.issue.number }}
       queue: max
     permissions:
       contents: read
@@ -176,7 +176,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: lax-database-publish
     concurrency:
-      group: lax-archive-publish
+      group: lax-archive-publish-${{ github.repository_id }}-${{ github.event.issue.number }}
       queue: max
     permissions:
       contents: read

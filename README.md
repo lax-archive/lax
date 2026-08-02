@@ -24,16 +24,19 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 
 The Lean validation job has no App key, installation token, or Archive write
 credential. Its successful workflow artifact contains `validation-report.json`,
-`generated-build-output.json`, and `capture.tar`. Inside the global publication
-queue, a credential-free preflight parses the exact schemas, verifies the USTAR
-inventory and every digest, and re-reads authorization, lifecycle state, issue
-binding, stale-write inputs, and dependency captures. Only then may the trusted
-job mint the database token, publish the content-addressed capture as an
-immutable `lax-database` GitHub Release, construct the authoritative files, and
-commit exactly `record.json` and `build-output.json`. It preserves
-`owner-list.json`, synchronizes the issue title after the commit, and then
-dispatches the Website rebuild. [spec-notes.md](spec-notes.md) remains retained
-unchanged as a design input.
+`generated-build-output.json`, and `capture.tar`. Inside the submission-scoped
+publication job, a credential-free preflight parses the exact schemas, verifies
+the USTAR inventory and every digest, and re-reads authorization, lifecycle
+state, issue binding, stale-write inputs, and dependency captures. Only then
+may the trusted job mint the database token, publish the content-addressed
+capture as an immutable `lax-database` GitHub Release, construct the
+authoritative files, and commit exactly `record.json` and `build-output.json`.
+It preserves `owner-list.json`, synchronizes the issue title after the commit,
+and then dispatches the Website rebuild. Publishers for different submissions
+may run concurrently. Each advances the shared database branch without force
+and, on a concurrent advance, re-reads and revalidates the latest head before
+retrying.
+[spec-notes.md](spec-notes.md) remains retained unchanged as a design input.
 
 ## Trust model
 
@@ -80,7 +83,7 @@ trusted infrastructure only when its reviewed runtime sources change on
 runtime, smoke-tests the pushed digest, and uploads `validation-image.txt`.
 Only promote that exact `ghcr.io/...@sha256:<digest>` value after review.
 `release-cli.yml` is similarly restricted to version tags, while CI runs for
-pushes and pull requests.
+pushes.
 
 `lax-database` must also have an initial commit and a real default branch before
 the control plane can pin a snapshot. An empty newly created repository has no

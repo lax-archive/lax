@@ -16,19 +16,18 @@ const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
 export function capturePackage(
   kind: "concepts" | "proofs",
   pristineSubmissionRoot: string,
-  compiledSubmissionRoot: string,
+  compiledLibrary: string,
   provisionedManifest: string,
   inventory: ModuleInventory,
   captureRoot: string,
 ): void {
-  const library = path.join(compiledSubmissionRoot, kind, ".lake", "build", "lib", "lean");
   const packageSource = path.join(pristineSubmissionRoot, kind);
   const capturedSource = path.join(captureRoot, kind, "package");
   copyPackageSource(packageSource, capturedSource);
   fs.writeFileSync(path.join(capturedSource, "lake-manifest.json"), provisionedManifest, { mode: 0o444 });
   for (const moduleName of [inventory.rootModule, ...inventory.modules]) {
     const relative = `${moduleName.split(".").join("/")}.olean`;
-    const source = path.join(library, relative);
+    const source = path.join(compiledLibrary, relative);
     if (!fs.existsSync(source) || !fs.statSync(source).isFile()) {
       throw new Error(`compiled artifact is missing for module ${moduleName}`);
     }

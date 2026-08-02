@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { ContainerRunner } from "../sandbox/container.js";
 import type { ProvisionedWorkspace } from "./provision.js";
@@ -33,16 +32,15 @@ async function compile(
   runner: ContainerRunner,
   limits: ValidationLimits,
 ): Promise<CompileResult> {
-  const workspaceBase = path.dirname(workspace.repositoryRoot);
-  const relativeRoot = path.relative(workspaceBase, workspace.submissionRoot).split(path.sep).join("/");
   const result = await runner.run({
     label: `compile-${kind}`,
     args: ["lake", "build"],
     mounts: [
-      { source: workspaceBase, target: "/work", writable: true },
+      { source: workspace.repositoryRoot, target: "/source" },
+      ...workspace.buildMounts[kind],
       ...(fs.existsSync(dependencyRoot) ? [{ source: dependencyRoot, target: "/deps" }] : []),
     ],
-    workdir: `/work/${relativeRoot}/${kind}`,
+    workdir: `${workspace.containerSubmissionRoot}/${kind}`,
     env: {
       HOME: "/tmp/lax-home",
       LAKE_ARTIFACT_CACHE: "false",

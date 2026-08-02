@@ -25,6 +25,7 @@ import { replayPackage } from "./phases/replay.js";
 import { runResolution } from "./phases/resolution.js";
 import { runStaticValidation } from "./phases/static.js";
 import { ContainerRunner } from "./sandbox/container.js";
+import { assertWorkspaceWithinLimit } from "./sandbox/workspace-limit.js";
 import { fetchSource, type FetchedSource } from "./source/fetch.js";
 
 export interface ValidationOptions {
@@ -49,7 +50,7 @@ export async function validateSubmission(
 ): Promise<ValidationReport> {
   const runtime = options.runtime ?? configuredRuntime();
   const limits = DEFAULT_LIMITS;
-  const runner = new ContainerRunner(runtime, limits);
+  const runner = new ContainerRunner(runtime, limits, jobDir);
   const scope = options.scope ?? "both";
   const warnings: ValidationFinding[] = [];
   const violations: ValidationFinding[] = [];
@@ -58,7 +59,9 @@ export async function validateSubmission(
     options.onPhase?.({ name, state: "start" });
     const started = performance.now();
     try {
-      return await operation();
+      const result = await operation();
+      assertWorkspaceWithinLimit(jobDir, limits);
+      return result;
     } finally {
       options.onPhase?.({ name, state: "complete", durationMs: performance.now() - started });
     }
@@ -150,7 +153,7 @@ export async function validateSubmission(
     capturePackage(
       "concepts",
       fetched.submissionRoot,
-      conceptWorkspace.submissionRoot,
+      conceptWorkspace.libraries.concepts,
       conceptWorkspace.manifests.concepts,
       staticCheck.result.concepts.inventory,
       captureRoot,
@@ -181,7 +184,7 @@ export async function validateSubmission(
       capturePackage(
         "proofs",
         fetched.submissionRoot,
-        proofWorkspace.submissionRoot,
+        proofWorkspace.libraries.proofs,
         proofWorkspace.manifests.proofs,
         staticCheck.result.proofs.inventory,
         captureRoot,
@@ -193,11 +196,13 @@ export async function validateSubmission(
 
   if (options.replay !== false) {
     try {
-      const replay: Promise<void>[] = [];
-      if (scope !== "proofs") replay.push(phase("replay concepts", () =>
+      // Replay containers each receive the full memory/CPU allowance, so do not
+      // let their per-container limits stack against the host.
+      const replay: Array<() => Promise<void>> = [];
+      if (scope !== "proofs") replay.push(() => phase("replay concepts", () =>
         replayPackage(
           "concepts",
-          conceptWorkspace,
+          captureRoot,
           staticCheck.result.concepts!.inventory,
           resolution.result,
           jobDir,
@@ -205,19 +210,18 @@ export async function validateSubmission(
           runner,
           limits,
         )));
-      if (scope !== "concepts") replay.push(phase("replay proofs", () =>
+      if (scope !== "concepts") replay.push(() => phase("replay proofs", () =>
         replayPackage(
           "proofs",
-          proofWorkspace!,
+          captureRoot,
           staticCheck.result.proofs!.inventory,
           resolution.result,
           jobDir,
           dependencyRoot,
           runner,
           limits,
-          path.join(captureRoot, "concepts", "lib"),
         )));
-      await Promise.all(replay);
+      for (const check of replay) await check();
     } catch (error) {
       return fail("replay", "kernel-replay", error);
     }
@@ -226,31 +230,27 @@ export async function validateSubmission(
   let conceptReport;
   let proofReport;
   try {
-    const reports = await Promise.all([
-      phase("inspect concepts", () => runInspector(
-        "concepts",
-        conceptWorkspace,
-        staticCheck.result.concepts!.inventory,
-        resolution.result,
-        jobDir,
-        dependencyRoot,
-        runner,
-        limits,
-      )),
-      ...(scope === "concepts" ? [] : [phase("inspect proofs", () => runInspector(
-          "proofs",
-          proofWorkspace!,
-          staticCheck.result.proofs!.inventory,
-          resolution.result,
-          jobDir,
-          dependencyRoot,
-          runner,
-          limits,
-          path.join(captureRoot, "concepts", "lib"),
-        ))]),
-    ]);
-    conceptReport = reports[0]!;
-    proofReport = reports[1];
+    // Inspection has the same heavyweight container budget as replay.
+    conceptReport = await phase("inspect concepts", () => runInspector(
+      "concepts",
+      captureRoot,
+      staticCheck.result.concepts!.inventory,
+      resolution.result,
+      jobDir,
+      dependencyRoot,
+      runner,
+      limits,
+    ));
+    proofReport = scope === "concepts" ? undefined : await phase("inspect proofs", () => runInspector(
+      "proofs",
+      captureRoot,
+      staticCheck.result.proofs!.inventory,
+      resolution.result,
+      jobDir,
+      dependencyRoot,
+      runner,
+      limits,
+    ));
   } catch (error) {
     return fail("inspect", "inspector", error);
   }

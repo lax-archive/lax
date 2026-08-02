@@ -58,6 +58,8 @@ export interface LoadedSubmission {
 interface PublicationGuardOptions {
   attempts?: number;
   intervalMs?: number;
+  conflictAttempts?: number;
+  conflictIntervalMs?: number;
 }
 
 export class ArchiveRepository {
@@ -158,7 +160,11 @@ export class ArchiveRepository {
     ) {
       throw new ValidationError("publication must change one or more known Archive files");
     }
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    // Different submissions publish concurrently. Rebuild from the latest
+    // branch head and repeat every caller-supplied validation after each CAS race.
+    const conflictAttempts = this.publicationGuard.conflictAttempts ?? 100;
+    const conflictIntervalMs = this.publicationGuard.conflictIntervalMs ?? 250;
+    for (let attempt = 1; attempt <= conflictAttempts; attempt += 1) {
       const currentSnapshot = await this.snapshot();
       const current = await this.load(args.id, currentSnapshot);
       await args.validateCurrent(current);
@@ -193,7 +199,9 @@ export class ArchiveRepository {
       try {
         const advanced = await this.advanceProtectedBranch(currentSnapshot, commit.sha);
         if (advanced) return commit.sha;
-        if (attempt === 3) throw new Error("lax-database changed during publication retries");
+        if (attempt === conflictAttempts) {
+          throw new Error(`lax-database changed during ${conflictAttempts} publication attempts`);
+        }
       } finally {
         try {
           await this.github.request(
@@ -205,6 +213,7 @@ export class ArchiveRepository {
           // cleanup failure must not obscure a successfully published commit.
         }
       }
+      await delay(conflictIntervalMs * Math.min(attempt, 8));
     }
     throw new Error("unreachable publication retry state");
   }
