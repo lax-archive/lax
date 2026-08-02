@@ -5,13 +5,14 @@ import { decodeUtf8, ValidationError } from "../shared/validation.js";
 import { validationRequestFromUnknown } from "./contracts.js";
 import { resetValidationOutputs, writeValidationOutputs } from "./outputs.js";
 import { validateSubmission } from "./pipeline.js";
+import { removeValidationWorkspace } from "./workspace-cleanup.js";
 
 const outputDir = path.resolve(requiredEnv("LAX_VALIDATION_OUTPUT"));
 if (outputDir === "/" || outputDir === process.cwd()) throw new Error("LAX_VALIDATION_OUTPUT must be a dedicated directory");
 fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
 resetValidationOutputs(outputDir);
 const jobDir = path.join(outputDir, "work");
-fs.rmSync(jobDir, { recursive: true, force: true });
+removeValidationWorkspace(jobDir);
 fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
 
 let exitCode = 1;
@@ -32,7 +33,7 @@ try {
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
 } finally {
-  fs.rmSync(jobDir, { recursive: true, force: true });
+  removeValidationWorkspace(jobDir);
 }
 process.exitCode = exitCode;
 
