@@ -91,8 +91,8 @@ export function validateManifest(
     findings.violate("manifest", `manifest.yaml: mathlibVersion must be ${runtime.mathlibCommit}`);
 
   const authors = [] as SubmissionManifest["authors"];
-  if (!Array.isArray(value.authors) || value.authors.length === 0 || value.authors.length > 100) {
-    findings.violate("manifest", "manifest.yaml: authors must be a non-empty list of at most 100 entries");
+  if (!Array.isArray(value.authors) || value.authors.length > 100) {
+    findings.violate("manifest", "manifest.yaml: authors must be a list of at most 100 entries");
   } else {
     for (const [index, authorValue] of value.authors.entries()) {
       if (!plainObject(authorValue)) {

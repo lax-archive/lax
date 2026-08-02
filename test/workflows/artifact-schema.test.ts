@@ -19,6 +19,20 @@ describe("trusted validation artifact parser", () => {
     ).toEqual(fixture);
   });
 
+  it("accepts a generated manifest with no authors", () => {
+    const fixture = successfulArtifacts();
+    fixture.report.buildOutput.inputs.manifest.authors = [];
+
+    expect(
+      parseSuccessfulValidationArtifacts(
+        fixture.report,
+        fixture.buildOutput,
+        validationRequest(),
+        TEST_RUNTIME,
+      ).buildOutput.inputs.manifest.authors,
+    ).toEqual([]);
+  });
+
   it("rejects unknown trusted fields and any standalone/report mismatch", () => {
     const unknown = successfulArtifacts();
     (unknown.report as unknown as Record<string, unknown>).extra = true;
