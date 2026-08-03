@@ -72,10 +72,12 @@ Issue creation and `/lax` issue comments start `submission.yml`; it is the only
 issue-event entry point. Validation runs on the standard `ubuntu-latest`
 GitHub-hosted runner and pulls the reviewed runtime by the immutable digest in
 `LAX_VALIDATION_IMAGE`. The workflow presents Compile, Replay, and Inspect as
-three separate steps in one validation job, retaining the workspace only
-between those steps and cleaning it unconditionally afterwards. Each phase
-still runs in a fresh credential-free container. The workflow reclaims unused
-hosted-runner SDK space before pulling the large runtime image. Kernel replay
+three first-class jobs in the Actions DAG. Short-lived, credential-free
+artifacts carry the validation workspace from Compile to Replay and from Replay
+to Inspect; every job cleans its local copy unconditionally afterwards. Each
+phase runs on a fresh hosted runner in a fresh credential-free container. The
+workflow reclaims unused hosted-runner SDK space before pulling the large
+runtime image. Kernel replay
 and inspection use two Lean workers inside their 16 GiB container limit so
 large module sets cannot exhaust the hosted runner while the surrounding
 workflow remains responsive.
