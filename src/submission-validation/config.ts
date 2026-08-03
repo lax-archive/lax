@@ -12,6 +12,7 @@ export interface ValidationLimits {
   minFreeDiskBytes: number;
   memoryBytes: number;
   cpuCount: number;
+  leanThreads: number;
   pids: number;
 }
 
@@ -23,8 +24,9 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   maxWorkspaceBytes: 20 * 1024 * 1024 * 1024,
   maxWorkspaceEntries: 1_000_000,
   minFreeDiskBytes: 5 * 1024 * 1024 * 1024,
-  memoryBytes: 12 * 1024 * 1024 * 1024,
+  memoryBytes: 16 * 1024 * 1024 * 1024,
   cpuCount: 4,
+  leanThreads: 2,
   pids: 1_024,
 };
 

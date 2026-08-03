@@ -114,9 +114,10 @@ jobs:
           PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
         run: node dist/workflows/submission.js publish
 
-  # Each validation phase gets a fresh, credential-free container from the
-  # reviewed immutable digest on an ephemeral GitHub-hosted runner.
-  validate-submission:
+  # Each validation phase is a first-class DAG node on a fresh hosted runner.
+  # Credential-free handoff artifacts carry only validation state forward.
+  compile:
+    name: Compile
     needs: route
     if: needs.route.outputs.operation == 'validate'
     runs-on: ubuntu-latest
@@ -149,12 +150,195 @@ jobs:
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull "$IMAGE"
           fi
-      - name: Validate in isolated phase containers
+      - name: Compile
         env:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
           LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-        run: node dist/submission-validation/run.js
+        run: node dist/submission-validation/run.js compile
+
+      - name: Pack Compile handoff
+        if: success()
+        run: |
+          tar \
+            --exclude='./work/source/.git' \
+            --exclude='./work/archive/.git' \
+            --exclude='./work/downloads' \
+            --create \
+            --file .build/submission-validation-compile.tar \
+            --directory .build/submission-validation \
+            .
+
+      - name: Preserve Compile handoff
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: submission-validation-compile-${{ github.event.issue.number }}
+          path: .build/submission-validation-compile.tar
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Clean validation workspace
+        if: always()
+        env:
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/run.js cleanup
+
+      - name: Preserve failed validation report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: submission-validation-${{ github.event.issue.number }}
+          path: .build/submission-validation/validation-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  replay:
+    name: Replay
+    needs: [route, compile]
+    if: needs.route.outputs.operation == 'validate' && needs.compile.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Reclaim hosted-runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          docker system prune --all --force
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Ensure the pinned warm runtime is local
+        env:
+          IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+        run: |
+          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            docker pull "$IMAGE"
+          fi
+      - name: Restore Compile handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: submission-validation-compile-${{ github.event.issue.number }}
+          path: .build
+      - name: Unpack Compile handoff
+        run: |
+          mkdir -p .build/submission-validation
+          tar \
+            --extract \
+            --file .build/submission-validation-compile.tar \
+            --directory .build/submission-validation
+      - name: Replay
+        env:
+          VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
+          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/run.js replay
+
+      - name: Pack Replay handoff
+        if: success()
+        run: |
+          tar \
+            --exclude='./work/source/.git' \
+            --exclude='./work/archive/.git' \
+            --exclude='./work/downloads' \
+            --create \
+            --file .build/submission-validation-replay.tar \
+            --directory .build/submission-validation \
+            .
+
+      - name: Preserve Replay handoff
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: submission-validation-replay-${{ github.event.issue.number }}
+          path: .build/submission-validation-replay.tar
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Clean validation workspace
+        if: always()
+        env:
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/run.js cleanup
+
+      - name: Preserve failed validation report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: submission-validation-${{ github.event.issue.number }}
+          path: .build/submission-validation/validation-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  inspect:
+    name: Inspect
+    needs: [route, replay]
+    if: needs.route.outputs.operation == 'validate' && needs.replay.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Reclaim hosted-runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          docker system prune --all --force
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Ensure the pinned warm runtime is local
+        env:
+          IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+        run: |
+          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            docker pull "$IMAGE"
+          fi
+      - name: Restore Replay handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: submission-validation-replay-${{ github.event.issue.number }}
+          path: .build
+      - name: Unpack Replay handoff
+        run: |
+          mkdir -p .build/submission-validation
+          tar \
+            --extract \
+            --file .build/submission-validation-replay.tar \
+            --directory .build/submission-validation
+      - name: Inspect
+        env:
+          VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
+          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/run.js inspect
+      - name: Clean validation workspace
+        if: always()
+        env:
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/run.js cleanup
       - name: Preserve the report, generated build output, and capture
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -167,12 +351,60 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  # Keep success and failure handling on one visible DAG path. On failure this
+  # job reports the validation result; on success it unlocks publication.
+  validation-result:
+    name: Validation result
+    needs: [route, inspect]
+    if: always() && needs.route.outputs.operation == 'validate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      should_publish: ${{ steps.outcome.outputs.should_publish }}
+    steps:
+      - name: Record validation outcome
+        id: outcome
+        run: echo "should_publish=${{ needs.inspect.result == 'success' }}" >> "$GITHUB_OUTPUT"
+      - if: steps.outcome.outputs.should_publish != 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - if: steps.outcome.outputs.should_publish != 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.outcome.outputs.should_publish != 'true'
+        run: npm ci
+      - if: steps.outcome.outputs.should_publish != 'true'
+        run: npm run build
+      - if: steps.outcome.outputs.should_publish != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: submission-validation-${{ github.event.issue.number }}
+          path: .build/submission-validation
+      - name: Report the validation result
+        if: steps.outcome.outputs.should_publish != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          VALIDATION_CONTEXT: ${{ needs.route.outputs.context }}
+          VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
+        run: node dist/workflows/submission.js report-validation
+
   # The first step has only the lax workflow token. It parses and hashes the
   # downloaded files and repeats all authorization, issue, state, stale-write,
   # and dependency checks before the protected App key is used.
   publish-update:
-    needs: [route, validate-submission]
-    if: needs.route.outputs.operation == 'validate' && needs.validate-submission.result == 'success'
+    needs: [route, validation-result]
+    if: >-
+      ${{
+        needs.route.outputs.operation == 'validate' &&
+        needs.validation-result.outputs.should_publish == 'true'
+      }}
     runs-on: ubuntu-latest
     environment: lax-database-publish
     concurrency:
@@ -278,36 +510,6 @@ jobs:
           TITLE_SYNC_ERROR: ${{ needs.publish-update.outputs.title_sync_error }}
         run: node dist/workflows/submission.js website
 
-  report-validation:
-    needs: [route, validate-submission]
-    if: always() && needs.route.outputs.operation == 'validate' && needs.validate-submission.result != 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        continue-on-error: true
-        with:
-          name: submission-validation-${{ github.event.issue.number }}
-          path: .build/submission-validation
-      - name: Report the validation result
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
-          VALIDATION_CONTEXT: ${{ needs.route.outputs.context }}
-          VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
-        run: node dist/workflows/submission.js report-validation
-
   # TypeScript reports structured routing/publication failures. This final
   # fallback also covers failures before the handlers can run: checkout,
   # dependency installation, compilation, and App-token actions.
@@ -318,8 +520,7 @@ jobs:
       - publish
       - publish-update
       - website
-      - validate-submission
-      - report-validation
+      - validation-result
     if: >-
       ${{
         always() &&
@@ -328,8 +529,7 @@ jobs:
          needs.publish.result == 'failure' ||
          needs.publish-update.result == 'failure' ||
          needs.website.result == 'failure' ||
-         needs.validate-submission.result == 'failure' ||
-         needs.report-validation.result == 'failure')
+         needs.validation-result.result == 'failure')
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -342,7 +542,7 @@ jobs:
           ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
           ACTION: ${{ needs.route.outputs.action }}
           OPERATION: ${{ needs.route.outputs.operation }}
-          VALIDATION_RESULT: ${{ needs.validate-submission.result }}
+          VALIDATION_RESULT: ${{ needs.validation-result.outputs.should_publish }}
         with:
           script: |
             const issueNumber = context.payload.issue?.number;
@@ -390,7 +590,7 @@ jobs:
             const commit = process.env.ARCHIVE_COMMIT;
             const summary = commit
                 ? `lax-database changed at commit \`${commit}\`, but Website dispatch or final reporting did not complete. Inspect this run before retrying.`
-                : process.env.OPERATION === "validate" && process.env.VALIDATION_RESULT === "success"
+                : process.env.OPERATION === "validate" && process.env.VALIDATION_RESULT === "true"
                   ? "Validation succeeded, but trusted update publication did not complete; no lax-database commit was created."
                   : process.env.OPERATION === "validate"
                     ? "Validation or result reporting failed; no trustworthy validation result was produced. lax-database was not changed."

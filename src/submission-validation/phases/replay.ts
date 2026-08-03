@@ -40,6 +40,7 @@ export async function replayPackage(
       { source: outputDir, target: "/out", writable: true },
       ...(fs.existsSync(dependencyRoot) ? [{ source: dependencyRoot, target: "/deps" }] : []),
     ],
+    env: { LEAN_NUM_THREADS: String(limits.leanThreads) },
     timeoutMs: limits.checkTimeoutMs,
     maxOutputBytes: limits.maxOutputBytes,
   });

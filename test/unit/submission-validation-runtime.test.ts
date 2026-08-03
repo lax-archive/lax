@@ -78,6 +78,7 @@ describe("validation runtime boundaries retained from main", () => {
     expect(calls[0]).toMatchObject({
       label: "replay-concepts",
       args: ["node", "/opt/lax-runtime/bin/run-check.mjs", "/out/plan.json"],
+      env: { LEAN_NUM_THREADS: "2" },
     });
     const plan = JSON.parse(
       fs.readFileSync(path.join(job, "checks", "replay-concepts", "plan.json"), "utf8"),
@@ -208,7 +209,8 @@ describe("validation runtime boundaries retained from main", () => {
 
   it("excludes generated module shadows and replays only the inventoried capture", async () => {
     const pristine = temporary("lax-shadow-pristine-");
-    const compiledLibrary = temporary("lax-shadow-build-");
+    const compiledRoot = temporary("lax-shadow-build-");
+    const compiledLibrary = path.join(compiledRoot, "concepts", ".lake", "build", "lib", "lean");
     const captureRoot = temporary("lax-shadow-capture-");
     const job = temporary("lax-shadow-job-");
     writeFile(pristine, "concepts/Lax9.lean", "import Mathlib.Data.Nat.Basic\n");
@@ -251,6 +253,33 @@ describe("validation runtime boundaries retained from main", () => {
     expect(calls[0]!.mounts!.some((mount) => mount.source === compiledLibrary)).toBe(false);
   });
 
+  it("refuses artifact links that could make host capture follow attacker paths", () => {
+    const pristine = temporary("lax-link-pristine-");
+    const compiled = temporary("lax-link-build-");
+    const outside = temporary("lax-link-outside-");
+    const library = path.join(compiled, "concepts", ".lake", "build", "lib", "lean");
+    writeFile(pristine, "concepts/Lax9.lean", "");
+    writeFile(outside, "secret", "host bytes");
+    fs.mkdirSync(library, { recursive: true });
+    fs.symlinkSync(path.join(outside, "secret"), path.join(library, "Lax9.olean"));
+    const inventory: ModuleInventory = {
+      packageName: "Lax9",
+      packageDir: path.join(pristine, "concepts"),
+      rootModule: "Lax9",
+      modules: [],
+      paths: new Map(),
+    };
+
+    expect(() => capturePackage(
+      "concepts",
+      pristine,
+      library,
+      "{\"packages\":[]}",
+      inventory,
+      temporary("lax-link-capture-"),
+    )).toThrow("compiled artifact is missing or unsafe for module Lax9");
+  });
+
   it("constructs hardened, explicit container invocations", async () => {
     const source = temporary("lax-container-mount-");
     const record = path.join(temporary("lax-container-bin-"), "arguments.txt");
@@ -275,6 +304,7 @@ describe("validation runtime boundaries retained from main", () => {
       "--cap-drop=ALL",
       "--security-opt=no-new-privileges",
       "--network=none",
+      `--memory=${16 * 1024 * 1024 * 1024}`,
       "--workdir=/input",
       "--env",
       "ALPHA=first",
@@ -308,7 +338,7 @@ describe("validation runtime boundaries retained from main", () => {
       minFreeDiskBytes: 0,
     })).toThrow("validation workspace exceeds");
     expect(() => assertWorkspaceWithinLimit(workspace, {
-      maxWorkspaceBytes: 1_000,
+      maxWorkspaceBytes: Number.MAX_SAFE_INTEGER,
       maxWorkspaceEntries: 2,
       minFreeDiskBytes: 0,
     })).toThrow("validation workspace contains more than 2 entries");

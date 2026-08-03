@@ -293,7 +293,6 @@ function parseManifest(
   if (normalizeTitle(title) !== title) throw new ValidationError("generated manifest title is not normalized");
   const authors = boundedArray(object.authors, "generated manifest authors", 100)
     .map((entry, index) => parseAuthor(entry, index));
-  if (authors.length === 0) throw new ValidationError("generated manifest authors must not be empty");
   return {
     specVersion: "1",
     id: expectedId,

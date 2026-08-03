@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
+import { normalizeSubmissionId } from "../../shared/validation.js";
 import { packageNameForSubmission, type GitRequire, type PathRequire, type StaticResult } from "../contracts.js";
 import { FindingCollector } from "../findings.js";
 
@@ -434,9 +435,12 @@ function manifestId(root: string): string {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new Error("manifest.yaml must be an object");
   const id = (value as Record<string, unknown>).id;
-  if (typeof id !== "string" || !/^lax-[1-9][0-9]*$/u.test(id))
-    throw new Error("manifest.yaml has no valid lax-N id");
-  return id;
+  if (typeof id !== "string") throw new Error("manifest.yaml has no valid lax-N or LaxN id");
+  try {
+    return normalizeSubmissionId(id);
+  } catch {
+    throw new Error("manifest.yaml has no valid lax-N or LaxN id");
+  }
 }
 
 function safeGitEnvironment(): NodeJS.ProcessEnv {

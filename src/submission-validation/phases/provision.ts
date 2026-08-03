@@ -54,7 +54,11 @@ export async function provisionWorkspace(
   const packages = (["concepts", "proofs"] as const).flatMap((kind) => {
     const staticPackage = staticResult[kind];
     if (staticPackage === undefined) return [];
-    const flattened = flattenClosure(path.join(submissionRoot, kind), siblings.closure);
+    // The sibling graph is resolved against the fetched checkout. Rebase its
+    // package directories from that same tree; using the later workspace copy
+    // here produces paths that escape through ../../../../source/... once Lake
+    // reads the manifest from the read-only /source mount.
+    const flattened = flattenClosure(path.join(fetched.submissionRoot, kind), siblings.closure);
     const pathDependencies = new Map<string, string>();
     for (const dependency of staticPackage.lakefile.pathRequires)
       pathDependencies.set(dependency.name, dependency.path);
@@ -125,8 +129,9 @@ function isolateBuildDirectories(
     concepts: path.join(submissionRoot, "concepts"),
     proofs: path.join(submissionRoot, "proofs"),
   };
+  const canonicalFetchedRepositoryRoot = fs.realpathSync(fetchedRepositoryRoot);
   const siblingDirectories = [...new Set([...siblings.closure.values()].map((entry) => {
-    const relative = path.relative(fetchedRepositoryRoot, entry.pkgDir);
+    const relative = path.relative(canonicalFetchedRepositoryRoot, fs.realpathSync(entry.pkgDir));
     if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
       throw new Error("sibling package escaped the provisioned repository");
     return path.join(repositoryRoot, relative);

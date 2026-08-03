@@ -8,7 +8,13 @@ import {
   SUBMISSION_ID_PATTERN,
 } from "../shared/constants.js";
 import { GitHubClient, repositoryPath } from "../shared/github.js";
-import { normalizeTitle, validateCommit, validateFolder, validateRepositoryUrl } from "../shared/validation.js";
+import {
+  normalizeSubmissionId,
+  normalizeTitle,
+  validateCommit,
+  validateFolder,
+  validateRepositoryUrl,
+} from "../shared/validation.js";
 import type { GitHubIdentity } from "../shared/types.js";
 import { checkDeleteLocally } from "./archive-preflight.js";
 import { githubAppUserToken } from "./auth.js";
@@ -238,12 +244,13 @@ export function resolveIssueReference(value: string): number {
 
 export function parseIssueReference(value: string): number {
   if (/^[1-9][0-9]*$/u.test(value)) return Number(value);
-  if (SUBMISSION_ID_PATTERN.test(value)) return Number(value.slice("lax-".length));
+  if (SUBMISSION_ID_PATTERN.test(value) || /^Lax[1-9][0-9]*$/u.test(value))
+    return Number(normalizeSubmissionId(value).slice("lax-".length));
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error("issue must be a number, lax-N id, or authoritative GitHub issue URL");
+    throw new Error("issue must be a number, lax-N/LaxN id, or authoritative GitHub issue URL");
   }
   const match = /^\/([^/]+)\/([^/]+)\/issues\/([1-9][0-9]*)\/?$/u.exec(url.pathname);
   if (

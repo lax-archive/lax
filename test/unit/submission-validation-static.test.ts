@@ -41,6 +41,11 @@ describe("submission static validation retained from main", () => {
     expect(parsed).toMatchObject({ id: "lax-261", title: "Test submission" });
     expect(parsed?.authors).toEqual([{ name: "Alice Example", github: "alice" }]);
 
+    const legacyFindings = new FindingCollector("static");
+    const legacy = validateManifest(manifest("Lax261"), "lax-261", RUNTIME, legacyFindings);
+    expect(legacyFindings.violations).toEqual([]);
+    expect(legacy?.id).toBe("lax-261");
+
     for (const [content, expected] of [
       [manifest("lax-261") + "extra: true\n", "unknown key"],
       [manifest("lax-261").replace("id: lax-261", "id: lax-26"), "id must be lax-261"],
@@ -53,6 +58,19 @@ describe("submission static validation retained from main", () => {
       validateManifest(content, "lax-261", RUNTIME, invalid);
       expect(invalid.violations.map((finding) => finding.message).join("\n")).toContain(expected);
     }
+  });
+
+  it("accepts an empty author list", () => {
+    const findings = new FindingCollector("static");
+    const parsed = validateManifest(
+      manifest("lax-261").replace("authors:\n  - name: Alice Example\n    github: alice", "authors: []"),
+      "lax-261",
+      RUNTIME,
+      findings,
+    );
+
+    expect(findings.violations).toEqual([]);
+    expect(parsed?.authors).toEqual([]);
   });
 
   it("accepts concept and proof lakefiles and warns about proof-package dependencies", () => {

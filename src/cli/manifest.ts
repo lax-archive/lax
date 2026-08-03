@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse } from "yaml";
-
-const MANIFEST_ID = /^lax-([1-9][0-9]*)$/u;
+import { normalizeSubmissionId } from "../shared/validation.js";
 
 /** Resolve the authoritative issue number from a local submission manifest. */
 export function issueNumberFromFolder(folder: string): number {
@@ -22,9 +21,15 @@ export function issueNumberFromFolder(folder: string): number {
     throw new Error(`${filename} must be a YAML mapping`);
   }
   const id = (value as Record<string, unknown>).id;
-  const match = typeof id === "string" ? MANIFEST_ID.exec(id) : null;
-  if (match === null) throw new Error(`${filename} must contain an id of the form lax-N`);
-  return Number(match[1]);
+  if (typeof id !== "string")
+    throw new Error(`${filename} must contain an id of the form lax-N or LaxN`);
+  let canonical: string;
+  try {
+    canonical = normalizeSubmissionId(id);
+  } catch {
+    throw new Error(`${filename} must contain an id of the form lax-N or LaxN`);
+  }
+  return Number(canonical.slice("lax-".length));
 }
 
 export function submissionIdFromFolder(folder: string): string {

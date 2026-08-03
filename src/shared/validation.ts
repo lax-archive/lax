@@ -2,6 +2,7 @@ import { TextDecoder } from "node:util";
 import {
   COMMIT_PATTERN,
   HANDLE_PATTERN,
+  LEGACY_SUBMISSION_ID_PATTERN,
   MAX_FOLDER_BYTES,
   MAX_FOLDER_SEGMENTS,
   SUBMISSION_ID_PATTERN,
@@ -102,6 +103,16 @@ export function validateSubmissionId(value: string): string {
     throw new ValidationError(`submission id must match lax-<positive decimal>, got ${value}`);
   }
   return value;
+}
+
+/** Accept a source-facing legacy LaxN id and return the canonical lax-N spelling. */
+export function normalizeSubmissionId(value: string): string {
+  if (SUBMISSION_ID_PATTERN.test(value)) return value;
+  const legacy = LEGACY_SUBMISSION_ID_PATTERN.exec(value);
+  if (legacy !== null) return `lax-${legacy[1]}`;
+  throw new ValidationError(
+    `submission id must match lax-<positive decimal> or Lax<positive decimal>, got ${value}`,
+  );
 }
 
 export function submissionId(issueNumber: number): string {

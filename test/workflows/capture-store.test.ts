@@ -19,6 +19,7 @@ describe("immutable GitHub Release capture promotion", () => {
     const fixture = captureFixture();
     const tag = `lax-capture-lax-42-${fixture.manifest.digest}`;
     const asset = releaseAsset(tag, fixture.manifest.digest, fixture.size);
+    const draftAsset = releaseAsset("untagged-draft", fixture.manifest.digest, fixture.size);
     const request = vi.fn(async (method: string, apiPath: string): Promise<unknown> => {
       if (apiPath.endsWith("/immutable-releases")) return { enabled: true };
       if (method === "GET") throw new GitHubError("not found", 404);
@@ -26,7 +27,7 @@ describe("immutable GitHub Release capture promotion", () => {
       if (method === "PATCH") return release(tag, false, true, [asset]);
       throw new Error(`unexpected ${method} ${apiPath}`);
     });
-    const uploadReleaseAsset = vi.fn().mockResolvedValue(asset);
+    const uploadReleaseAsset = vi.fn().mockResolvedValue(draftAsset);
     const store = new GitHubReleaseCaptureStore({ request, uploadReleaseAsset } as CaptureStoreClient);
     await expect(store.promote("lax-42", fixture.manifest, fixture.path, "a".repeat(40))).resolves.toEqual({
       ...fixture.manifest,
@@ -38,6 +39,31 @@ describe("immutable GitHub Release capture promotion", () => {
       draft: true,
       target_commitish: "a".repeat(40),
     });
+  });
+
+  it("resumes an exact uploaded draft whose download URL is still temporary", async () => {
+    const fixture = captureFixture();
+    const tag = `lax-capture-lax-42-${fixture.manifest.digest}`;
+    const draftAsset = releaseAsset("untagged-draft", fixture.manifest.digest, fixture.size);
+    const publishedAsset = releaseAsset(tag, fixture.manifest.digest, fixture.size);
+    const request = vi.fn(async (method: string, apiPath: string): Promise<unknown> => {
+      if (apiPath.endsWith("/immutable-releases")) return { enabled: true };
+      if (method === "GET") return release(tag, true, false, [draftAsset]);
+      if (method === "PATCH") return release(tag, false, true, [publishedAsset]);
+      throw new Error(`unexpected ${method} ${apiPath}`);
+    });
+    const uploadReleaseAsset = vi.fn();
+
+    await expect(new GitHubReleaseCaptureStore({ request, uploadReleaseAsset }).promote(
+      "lax-42",
+      fixture.manifest,
+      fixture.path,
+      "a".repeat(40),
+    )).resolves.toEqual({
+      ...fixture.manifest,
+      downloadUrl: publishedAsset.browser_download_url,
+    });
+    expect(uploadReleaseAsset).not.toHaveBeenCalled();
   });
 
   it("reuses an already immutable exact capture without uploading", async () => {

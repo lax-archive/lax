@@ -3,9 +3,11 @@ import path from "node:path";
 import { ArchiveSnapshot, fetchArchiveSnapshot } from "./archive/snapshot.js";
 import { materializeDependencyCaptures } from "./captures/materialize.js";
 import { capturePackage, describeLocalCapture, sealCapture } from "./captures/seal.js";
-import { configuredRuntime, DEFAULT_LIMITS } from "./config.js";
+import { configuredRuntime, DEFAULT_LIMITS, type ValidationLimits } from "./config.js";
 import type {
   ResolvedDependency,
+  ResolutionResult,
+  StaticResult,
   ValidationFinding,
   ValidationReport,
   ValidationRequest,
@@ -26,7 +28,7 @@ import { runResolution } from "./phases/resolution.js";
 import { runStaticValidation } from "./phases/static.js";
 import { ContainerRunner } from "./sandbox/container.js";
 import { assertWorkspaceWithinLimit } from "./sandbox/workspace-limit.js";
-import { fetchSource, type FetchedSource } from "./source/fetch.js";
+import { containedDirectory, fetchSource, type FetchedSource } from "./source/fetch.js";
 
 export interface ValidationOptions {
   /** A local build supplies already-available source and Archive data. */
@@ -43,11 +45,284 @@ export interface ValidationOptions {
   onPhase?: (event: { name: string; state: "start" | "complete"; durationMs?: number }) => void;
 }
 
+interface ReportState {
+  request: ValidationRequest;
+  runtime: ValidationRuntimeIdentity;
+  dependencies: ResolvedDependency[];
+  warnings: ValidationFinding[];
+  violations: ValidationFinding[];
+}
+
+interface PreparedValidation extends ReportState {
+  jobDir: string;
+  options: ValidationOptions;
+  limits: ValidationLimits;
+  runner: ContainerRunner;
+  scope: ValidationScope;
+  fetched: FetchedSource;
+  staticResult: StaticResult;
+  resolution: ResolutionResult;
+  siblings: ReturnType<typeof runResolution>["siblings"];
+  dependencyRoot: string;
+  captureRoot: string;
+  phase<T>(name: string, operation: () => Promise<T> | T): Promise<T>;
+}
+
+type CompiledValidation = PreparedValidation;
+
+type Preparation = { state: PreparedValidation } | { report: ValidationReport };
+type Compilation = { state: CompiledValidation } | { report: ValidationReport };
+
+/** Run all stages in one process for local builds and direct library callers. */
 export async function validateSubmission(
   request: ValidationRequest,
   jobDir: string,
   options: ValidationOptions = {},
 ): Promise<ValidationReport> {
+  const compiled = await compileStage(request, jobDir, options, false);
+  if ("report" in compiled) return compiled.report;
+  if (options.replay !== false) {
+    const replayFailure = await replayStage(compiled.state);
+    if (replayFailure !== undefined) return replayFailure;
+  }
+  return inspectStage(compiled.state);
+}
+
+/** Compile and retain the job workspace for a later workflow step. */
+export async function compileSubmission(
+  request: ValidationRequest,
+  jobDir: string,
+  options: ValidationOptions = {},
+): Promise<ValidationReport | undefined> {
+  const compiled = await compileStage(request, jobDir, options, false);
+  return "report" in compiled ? compiled.report : undefined;
+}
+
+/** Resume a successful Compile workspace and kernel-replay its artifacts. */
+export async function replaySubmission(
+  request: ValidationRequest,
+  jobDir: string,
+  options: ValidationOptions = {},
+): Promise<ValidationReport | undefined> {
+  const compiled = await compileStage(request, jobDir, options, true, "replay");
+  if ("report" in compiled) return compiled.report;
+  return replayStage(compiled.state);
+}
+
+/** Resume a replayed workspace, inspect it, and emit the final validation report. */
+export async function inspectSubmission(
+  request: ValidationRequest,
+  jobDir: string,
+  options: ValidationOptions = {},
+): Promise<ValidationReport> {
+  const compiled = await compileStage(request, jobDir, options, true, "inspect");
+  if ("report" in compiled) return compiled.report;
+  return inspectStage(compiled.state);
+}
+
+async function compileStage(
+  request: ValidationRequest,
+  jobDir: string,
+  options: ValidationOptions,
+  resume: boolean,
+  resumePhase: "replay" | "inspect" = "replay",
+): Promise<Compilation> {
+  const prepared = await prepareValidation(request, jobDir, options, resume);
+  if ("report" in prepared) return prepared;
+  const state = prepared.state;
+
+  if (resume) {
+    try {
+      capturedManifests(state.captureRoot, state.scope);
+      return { state };
+    } catch (error) {
+      return { report: fail(state, resumePhase, "stage-workspace", error) };
+    }
+  }
+
+  try {
+    await state.phase("dependency provisioning", () =>
+      materializeDependencyCaptures(
+        state.dependencies,
+        state.jobDir,
+        state.runner,
+        state.limits,
+      ));
+  } catch (error) {
+    return { report: fail(state, "provision", "dependency-capture", error) };
+  }
+
+  fs.mkdirSync(state.captureRoot, { recursive: true, mode: 0o700 });
+  let conceptWorkspace: ProvisionedWorkspace;
+  try {
+    conceptWorkspace = await state.phase("provision concepts", () =>
+      provisionWorkspace(
+        "concepts",
+        state.fetched,
+        request.source.folder,
+        state.staticResult,
+        state.resolution,
+        state.siblings,
+        state.jobDir,
+        state.dependencyRoot,
+        state.runner,
+        state.limits,
+      ));
+    await state.phase("compile concepts", () =>
+      compileConcepts(conceptWorkspace, state.dependencyRoot, state.runner, state.limits));
+    capturePackage(
+      "concepts",
+      state.fetched.submissionRoot,
+      conceptWorkspace.libraries.concepts,
+      conceptWorkspace.manifests.concepts,
+      state.staticResult.concepts!.inventory,
+      state.captureRoot,
+    );
+  } catch (error) {
+    return { report: fail(state, "compile-concepts", "compile", error) };
+  }
+
+  let proofWorkspace: ProvisionedWorkspace | undefined;
+  if (state.scope !== "concepts") {
+    try {
+      proofWorkspace = await state.phase("provision proofs", () =>
+        provisionWorkspace(
+          "proofs",
+          state.fetched,
+          request.source.folder,
+          state.staticResult,
+          state.resolution,
+          state.siblings,
+          state.jobDir,
+          state.dependencyRoot,
+          state.runner,
+          state.limits,
+        ));
+      installOwnConceptCapture(proofWorkspace, state.captureRoot);
+      await state.phase("compile proofs", () =>
+        compileProofs(proofWorkspace!, state.dependencyRoot, state.runner, state.limits));
+      capturePackage(
+        "proofs",
+        state.fetched.submissionRoot,
+        proofWorkspace.libraries.proofs,
+        proofWorkspace.manifests.proofs,
+        state.staticResult.proofs!.inventory,
+        state.captureRoot,
+      );
+    } catch (error) {
+      return { report: fail(state, "compile-proofs", "compile", error) };
+    }
+  }
+
+  return { state };
+}
+
+async function replayStage(state: CompiledValidation): Promise<ValidationReport | undefined> {
+  try {
+    // Each checker receives the full container budget, so keep the two
+    // heavyweight replays from stacking their limits against the host.
+    const replay: Array<() => Promise<void>> = [];
+    if (state.scope !== "proofs") replay.push(() => state.phase("replay concepts", () =>
+      replayPackage(
+        "concepts",
+        state.captureRoot,
+        state.staticResult.concepts!.inventory,
+        state.resolution,
+        state.jobDir,
+        state.dependencyRoot,
+        state.runner,
+        state.limits,
+      )));
+    if (state.scope !== "concepts") replay.push(() => state.phase("replay proofs", () =>
+      replayPackage(
+        "proofs",
+        state.captureRoot,
+        state.staticResult.proofs!.inventory,
+        state.resolution,
+        state.jobDir,
+        state.dependencyRoot,
+        state.runner,
+        state.limits,
+      )));
+    for (const check of replay) await check();
+    return undefined;
+  } catch (error) {
+    return fail(state, "replay", "kernel-replay", error);
+  }
+}
+
+async function inspectStage(state: CompiledValidation): Promise<ValidationReport> {
+  let conceptReport;
+  let proofReport;
+  try {
+    // Inspection has the same heavyweight container budget as replay.
+    conceptReport = await state.phase("inspect concepts", () => runInspector(
+      "concepts",
+      state.captureRoot,
+      state.staticResult.concepts!.inventory,
+      state.resolution,
+      state.jobDir,
+      state.dependencyRoot,
+      state.runner,
+      state.limits,
+    ));
+    proofReport = state.scope === "concepts" ? undefined : await state.phase("inspect proofs", () => runInspector(
+      "proofs",
+      state.captureRoot,
+      state.staticResult.proofs!.inventory,
+      state.resolution,
+      state.jobDir,
+      state.dependencyRoot,
+      state.runner,
+      state.limits,
+    ));
+  } catch (error) {
+    return fail(state, "inspect", "inspector", error);
+  }
+  const inspection = judgeInspection(
+    conceptReport,
+    proofReport,
+    state.staticResult.concepts!.inventory,
+    state.scope === "concepts" ? undefined : state.staticResult.proofs!.inventory,
+    state.resolution,
+    state.scope,
+  );
+  state.warnings.push(...inspection.findings.warnings);
+  state.violations.push(...inspection.findings.violations);
+  if (inspection.findings.failed) return report(state, false);
+
+  if (state.scope !== "both") return report(state, true);
+
+  try {
+    const capture = await state.phase("emit", async () =>
+      state.options.sealCapture === false
+        ? describeLocalCapture(state.captureRoot, state.request.source.commit, state.runtime)
+        : await sealCapture(
+            state.captureRoot,
+            path.join(path.dirname(state.jobDir), "capture.tar"),
+            state.request.source.commit,
+            state.runtime,
+            state.runner,
+            state.limits,
+          ));
+    const buildOutput = emitBuildOutput(
+      state.fetched.submissionRoot,
+      state.staticResult,
+      inspection.result,
+      capture,
+    );
+    return { ...report(state, true), buildOutput, capture };
+  } catch (error) {
+    return fail(state, "emit", "emit", error);
+  }
+}
+
+async function prepareValidation(
+  request: ValidationRequest,
+  jobDir: string,
+  options: ValidationOptions,
+  resume: boolean,
+): Promise<Preparation> {
   const runtime = options.runtime ?? configuredRuntime();
   const limits = DEFAULT_LIMITS;
   const runner = new ContainerRunner(runtime, limits, jobDir);
@@ -66,23 +341,12 @@ export async function validateSubmission(
       options.onPhase?.({ name, state: "complete", durationMs: performance.now() - started });
     }
   };
-  const fail = (phase: ValidationFinding["phase"], rule: string, error: unknown): ValidationReport => {
-    violations.push({ phase, rule, message: safeError(error) });
-    return {
-      reportVersion: 1,
-      ok: false,
-      request,
-      runtime,
-      dependencies,
-      warnings,
-      violations,
-    };
-  };
+  const base = (): ReportState => ({ request, runtime, dependencies, warnings, violations });
 
   try {
     await phase("validation runtime", () => runner.verifyRuntime());
   } catch (error) {
-    return fail("source", "runtime", error);
+    return { report: fail(base(), "source", "runtime", error) };
   }
 
   let fetched: FetchedSource;
@@ -90,6 +354,16 @@ export async function validateSubmission(
   try {
     if (options.local !== undefined) {
       ({ fetched, archive } = options.local);
+    } else if (resume) {
+      const repositoryRoot = existingDirectory(path.join(jobDir, "source"), "fetched source");
+      fetched = {
+        repositoryRoot,
+        submissionRoot: containedDirectory(repositoryRoot, request.source.folder),
+      };
+      archive = new ArchiveSnapshot(
+        existingDirectory(path.join(jobDir, "archive"), "Archive snapshot"),
+        request.archiveSha,
+      );
     } else {
       [fetched, archive] = await Promise.all([
         fetchSource(request.source, jobDir, runner, limits),
@@ -97,7 +371,7 @@ export async function validateSubmission(
       ]);
     }
   } catch (error) {
-    return fail("source", "fetch", error);
+    return { report: fail(base(), "source", resume ? "resume" : "fetch", error) };
   }
 
   const staticCheck = await phase("static validation", () =>
@@ -105,7 +379,7 @@ export async function validateSubmission(
   warnings.push(...staticCheck.findings.warnings);
   violations.push(...staticCheck.findings.violations);
   if (staticCheck.findings.failed || staticCheck.result.concepts === undefined || staticCheck.result.proofs === undefined)
-    return { reportVersion: 1, ok: false, request, runtime, dependencies, warnings, violations };
+    return { report: report(base(), false) };
 
   const resolution = await phase("dependency resolution", () =>
     runResolution(
@@ -115,194 +389,78 @@ export async function validateSubmission(
       runtime,
       fetched.repositoryRoot,
       fetched.submissionRoot,
-    ),
-  );
+    ));
   warnings.push(...resolution.findings.warnings);
   violations.push(...resolution.findings.violations);
   dependencies = resolution.result.all;
-  if (resolution.findings.failed)
-    return { reportVersion: 1, ok: false, request, runtime, dependencies, warnings, violations };
+  if (resolution.findings.failed) return { report: report(base(), false) };
 
-  const dependencyRoot = path.join(jobDir, "dependencies");
-  try {
-    await phase("dependency provisioning", () =>
-      materializeDependencyCaptures(dependencies, jobDir, runner, limits));
-  } catch (error) {
-    return fail("provision", "dependency-capture", error);
-  }
-
-  const captureRoot = path.join(jobDir, "capture");
-  fs.mkdirSync(captureRoot, { recursive: true, mode: 0o700 });
-  let conceptWorkspace: ProvisionedWorkspace;
-  try {
-    conceptWorkspace = await phase("provision concepts", () =>
-      provisionWorkspace(
-        "concepts",
-        fetched,
-        request.source.folder,
-        staticCheck.result,
-        resolution.result,
-        resolution.siblings,
-        jobDir,
-        dependencyRoot,
-        runner,
-        limits,
-      ));
-    await phase("compile concepts", () =>
-      compileConcepts(conceptWorkspace, dependencyRoot, runner, limits));
-    capturePackage(
-      "concepts",
-      fetched.submissionRoot,
-      conceptWorkspace.libraries.concepts,
-      conceptWorkspace.manifests.concepts,
-      staticCheck.result.concepts.inventory,
-      captureRoot,
-    );
-  } catch (error) {
-    return fail("compile-concepts", "compile", error);
-  }
-
-  let proofWorkspace: ProvisionedWorkspace | undefined;
-  if (scope !== "concepts") {
-    try {
-      proofWorkspace = await phase("provision proofs", () =>
-        provisionWorkspace(
-          "proofs",
-          fetched,
-          request.source.folder,
-          staticCheck.result,
-          resolution.result,
-          resolution.siblings,
-          jobDir,
-          dependencyRoot,
-          runner,
-          limits,
-        ));
-      installOwnConceptCapture(proofWorkspace, captureRoot);
-      await phase("compile proofs", () =>
-        compileProofs(proofWorkspace!, dependencyRoot, runner, limits));
-      capturePackage(
-        "proofs",
-        fetched.submissionRoot,
-        proofWorkspace.libraries.proofs,
-        proofWorkspace.manifests.proofs,
-        staticCheck.result.proofs.inventory,
-        captureRoot,
-      );
-    } catch (error) {
-      return fail("compile-proofs", "compile", error);
-    }
-  }
-
-  if (options.replay !== false) {
-    try {
-      // Replay containers each receive the full memory/CPU allowance, so do not
-      // let their per-container limits stack against the host.
-      const replay: Array<() => Promise<void>> = [];
-      if (scope !== "proofs") replay.push(() => phase("replay concepts", () =>
-        replayPackage(
-          "concepts",
-          captureRoot,
-          staticCheck.result.concepts!.inventory,
-          resolution.result,
-          jobDir,
-          dependencyRoot,
-          runner,
-          limits,
-        )));
-      if (scope !== "concepts") replay.push(() => phase("replay proofs", () =>
-        replayPackage(
-          "proofs",
-          captureRoot,
-          staticCheck.result.proofs!.inventory,
-          resolution.result,
-          jobDir,
-          dependencyRoot,
-          runner,
-          limits,
-        )));
-      for (const check of replay) await check();
-    } catch (error) {
-      return fail("replay", "kernel-replay", error);
-    }
-  }
-
-  let conceptReport;
-  let proofReport;
-  try {
-    // Inspection has the same heavyweight container budget as replay.
-    conceptReport = await phase("inspect concepts", () => runInspector(
-      "concepts",
-      captureRoot,
-      staticCheck.result.concepts!.inventory,
-      resolution.result,
+  return {
+    state: {
+      ...base(),
       jobDir,
-      dependencyRoot,
-      runner,
+      options,
       limits,
-    ));
-    proofReport = scope === "concepts" ? undefined : await phase("inspect proofs", () => runInspector(
-      "proofs",
-      captureRoot,
-      staticCheck.result.proofs!.inventory,
-      resolution.result,
-      jobDir,
-      dependencyRoot,
       runner,
-      limits,
-    ));
-  } catch (error) {
-    return fail("inspect", "inspector", error);
-  }
-  const inspection = judgeInspection(
-    conceptReport,
-    proofReport,
-    staticCheck.result.concepts.inventory,
-    scope === "concepts" ? undefined : staticCheck.result.proofs.inventory,
-    resolution.result,
-    scope,
-  );
-  warnings.push(...inspection.findings.warnings);
-  violations.push(...inspection.findings.violations);
-  if (inspection.findings.failed)
-    return { reportVersion: 1, ok: false, request, runtime, dependencies, warnings, violations };
+      scope,
+      fetched,
+      staticResult: staticCheck.result,
+      resolution: resolution.result,
+      siblings: resolution.siblings,
+      dependencyRoot: path.join(jobDir, "dependencies"),
+      captureRoot: path.join(jobDir, "capture"),
+      phase,
+    },
+  };
+}
 
-  if (scope !== "both") {
-    return { reportVersion: 1, ok: true, request, runtime, dependencies, warnings, violations };
-  }
+function capturedManifests(
+  captureRoot: string,
+  scope: ValidationScope,
+): Record<"concepts" | "proofs", string> {
+  const concepts = readCapturedManifest(path.join(captureRoot, "concepts", "package", "lake-manifest.json"));
+  return {
+    concepts,
+    proofs: scope === "concepts"
+      ? concepts
+      : readCapturedManifest(path.join(captureRoot, "proofs", "package", "lake-manifest.json")),
+  };
+}
 
-  try {
-    const capture = await phase("emit", async () =>
-      options.sealCapture === false
-        ? describeLocalCapture(captureRoot, request.source.commit, runtime)
-        : await sealCapture(
-            captureRoot,
-            path.join(path.dirname(jobDir), "capture.tar"),
-            request.source.commit,
-            runtime,
-            runner,
-            limits,
-          ));
-    const buildOutput = emitBuildOutput(
-      fetched.submissionRoot,
-      staticCheck.result,
-      inspection.result,
-      capture,
-    );
-    return {
-      reportVersion: 1,
-      ok: true,
-      request,
-      runtime,
-      dependencies,
-      warnings,
-      violations,
-      buildOutput,
-      capture,
-    };
-  } catch (error) {
-    return fail("emit", "emit", error);
+function readCapturedManifest(filename: string): string {
+  const stat = fs.lstatSync(filename);
+  if (!stat.isFile() || stat.size > 8 * 1024 * 1024) {
+    throw new Error("compiled stage has no bounded captured manifest");
   }
+  return fs.readFileSync(filename, "utf8");
+}
+
+function existingDirectory(directory: string, label: string): string {
+  const absolute = path.resolve(directory);
+  if (!fs.lstatSync(absolute).isDirectory()) throw new Error(`${label} is missing`);
+  return absolute;
+}
+
+function fail(
+  state: ReportState,
+  phase: ValidationFinding["phase"],
+  rule: string,
+  error: unknown,
+): ValidationReport {
+  state.violations.push({ phase, rule, message: safeError(error) });
+  return report(state, false);
+}
+
+function report(state: ReportState, ok: boolean): ValidationReport {
+  return {
+    reportVersion: 1,
+    ok,
+    request: state.request,
+    runtime: state.runtime,
+    dependencies: state.dependencies,
+    warnings: state.warnings,
+    violations: state.violations,
+  };
 }
 
 function safeError(error: unknown): string {
