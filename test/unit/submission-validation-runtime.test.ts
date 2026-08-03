@@ -162,10 +162,10 @@ describe("validation runtime boundaries retained from main", () => {
     expect(fs.readdirSync(path.join(workspace.repositoryRoot, "concepts", ".lake"))).toEqual([]);
     expect(fs.readFileSync(path.join(conceptMount.source, "packages", "warm-marker"), "utf8"))
       .toBe("trusted\n");
-    expect(workspace.buildMounts.proofs.at(-1)).toEqual({
-      source: workspace.libraries.concepts,
-      target: "/source/concepts/.lake/build/lib/lean",
-    });
+    expect(workspace.buildMounts.proofs).toContainEqual(conceptMount);
+    expect(workspace.buildMounts.proofs.filter(
+      (mount) => mount.target.startsWith(`${conceptMount.target}/`),
+    )).toEqual([]);
   });
 
   it("captures exactly the declared module artifacts and excludes build state from source", () => {

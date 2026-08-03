@@ -168,14 +168,14 @@ function isolateBuildDirectories(
     libraries,
     buildMounts: {
       concepts: [conceptMount, ...siblingMounts],
+      // Lake may refresh dependency traces or replace stale outputs while
+      // compiling proofs, so the private concepts .lake mount must remain
+      // writable as a whole. The separately captured concepts artifacts are
+      // never mounted here; Replay later authenticates proofs against them.
       proofs: [
         conceptMount,
         mount(ownDirectories.proofs),
         ...siblingMounts,
-        {
-          source: libraries.concepts,
-          target: `${conceptMount.target}/build/lib/lean`,
-        },
       ],
     },
   };
