@@ -24,18 +24,18 @@ describe("GitHub Actions workflow progress", () => {
         { status: "in_progress", conclusion: null },
         [
           {
-            name: "publish-direct",
+            name: "publish",
             status: "in_progress",
             conclusion: null,
             steps: [
               { name: "Set up job", status: "completed", conclusion: "success" },
-              { name: "Publish direct lax-database change", status: "in_progress", conclusion: null },
+              { name: "Revalidate and publish", status: "in_progress", conclusion: null },
             ],
           },
         ],
       ),
     ).toEqual({
-      label: "GitHub Actions · publish-direct · Publish direct lax-database change",
+      label: "GitHub Actions · publish · Revalidate and publish",
       completed: false,
     });
   });
@@ -74,10 +74,10 @@ describe("GitHub Actions workflow progress", () => {
         ? {
             jobs: [
               {
-                name: "publish-direct",
+                name: "publish",
                 status: "in_progress",
                 conclusion: null,
-                steps: [{ name: "Publish direct", status: "in_progress", conclusion: null }],
+                steps: [{ name: "Publish", status: "in_progress", conclusion: null }],
               },
             ],
           }
