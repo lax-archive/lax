@@ -67,53 +67,6 @@ jobs:
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
         run: node dist/workflows/submission.js route
 
-  # This job checks out and executes only trusted lax source. It never checks
-  # out a submission. The database publication environment owns only the
-  # lax-database Publisher App key.
-  publish:
-    needs: route
-    if: needs.route.outputs.operation == 'publish'
-    runs-on: ubuntu-latest
-    environment: lax-database-publish
-    concurrency:
-      group: lax-archive-publish-${{ github.repository_id }}-${{ github.event.issue.number }}
-      queue: max
-    permissions:
-      contents: read
-      issues: write
-    outputs:
-      archive_commit: ${{ steps.publish.outputs.archive_commit }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-
-      - name: Mint lax-database token
-        id: database-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
-        with:
-          app-id: ${{ vars.LAX_DATABASE_APP_ID }}
-          private-key: ${{ secrets.LAX_DATABASE_APP_PRIVATE_KEY }}
-          owner: lax-archive
-          repositories: lax-database
-          permission-administration: read
-          permission-contents: write
-
-      - name: Revalidate and publish lax-database
-        id: publish
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
-          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
-          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
-        run: node dist/workflows/submission.js publish
-
   # Each validation phase is a first-class DAG node on a fresh hosted runner.
   # Credential-free handoff artifacts carry only validation state forward.
   compile:
@@ -469,6 +422,55 @@ jobs:
           GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
         run: node dist/workflows/submission.js publish-update
+
+  # Keep the shorter publish branch after the validation branch in declaration
+  # order so GitHub's automatic DAG layout prefers it as the lower row.
+  # This job checks out and executes only trusted lax source. It never checks
+  # out a submission. The database publication environment owns only the
+  # lax-database Publisher App key.
+  publish:
+    needs: route
+    if: needs.route.outputs.operation == 'publish'
+    runs-on: ubuntu-latest
+    environment: lax-database-publish
+    concurrency:
+      group: lax-archive-publish-${{ github.repository_id }}-${{ github.event.issue.number }}
+      queue: max
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      archive_commit: ${{ steps.publish.outputs.archive_commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Mint lax-database token
+        id: database-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.LAX_DATABASE_APP_ID }}
+          private-key: ${{ secrets.LAX_DATABASE_APP_PRIVATE_KEY }}
+          owner: lax-archive
+          repositories: lax-database
+          permission-administration: read
+          permission-contents: write
+
+      - name: Revalidate and publish lax-database
+        id: publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
+        run: node dist/workflows/submission.js publish
 
   # Website credentials do not exist until lax-database has advanced. This job
   # receives no Archive token and can only dispatch the complete rebuild.
