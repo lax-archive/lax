@@ -77,7 +77,8 @@ artifacts carry the validation workspace from Compile to Replay and from Replay
 to Inspect; every job cleans its local copy unconditionally afterwards. Each
 phase runs on a fresh hosted runner in a fresh credential-free container. The
 workflow reclaims unused hosted-runner SDK space before pulling the large
-runtime image. Kernel replay
+runtime image. A lightweight Validation result job keeps success and failure
+handling on one linear DAG path before publication. Kernel replay
 and inspection use two Lean workers inside their 16 GiB container limit so
 large module sets cannot exhaust the hosted runner while the surrounding
 workflow remains responsive.

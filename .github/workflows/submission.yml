@@ -351,12 +351,60 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  # Keep success and failure handling on one visible DAG path. On failure this
+  # job reports the validation result; on success it unlocks publication.
+  validation-result:
+    name: Validation result
+    needs: [route, inspect]
+    if: always() && needs.route.outputs.operation == 'validate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      should_publish: ${{ steps.outcome.outputs.should_publish }}
+    steps:
+      - name: Record validation outcome
+        id: outcome
+        run: echo "should_publish=${{ needs.inspect.result == 'success' }}" >> "$GITHUB_OUTPUT"
+      - if: steps.outcome.outputs.should_publish != 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - if: steps.outcome.outputs.should_publish != 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.outcome.outputs.should_publish != 'true'
+        run: npm ci
+      - if: steps.outcome.outputs.should_publish != 'true'
+        run: npm run build
+      - if: steps.outcome.outputs.should_publish != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: submission-validation-${{ github.event.issue.number }}
+          path: .build/submission-validation
+      - name: Report the validation result
+        if: steps.outcome.outputs.should_publish != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          VALIDATION_CONTEXT: ${{ needs.route.outputs.context }}
+          VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
+        run: node dist/workflows/submission.js report-validation
+
   # The first step has only the lax workflow token. It parses and hashes the
   # downloaded files and repeats all authorization, issue, state, stale-write,
   # and dependency checks before the protected App key is used.
   publish-update:
-    needs: [route, inspect]
-    if: needs.route.outputs.operation == 'validate' && needs.inspect.result == 'success'
+    needs: [route, validation-result]
+    if: >-
+      ${{
+        needs.route.outputs.operation == 'validate' &&
+        needs.validation-result.outputs.should_publish == 'true'
+      }}
     runs-on: ubuntu-latest
     environment: lax-database-publish
     concurrency:
@@ -462,43 +510,6 @@ jobs:
           TITLE_SYNC_ERROR: ${{ needs.publish-update.outputs.title_sync_error }}
         run: node dist/workflows/submission.js website
 
-  report-validation:
-    needs: [route, compile, replay, inspect]
-    if: >-
-      ${{
-        always() &&
-        needs.route.outputs.operation == 'validate' &&
-        (needs.compile.result != 'success' ||
-         needs.replay.result != 'success' ||
-         needs.inspect.result != 'success')
-      }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        continue-on-error: true
-        with:
-          name: submission-validation-${{ github.event.issue.number }}
-          path: .build/submission-validation
-      - name: Report the validation result
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
-          VALIDATION_CONTEXT: ${{ needs.route.outputs.context }}
-          VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
-        run: node dist/workflows/submission.js report-validation
-
   # TypeScript reports structured routing/publication failures. This final
   # fallback also covers failures before the handlers can run: checkout,
   # dependency installation, compilation, and App-token actions.
@@ -509,10 +520,7 @@ jobs:
       - publish
       - publish-update
       - website
-      - compile
-      - replay
-      - inspect
-      - report-validation
+      - validation-result
     if: >-
       ${{
         always() &&
@@ -521,10 +529,7 @@ jobs:
          needs.publish.result == 'failure' ||
          needs.publish-update.result == 'failure' ||
          needs.website.result == 'failure' ||
-         needs.compile.result == 'failure' ||
-         needs.replay.result == 'failure' ||
-         needs.inspect.result == 'failure' ||
-         needs.report-validation.result == 'failure')
+         needs.validation-result.result == 'failure')
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -536,7 +541,7 @@ jobs:
         env:
           ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
           OPERATION: ${{ needs.route.outputs.operation }}
-          VALIDATION_RESULT: ${{ needs.inspect.result }}
+          VALIDATION_RESULT: ${{ needs.validation-result.outputs.should_publish }}
         with:
           script: |
             const issueNumber = context.payload.issue?.number;
@@ -561,7 +566,7 @@ jobs:
             const commit = process.env.ARCHIVE_COMMIT;
             const summary = commit
                 ? `lax-database changed at commit \`${commit}\`, but Website dispatch or final reporting did not complete. Inspect this run before retrying.`
-                : process.env.OPERATION === "validate" && process.env.VALIDATION_RESULT === "success"
+                : process.env.OPERATION === "validate" && process.env.VALIDATION_RESULT === "true"
                   ? "Validation succeeded, but trusted update publication did not complete; no lax-database commit was created."
                   : process.env.OPERATION === "validate"
                     ? "Validation or result reporting failed; no trustworthy validation result was produced. lax-database was not changed."

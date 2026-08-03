@@ -48,7 +48,11 @@ describe("submission workflow definition", () => {
     expect(workflow).toContain("inspect:\n    name: Inspect\n    needs: [route, replay]");
     expect(workflow).toContain("needs.compile.result == 'success'");
     expect(workflow).toContain("needs.replay.result == 'success'");
+    expect(workflow).toContain("validation-result:\n    name: Validation result\n    needs: [route, inspect]");
     expect(workflow).toContain("needs.inspect.result == 'success'");
+    expect(workflow).toContain("publish-update:\n    needs: [route, validation-result]");
+    expect(workflow).toContain("needs.validation-result.outputs.should_publish == 'true'");
+    expect(workflow).not.toMatch(/^  report-validation:/mu);
     expect(workflow.match(/runs-on: ubuntu-latest/gu)!.length).toBeGreaterThanOrEqual(3);
     expect(workflow.match(/Reclaim hosted-runner disk/gu)).toHaveLength(3);
     expect(workflow.match(/Ensure the pinned warm runtime is local/gu)).toHaveLength(3);
@@ -65,13 +69,13 @@ describe("submission workflow definition", () => {
     expect(workflow).toContain(".build/submission-validation/validation-report.json");
     expect(workflow).toContain(".build/submission-validation/generated-build-output.json");
     expect(workflow).toContain(".build/submission-validation/capture.tar");
-    expect(workflow).toContain("report-validation:");
+    expect(workflow).toContain("node dist/workflows/submission.js report-validation");
     expect(workflow).toContain("VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}");
   });
 
   it("separates database publication from Website credential creation", () => {
     const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  compile:"));
-    const website = workflow.slice(workflow.indexOf("  website:"), workflow.indexOf("  report-validation:"));
+    const website = workflow.slice(workflow.indexOf("  website:"), workflow.indexOf("  # TypeScript reports"));
     expect(publish).toContain("Mint lax-database token");
     expect(publish).toContain("environment: lax-database-publish");
     expect(publish).toContain("vars.LAX_DATABASE_APP_ID");
@@ -107,10 +111,10 @@ describe("submission workflow definition", () => {
   });
 
   it("reports validation directly only when validation did not succeed", () => {
-    const report = workflow.slice(workflow.indexOf("  report-validation:"), workflow.indexOf("  # TypeScript reports"));
-    expect(report).toContain("needs.compile.result != 'success'");
-    expect(report).toContain("needs.replay.result != 'success'");
-    expect(report).toContain("needs.inspect.result != 'success'");
+    const result = workflow.slice(workflow.indexOf("  validation-result:"), workflow.indexOf("  # The first step"));
+    expect(result).toContain("should_publish=${{ needs.inspect.result == 'success' }}");
+    expect(result).toContain("steps.outcome.outputs.should_publish != 'true'");
+    expect(result).toContain("node dist/workflows/submission.js report-validation");
   });
 
   it("has a correlated fallback for setup and action failures", () => {
