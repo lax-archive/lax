@@ -412,12 +412,12 @@ jobs:
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
         run: node dist/workflows/submission.js publish-update
 
-  # Keep the shorter publish branch after the validation branch in declaration
+  # Keep the shorter publish-direct branch after the validation branch in declaration
   # order so GitHub's automatic DAG layout prefers it as the lower row.
   # This job checks out and executes only trusted lax source. It never checks
   # out a submission. The database publication environment owns only the
   # lax-database Publisher App key.
-  publish:
+  publish-direct:
     needs: route
     if: needs.route.outputs.operation == 'publish'
     runs-on: ubuntu-latest
@@ -429,7 +429,7 @@ jobs:
       contents: read
       issues: write
     outputs:
-      archive_commit: ${{ steps.publish.outputs.archive_commit }}
+      archive_commit: ${{ steps.publish-direct.outputs.archive_commit }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -452,8 +452,8 @@ jobs:
           permission-administration: read
           permission-contents: write
 
-      - name: Revalidate and publish lax-database
-        id: publish
+      - name: Publish direct lax-database change
+        id: publish-direct
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
@@ -464,11 +464,11 @@ jobs:
   # Website credentials do not exist until lax-database has advanced. This job
   # receives no Archive token and can only dispatch the complete rebuild.
   website:
-    needs: [route, publish, publish-update]
+    needs: [route, publish-direct, publish-update]
     if: >-
       ${{
         always() &&
-        ((needs.publish.result == 'success' && needs.publish.outputs.archive_commit != '') ||
+        ((needs.publish-direct.result == 'success' && needs.publish-direct.outputs.archive_commit != '') ||
          (needs.publish-update.result == 'success' && needs.publish-update.outputs.archive_commit != ''))
       }}
     runs-on: ubuntu-latest
@@ -501,7 +501,7 @@ jobs:
           LAX_WEBSITE_TOKEN: ${{ steps.website-token.outputs.token }}
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
           PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
-          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
+          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish-direct.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
           TITLE_SYNC_ERROR: ${{ needs.publish-update.outputs.title_sync_error }}
         run: node dist/workflows/submission.js website
 
@@ -512,7 +512,7 @@ jobs:
     needs:
       - precheck
       - route
-      - publish
+      - publish-direct
       - publish-update
       - website
       - validation-result
@@ -521,7 +521,7 @@ jobs:
         always() &&
         (needs.precheck.result == 'failure' ||
          needs.route.result == 'failure' ||
-         needs.publish.result == 'failure' ||
+         needs.publish-direct.result == 'failure' ||
          needs.publish-update.result == 'failure' ||
          needs.website.result == 'failure' ||
          needs.validation-result.result == 'failure')
@@ -534,7 +534,7 @@ jobs:
       - name: Post a correlated operational failure
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         env:
-          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
+          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish-direct.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
           ACTION: ${{ needs.route.outputs.action }}
           OPERATION: ${{ needs.route.outputs.operation }}
           VALIDATION_RESULT: ${{ needs.validation-result.outputs.should_publish }}
