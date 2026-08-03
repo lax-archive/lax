@@ -44,10 +44,16 @@ describe("submission workflow definition", () => {
   it("routes updates through first-class Compile, Replay, and Inspect DAG jobs", () => {
     expect(workflow).not.toContain("validate-submission:");
     expect(workflow).toContain("compile:\n    name: Compile");
-    expect(workflow).toContain("replay:\n    name: Replay\n    needs: [route, compile]");
-    expect(workflow).toContain("inspect:\n    name: Inspect\n    needs: [route, replay]");
+    expect(workflow).toContain("replay:\n    name: Replay\n    needs: compile");
+    expect(workflow).toContain("inspect:\n    name: Inspect\n    needs: replay");
     expect(workflow).toContain("needs.compile.result == 'success'");
     expect(workflow).toContain("needs.replay.result == 'success'");
+    expect(workflow).toContain("validation_request: ${{ needs.route.outputs.validation_request }}");
+    expect(workflow).toContain("validation_request: ${{ needs.compile.outputs.validation_request }}");
+    expect(workflow).toContain("VALIDATION_REQUEST: ${{ needs.compile.outputs.validation_request }}");
+    expect(workflow).toContain("VALIDATION_REQUEST: ${{ needs.replay.outputs.validation_request }}");
+    expect(workflow).not.toContain("needs: [route, compile]");
+    expect(workflow).not.toContain("needs: [route, replay]");
     expect(workflow).toContain("validation-result:\n    name: Validation result\n    needs: [route, inspect]");
     expect(workflow).toContain("needs.inspect.result == 'success'");
     expect(workflow).toContain("publish-update:\n    needs: [route, validation-result]");
