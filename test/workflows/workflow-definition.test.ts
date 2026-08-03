@@ -84,7 +84,7 @@ describe("submission workflow definition", () => {
   });
 
   it("separates database publication from Website credential creation", () => {
-    const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  compile:"));
+    const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  # Website"));
     const website = workflow.slice(workflow.indexOf("  website:"), workflow.indexOf("  # TypeScript reports"));
     expect(publish).toContain("Mint lax-database token");
     expect(publish).toContain("environment: lax-database-publish");
@@ -105,8 +105,14 @@ describe("submission workflow definition", () => {
     expect(workflow).not.toContain("secrets.LAX_APP_PRIVATE_KEY");
   });
 
+  it("declares the validation branch before the shorter publish branch", () => {
+    expect(workflow.indexOf("  compile:")).toBeLessThan(workflow.indexOf("  publish:"));
+    expect(workflow.indexOf("  publish-update:")).toBeLessThan(workflow.indexOf("  publish:"));
+    expect(workflow.indexOf("  publish:")).toBeLessThan(workflow.indexOf("  website:"));
+  });
+
   it("checks update artifacts and fresh state before minting the database token", () => {
-    const update = workflow.slice(workflow.indexOf("  publish-update:"), workflow.indexOf("  # Website"));
+    const update = workflow.slice(workflow.indexOf("  publish-update:"), workflow.indexOf("  publish:"));
     const prepare = update.indexOf("Parse artifacts and revalidate current state");
     const mint = update.indexOf("Mint lax-database token");
     const publish = update.indexOf("Promote capture and publish trusted update");
