@@ -3,27 +3,26 @@ import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { ModuleInventory, ResolutionResult } from "../contracts.js";
 import type { ContainerRunner } from "../sandbox/container.js";
-import type { ProvisionedWorkspace } from "./provision.js";
 
 export async function replayPackage(
   kind: "concepts" | "proofs",
-  workspace: ProvisionedWorkspace,
+  captureRoot: string,
   inventory: ModuleInventory,
   resolution: ResolutionResult,
   jobDir: string,
   dependencyRoot: string,
   runner: ContainerRunner,
   limits: ValidationLimits,
-  ownConceptLibrary?: string,
 ): Promise<void> {
-  const workspaceBase = path.dirname(workspace.repositoryRoot);
-  const containerRoot = `/work/${path.relative(workspaceBase, workspace.submissionRoot).split(path.sep).join("/")}`;
+  const containerRoot = `/capture/${kind}/package`;
   const plan = {
     tool: "replay",
     cwd: containerRoot,
-    ownLibs: kind === "proofs" && ownConceptLibrary !== undefined
-      ? [`${containerRoot}/proofs/.lake/build/lib/lean`, "/own-concepts"]
-      : [`${containerRoot}/concepts/.lake/build/lib/lean`],
+    // Capture contains only Static validation's inventoried module artifacts;
+    // never put Compile's mutable library on the replay search path.
+    ownLibs: kind === "proofs"
+      ? ["/capture/proofs/lib", "/capture/concepts/lib"]
+      : ["/capture/concepts/lib"],
     dependencyLibs: resolution.all.map(
       (dependency) => `/deps/${dependency.submissionId}/${dependency.kind}/lib`,
     ),
@@ -37,9 +36,8 @@ export async function replayPackage(
     label: `replay-${kind}`,
     args: ["node", "/opt/lax-runtime/bin/run-check.mjs", `/out/plan.json`],
     mounts: [
-      { source: workspaceBase, target: "/work" },
+      { source: captureRoot, target: "/capture" },
       { source: outputDir, target: "/out", writable: true },
-      ...(ownConceptLibrary === undefined ? [] : [{ source: ownConceptLibrary, target: "/own-concepts" }]),
       ...(fs.existsSync(dependencyRoot) ? [{ source: dependencyRoot, target: "/deps" }] : []),
     ],
     env: { LEAN_NUM_THREADS: String(limits.leanThreads) },

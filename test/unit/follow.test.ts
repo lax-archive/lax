@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { followCommand, workflowProgress } from "../../src/cli/follow.js";
-import { appendWorkflowRun, previewMarker, resultMarker } from "../../src/shared/workflow-comments.js";
+import {
+  appendWorkflowRun,
+  previewMarker,
+  resultMarker,
+  upsertCommandContext,
+  workflowRunMarker,
+} from "../../src/shared/workflow-comments.js";
 import type { GitHubClient } from "../../src/shared/github.js";
+
+const bot = { id: 41_898_282, login: "github-actions[bot]", type: "Bot" };
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -56,8 +64,11 @@ describe("GitHub Actions workflow progress", () => {
       { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
     );
     const paginate = vi.fn()
-      .mockResolvedValueOnce([{ id: 1, body: preview }])
-      .mockResolvedValueOnce([{ id: 1, body: preview }, { id: 2, body: result }]);
+      .mockResolvedValueOnce([{ id: 1, body: preview, user: bot }])
+      .mockResolvedValueOnce([
+        { id: 1, body: preview, user: bot },
+        { id: 2, body: result, user: bot },
+      ]);
     const request = vi.fn(async (_method: string, path: string): Promise<unknown> =>
       path.endsWith("/jobs?filter=latest&per_page=100")
         ? {
@@ -103,7 +114,7 @@ describe("GitHub Actions workflow progress", () => {
       `Delete preview.\n\n${previewMarker(9001)}`,
       { id: "321", url: "https://github.com/lax-archive/lax/actions/runs/321" },
     );
-    const paginate = vi.fn().mockResolvedValue([{ id: 1, body: preview }]);
+    const paginate = vi.fn().mockResolvedValue([{ id: 1, body: preview, user: bot }]);
     const request = vi.fn(async (_method: string, path: string): Promise<unknown> =>
       path.endsWith("/jobs?filter=latest&per_page=100")
         ? { jobs: [] }
@@ -116,6 +127,42 @@ describe("GitHub Actions workflow progress", () => {
       followCommand({ paginate, request } as unknown as GitHubClient, 42, 9001),
     ).rejects.toThrow("workflow #321 finished with failure without posting a result");
     expect(paginate).toHaveBeenCalledTimes(2);
+  });
+
+  it("follows an owner command through its hidden run marker and final bot thumbs-up", async () => {
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "100";
+    const source = upsertCommandContext(
+      '/lax owners [{"githubId":10,"handle":"alice"}]',
+      9001,
+      workflowRunMarker("456"),
+    );
+    const paginate = vi.fn(async (path: string): Promise<unknown[]> =>
+      path.endsWith("/reactions")
+        ? [
+            {
+              content: "rocket",
+              user: { id: 41_898_282, login: "github-actions[bot]", type: "Bot" },
+            },
+            {
+              content: "+1",
+              user: { id: 41_898_282, login: "github-actions[bot]", type: "Bot" },
+            },
+          ]
+        : [{ id: 9001, body: source, user: { id: 10, login: "alice", type: "User" } }],
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await followCommand({ paginate } as unknown as GitHubClient, 42, 9001, true);
+
+    expect(paginate).toHaveBeenCalledWith(
+      "/repos/lax-archive/lax/issues/comments/9001/reactions",
+    );
+    expect(log.mock.calls.flat().join("\n")).toContain(
+      "Following workflow run #456: https://github.com/lax-archive/lax/actions/runs/456",
+    );
+    expect(log.mock.calls.flat().join("\n")).toContain("👍 Owner list updated.");
   });
 
   it("times out when GitHub never emits a correlated comment", async () => {

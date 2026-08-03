@@ -39,8 +39,11 @@ import {
 
 export interface PublisherControl {
   resultExists(issueNumber: number, commentId: number): Promise<boolean>;
+  successReactionExists(commentId: number): Promise<boolean>;
   resolveOwnerPairs(owners: GitHubIdentity[]): Promise<GitHubIdentity[]>;
   postIssueComment(issueNumber: number, body: string): Promise<void>;
+  completeCommand(commentId: number): Promise<void>;
+  clearCommandProgress(commentId: number): Promise<void>;
 }
 
 export interface PublisherArchive {
@@ -86,8 +89,17 @@ export class Publisher {
     if (request.action === "update") {
       throw new ValidationError("validated update publication must use UpdatePublisher");
     }
-    if (request.commentId !== undefined && (await this.control.resultExists(request.issue.number, request.commentId))) {
-      return { kind: "no-op" };
+    if (request.commentId !== undefined) {
+      const alreadyFinished =
+        request.action === "owners"
+          ? await this.control.successReactionExists(request.commentId)
+          : await this.control.resultExists(request.issue.number, request.commentId);
+      if (alreadyFinished) {
+        if (request.action === "owners") {
+          await this.control.clearCommandProgress(request.commentId);
+        }
+        return { kind: "no-op" };
+      }
     }
     request = parsePublishRequest(await this.recanonicalize(request), this.repositoryId);
     const current = await this.archive.load(request.id);
@@ -99,13 +111,7 @@ export class Publisher {
       sameOwners(current.files.ownerList.owners, request.command.owners)
     ) {
       this.validateCurrent(request, current, plan);
-      await this.control.postIssueComment(
-        request.issue.number,
-        appendWorkflowRun(
-          `Owner list for **${request.id}** was already current; lax-database was not changed.\n\n${marker(request)}`,
-          run,
-        ),
-      );
+      await this.control.completeCommand(request.commentId!);
       return { kind: "no-op" };
     }
     const commit = await this.archive.writeFiles({
@@ -232,13 +238,22 @@ export async function dispatchWebsiteAndReport(
     dispatchError = (error as Error).message;
   }
   try {
-    await control.postIssueComment(
-      request.issue.number,
-      appendWorkflowRun(
-        successComment(request, commit, dispatched, dispatchError, titleSyncError),
-        run,
-      ),
-    );
+    if (request.action === "owners" && dispatched && titleSyncError === "") {
+      await control.completeCommand(request.commentId!);
+    } else {
+      await control.postIssueComment(
+        request.issue.number,
+        appendWorkflowRun(
+          successComment(request, commit, dispatched, dispatchError, titleSyncError),
+          run,
+        ),
+      );
+      if (request.action === "update" && dispatched && titleSyncError === "") {
+        await control.completeCommand(request.commentId!);
+      } else if (request.action === "owners" || request.action === "update") {
+        await control.clearCommandProgress(request.commentId!);
+      }
+    }
   } catch (error) {
     throw new PostCommitError(commit, (error as Error).message);
   }

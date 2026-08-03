@@ -3,13 +3,16 @@ import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { ResolutionResult, StaticResult } from "../contracts.js";
 import type { FetchedSource } from "../source/fetch.js";
-import type { ContainerRunner } from "../sandbox/container.js";
+import type { ContainerMount, ContainerRunner } from "../sandbox/container.js";
 import { flattenClosure, type SiblingGraph } from "./siblings.js";
 
 export interface ProvisionedWorkspace {
   repositoryRoot: string;
   submissionRoot: string;
+  containerSubmissionRoot: string;
   manifests: Record<"concepts" | "proofs", string>;
+  libraries: Record<"concepts" | "proofs", string>;
+  buildMounts: Record<"concepts" | "proofs", ContainerMount[]>;
 }
 
 interface ProvisionPlan {
@@ -99,7 +102,83 @@ export async function provisionWorkspace(
       return [kind, fs.readFileSync(filename, "utf8")];
     }),
   ) as Record<"concepts" | "proofs", string>;
-  return { repositoryRoot, submissionRoot, manifests };
+  const isolated = isolateBuildDirectories(
+    path.join(jobDir, "workspaces", label),
+    fetched.repositoryRoot,
+    repositoryRoot,
+    submissionRoot,
+    siblings,
+  );
+  return {
+    repositoryRoot,
+    submissionRoot,
+    containerSubmissionRoot: sourceFolder === "." ? "/source" : `/source/${sourceFolder}`,
+    manifests,
+    ...isolated,
+  };
+}
+
+function isolateBuildDirectories(
+  workspaceRoot: string,
+  fetchedRepositoryRoot: string,
+  repositoryRoot: string,
+  submissionRoot: string,
+  siblings: SiblingGraph,
+): Pick<ProvisionedWorkspace, "libraries" | "buildMounts"> {
+  const ownDirectories = {
+    concepts: path.join(submissionRoot, "concepts"),
+    proofs: path.join(submissionRoot, "proofs"),
+  };
+  const canonicalFetchedRepositoryRoot = fs.realpathSync(fetchedRepositoryRoot);
+  const siblingDirectories = [...new Set([...siblings.closure.values()].map((entry) => {
+    const relative = path.relative(canonicalFetchedRepositoryRoot, fs.realpathSync(entry.pkgDir));
+    if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+      throw new Error("sibling package escaped the provisioned repository");
+    return path.join(repositoryRoot, relative);
+  }))];
+  const buildRoots = new Map<string, string>();
+  for (const packageDirectory of [...Object.values(ownDirectories), ...siblingDirectories]) {
+    const relative = path.relative(repositoryRoot, packageDirectory);
+    if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+      throw new Error("package build directory escaped the provisioned repository");
+    const sourceLake = path.join(packageDirectory, ".lake");
+    const buildLake = path.join(workspaceRoot, "build", relative, ".lake");
+    fs.mkdirSync(path.dirname(buildLake), { recursive: true, mode: 0o700 });
+    if (fs.existsSync(sourceLake)) fs.renameSync(sourceLake, buildLake);
+    else fs.mkdirSync(buildLake, { recursive: true, mode: 0o700 });
+    // Keep an empty mount point in the read-only repository. Compilation sees
+    // the external directory through a nested bind mount at this path.
+    fs.mkdirSync(sourceLake, { recursive: true, mode: 0o700 });
+    buildRoots.set(packageDirectory, buildLake);
+  }
+  const libraries = {
+    concepts: path.join(buildRoots.get(ownDirectories.concepts)!, "build", "lib", "lean"),
+    proofs: path.join(buildRoots.get(ownDirectories.proofs)!, "build", "lib", "lean"),
+  };
+  fs.mkdirSync(libraries.concepts, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(libraries.proofs, { recursive: true, mode: 0o700 });
+  const mount = (packageDirectory: string): ContainerMount => ({
+    source: buildRoots.get(packageDirectory)!,
+    target: `/source/${path.relative(repositoryRoot, packageDirectory).split(path.sep).join("/")}/.lake`,
+    writable: true,
+  });
+  const siblingMounts = siblingDirectories.map(mount);
+  const conceptMount = mount(ownDirectories.concepts);
+  return {
+    libraries,
+    buildMounts: {
+      concepts: [conceptMount, ...siblingMounts],
+      proofs: [
+        conceptMount,
+        mount(ownDirectories.proofs),
+        ...siblingMounts,
+        {
+          source: libraries.concepts,
+          target: `${conceptMount.target}/build/lib/lean`,
+        },
+      ],
+    },
+  };
 }
 
 function dependencyClosure(
@@ -122,7 +201,7 @@ function dependencyClosure(
 
 export function installOwnConceptCapture(workspace: ProvisionedWorkspace, captureRoot: string): void {
   const source = path.join(captureRoot, "concepts", "lib");
-  const destination = path.join(workspace.submissionRoot, "concepts", ".lake", "build", "lib", "lean");
+  const destination = workspace.libraries.concepts;
   fs.rmSync(destination, { recursive: true, force: true });
   fs.mkdirSync(destination, { recursive: true });
   fs.cpSync(source, destination, { recursive: true });

@@ -148,6 +148,25 @@ function fixtures(): SmokeFixture[] {
       },
     },
     {
+      name: "compile-provenance-attacks",
+      id: "lax-43",
+      files: compileProvenanceAttackFiles(),
+      check(report) {
+        assertSuccessful(report);
+        const target = report.buildOutput!.concepts.find((concept) => concept.id === "Lax43.Target");
+        assert(target !== undefined, "immutable target concept was not inspected");
+        assert(
+          target.statements.some((statement) => statement.signature === "archived_claim : True"),
+          "compiled statement did not come from the archived source",
+        );
+        assert(target.sourceText.includes("archived_claim : True"));
+        assert(
+          !report.capture!.files.some((file) => file.path.includes("Generated.olean")),
+          "generated module shadow entered the capture",
+        );
+      },
+    },
+    {
       name: "mutual-inductive-axiom-closure",
       id: "lax-23",
       files: mutualInductiveFiles(),
@@ -271,6 +290,38 @@ axiom cache_readable : [0, 1].length = 2 ∧ (0 : Nat) ∈ ({0} : Set Nat)
 
 end Lax42.WarmCache
 `,
+)}`,
+  };
+}
+
+function compileProvenanceAttackFiles(): Record<string, string> {
+  const replacement = conceptModule(
+    "Immutable target",
+    "namespace Lax43.Target\n/-- The archived claim. -/\naxiom archived_claim : False\nend Lax43.Target\n",
+  );
+  return {
+    "concepts/Lax43.lean": "import Lax43.Attack\nimport Lax43.Target\n",
+    "concepts/Lax43/Attack.lean": `${conceptModule(
+      "Compile attack",
+      `run_tac do
+  try
+    IO.FS.writeFile "Lax43/Target.lean" ${JSON.stringify(replacement)}
+  catch _ =>
+    pure ()
+  IO.FS.createDirAll ".lake/build/lib/lean/Lax43"
+  IO.FS.writeFile ".lake/build/lib/lean/Lax43/Generated.olean" "attacker generated object"
+
+namespace Lax43.Attack
+/-- The attack module remains a valid concept. -/
+axiom attempted : True
+end Lax43.Attack
+`,
+    )}`,
+    "concepts/Lax43/Target.lean": `import Lax43.Attack
+
+${conceptModule(
+  "Immutable target",
+  "namespace Lax43.Target\n/-- The archived claim. -/\naxiom archived_claim : True\nend Lax43.Target\n",
 )}`,
   };
 }

@@ -7,9 +7,14 @@ import {
   initializationPreviewMarker,
   parseWorkflowComment,
   previewMarker,
+  readCommandContext,
   resultMarker,
+  upsertCommandContext,
   visibleComment,
+  workflowRunMarker,
 } from "../../src/shared/workflow-comments.js";
+
+const bot = { id: 41_898_282, login: "github-actions[bot]", type: "Bot" };
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -44,6 +49,22 @@ describe("workflow comment correlation", () => {
     });
   });
 
+  it("replaces workflow-owned context on the original command without duplicating it", () => {
+    const command = '/lax update {"repository":"https://github.com/alice/repo"}';
+    const first = upsertCommandContext(
+      command,
+      77,
+      appendWorkflowRun(`Update preview.\n\n${previewMarker(77)}`, run()),
+    );
+    const second = upsertCommandContext(first, 77, workflowRunMarker("987654321"));
+    expect(readCommandContext(first, 77)).toContain("Update preview.");
+    expect(second).toContain(command);
+    expect(second).not.toContain("Update preview.");
+    expect(second.match(/lax-command-context:77:start/gu)).toHaveLength(1);
+    expect(parseWorkflowComment(second).runId).toBe("987654321");
+    expect(visibleComment(first)).toContain(`${command}\n\nUpdate preview.`);
+  });
+
   it("follows a command from its preview run id through its result", async () => {
     vi.stubEnv("LAX_POLL_INTERVAL_MS", "1");
     vi.stubEnv("LAX_WORKFLOW_TIMEOUT_MS", "1000");
@@ -51,8 +72,11 @@ describe("workflow comment correlation", () => {
     const result = appendWorkflowRun(`Done.\n\n${resultMarker(77)}`, run());
     const paginate = vi
       .fn()
-      .mockResolvedValueOnce([{ id: 1, body: preview }])
-      .mockResolvedValue([{ id: 1, body: preview }, { id: 2, body: result }]);
+      .mockResolvedValueOnce([{ id: 1, body: preview, user: bot }])
+      .mockResolvedValue([
+        { id: 1, body: preview, user: bot },
+        { id: 2, body: result, user: bot },
+      ]);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await followCommand({ paginate } as unknown as GitHubClient, 42, 77);
     expect(paginate).toHaveBeenCalledTimes(2);
@@ -64,7 +88,7 @@ describe("workflow comment correlation", () => {
     vi.stubEnv("LAX_POLL_INTERVAL_MS", "1");
     vi.stubEnv("LAX_WORKFLOW_TIMEOUT_MS", "1000");
     const result = appendWorkflowRun(`Initialized.\n\n${initializationMarker(42)}`, run());
-    const paginate = vi.fn().mockResolvedValue([{ id: 1, body: result }]);
+    const paginate = vi.fn().mockResolvedValue([{ id: 1, body: result, user: bot }]);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await followInitialization({ paginate } as unknown as GitHubClient, 42);
     expect(log.mock.calls.flat().join("\n")).toContain("Workflow run #123456789");

@@ -7,6 +7,9 @@ export interface ValidationLimits {
   compileTimeoutMs: number;
   checkTimeoutMs: number;
   maxOutputBytes: number;
+  maxWorkspaceBytes: number;
+  maxWorkspaceEntries: number;
+  minFreeDiskBytes: number;
   memoryBytes: number;
   cpuCount: number;
   leanThreads: number;
@@ -18,6 +21,9 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   compileTimeoutMs: 30 * 60_000,
   checkTimeoutMs: 20 * 60_000,
   maxOutputBytes: 8 * 1024 * 1024,
+  maxWorkspaceBytes: 20 * 1024 * 1024 * 1024,
+  maxWorkspaceEntries: 1_000_000,
+  minFreeDiskBytes: 5 * 1024 * 1024 * 1024,
   memoryBytes: 16 * 1024 * 1024 * 1024,
   cpuCount: 4,
   leanThreads: 2,

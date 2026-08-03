@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { ValidationRuntimeIdentity } from "../contracts.js";
+import { assertWorkspaceWithinLimit } from "./workspace-limit.js";
 
 export interface ContainerMount {
   source: string;
@@ -37,6 +38,7 @@ export class ContainerRunner {
   constructor(
     private readonly runtime: ValidationRuntimeIdentity,
     private readonly limits: ValidationLimits,
+    private readonly workspaceRoot: string,
   ) {}
 
   async verifyRuntime(): Promise<void> {
@@ -76,6 +78,7 @@ export class ContainerRunner {
   }
 
   async run(invocation: ContainerInvocation): Promise<ContainerResult> {
+    assertWorkspaceWithinLimit(this.workspaceRoot, this.limits);
     const name = `lax-validation-${safeLabel(invocation.label)}-${randomUUID().slice(0, 12)}`;
     const args = [
       "run",
@@ -108,12 +111,23 @@ export class ContainerRunner {
       args.push("--env", `${key}=${value}`);
     }
     args.push(this.runtime.image, ...invocation.args);
-    const result = await runProcess("docker", args, invocation.timeoutMs, invocation.maxOutputBytes);
-    if (result.timedOut) {
+    const result = await runProcess(
+      "docker",
+      args,
+      invocation.timeoutMs,
+      invocation.maxOutputBytes,
+      () => assertWorkspaceWithinLimit(this.workspaceRoot, this.limits),
+    );
+    if (result.timedOut || result.terminationError !== undefined) {
       await runProcess("docker", ["rm", "--force", name], 10_000, 64 * 1024).catch(() => undefined);
     }
+    if (result.terminationError !== undefined) throw result.terminationError;
     return result;
   }
+}
+
+interface ProcessResult extends ContainerResult {
+  terminationError?: Error;
 }
 
 async function runProcess(
@@ -121,7 +135,8 @@ async function runProcess(
   args: string[],
   timeoutMs: number,
   maxOutputBytes: number,
-): Promise<ContainerResult> {
+  healthCheck?: () => void,
+): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const environment: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
     if (process.env.DOCKER_HOST !== undefined) environment.DOCKER_HOST = process.env.DOCKER_HOST;
@@ -133,6 +148,7 @@ async function runProcess(
     let bytes = 0;
     let truncated = false;
     let timedOut = false;
+    let terminationError: Error | undefined;
     const collect = (chunk: Buffer): void => {
       if (bytes >= maxOutputBytes) {
         truncated = true;
@@ -149,14 +165,32 @@ async function runProcess(
       timedOut = true;
       child.kill("SIGKILL");
     }, timeoutMs);
+    const healthTimer = healthCheck === undefined
+      ? undefined
+      : setInterval(() => {
+          if (timedOut || terminationError !== undefined) return;
+          try {
+            healthCheck();
+          } catch (error) {
+            terminationError = error instanceof Error ? error : new Error(String(error));
+            child.kill("SIGKILL");
+          }
+        }, 250);
     child.once("error", (error) => {
       clearTimeout(timer);
+      if (healthTimer !== undefined) clearInterval(healthTimer);
       reject(error);
     });
     child.once("close", (code) => {
       clearTimeout(timer);
+      if (healthTimer !== undefined) clearInterval(healthTimer);
       const suffix = truncated ? "\n[output truncated by lax]\n" : "";
-      resolve({ code: code ?? 1, output: Buffer.concat(chunks).toString("utf8") + suffix, timedOut });
+      resolve({
+        code: code ?? 1,
+        output: Buffer.concat(chunks).toString("utf8") + suffix,
+        timedOut,
+        ...(terminationError === undefined ? {} : { terminationError }),
+      });
     });
   });
 }

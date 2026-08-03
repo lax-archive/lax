@@ -16,20 +16,19 @@ const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
 export function capturePackage(
   kind: "concepts" | "proofs",
   pristineSubmissionRoot: string,
-  compiledSubmissionRoot: string,
+  compiledLibrary: string,
   provisionedManifest: string,
   inventory: ModuleInventory,
   captureRoot: string,
 ): void {
-  const library = path.join(compiledSubmissionRoot, kind, ".lake", "build", "lib", "lean");
   const packageSource = path.join(pristineSubmissionRoot, kind);
   const capturedSource = path.join(captureRoot, kind, "package");
   copyPackageSource(packageSource, capturedSource);
   fs.writeFileSync(path.join(capturedSource, "lake-manifest.json"), provisionedManifest, { mode: 0o444 });
   for (const moduleName of [inventory.rootModule, ...inventory.modules]) {
     const relative = `${moduleName.split(".").join("/")}.olean`;
-    const source = path.join(library, relative);
-    if (!regularContainedArtifact(library, source)) {
+    const source = path.join(compiledLibrary, relative);
+    if (!regularContainedArtifact(compiledLibrary, source)) {
       throw new Error(`compiled artifact is missing or unsafe for module ${moduleName}`);
     }
     const destination = path.join(captureRoot, kind, "lib", relative);
@@ -39,12 +38,12 @@ export function capturePackage(
   }
 }
 
-function regularContainedArtifact(library: string, filename: string): boolean {
+function regularContainedArtifact(compiledLibrary: string, filename: string): boolean {
   try {
     // Authored IO controls everything below the writable .lake directory.
     // Reject direct links and ancestor links that redirect outside it.
     if (!fs.lstatSync(filename).isFile()) return false;
-    const buildRoot = fs.realpathSync(path.resolve(library, "../../.."));
+    const buildRoot = fs.realpathSync(path.resolve(compiledLibrary, "../../.."));
     const actual = fs.realpathSync(filename);
     return actual.startsWith(`${buildRoot}${path.sep}`);
   } catch {

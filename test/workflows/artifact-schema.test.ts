@@ -113,4 +113,22 @@ describe("trusted validation artifact parser", () => {
       parseSuccessfulValidationArtifacts(oversized.report, oversized.buildOutput, validationRequest(), TEST_RUNTIME),
     ).toThrow("exceeds 512 UTF-8 bytes");
   });
+
+  it("rejects artifact identifiers that are not canonical Lean names", () => {
+    const artifact = successfulArtifacts();
+    artifact.buildOutput.concepts.push({
+      id: "Lax42Proofs.x/../../../index",
+      path: "concepts/Lax42/Unsafe.lean",
+      title: "Unsafe",
+      type: "definition",
+      description: "An unsafe artifact identifier.",
+      imports: [],
+      mathlibImports: [],
+      sourceText: "",
+      statements: [],
+    });
+    expect(() =>
+      parseSuccessfulValidationArtifacts(artifact.report, artifact.buildOutput, validationRequest(), TEST_RUNTIME),
+    ).toThrow("generated concept 1 id must be a canonical Lean name");
+  });
 });

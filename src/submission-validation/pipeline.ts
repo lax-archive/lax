@@ -27,6 +27,7 @@ import { replayPackage } from "./phases/replay.js";
 import { runResolution } from "./phases/resolution.js";
 import { runStaticValidation } from "./phases/static.js";
 import { ContainerRunner } from "./sandbox/container.js";
+import { assertWorkspaceWithinLimit } from "./sandbox/workspace-limit.js";
 import { containedDirectory, fetchSource, type FetchedSource } from "./source/fetch.js";
 
 export interface ValidationOptions {
@@ -67,10 +68,7 @@ interface PreparedValidation extends ReportState {
   phase<T>(name: string, operation: () => Promise<T> | T): Promise<T>;
 }
 
-interface CompiledValidation extends PreparedValidation {
-  conceptWorkspace: ProvisionedWorkspace;
-  proofWorkspace?: ProvisionedWorkspace;
-}
+type CompiledValidation = PreparedValidation;
 
 type Preparation = { state: PreparedValidation } | { report: ValidationReport };
 type Compilation = { state: CompiledValidation } | { report: ValidationReport };
@@ -135,16 +133,8 @@ async function compileStage(
 
   if (resume) {
     try {
-      const manifests = capturedManifests(state.captureRoot, state.scope);
-      return {
-        state: {
-          ...state,
-          conceptWorkspace: restoreWorkspace("concepts", state, manifests),
-          ...(state.scope === "concepts"
-            ? {}
-            : { proofWorkspace: restoreWorkspace("proofs", state, manifests) }),
-        },
-      };
+      capturedManifests(state.captureRoot, state.scope);
+      return { state };
     } catch (error) {
       return { report: fail(state, resumePhase, "stage-workspace", error) };
     }
@@ -183,7 +173,7 @@ async function compileStage(
     capturePackage(
       "concepts",
       state.fetched.submissionRoot,
-      conceptWorkspace.submissionRoot,
+      conceptWorkspace.libraries.concepts,
       conceptWorkspace.manifests.concepts,
       state.staticResult.concepts!.inventory,
       state.captureRoot,
@@ -214,7 +204,7 @@ async function compileStage(
       capturePackage(
         "proofs",
         state.fetched.submissionRoot,
-        proofWorkspace.submissionRoot,
+        proofWorkspace.libraries.proofs,
         proofWorkspace.manifests.proofs,
         state.staticResult.proofs!.inventory,
         state.captureRoot,
@@ -224,7 +214,7 @@ async function compileStage(
     }
   }
 
-  return { state: { ...state, conceptWorkspace, proofWorkspace } };
+  return { state };
 }
 
 async function replayStage(state: CompiledValidation): Promise<ValidationReport | undefined> {
@@ -235,7 +225,7 @@ async function replayStage(state: CompiledValidation): Promise<ValidationReport 
     if (state.scope !== "proofs") replay.push(() => state.phase("replay concepts", () =>
       replayPackage(
         "concepts",
-        state.conceptWorkspace,
+        state.captureRoot,
         state.staticResult.concepts!.inventory,
         state.resolution,
         state.jobDir,
@@ -246,14 +236,13 @@ async function replayStage(state: CompiledValidation): Promise<ValidationReport 
     if (state.scope !== "concepts") replay.push(() => state.phase("replay proofs", () =>
       replayPackage(
         "proofs",
-        state.proofWorkspace!,
+        state.captureRoot,
         state.staticResult.proofs!.inventory,
         state.resolution,
         state.jobDir,
         state.dependencyRoot,
         state.runner,
         state.limits,
-        path.join(state.captureRoot, "concepts", "lib"),
       )));
     for (const check of replay) await check();
     return undefined;
@@ -269,7 +258,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationReport
     // Inspection has the same heavyweight container budget as replay.
     conceptReport = await state.phase("inspect concepts", () => runInspector(
       "concepts",
-      state.conceptWorkspace,
+      state.captureRoot,
       state.staticResult.concepts!.inventory,
       state.resolution,
       state.jobDir,
@@ -279,14 +268,13 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationReport
     ));
     proofReport = state.scope === "concepts" ? undefined : await state.phase("inspect proofs", () => runInspector(
       "proofs",
-      state.proofWorkspace!,
+      state.captureRoot,
       state.staticResult.proofs!.inventory,
       state.resolution,
       state.jobDir,
       state.dependencyRoot,
       state.runner,
       state.limits,
-      path.join(state.captureRoot, "concepts", "lib"),
     ));
   } catch (error) {
     return fail(state, "inspect", "inspector", error);
@@ -337,7 +325,7 @@ async function prepareValidation(
 ): Promise<Preparation> {
   const runtime = options.runtime ?? configuredRuntime();
   const limits = DEFAULT_LIMITS;
-  const runner = new ContainerRunner(runtime, limits);
+  const runner = new ContainerRunner(runtime, limits, jobDir);
   const scope = options.scope ?? "both";
   const warnings: ValidationFinding[] = [];
   const violations: ValidationFinding[] = [];
@@ -346,7 +334,9 @@ async function prepareValidation(
     options.onPhase?.({ name, state: "start" });
     const started = performance.now();
     try {
-      return await operation();
+      const result = await operation();
+      assertWorkspaceWithinLimit(jobDir, limits);
+      return result;
     } finally {
       options.onPhase?.({ name, state: "complete", durationMs: performance.now() - started });
     }
@@ -421,22 +411,6 @@ async function prepareValidation(
       captureRoot: path.join(jobDir, "capture"),
       phase,
     },
-  };
-}
-
-function restoreWorkspace(
-  label: "concepts" | "proofs",
-  state: PreparedValidation,
-  manifests: Record<"concepts" | "proofs", string>,
-): ProvisionedWorkspace {
-  const repositoryRoot = existingDirectory(
-    path.join(state.jobDir, "workspaces", label, "repository"),
-    `${label} workspace`,
-  );
-  return {
-    repositoryRoot,
-    submissionRoot: containedDirectory(repositoryRoot, state.request.source.folder),
-    manifests,
   };
 }
 

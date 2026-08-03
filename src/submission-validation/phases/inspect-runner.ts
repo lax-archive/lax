@@ -11,29 +11,28 @@ import type {
   ResolutionResult,
 } from "../contracts.js";
 import type { ContainerRunner } from "../sandbox/container.js";
-import type { ProvisionedWorkspace } from "./provision.js";
 
 export async function runInspector(
   kind: "concepts" | "proofs",
-  workspace: ProvisionedWorkspace,
+  captureRoot: string,
   inventory: ModuleInventory,
   resolution: ResolutionResult,
   jobDir: string,
   dependencyRoot: string,
   runner: ContainerRunner,
   limits: ValidationLimits,
-  ownConceptLibrary?: string,
 ): Promise<InspectorReport> {
-  const workspaceBase = path.dirname(workspace.repositoryRoot);
-  const containerRoot = `/work/${path.relative(workspaceBase, workspace.submissionRoot).split(path.sep).join("/")}`;
+  const containerRoot = `/capture/${kind}/package`;
   const outputDir = path.join(jobDir, "checks", `inspect-${kind}`);
   fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
   const plan = {
     tool: "inspect",
     cwd: containerRoot,
-    ownLibs: kind === "proofs" && ownConceptLibrary !== undefined
-      ? [`${containerRoot}/proofs/.lake/build/lib/lean`, "/own-concepts"]
-      : [`${containerRoot}/concepts/.lake/build/lib/lean`],
+    // Inspect exactly the artifacts Replay authenticated, not the mutable
+    // compilation library where authored elaboration could create shadows.
+    ownLibs: kind === "proofs"
+      ? ["/capture/proofs/lib", "/capture/concepts/lib"]
+      : ["/capture/concepts/lib"],
     dependencyLibs: resolution.all.map(
       (dependency) => `/deps/${dependency.submissionId}/${dependency.kind}/lib`,
     ),
@@ -44,9 +43,8 @@ export async function runInspector(
     label: `inspect-${kind}`,
     args: ["node", "/opt/lax-runtime/bin/run-check.mjs", "/out/plan.json"],
     mounts: [
-      { source: workspaceBase, target: "/work" },
+      { source: captureRoot, target: "/capture" },
       { source: outputDir, target: "/out", writable: true },
-      ...(ownConceptLibrary === undefined ? [] : [{ source: ownConceptLibrary, target: "/own-concepts" }]),
       ...(fs.existsSync(dependencyRoot) ? [{ source: dependencyRoot, target: "/deps" }] : []),
     ],
     env: { LEAN_NUM_THREADS: String(limits.leanThreads) },

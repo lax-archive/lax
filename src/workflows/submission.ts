@@ -26,6 +26,7 @@ import {
   appendWorkflowRun,
   initializationMarker,
   resultMarker,
+  workflowRunMarker,
   type WorkflowRunRef,
 } from "../shared/workflow-comments.js";
 
@@ -52,13 +53,28 @@ async function route(): Promise<void> {
   const token = requiredEnv("GITHUB_TOKEN");
   const client = new GitHubClient(token);
   const control = new ControlPlane(client, new ArchiveRepository(client), repositoryId());
+  let startedCommandCommentId: number | undefined;
   try {
     const result = await control.route(eventName, event);
     if (result.kind === "ignore") {
       writeOutput("operation", "ignore");
       return;
     }
-    if (result.preview !== undefined) {
+    const run = workflowRun();
+    if (
+      result.request.commentId !== undefined &&
+      (result.kind === "validate" || result.request.action === "owners")
+    ) {
+      const context =
+        result.kind === "validate"
+          ? appendWorkflowRun(result.preview, run)
+          : workflowRunMarker(run.id);
+      await control.annotateIssueComment(result.request.commentId, context);
+      if (result.request.action === "owners" || result.request.action === "update") {
+        await control.markCommandStarted(result.request.commentId);
+        startedCommandCommentId = result.request.commentId;
+      }
+    } else if (result.preview !== undefined) {
       const exists =
         result.request.commentId === undefined
           ? await control.initializationPreviewExists(result.request.issue.number)
@@ -66,7 +82,7 @@ async function route(): Promise<void> {
       if (!exists) {
         await control.postIssueComment(
           result.request.issue.number,
-          appendWorkflowRun(result.preview, workflowRun()),
+          appendWorkflowRun(result.preview, run),
         );
       }
     }
@@ -89,6 +105,9 @@ async function route(): Promise<void> {
     writeOutput("action", result.request.action);
     writeOutput("publish_request", encode(result.request));
   } catch (error) {
+    if (startedCommandCommentId !== undefined) {
+      await clearCommandProgress(control, startedCommandCommentId);
+    }
     await postFailure(control, event, eventName, error, false);
     throw error;
   }
@@ -104,7 +123,10 @@ async function reportValidation(): Promise<void> {
   const context = parseValidationContext(decodeBase64Json(requiredEnv("VALIDATION_CONTEXT")));
   const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
   const control = new ControlPlane(client, new ArchiveRepository(client), repositoryId());
-  if (await control.resultExists(context.issueNumber, context.commentId)) return;
+  if (await control.resultExists(context.issueNumber, context.commentId)) {
+    await clearCommandProgress(control, context.commentId);
+    return;
+  }
   let report: ValidationReport | undefined;
   const reportPath = process.env.VALIDATION_REPORT_PATH;
   if (reportPath !== undefined && fs.existsSync(reportPath)) {
@@ -137,6 +159,7 @@ async function reportValidation(): Promise<void> {
         `${validationWarnings(report)}${marker}`
       : `Submission validation failed for **${context.id}**; lax-database was not changed.\n\n` +
         `${validationProblems(report)}\n\n${marker}`;
+  await clearCommandProgress(control, context.commentId);
   await control.postIssueComment(context.issueNumber, appendWorkflowRun(body, workflowRun()));
 }
 
@@ -159,6 +182,9 @@ async function publish(): Promise<void> {
       writeOutput("archive_commit", archiveCommit);
     }
   } catch (error) {
+    if (request.action === "owners" && request.commentId !== undefined) {
+      await clearCommandProgress(control, request.commentId);
+    }
     const committed =
       archiveCommit ?? (error instanceof PostCommitError ? error.archiveCommit : undefined);
     const marker =
@@ -175,6 +201,14 @@ async function publish(): Promise<void> {
     );
     await control.postIssueComment(request.issue.number, body);
     throw error;
+  }
+}
+
+async function clearCommandProgress(control: ControlPlane, commentId: number): Promise<void> {
+  try {
+    await control.clearCommandProgress(commentId);
+  } catch (error) {
+    console.error(`could not clear command progress reaction: ${(error as Error).message}`);
   }
 }
 
@@ -273,6 +307,7 @@ async function postPublicationFailure(
   error: unknown,
   archiveCommit?: string,
 ): Promise<void> {
+  if (request.commentId !== undefined) await clearCommandProgress(control, request.commentId);
   const committed = archiveCommit ?? (error instanceof PostCommitError ? error.archiveCommit : undefined);
   const markerText =
     request.commentId === undefined

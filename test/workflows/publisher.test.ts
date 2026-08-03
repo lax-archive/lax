@@ -86,11 +86,11 @@ describe("trusted Archive publisher modes", () => {
     );
     expect(Object.keys(harness.changes())).toEqual(["owner-list.json"]);
     expect(harness.changes()["owner-list.json"]).toContain('"handle": "bob"');
-    expect(harness.comments[0]).toContain("lax-result-comment-id:77");
-    expect(harness.comments[0]).toContain("Workflow run: [#123456789]");
+    expect(harness.comments).toEqual([]);
+    expect(harness.successes).toEqual([77]);
   });
 
-  it("owner no-op writes neither Archive nor Website but still reports a correlated result", async () => {
+  it("owner no-op writes neither Archive nor Website and reacts to the command", async () => {
     const compact = initialFiles("lax-42", issue, alice, "2026-07-30T10:00:00Z");
     compact["owner-list.json"] = JSON.stringify({ specVersion: "1", owners: [alice] });
     const current = loaded(compact);
@@ -106,8 +106,60 @@ describe("trusted Archive publisher modes", () => {
     );
     expect(harness.writeFiles).not.toHaveBeenCalled();
     expect(harness.website.request).not.toHaveBeenCalled();
-    expect(harness.comments[0]).toContain("was already current");
-    expect(harness.comments[0]).toContain("lax-workflow-run-id:123456789");
+    expect(harness.comments).toEqual([]);
+    expect(harness.successes).toEqual([77]);
+  });
+
+  it("owner publication creates a comment only when Website dispatch has a problem", async () => {
+    const current = loaded();
+    const harness = publisherHarness(current);
+    const publication = request({
+      action: "owners",
+      commentId: 77,
+      command: { action: "owners", owners: [alice, bob] },
+      preconditions: current.preconditions,
+    });
+    harness.website.request.mockRejectedValueOnce(new Error("dispatch unavailable"));
+
+    await expect(
+      dispatchWebsiteAndReport(
+        harness.control,
+        harness.website,
+        publication,
+        issue.repositoryId,
+        "c".repeat(40),
+        run,
+      ),
+    ).rejects.toThrow("Website dispatch failed");
+
+    expect(harness.successes).toEqual([]);
+    expect(harness.clearedProgress).toEqual([77]);
+    expect(harness.comments).toHaveLength(1);
+    expect(harness.comments[0]).toContain("Website rebuild was not dispatched");
+    expect(harness.comments[0]).toContain("lax-result-comment-id:77");
+  });
+
+  it("treats an existing bot thumbs-up as an idempotent owner result", async () => {
+    const current = loaded();
+    const harness = publisherHarness(current);
+    vi.mocked(harness.control.successReactionExists).mockResolvedValueOnce(true);
+
+    await expect(
+      harness.publisher.publish(
+        request({
+          action: "owners",
+          commentId: 77,
+          command: { action: "owners", owners: [alice, bob] },
+          preconditions: current.preconditions,
+        }),
+        run,
+      ),
+    ).resolves.toEqual({ kind: "no-op" });
+
+    expect(harness.writeFiles).not.toHaveBeenCalled();
+    expect(harness.comments).toEqual([]);
+    expect(harness.successes).toEqual([]);
+    expect(harness.clearedProgress).toEqual([77]);
   });
 
   it("reports a precise partial result when Website dispatch fails after the commit", async () => {
@@ -154,6 +206,39 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.comments[0]).toContain("Updated **lax-42**");
     expect(harness.comments[0]).toContain("issue title was not synchronized");
     expect(harness.comments[0]).toContain("Workflow run: [#123456789]");
+    expect(harness.successes).toEqual([]);
+    expect(harness.clearedProgress).toEqual([80]);
+  });
+
+  it("keeps the final update comment and completes its progress reaction", async () => {
+    const current = loaded();
+    const harness = publisherHarness(current);
+    const publication = request({
+      action: "update",
+      commentId: 80,
+      command: {
+        action: "update",
+        repository: "https://github.com/alice/repo",
+        commit: "a".repeat(40),
+        folder: ".",
+      },
+      preconditions: current.preconditions,
+    });
+
+    await dispatchWebsiteAndReport(
+      harness.control,
+      harness.website,
+      publication,
+      issue.repositoryId,
+      "c".repeat(40),
+      run,
+    );
+
+    expect(harness.comments).toHaveLength(1);
+    expect(harness.comments[0]).toContain("Updated **lax-42**");
+    expect(harness.comments[0]).toContain("lax-result-comment-id:80");
+    expect(harness.successes).toEqual([80]);
+    expect(harness.clearedProgress).toEqual([]);
   });
 
   it("update mode omits owner-list.json for delete and registration", async () => {
@@ -299,16 +384,27 @@ function publisherHarness(
   control: PublisherControl;
   changes: () => ArchiveChanges;
   comments: string[];
+  successes: number[];
+  clearedProgress: number[];
   writeFiles: ReturnType<typeof vi.fn>;
   website: { request: ReturnType<typeof vi.fn> };
 } {
   let changes: ArchiveChanges = {};
   const comments: string[] = [];
+  const successes: number[] = [];
+  const clearedProgress: number[] = [];
   const control: PublisherControl = {
     resultExists: vi.fn().mockResolvedValue(false),
+    successReactionExists: vi.fn().mockResolvedValue(false),
     resolveOwnerPairs: vi.fn(async (owners: GitHubIdentity[]) => owners),
     postIssueComment: vi.fn(async (_number: number, body: string) => {
       comments.push(body);
+    }),
+    completeCommand: vi.fn(async (commentId: number) => {
+      successes.push(commentId);
+    }),
+    clearCommandProgress: vi.fn(async (commentId: number) => {
+      clearedProgress.push(commentId);
     }),
   };
   const writeFiles = vi.fn(async (args: Parameters<PublisherArchive["writeFiles"]>[0]) => {
@@ -327,6 +423,8 @@ function publisherHarness(
     control,
     changes: () => changes,
     comments,
+    successes,
+    clearedProgress,
     writeFiles,
     website,
   };

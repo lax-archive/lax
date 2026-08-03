@@ -23,8 +23,41 @@ export function workflowRunMarker(runId: string): string {
   return `<!-- lax-workflow-run-id:${runId} -->`;
 }
 
+function commandContextStart(commentId: number): string {
+  return `<!-- lax-command-context:${commentId}:start -->`;
+}
+
+function commandContextEnd(commentId: number): string {
+  return `<!-- lax-command-context:${commentId}:end -->`;
+}
+
 export function appendWorkflowRun(body: string, run: WorkflowRunRef): string {
   return `${body}\n\nWorkflow run: [#${run.id}](${run.url})\n${workflowRunMarker(run.id)}`;
+}
+
+/** Append or replace the workflow-owned context on an originating command comment. */
+export function upsertCommandContext(body: string, commentId: number, context: string): string {
+  const start = commandContextStart(commentId);
+  const end = commandContextEnd(commentId);
+  const startAt = body.indexOf(start);
+  let withoutContext = body;
+  if (startAt !== -1) {
+    const endAt = body.indexOf(end, startAt + start.length);
+    if (endAt !== -1) {
+      withoutContext = `${body.slice(0, startAt)}${body.slice(endAt + end.length)}`;
+    }
+  }
+  return `${withoutContext.trimEnd()}\n\n${start}\n${context.trim()}\n${end}`;
+}
+
+export function readCommandContext(body: string, commentId: number): string | undefined {
+  const start = commandContextStart(commentId);
+  const end = commandContextEnd(commentId);
+  const startAt = body.indexOf(start);
+  if (startAt === -1) return undefined;
+  const contentAt = startAt + start.length;
+  const endAt = body.indexOf(end, contentAt);
+  return endAt === -1 ? undefined : body.slice(contentAt, endAt).trim();
 }
 
 export interface ParsedWorkflowComment {

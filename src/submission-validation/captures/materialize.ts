@@ -19,6 +19,15 @@ export async function materializeDependencyCaptures(
       throw new Error(`dependency ${dependency.submissionId} resolves to conflicting artifact captures`);
     bySubmission.set(dependency.submissionId, dependency.capture);
   }
+  let declaredBytes = 0;
+  for (const capture of bySubmission.values()) {
+    for (const file of capture.files) {
+      declaredBytes += file.bytes;
+      if (!Number.isSafeInteger(declaredBytes) || declaredBytes > limits.maxWorkspaceBytes) {
+        throw new Error("dependency captures exceed the aggregate validation workspace limit");
+      }
+    }
+  }
   const materialized = await mapConcurrent(
     [...bySubmission],
     4,
@@ -28,28 +37,32 @@ export async function materializeDependencyCaptures(
       const archive = path.join(jobDir, "downloads", archiveName);
       fs.mkdirSync(path.dirname(archive), { recursive: true, mode: 0o700 });
       fs.mkdirSync(path.dirname(base), { recursive: true, mode: 0o700 });
-      const download = await runner.run({
-        label: `download-${id}`,
-        args: ["node", "/opt/lax-runtime/bin/download-capture.mjs", capture.downloadUrl, `/job/downloads/${archiveName}`],
-        mounts: [{ source: jobDir, target: "/job", writable: true }],
-        network: true,
-        timeoutMs: limits.fetchTimeoutMs,
-        maxOutputBytes: limits.maxOutputBytes,
-      });
-      if (download.code !== 0) throw new Error(`could not download capture for ${id}: ${download.output.trim()}`);
-      if (sha256File(archive) !== capture.digest) throw new Error(`capture archive digest mismatch for ${id}`);
-      const extract = await runner.run({
-        label: `extract-${id}`,
-        args: ["node", "/opt/lax-runtime/bin/extract-capture.mjs", `/job/downloads/${archiveName}`, `/job/dependencies/${id}`],
-        mounts: [{ source: jobDir, target: "/job", writable: true }],
-        timeoutMs: 60_000,
-        maxOutputBytes: limits.maxOutputBytes,
-      });
-      if (extract.code !== 0) throw new Error(`could not extract capture for ${id}: ${extract.output.trim()}`);
-      verifyFiles(base, capture);
-      makeCapturedPackagesUsable(base, id);
-      makeReadOnly(base);
-      return [id, base];
+      try {
+        const download = await runner.run({
+          label: `download-${id}`,
+          args: ["node", "/opt/lax-runtime/bin/download-capture.mjs", capture.downloadUrl, `/job/downloads/${archiveName}`],
+          mounts: [{ source: jobDir, target: "/job", writable: true }],
+          network: true,
+          timeoutMs: limits.fetchTimeoutMs,
+          maxOutputBytes: limits.maxOutputBytes,
+        });
+        if (download.code !== 0) throw new Error(`could not download capture for ${id}: ${download.output.trim()}`);
+        if (sha256File(archive) !== capture.digest) throw new Error(`capture archive digest mismatch for ${id}`);
+        const extract = await runner.run({
+          label: `extract-${id}`,
+          args: ["node", "/opt/lax-runtime/bin/extract-capture.mjs", `/job/downloads/${archiveName}`, `/job/dependencies/${id}`],
+          mounts: [{ source: jobDir, target: "/job", writable: true }],
+          timeoutMs: 60_000,
+          maxOutputBytes: limits.maxOutputBytes,
+        });
+        if (extract.code !== 0) throw new Error(`could not extract capture for ${id}: ${extract.output.trim()}`);
+        verifyFiles(base, capture);
+        makeCapturedPackagesUsable(base, id);
+        makeReadOnly(base);
+        return [id, base];
+      } finally {
+        fs.rmSync(archive, { force: true });
+      }
     },
   );
   return new Map(materialized);

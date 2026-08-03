@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: lax-database-publish
     concurrency:
-      group: lax-archive-publish
+      group: lax-archive-publish-${{ github.repository_id }}-${{ github.event.issue.number }}
       queue: max
     permissions:
       contents: read
@@ -412,7 +412,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: lax-database-publish
     concurrency:
-      group: lax-archive-publish
+      group: lax-archive-publish-${{ github.repository_id }}-${{ github.event.issue.number }}
       queue: max
     permissions:
       contents: read
@@ -544,6 +544,7 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         env:
           ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
+          ACTION: ${{ needs.route.outputs.action }}
           OPERATION: ${{ needs.route.outputs.operation }}
           VALIDATION_RESULT: ${{ needs.validation-result.outputs.should_publish }}
         with:
@@ -559,6 +560,29 @@ jobs:
               github.rest.issues.listComments,
               { ...context.repo, issue_number: issueNumber, per_page: 100 },
             );
+            if (["owners", "update"].includes(process.env.ACTION) && Number.isSafeInteger(commentId) && commentId > 0) {
+              try {
+                const reactions = await github.paginate(
+                  github.rest.reactions.listForIssueComment,
+                  { ...context.repo, comment_id: commentId, per_page: 100 },
+                );
+                const rocket = reactions.find((reaction) =>
+                  reaction.content === "rocket" &&
+                  reaction.user?.id === 41898282 &&
+                  reaction.user?.login === "github-actions[bot]" &&
+                  reaction.user?.type === "Bot"
+                );
+                if (rocket !== undefined) {
+                  await github.rest.reactions.deleteForIssueComment({
+                    ...context.repo,
+                    comment_id: commentId,
+                    reaction_id: rocket.id,
+                  });
+                }
+              } catch (error) {
+                core.warning(`Could not clear command progress reaction: ${error.message}`);
+              }
+            }
             const alreadyReported = comments.some((comment) =>
               comment.user?.id === 41898282 &&
               comment.user?.login === "github-actions[bot]" &&

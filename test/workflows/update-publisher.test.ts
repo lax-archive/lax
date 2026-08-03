@@ -134,6 +134,7 @@ describe("trusted update publisher", () => {
     ).resolves.toEqual({ kind: "no-op" });
     expect(harness.load).not.toHaveBeenCalled();
     expect(harness.captureStore.promote).not.toHaveBeenCalled();
+    expect(harness.clearProgress).toHaveBeenCalledWith(80);
   });
 });
 
@@ -145,12 +146,17 @@ function updateHarness(
   captureStore: { promote: ReturnType<typeof vi.fn> };
   load: ReturnType<typeof vi.fn>;
   writeFiles: ReturnType<typeof vi.fn>;
+  clearProgress: ReturnType<typeof vi.fn>;
   readonly changes: ArchiveChanges;
 } {
+  const clearProgress = vi.fn();
   const control: PublisherControl = {
     resultExists: vi.fn().mockResolvedValue(resultExists),
+    successReactionExists: vi.fn().mockResolvedValue(false),
     resolveOwnerPairs: vi.fn(async (owners) => owners),
     postIssueComment: vi.fn(),
+    completeCommand: vi.fn(),
+    clearCommandProgress: clearProgress,
   };
   const load = vi.fn(async (id: string) => values.get(id));
   let changes: ArchiveChanges = {};
@@ -172,6 +178,7 @@ function updateHarness(
     captureStore,
     load,
     writeFiles,
+    clearProgress,
     get changes() { return changes; },
   };
 }

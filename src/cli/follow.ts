@@ -1,8 +1,14 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { CONTROL_REPOSITORY } from "../shared/constants.js";
+import {
+  CONTROL_REPOSITORY,
+  GITHUB_ACTIONS_BOT_ID,
+  GITHUB_ACTIONS_BOT_LOGIN,
+  GITHUB_OAUTH_URL,
+} from "../shared/constants.js";
 import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import {
   parseWorkflowComment,
+  readCommandContext,
   visibleComment,
   type ParsedWorkflowComment,
 } from "../shared/workflow-comments.js";
@@ -11,6 +17,12 @@ import { LoadingLine } from "./loading.js";
 interface IssueComment {
   id: number;
   body: string | null;
+  user: { id: number; login: string; type: string } | null;
+}
+
+interface IssueReaction {
+  content: string;
+  user: { id: number; login: string; type: string } | null;
 }
 
 interface WorkflowRun {
@@ -62,12 +74,20 @@ export async function followCommand(
   client: GitHubClient,
   issueNumber: number,
   triggeringCommentId: number,
+  acceptSuccessReaction = false,
 ): Promise<void> {
-  await follow(client, issueNumber, (parsed) => {
-    const preview = parsed.previewCommentId === triggeringCommentId;
-    const result = parsed.resultCommentId === triggeringCommentId;
-    return preview || result ? { preview, result } : undefined;
-  });
+  await follow(
+    client,
+    issueNumber,
+    (parsed, commentId) => {
+      const preview = parsed.previewCommentId === triggeringCommentId;
+      const result = parsed.resultCommentId === triggeringCommentId;
+      const sourceRun = commentId === triggeringCommentId && parsed.runId !== undefined;
+      return preview || result || sourceRun ? { preview, result } : undefined;
+    },
+    triggeringCommentId,
+    acceptSuccessReaction ? triggeringCommentId : undefined,
+  );
 }
 
 /** Select the most useful current job and step from the Actions response. */
@@ -103,7 +123,10 @@ async function follow(
   issueNumber: number,
   matches: (
     parsed: ParsedWorkflowComment,
+    commentId: number,
   ) => { preview: boolean; result: boolean } | undefined,
+  sourceCommentId?: number,
+  successReactionCommentId?: number,
 ): Promise<void> {
   const interval = positiveEnv("LAX_POLL_INTERVAL_MS", 3_000);
   const timeout = positiveEnv("LAX_WORKFLOW_TIMEOUT_MS", 6 * 60 * 60 * 1_000);
@@ -119,10 +142,17 @@ async function follow(
   loading.update("GitHub Actions · waiting for workflow");
   try {
     while (Date.now() <= deadline) {
-      const comments = await client.paginate<IssueComment>(`${base}/issues/${issueNumber}/comments`);
-      const matched = matchComments(comments, matches);
-      runId = matched.runId ?? runId;
-      runUrl = matched.runUrl ?? runUrl;
+      const [comments, successReaction] = await Promise.all([
+        client.paginate<IssueComment>(`${base}/issues/${issueNumber}/comments`),
+        successReactionCommentId === undefined
+          ? Promise.resolve(false)
+          : hasSuccessReaction(client, successReactionCommentId),
+      ]);
+      const matched = matchComments(comments, matches, sourceCommentId);
+      if (matched.runId !== undefined) {
+        runId = matched.runId;
+        runUrl = matched.runUrl ?? `${GITHUB_OAUTH_URL}/${CONTROL_REPOSITORY}/actions/runs/${runId}`;
+      }
 
       if (runId !== undefined && runUrl !== undefined && runId !== announcedRun) {
         loading.clear();
@@ -140,6 +170,14 @@ async function follow(
           console.log(`Workflow run #${runId}: ${runUrl}`);
         }
         console.log(visibleComment(matched.result));
+        return;
+      }
+      if (successReaction) {
+        loading.clear();
+        if (runId !== undefined && runUrl !== undefined) {
+          console.log(`Workflow run #${runId}: ${runUrl}`);
+        }
+        console.log("👍 Owner list updated.");
         return;
       }
 
@@ -180,20 +218,39 @@ function matchComments(
   comments: IssueComment[],
   matches: (
     parsed: ParsedWorkflowComment,
+    commentId: number,
   ) => { preview: boolean; result: boolean } | undefined,
+  sourceCommentId?: number,
 ): CommentMatch {
   const matched: CommentMatch = {};
   for (const comment of comments) {
     if (comment.body === null) continue;
+    const trustedSource = comment.id === sourceCommentId;
+    const trustedBot =
+      comment.user?.id === GITHUB_ACTIONS_BOT_ID &&
+      comment.user.login === GITHUB_ACTIONS_BOT_LOGIN &&
+      comment.user.type === "Bot";
+    if (!trustedSource && !trustedBot) continue;
     const parsed = parseWorkflowComment(comment.body);
-    const kind = matches(parsed);
+    const kind = matches(parsed, comment.id);
     if (kind === undefined) continue;
-    if (kind.preview) matched.preview = comment.body;
+    if (kind.preview) matched.preview = readCommandContext(comment.body, comment.id) ?? comment.body;
     if (kind.result) matched.result = comment.body;
     matched.runId = parsed.runId ?? matched.runId;
     matched.runUrl = parsed.runUrl ?? matched.runUrl;
   }
   return matched;
+}
+
+async function hasSuccessReaction(client: GitHubClient, commentId: number): Promise<boolean> {
+  const reactions = await client.paginate<IssueReaction>(`${base}/issues/comments/${commentId}/reactions`);
+  return reactions.some(
+    (reaction) =>
+      reaction.content === "+1" &&
+      reaction.user?.id === GITHUB_ACTIONS_BOT_ID &&
+      reaction.user.login === GITHUB_ACTIONS_BOT_LOGIN &&
+      reaction.user.type === "Bot",
+  );
 }
 
 async function readWorkflowProgress(client: GitHubClient, runId: string): Promise<WorkflowProgress> {

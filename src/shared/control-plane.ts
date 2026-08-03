@@ -20,6 +20,7 @@ import {
   initializationPreviewMarker,
   previewMarker,
   resultMarker,
+  upsertCommandContext,
 } from "./workflow-comments.js";
 
 interface IssueUser {
@@ -47,6 +48,12 @@ interface UserResponse {
 interface CommentResponse {
   id: number;
   body: string | null;
+  user: IssueUser | null;
+}
+
+interface ReactionResponse {
+  id: number;
+  content: string;
   user: IssueUser | null;
 }
 
@@ -85,6 +92,56 @@ export class ControlPlane {
 
   async postIssueComment(issueNumber: number, body: string): Promise<void> {
     await this.github.request("POST", `${this.controlBase}/issues/${issueNumber}/comments`, { body });
+  }
+
+  async annotateIssueComment(commentId: number, context: string): Promise<void> {
+    const path = `${this.controlBase}/issues/comments/${commentId}`;
+    const comment = await this.github.request<CommentResponse>("GET", path);
+    if (typeof comment.body !== "string") throw new ValidationError("command comment body is missing");
+    await this.github.request("PATCH", path, {
+      body: upsertCommandContext(comment.body, commentId, context),
+    });
+  }
+
+  async markCommandStarted(commentId: number): Promise<void> {
+    await this.github.request("POST", `${this.controlBase}/issues/comments/${commentId}/reactions`, {
+      content: "rocket",
+    });
+  }
+
+  async completeCommand(commentId: number): Promise<void> {
+    await this.github.request("POST", `${this.controlBase}/issues/comments/${commentId}/reactions`, {
+      content: "+1",
+    });
+    await this.clearCommandProgress(commentId);
+  }
+
+  async clearCommandProgress(commentId: number): Promise<void> {
+    const reaction = await this.findBotReaction(commentId, "rocket");
+    if (reaction === undefined) return;
+    await this.github.request(
+      "DELETE",
+      `${this.controlBase}/issues/comments/${commentId}/reactions/${reaction.id}`,
+    );
+  }
+
+  async successReactionExists(commentId: number): Promise<boolean> {
+    return (await this.findBotReaction(commentId, "+1")) !== undefined;
+  }
+
+  private async findBotReaction(commentId: number, content: string): Promise<ReactionResponse | undefined> {
+    const reactions = await this.github.paginate<ReactionResponse>(
+      `${this.controlBase}/issues/comments/${commentId}/reactions`,
+    );
+    return reactions.find(
+      (reaction) =>
+        Number.isSafeInteger(reaction.id) &&
+        reaction.id > 0 &&
+        reaction.content === content &&
+        reaction.user?.id === GITHUB_ACTIONS_BOT_ID &&
+        reaction.user.login === GITHUB_ACTIONS_BOT_LOGIN &&
+        reaction.user.type === "Bot",
+    );
   }
 
   async resultExists(issueNumber: number, commentId: number): Promise<boolean> {
