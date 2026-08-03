@@ -153,8 +153,6 @@ jobs:
     needs: compile
     if: needs.compile.result == 'success'
     runs-on: ubuntu-latest
-    outputs:
-      validation_request: ${{ needs.compile.outputs.validation_request }}
     permissions:
       contents: read
       packages: read
@@ -203,27 +201,6 @@ jobs:
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
         run: node dist/submission-validation/run.js replay
 
-      - name: Pack Replay handoff
-        if: success()
-        run: |
-          tar \
-            --exclude='./work/source/.git' \
-            --exclude='./work/archive/.git' \
-            --exclude='./work/downloads' \
-            --create \
-            --file .build/submission-validation-replay.tar \
-            --directory .build/submission-validation \
-            .
-
-      - name: Preserve Replay handoff
-        if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: submission-validation-replay-${{ github.event.issue.number }}
-          path: .build/submission-validation-replay.tar
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Clean validation workspace
         if: always()
         env:
@@ -234,15 +211,15 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: submission-validation-${{ github.event.issue.number }}
+          name: submission-validation-replay-report-${{ github.event.issue.number }}
           path: .build/submission-validation/validation-report.json
           if-no-files-found: warn
           retention-days: 30
 
   inspect:
     name: Inspect
-    needs: replay
-    if: needs.replay.result == 'success'
+    needs: compile
+    if: needs.compile.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -273,21 +250,21 @@ jobs:
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull "$IMAGE"
           fi
-      - name: Restore Replay handoff
+      - name: Restore Compile handoff
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: submission-validation-replay-${{ github.event.issue.number }}
+          name: submission-validation-compile-${{ github.event.issue.number }}
           path: .build
-      - name: Unpack Replay handoff
+      - name: Unpack Compile handoff
         run: |
           mkdir -p .build/submission-validation
           tar \
             --extract \
-            --file .build/submission-validation-replay.tar \
+            --file .build/submission-validation-compile.tar \
             --directory .build/submission-validation
       - name: Inspect
         env:
-          VALIDATION_REQUEST: ${{ needs.replay.outputs.validation_request }}
+          VALIDATION_REQUEST: ${{ needs.compile.outputs.validation_request }}
           LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
         run: node dist/submission-validation/run.js inspect
@@ -312,7 +289,7 @@ jobs:
   # job reports the validation result; on success it unlocks publication.
   validation-result:
     name: Validation result
-    needs: [route, inspect]
+    needs: [route, replay, inspect]
     if: always() && needs.route.outputs.operation == 'validate'
     runs-on: ubuntu-latest
     permissions:
@@ -323,7 +300,11 @@ jobs:
     steps:
       - name: Record validation outcome
         id: outcome
-        run: echo "should_publish=${{ needs.inspect.result == 'success' }}" >> "$GITHUB_OUTPUT"
+        run: >-
+          echo "should_publish=${{
+            needs.replay.result == 'success' &&
+            needs.inspect.result == 'success'
+          }}" >> "$GITHUB_OUTPUT"
       - if: steps.outcome.outputs.should_publish != 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -337,7 +318,15 @@ jobs:
         run: npm ci
       - if: steps.outcome.outputs.should_publish != 'true'
         run: npm run build
-      - if: steps.outcome.outputs.should_publish != 'true'
+      - name: Restore Replay failure report
+        if: steps.outcome.outputs.should_publish != 'true' && needs.replay.result == 'failure'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: submission-validation-replay-report-${{ github.event.issue.number }}
+          path: .build/submission-validation
+      - name: Restore Compile or Inspect validation report
+        if: steps.outcome.outputs.should_publish != 'true' && needs.replay.result != 'failure'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
