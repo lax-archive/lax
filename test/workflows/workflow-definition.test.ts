@@ -92,22 +92,17 @@ describe("submission workflow definition", () => {
   });
 
   it("separates database publication from Website credential creation", () => {
-    const publishDirect = workflow.slice(
-      workflow.indexOf("  publish-direct:"),
-      workflow.indexOf("  # Website"),
-    );
+    const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  # Website"));
     const website = workflow.slice(workflow.indexOf("  website:"), workflow.indexOf("  # TypeScript reports"));
-    expect(workflow).toContain("publish-direct:\n    needs: route");
-    expect(workflow).not.toMatch(/^  publish:$/mu);
-    expect(publishDirect).toContain("Mint lax-database token");
-    expect(publishDirect).toContain("environment: lax-database-publish");
-    expect(publishDirect).toContain("vars.LAX_DATABASE_APP_ID");
-    expect(publishDirect).toContain("secrets.LAX_DATABASE_APP_PRIVATE_KEY");
-    expect(publishDirect).toContain("permission-administration: read");
-    expect(publishDirect).not.toContain("Mint lax-website dispatch token");
-    expect(publishDirect).not.toContain("LAX_WEBSITE_TOKEN");
-    expect(website).toContain("needs: [route, publish-direct, publish-update]");
-    expect(website).toContain("needs.publish-direct.outputs.archive_commit != ''");
+    expect(publish).toContain("Mint lax-database token");
+    expect(publish).toContain("environment: lax-database-publish");
+    expect(publish).toContain("vars.LAX_DATABASE_APP_ID");
+    expect(publish).toContain("secrets.LAX_DATABASE_APP_PRIVATE_KEY");
+    expect(publish).toContain("permission-administration: read");
+    expect(publish).not.toContain("Mint lax-website dispatch token");
+    expect(publish).not.toContain("LAX_WEBSITE_TOKEN");
+    expect(website).toContain("needs: [route, publish, publish-update]");
+    expect(website).toContain("needs.publish.outputs.archive_commit != ''");
     expect(website).toContain("needs.publish-update.outputs.archive_commit != ''");
     expect(website).toContain("Mint lax-website dispatch token");
     expect(website).toContain("environment: lax-website-dispatch");
@@ -118,17 +113,14 @@ describe("submission workflow definition", () => {
     expect(workflow).not.toContain("secrets.LAX_APP_PRIVATE_KEY");
   });
 
-  it("declares the validation branch before the shorter direct-publication branch", () => {
-    expect(workflow.indexOf("  compile:")).toBeLessThan(workflow.indexOf("  publish-direct:"));
-    expect(workflow.indexOf("  publish-update:")).toBeLessThan(workflow.indexOf("  publish-direct:"));
-    expect(workflow.indexOf("  publish-direct:")).toBeLessThan(workflow.indexOf("  website:"));
+  it("declares the validation branch before the shorter publish branch", () => {
+    expect(workflow.indexOf("  compile:")).toBeLessThan(workflow.indexOf("  publish:"));
+    expect(workflow.indexOf("  publish-update:")).toBeLessThan(workflow.indexOf("  publish:"));
+    expect(workflow.indexOf("  publish:")).toBeLessThan(workflow.indexOf("  website:"));
   });
 
   it("checks update artifacts and fresh state before minting the database token", () => {
-    const update = workflow.slice(
-      workflow.indexOf("  publish-update:"),
-      workflow.indexOf("  publish-direct:"),
-    );
+    const update = workflow.slice(workflow.indexOf("  publish-update:"), workflow.indexOf("  publish:"));
     const prepare = update.indexOf("Parse artifacts and revalidate current state");
     const mint = update.indexOf("Mint lax-database token");
     const publish = update.indexOf("Promote capture and publish trusted update");
