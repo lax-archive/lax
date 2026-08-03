@@ -49,16 +49,15 @@ describe("submission workflow definition", () => {
     expect(workflow).not.toContain("validate-submission:");
     expect(workflow).toContain("compile:\n    name: Compile");
     expect(workflow).toContain("replay:\n    name: Replay\n    needs: compile");
-    expect(workflow).toContain("inspect:\n    name: Inspect\n    needs: replay");
-    expect(workflow).toContain("needs.compile.result == 'success'");
-    expect(workflow).toContain("needs.replay.result == 'success'");
+    expect(workflow).toContain("inspect:\n    name: Inspect\n    needs: compile");
+    expect(workflow.match(/if: needs\.compile\.result == 'success'/gu)).toHaveLength(2);
     expect(workflow).toContain("validation_request: ${{ needs.route.outputs.validation_request }}");
-    expect(workflow).toContain("validation_request: ${{ needs.compile.outputs.validation_request }}");
-    expect(workflow).toContain("VALIDATION_REQUEST: ${{ needs.compile.outputs.validation_request }}");
-    expect(workflow).toContain("VALIDATION_REQUEST: ${{ needs.replay.outputs.validation_request }}");
+    expect(workflow.match(/VALIDATION_REQUEST: \$\{\{ needs\.compile\.outputs\.validation_request \}\}/gu)).toHaveLength(2);
+    expect(workflow).not.toContain("needs.replay.outputs.validation_request");
     expect(workflow).not.toContain("needs: [route, compile]");
     expect(workflow).not.toContain("needs: [route, replay]");
-    expect(workflow).toContain("validation-result:\n    name: Validation result\n    needs: [route, inspect]");
+    expect(workflow).toContain("validation-result:\n    name: Validation result\n    needs: [route, replay, inspect]");
+    expect(workflow).toContain("needs.replay.result == 'success'");
     expect(workflow).toContain("needs.inspect.result == 'success'");
     expect(workflow).toContain("publish-update:\n    needs: [route, validation-result]");
     expect(workflow).toContain("needs.validation-result.outputs.should_publish == 'true'");
@@ -70,10 +69,12 @@ describe("submission workflow definition", () => {
     expect(workflow).toContain("node dist/submission-validation/run.js replay");
     expect(workflow).toContain("node dist/submission-validation/run.js inspect");
     expect(workflow).toContain("submission-validation-compile-${{ github.event.issue.number }}");
-    expect(workflow).toContain("submission-validation-replay-${{ github.event.issue.number }}");
+    expect(workflow).toContain("submission-validation-replay-report-${{ github.event.issue.number }}");
     expect(workflow).toContain(".build/submission-validation-compile.tar");
-    expect(workflow).toContain(".build/submission-validation-replay.tar");
-    expect(workflow.match(/--create/gu)).toHaveLength(2);
+    expect(workflow).not.toContain(".build/submission-validation-replay.tar");
+    expect(workflow.match(/Restore Compile handoff/gu)).toHaveLength(2);
+    expect(workflow.match(/Unpack Compile handoff/gu)).toHaveLength(2);
+    expect(workflow.match(/--create/gu)).toHaveLength(1);
     expect(workflow.match(/--extract/gu)).toHaveLength(2);
     expect(workflow.match(/- name: Clean validation workspace\n        if: always\(\)/gu)).toHaveLength(3);
     expect(workflow).toContain(".build/submission-validation/validation-report.json");
@@ -126,10 +127,13 @@ describe("submission workflow definition", () => {
     expect(update).toContain("permission-contents: write");
   });
 
-  it("reports validation directly only when validation did not succeed", () => {
+  it("joins Replay and Inspect before reporting or publishing", () => {
     const result = workflow.slice(workflow.indexOf("  validation-result:"), workflow.indexOf("  # The first step"));
-    expect(result).toContain("should_publish=${{ needs.inspect.result == 'success' }}");
+    expect(result).toContain("needs.replay.result == 'success'");
+    expect(result).toContain("needs.inspect.result == 'success'");
     expect(result).toContain("steps.outcome.outputs.should_publish != 'true'");
+    expect(result).toContain("Restore Replay failure report");
+    expect(result).toContain("Restore Compile or Inspect validation report");
     expect(result).toContain("node dist/workflows/submission.js report-validation");
   });
 

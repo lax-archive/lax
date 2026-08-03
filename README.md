@@ -76,16 +76,15 @@ issue-event entry point. Validation runs on the standard `ubuntu-latest`
 GitHub-hosted runner and pulls the reviewed runtime by the immutable digest in
 `LAX_VALIDATION_IMAGE`. The workflow presents Compile, Replay, and Inspect as
 three first-class jobs in the Actions DAG. Short-lived, credential-free
-artifacts carry the validation workspace from Compile to Replay and from Replay
-to Inspect; every job cleans its local copy unconditionally afterwards. Each
-phase runs on a fresh hosted runner in a fresh credential-free container. The
-workflow reclaims unused hosted-runner SDK space before pulling the large
-runtime image. A lightweight Validation result job keeps success and failure
-handling on one linear DAG path before publication. Validation request outputs
-also follow the same direct Compile to Replay to Inspect chain, avoiding
-redundant routing edges in the rendered graph. Kernel replay
-and inspection use two Lean workers inside their 16 GiB container limit so
-large module sets cannot exhaust the hosted runner while the surrounding
+artifacts carry the same compiled validation workspace from Compile to Replay
+and Inspect, which run in parallel; every job cleans its local copy
+unconditionally afterwards. Each phase runs on a fresh hosted runner in a fresh
+credential-free container. The workflow reclaims unused hosted-runner SDK
+space before pulling the large runtime image. A lightweight Validation result
+job joins Replay and Inspect and requires both to succeed before publication.
+The validation request output follows the same Compile-to-checker fork. Kernel
+replay and inspection use two Lean workers inside their 16 GiB container limit
+so large module sets cannot exhaust either hosted runner while the surrounding
 workflow remains responsive.
 
 `validation-runtime.yml` is intentionally not issue-triggered: it builds
