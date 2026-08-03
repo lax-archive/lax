@@ -58,7 +58,7 @@ export async function runInspector(
     throw new Error(reason || `${kind} inspection failed`);
   }
   const reportPath = path.join(outputDir, "report.json");
-  const stat = fs.statSync(reportPath);
+  const stat = fs.lstatSync(reportPath);
   if (!stat.isFile() || stat.size > 32 * 1024 * 1024) throw new Error(`${kind} inspector report is missing or oversized`);
   return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown);
 }

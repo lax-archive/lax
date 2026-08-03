@@ -42,9 +42,13 @@ const runtime = JSON.parse(
 ) as RuntimePins;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-submission-validation-smoke-"));
 const completed: Array<{ name: string; ok: boolean; captureFiles?: number }> = [];
+const selectedFixtures = fixtures().filter(
+  (fixture) => process.env.LAX_SMOKE_CASE === undefined || fixture.name === process.env.LAX_SMOKE_CASE,
+);
+assert(selectedFixtures.length > 0, `no smoke fixture named ${process.env.LAX_SMOKE_CASE}`);
 
 try {
-  for (const fixture of fixtures()) {
+  for (const fixture of selectedFixtures) {
     const fixtureRoot = path.join(root, fixture.name);
     const sourceRoot = path.join(fixtureRoot, "source");
     const archiveRoot = path.join(fixtureRoot, "archive");
