@@ -117,6 +117,33 @@ describe("validation runtime boundaries retained from main", () => {
     );
   });
 
+  it("refuses artifact links that could make host capture follow attacker paths", () => {
+    const pristine = temporary("lax-link-pristine-");
+    const compiled = temporary("lax-link-build-");
+    const outside = temporary("lax-link-outside-");
+    const library = path.join(compiled, "concepts", ".lake", "build", "lib", "lean");
+    writeFile(pristine, "concepts/Lax9.lean", "");
+    writeFile(outside, "secret", "host bytes");
+    fs.mkdirSync(library, { recursive: true });
+    fs.symlinkSync(path.join(outside, "secret"), path.join(library, "Lax9.olean"));
+    const inventory: ModuleInventory = {
+      packageName: "Lax9",
+      packageDir: path.join(pristine, "concepts"),
+      rootModule: "Lax9",
+      modules: [],
+      paths: new Map(),
+    };
+
+    expect(() => capturePackage(
+      "concepts",
+      pristine,
+      compiled,
+      "{\"packages\":[]}",
+      inventory,
+      temporary("lax-link-capture-"),
+    )).toThrow("compiled artifact is missing or unsafe for module Lax9");
+  });
+
   it("constructs hardened, explicit container invocations", async () => {
     const source = temporary("lax-container-mount-");
     const record = path.join(temporary("lax-container-bin-"), "arguments.txt");

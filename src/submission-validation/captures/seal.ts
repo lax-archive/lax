@@ -29,13 +29,26 @@ export function capturePackage(
   for (const moduleName of [inventory.rootModule, ...inventory.modules]) {
     const relative = `${moduleName.split(".").join("/")}.olean`;
     const source = path.join(library, relative);
-    if (!fs.existsSync(source) || !fs.statSync(source).isFile()) {
-      throw new Error(`compiled artifact is missing for module ${moduleName}`);
+    if (!regularContainedArtifact(library, source)) {
+      throw new Error(`compiled artifact is missing or unsafe for module ${moduleName}`);
     }
     const destination = path.join(captureRoot, kind, "lib", relative);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
     fs.chmodSync(destination, 0o444);
+  }
+}
+
+function regularContainedArtifact(library: string, filename: string): boolean {
+  try {
+    // Authored IO controls everything below the writable .lake directory.
+    // Reject direct links and ancestor links that redirect outside it.
+    if (!fs.lstatSync(filename).isFile()) return false;
+    const buildRoot = fs.realpathSync(path.resolve(library, "../../.."));
+    const actual = fs.realpathSync(filename);
+    return actual.startsWith(`${buildRoot}${path.sep}`);
+  } catch {
+    return false;
   }
 }
 
