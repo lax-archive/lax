@@ -9,7 +9,13 @@ import type {
   ValidationRequest,
 } from "../../src/submission-validation/contracts.js";
 import { packageNameForSubmission } from "../../src/submission-validation/contracts.js";
-import { validateSubmission } from "../../src/submission-validation/pipeline.js";
+import {
+  compileSubmission,
+  inspectSubmission,
+  replaySubmission,
+  validateSubmission,
+  type ValidationOptions,
+} from "../../src/submission-validation/pipeline.js";
 
 interface RuntimePins {
   leanToolchain: string;
@@ -84,12 +90,15 @@ try {
       },
       archiveSha: "0".repeat(40),
     };
-    const report = await validateSubmission(request, jobRoot, {
+    const options: ValidationOptions = {
       local: {
         fetched: { repositoryRoot: sourceRoot, submissionRoot: sourceRoot },
         archive: new ArchiveSnapshot(archiveRoot, request.archiveSha),
       },
-    });
+    };
+    const report = fixture.name === "minimal"
+      ? await validateInStages(request, jobRoot, options)
+      : await validateSubmission(request, jobRoot, options);
     fixture.check(report, jobRoot);
     completed.push({
       name: fixture.name,
@@ -101,6 +110,18 @@ try {
 } finally {
   if (process.env.LAX_SMOKE_KEEP === "1") console.error(`smoke workspace retained at ${root}`);
   else fs.rmSync(root, { recursive: true, force: true });
+}
+
+async function validateInStages(
+  request: ValidationRequest,
+  jobRoot: string,
+  options: ValidationOptions,
+): Promise<ValidationReport> {
+  const compileFailure = await compileSubmission(request, jobRoot, options);
+  if (compileFailure !== undefined) return compileFailure;
+  const replayFailure = await replaySubmission(request, jobRoot, options);
+  if (replayFailure !== undefined) return replayFailure;
+  return inspectSubmission(request, jobRoot, options);
 }
 
 function fixtures(): SmokeFixture[] {
