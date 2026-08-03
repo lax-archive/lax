@@ -121,6 +121,8 @@ jobs:
     needs: route
     if: needs.route.outputs.operation == 'validate'
     runs-on: ubuntu-latest
+    outputs:
+      validation_request: ${{ needs.route.outputs.validation_request }}
     permissions:
       contents: read
       packages: read
@@ -195,9 +197,11 @@ jobs:
 
   replay:
     name: Replay
-    needs: [route, compile]
-    if: needs.route.outputs.operation == 'validate' && needs.compile.result == 'success'
+    needs: compile
+    if: needs.compile.result == 'success'
     runs-on: ubuntu-latest
+    outputs:
+      validation_request: ${{ needs.compile.outputs.validation_request }}
     permissions:
       contents: read
       packages: read
@@ -241,7 +245,7 @@ jobs:
             --directory .build/submission-validation
       - name: Replay
         env:
-          VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
+          VALIDATION_REQUEST: ${{ needs.compile.outputs.validation_request }}
           LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
         run: node dist/submission-validation/run.js replay
@@ -284,8 +288,8 @@ jobs:
 
   inspect:
     name: Inspect
-    needs: [route, replay]
-    if: needs.route.outputs.operation == 'validate' && needs.replay.result == 'success'
+    needs: replay
+    if: needs.replay.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -330,7 +334,7 @@ jobs:
             --directory .build/submission-validation
       - name: Inspect
         env:
-          VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
+          VALIDATION_REQUEST: ${{ needs.replay.outputs.validation_request }}
           LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
         run: node dist/submission-validation/run.js inspect
