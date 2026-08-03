@@ -222,7 +222,7 @@ async function postCommand(reference: string | number, body: string): Promise<vo
     { body },
   );
   console.log(`Command submitted: ${comment.html_url}`);
-  await followCommand(github, issue, comment.id);
+  await followCommand(github, issue, comment.id, body.startsWith("/lax owners "));
 }
 
 /** Issue commands also accept a submission folder containing manifest.yaml. */

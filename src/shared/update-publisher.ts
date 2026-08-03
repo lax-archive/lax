@@ -40,7 +40,10 @@ export class UpdatePublisher {
     artifacts: SuccessfulValidationArtifacts,
   ): Promise<{ kind: "no-op" } | { kind: "ready"; request: PublishRequest }> {
     const request = await this.canonicalRequest(untrustedRequest);
-    if (await this.control.resultExists(request.issue.number, request.commentId!)) return { kind: "no-op" };
+    if (await this.control.resultExists(request.issue.number, request.commentId!)) {
+      await this.control.clearCommandProgress(request.commentId!);
+      return { kind: "no-op" };
+    }
     const current = await this.archive.load(request.id);
     await this.validateCurrent(request, artifacts, current);
     return { kind: "ready", request };

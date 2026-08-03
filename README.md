@@ -142,6 +142,13 @@ so uncommitted files are never mistaken for the submitted source.
 Commands that create an issue or post a `/lax` comment wait for the correlated
 workflow result. Once the workflow publishes its correlated run link, the CLI
 polls GitHub and displays the current Actions job and step on one loading line.
+For updates, the parsed source preview and workflow run are appended to the
+originating command comment instead of creating a separate preview comment. A
+🚀 reaction marks validation and publication in progress; it becomes 👍 after
+full success, while the final workflow result comment remains in place.
+Owner-list changes create no result comment: the workflow reacts with 🚀 while
+the command is running, then replaces it with 👍 after full success. The CLI
+treats the bot-authored 👍 as the correlated successful result.
 Set `LAX_POLL_INTERVAL_MS` or
 `LAX_WORKFLOW_TIMEOUT_MS` to override the 3-second poll interval or 6-hour
 timeout.

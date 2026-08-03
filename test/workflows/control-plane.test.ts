@@ -181,6 +181,69 @@ describe("submission control-plane routing", () => {
     ).resolves.toEqual({ kind: "ignore" });
   });
 
+  it("replaces workflow context and transitions the bot rocket to thumbs-up", async () => {
+    let body = "/lax update {}";
+    let nextReactionId = 2;
+    const reactions = [{
+      id: 1,
+      content: "rocket",
+      user: { id: 10, login: "alice", type: "User" },
+    }];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input));
+      const reactionPath = "/repos/lax-archive/lax/issues/comments/9001/reactions";
+      if (url.pathname === reactionPath) {
+        if (init?.method === "POST") {
+          const content = String((JSON.parse(String(init.body)) as { content: string }).content);
+          const reaction = {
+            id: nextReactionId++,
+            content,
+            user: { id: 41_898_282, login: "github-actions[bot]", type: "Bot" },
+          };
+          reactions.push(reaction);
+          return json(reaction, 201);
+        }
+        return json(reactions);
+      }
+      if (url.pathname.startsWith(`${reactionPath}/`) && init?.method === "DELETE") {
+        const reactionId = Number(url.pathname.slice(reactionPath.length + 1));
+        const index = reactions.findIndex((reaction) => reaction.id === reactionId);
+        if (index !== -1) reactions.splice(index, 1);
+        return new Response(undefined, { status: 204 });
+      }
+      if (!url.pathname.endsWith("/issues/comments/9001")) {
+        return json({ message: `unhandled ${url.pathname}` }, 500);
+      }
+      if (init?.method === "PATCH") {
+        body = String((JSON.parse(String(init.body)) as { body: string }).body);
+        return json({ id: 9001, body, user: { id: 10, login: "alice", type: "User" } });
+      }
+      return json({ id: 9001, body, user: { id: 10, login: "alice", type: "User" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const control = controlPlane();
+
+    await control.annotateIssueComment(9001, "Update preview.\n\n<!-- lax-workflow-run-id:123 -->");
+    await control.annotateIssueComment(9001, "Update preview changed.\n\n<!-- lax-workflow-run-id:456 -->");
+    await control.markCommandStarted(9001);
+
+    expect(body).toContain("/lax update {}");
+    expect(body).toContain("Update preview changed.");
+    expect(body).not.toContain("lax-workflow-run-id:123");
+    expect(body.match(/lax-command-context:9001:start/gu)).toHaveLength(1);
+    await expect(control.successReactionExists(9001)).resolves.toBe(false);
+    await control.completeCommand(9001);
+    await expect(control.successReactionExists(9001)).resolves.toBe(true);
+    expect(reactions).toEqual([
+      { id: 1, content: "rocket", user: { id: 10, login: "alice", type: "User" } },
+      {
+        id: 3,
+        content: "+1",
+        user: { id: 41_898_282, login: "github-actions[bot]", type: "Bot" },
+      },
+    ]);
+  });
+
   it("rejects executable Archive payloads", async () => {
     installArchiveFetch(alice, files, { fileMode: "100755" });
     await expect(
