@@ -80,7 +80,7 @@ async function runStage(stage: Stage, request: ValidationRequest): Promise<numbe
     return 0;
   }
 
-  requireStageState(stage === "replay" ? "compile" : "replay", request);
+  requireStageState(stage === "replay" ? ["compile"] : ["compile", "replay"], request);
   if (stage === "replay") {
     const failure = await replaySubmission(request, jobDir);
     if (failure !== undefined) {
@@ -121,12 +121,13 @@ function readRequest(): ValidationRequest {
   return validationRequestFromUnknown(raw);
 }
 
-function requireStageState(expected: CompletedStage, request: ValidationRequest): void {
+function requireStageState(expected: readonly CompletedStage[], request: ValidationRequest): void {
+  const expectedLabel = expected.join(" or ");
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(statePath);
   } catch {
-    throw new Error(`validation ${expected} stage did not complete`);
+    throw new Error(`validation ${expectedLabel} stage did not complete`);
   }
   if (!stat.isFile() || stat.size > 64 * 1024) throw new Error("validation stage state is malformed");
   const value = JSON.parse(fs.readFileSync(statePath, "utf8")) as unknown;
@@ -136,8 +137,8 @@ function requireStageState(expected: CompletedStage, request: ValidationRequest)
     ["stateVersion", "completed", "runtimeImage", "request"],
     "validation stage state",
   );
-  if (value.stateVersion !== 1 || value.completed !== expected) {
-    throw new Error(`validation ${expected} stage did not complete`);
+  if (value.stateVersion !== 1 || !expected.includes(value.completed as CompletedStage)) {
+    throw new Error(`validation ${expectedLabel} stage did not complete`);
   }
   if (value.runtimeImage !== requiredEnv("LAX_VALIDATION_IMAGE")) {
     throw new Error("validation runtime changed between steps");
