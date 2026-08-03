@@ -23,6 +23,15 @@ describe("CLI compatibility surface", () => {
     expect(register.output).toContain("--yes");
   });
 
+  it("prints the continuous proof-preview workflow in the bundled specification", () => {
+    const spec = cli(["spec"]);
+    expect(spec.code).toBe(0);
+    expect(spec.output).toContain("After each successfully completed proof");
+    expect(spec.output).toContain("lax serve path/to/submission");
+    expect(spec.output).toContain("lax build path/to/submission");
+    expect(spec.output).toContain("successfully validated milestone");
+  });
+
   it("uses command-specific errors", () => {
     const result = cli(["build", "--only", "everything"]);
     expect(result.code).toBe(1);
