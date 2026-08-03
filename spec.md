@@ -1026,6 +1026,26 @@ so ``lax serve`` works before ``lax init`` has allocated an id. If
 ``build-output.json`` is missing, the website shows a placeholder stating that
 the output has not been generated yet; ``lax serve`` does not build.
 
+**Continuous preview while authoring.** Keep ``lax serve`` running in one
+terminal and open the URL it prints. After each successfully completed proof
+or meaningful milestone, authors and automated proof-building agents should
+run a full build of the submission in another terminal:
+
+```sh
+# Terminal 1: keep the preview server running.
+lax serve path/to/submission
+
+# Terminal 2: run after each completed proof or meaningful milestone.
+lax build path/to/submission
+```
+
+Each successful full build atomically replaces ``build-output.json`` and
+therefore causes ``lax serve`` to regenerate the preview. A failed build, or a
+partial ``lax build --only concepts`` or ``lax build --only proofs``, does not
+replace ``build-output.json``; the preview intentionally remains at the last
+successfully validated milestone. Reload an already open browser page to see
+the regenerated checkpoint.
+
 **lax submit [folder]** derives the (repository, commit, folder) triple from
 the folder's git state — the remote URL, the HEAD commit, the folder's path
 within the repository — and hands it to the archive. The remote URL is first
