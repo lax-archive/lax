@@ -47,7 +47,15 @@ describe("submission workflow definition", () => {
     expect(workflow).toContain("runs-on: ubuntu-latest");
     expect(workflow).toContain("Reclaim hosted-runner disk");
     expect(workflow).toContain("LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}");
-    expect(workflow).toContain("node dist/submission-validation/run.js");
+    const compile = workflow.indexOf("node dist/submission-validation/run.js compile");
+    const replay = workflow.indexOf("node dist/submission-validation/run.js replay");
+    const inspect = workflow.indexOf("node dist/submission-validation/run.js inspect");
+    const cleanup = workflow.indexOf("node dist/submission-validation/run.js cleanup");
+    expect(compile).toBeGreaterThan(0);
+    expect(compile).toBeLessThan(replay);
+    expect(replay).toBeLessThan(inspect);
+    expect(inspect).toBeLessThan(cleanup);
+    expect(workflow).toContain("- name: Clean validation workspace\n        if: always()");
     expect(workflow).toContain(".build/submission-validation/validation-report.json");
     expect(workflow).toContain(".build/submission-validation/generated-build-output.json");
     expect(workflow).toContain(".build/submission-validation/capture.tar");

@@ -149,12 +149,29 @@ jobs:
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull "$IMAGE"
           fi
-      - name: Validate in isolated phase containers
+      - name: Compile
         env:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
           LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-        run: node dist/submission-validation/run.js
+        run: node dist/submission-validation/run.js compile
+      - name: Replay
+        env:
+          VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
+          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/run.js replay
+      - name: Inspect
+        env:
+          VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
+          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/run.js inspect
+      - name: Clean validation workspace
+        if: always()
+        env:
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/run.js cleanup
       - name: Preserve the report, generated build output, and capture
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
