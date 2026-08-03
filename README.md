@@ -22,10 +22,14 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 | `/lax register` | Makes an init/draft record immutable. |
 | `/lax update <JSON>` | Validates the immutable source, promotes its exact capture to immutable storage, and replaces only `record.json` and `build-output.json`. |
 
+The Actions DAG exposes two protected publication jobs. `publish-direct`
+handles issue creation plus `/lax owners`, `/lax delete`, and `/lax register`;
+`publish-update` handles validated `/lax update` requests.
+
 The Lean validation job has no App key, installation token, or Archive write
 credential. Its successful workflow artifact contains `validation-report.json`,
 `generated-build-output.json`, and `capture.tar`. Inside the submission-scoped
-publication job, a credential-free preflight parses the exact schemas, verifies
+`publish-update` job, a credential-free preflight parses the exact schemas, verifies
 the USTAR inventory and every digest, and re-reads authorization, lifecycle
 state, issue binding, stale-write inputs, and dependency captures. Only then
 may the trusted job mint the database token, publish the content-addressed
