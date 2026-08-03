@@ -41,21 +41,27 @@ describe("submission workflow definition", () => {
     expect(workflow).toContain("if: needs.precheck.outputs.should_run == 'true'");
   });
 
-  it("routes updates to an isolated hosted-runner validation job", () => {
-    expect(workflow).toContain("validate-submission:");
-    expect(workflow).toContain("needs.route.outputs.operation == 'validate'");
-    expect(workflow).toContain("runs-on: ubuntu-latest");
-    expect(workflow).toContain("Reclaim hosted-runner disk");
-    expect(workflow).toContain("LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}");
-    const compile = workflow.indexOf("node dist/submission-validation/run.js compile");
-    const replay = workflow.indexOf("node dist/submission-validation/run.js replay");
-    const inspect = workflow.indexOf("node dist/submission-validation/run.js inspect");
-    const cleanup = workflow.indexOf("node dist/submission-validation/run.js cleanup");
-    expect(compile).toBeGreaterThan(0);
-    expect(compile).toBeLessThan(replay);
-    expect(replay).toBeLessThan(inspect);
-    expect(inspect).toBeLessThan(cleanup);
-    expect(workflow).toContain("- name: Clean validation workspace\n        if: always()");
+  it("routes updates through first-class Compile, Replay, and Inspect DAG jobs", () => {
+    expect(workflow).not.toContain("validate-submission:");
+    expect(workflow).toContain("compile:\n    name: Compile");
+    expect(workflow).toContain("replay:\n    name: Replay\n    needs: [route, compile]");
+    expect(workflow).toContain("inspect:\n    name: Inspect\n    needs: [route, replay]");
+    expect(workflow).toContain("needs.compile.result == 'success'");
+    expect(workflow).toContain("needs.replay.result == 'success'");
+    expect(workflow).toContain("needs.inspect.result == 'success'");
+    expect(workflow.match(/runs-on: ubuntu-latest/gu)!.length).toBeGreaterThanOrEqual(3);
+    expect(workflow.match(/Reclaim hosted-runner disk/gu)).toHaveLength(3);
+    expect(workflow.match(/Ensure the pinned warm runtime is local/gu)).toHaveLength(3);
+    expect(workflow).toContain("node dist/submission-validation/run.js compile");
+    expect(workflow).toContain("node dist/submission-validation/run.js replay");
+    expect(workflow).toContain("node dist/submission-validation/run.js inspect");
+    expect(workflow).toContain("submission-validation-compile-${{ github.event.issue.number }}");
+    expect(workflow).toContain("submission-validation-replay-${{ github.event.issue.number }}");
+    expect(workflow).toContain(".build/submission-validation-compile.tar");
+    expect(workflow).toContain(".build/submission-validation-replay.tar");
+    expect(workflow.match(/--create/gu)).toHaveLength(2);
+    expect(workflow.match(/--extract/gu)).toHaveLength(2);
+    expect(workflow.match(/- name: Clean validation workspace\n        if: always\(\)/gu)).toHaveLength(3);
     expect(workflow).toContain(".build/submission-validation/validation-report.json");
     expect(workflow).toContain(".build/submission-validation/generated-build-output.json");
     expect(workflow).toContain(".build/submission-validation/capture.tar");
@@ -64,7 +70,7 @@ describe("submission workflow definition", () => {
   });
 
   it("separates database publication from Website credential creation", () => {
-    const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  validate-submission:"));
+    const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  compile:"));
     const website = workflow.slice(workflow.indexOf("  website:"), workflow.indexOf("  report-validation:"));
     expect(publish).toContain("Mint lax-database token");
     expect(publish).toContain("environment: lax-database-publish");
@@ -102,7 +108,9 @@ describe("submission workflow definition", () => {
 
   it("reports validation directly only when validation did not succeed", () => {
     const report = workflow.slice(workflow.indexOf("  report-validation:"), workflow.indexOf("  # TypeScript reports"));
-    expect(report).toContain("needs.validate-submission.result != 'success'");
+    expect(report).toContain("needs.compile.result != 'success'");
+    expect(report).toContain("needs.replay.result != 'success'");
+    expect(report).toContain("needs.inspect.result != 'success'");
   });
 
   it("has a correlated fallback for setup and action failures", () => {
