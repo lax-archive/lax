@@ -10,6 +10,10 @@ const runtimeWorkflow = fs.readFileSync(
   new URL("../../.github/workflows/validation-runtime.yml", import.meta.url),
   "utf8",
 );
+const stagedValidationRunner = fs.readFileSync(
+  new URL("../../src/submission-validation/run.ts", import.meta.url),
+  "utf8",
+);
 
 describe("GitHub Actions dependency pins", () => {
   it.each(workflowFiles)("pins every external action in %s to a full commit SHA", (file) => {
@@ -68,6 +72,9 @@ describe("submission workflow definition", () => {
     expect(workflow).toContain("node dist/submission-validation/run.js compile");
     expect(workflow).toContain("node dist/submission-validation/run.js replay");
     expect(workflow).toContain("node dist/submission-validation/run.js inspect");
+    expect(stagedValidationRunner).toContain(
+      'stage === "replay" ? ["compile"] : ["compile", "replay"]',
+    );
     expect(workflow).toContain("submission-validation-compile-${{ github.event.issue.number }}");
     expect(workflow).toContain("submission-validation-replay-report-${{ github.event.issue.number }}");
     expect(workflow).toContain(".build/submission-validation-compile.tar");

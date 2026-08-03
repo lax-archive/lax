@@ -109,7 +109,7 @@ export async function replaySubmission(
   return replayStage(compiled.state);
 }
 
-/** Resume a replayed workspace, inspect it, and emit the final validation report. */
+/** Resume a compiled (or sequentially replayed) workspace and inspect it. */
 export async function inspectSubmission(
   request: ValidationRequest,
   jobDir: string,
