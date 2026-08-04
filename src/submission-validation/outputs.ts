@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { formatProfile, type Span } from "../shared/profile.js";
 import type { ValidationReport } from "./contracts.js";
 
 export const VALIDATION_REPORT_FILENAME = "validation-report.json";
 export const GENERATED_BUILD_OUTPUT_FILENAME = "generated-build-output.json";
 export const CAPTURE_FILENAME = "capture.tar";
+export const VALIDATION_PROFILE_FILENAME = "validation-profile.json";
+
+const MAX_PROFILE_BYTES = 4 * 1024 * 1024;
+const MAX_PROFILE_STAGES = 16;
 
 /** Remove only this workflow's known outputs so a reused runner cannot upload stale results. */
 export function resetValidationOutputs(outputDir: string): void {
@@ -13,8 +18,73 @@ export function resetValidationOutputs(outputDir: string): void {
     VALIDATION_REPORT_FILENAME,
     GENERATED_BUILD_OUTPUT_FILENAME,
     CAPTURE_FILENAME,
+    VALIDATION_PROFILE_FILENAME,
   ]) {
     fs.rmSync(path.join(outputDir, filename), { force: true });
+  }
+}
+
+export interface RecordedProfile {
+  profileVersion: 1;
+  stages: Array<{ stage: string; completedAt: string; totalMs: number; span: Span }>;
+}
+
+/**
+ * Append this stage's span tree to the accumulating profile. Compile's copy
+ * travels forward inside the handoff, so the artifact Inspect uploads carries
+ * the whole run. Purely diagnostic: this file is not part of the evidence
+ * `parseSuccessfulValidationArtifacts` authenticates, and nothing here may
+ * fail a validation — every error is swallowed on purpose.
+ */
+export function recordValidationProfile(outputDir: string, stage: string, root: Span): void {
+  try {
+    const filename = path.join(outputDir, VALIDATION_PROFILE_FILENAME);
+    const profile = readProfile(filename);
+    profile.stages.push({
+      stage,
+      completedAt: new Date().toISOString(),
+      totalMs: Math.round(root.ms),
+      span: root,
+    });
+    if (profile.stages.length > MAX_PROFILE_STAGES) {
+      profile.stages.splice(0, profile.stages.length - MAX_PROFILE_STAGES);
+    }
+    atomicWriteJson(filename, profile);
+  } catch {
+    // Profiling never breaks a run.
+  }
+}
+
+/** Echo the span tree into the workflow run's step summary when there is one. */
+export function appendProfileStepSummary(stage: string, root: Span): void {
+  const filename = process.env.GITHUB_STEP_SUMMARY;
+  if (filename === undefined || filename === "") return;
+  try {
+    fs.appendFileSync(
+      filename,
+      `\n### lax validation profile — ${stage}\n\n\`\`\`\n${formatProfile(root)}\n\`\`\`\n`,
+      "utf8",
+    );
+  } catch {
+    // Profiling never breaks a run.
+  }
+}
+
+function readProfile(filename: string): RecordedProfile {
+  const fresh: RecordedProfile = { profileVersion: 1, stages: [] };
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(filename);
+  } catch {
+    return fresh;
+  }
+  if (!stat.isFile() || stat.size > MAX_PROFILE_BYTES) return fresh;
+  try {
+    const value = JSON.parse(fs.readFileSync(filename, "utf8")) as RecordedProfile;
+    if (value.profileVersion !== 1 || !Array.isArray(value.stages)) return fresh;
+    return value;
+  } catch {
+    return fresh;
   }
 }
 

@@ -79,6 +79,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+      # Read this run's own step timings for the job-overhead profile.
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -112,6 +114,17 @@ jobs:
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
         run: node dist/submission-validation/run.js compile
 
+      # Before packing, so the job's own overhead travels with the handoff and
+      # ends up in the artifact Inspect uploads. Packing and uploading are the
+      # only costs this misses.
+      - name: Record job cost
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+          LAX_VALIDATION_STAGE: compile
+        run: node dist/workflows/job-profile.js
+
       - name: Pack Compile handoff
         if: success()
         run: |
@@ -144,7 +157,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: submission-validation-${{ github.event.issue.number }}
-          path: .build/submission-validation/validation-report.json
+          path: |
+            .build/submission-validation/validation-report.json
+            .build/submission-validation/validation-profile.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -156,6 +171,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -201,6 +217,14 @@ jobs:
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
         run: node dist/submission-validation/run.js replay
 
+      - name: Record job cost
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+          LAX_VALIDATION_STAGE: replay
+        run: node dist/workflows/job-profile.js
+
       - name: Clean validation workspace
         if: always()
         env:
@@ -212,7 +236,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: submission-validation-replay-report-${{ github.event.issue.number }}
-          path: .build/submission-validation/validation-report.json
+          path: |
+            .build/submission-validation/validation-report.json
+            .build/submission-validation/validation-profile.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -224,6 +250,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -268,6 +295,13 @@ jobs:
           LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
         run: node dist/submission-validation/run.js inspect
+      - name: Record job cost
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+          LAX_VALIDATION_STAGE: inspect
+        run: node dist/workflows/job-profile.js
       - name: Clean validation workspace
         if: always()
         env:
@@ -280,6 +314,7 @@ jobs:
           name: submission-validation-${{ github.event.issue.number }}
           path: |
             .build/submission-validation/validation-report.json
+            .build/submission-validation/validation-profile.json
             .build/submission-validation/generated-build-output.json
             .build/submission-validation/capture.tar
           if-no-files-found: warn

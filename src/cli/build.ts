@@ -5,12 +5,12 @@ import path from "node:path";
 import { ArchiveSnapshot } from "../submission-validation/archive/snapshot.js";
 import type { ValidationRequest, ValidationScope } from "../submission-validation/contracts.js";
 import { validateSubmission } from "../submission-validation/pipeline.js";
+import { formatProfile, Profiler } from "../shared/profile.js";
 import { databaseDirectory } from "./database.js";
 import { formatLocalFindings } from "./findings.js";
 import { deriveLocalSource, repositoryRoot } from "./git.js";
 import { LoadingLine } from "./loading.js";
 import { submissionIdFromFolder } from "./manifest.js";
-import { formatProfile, type ProfileSpan } from "./profile.js";
 import { localValidationRuntime } from "./runtime.js";
 import type { SourceLocation } from "../shared/types.js";
 
@@ -47,8 +47,7 @@ export async function buildSubmission(
   fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
   const scope = options.scope ?? "both";
   const progress = new LoadingLine(process.stderr);
-  const spans: ProfileSpan[] = [];
-  const started = performance.now();
+  const profiler = new Profiler();
   console.log(
     `lax build: validating ${request.id}${scope === "both" ? "" : ` (${scope} only)`}` +
       `${options.replay === true ? " with kernel replay" : ""}`,
@@ -63,9 +62,9 @@ export async function buildSubmission(
       sealCapture: false,
       scope,
       runtime,
+      profiler,
       onPhase: (event) => {
         if (event.state === "start") progress.update(`lax build · ${event.name}`);
-        else if (event.durationMs !== undefined) spans.push({ name: event.name, ms: event.durationMs });
       },
     });
     progress.clear();
@@ -76,13 +75,13 @@ export async function buildSubmission(
           .filter((line): line is string => line !== undefined)
           .join("\n"),
       );
-      if (options.profile === true) console.log(`\n${formatProfile(spans, performance.now() - started)}`);
+      if (options.profile === true) console.log(`\n${formatProfile(profiler.snapshot())}`);
       return 1;
     }
     if (findings !== undefined) console.warn(findings);
     if (scope !== "both") {
       console.log(`lax build: OK (${scope} only) — partial build; build-output.json was not changed`);
-      if (options.profile === true) console.log(`\n${formatProfile(spans, performance.now() - started)}`);
+      if (options.profile === true) console.log(`\n${formatProfile(profiler.snapshot())}`);
       return 0;
     }
     const output = {
@@ -102,7 +101,7 @@ export async function buildSubmission(
     fs.writeFileSync(staging, `${JSON.stringify(output, null, 2)}\n`);
     fs.renameSync(staging, filename);
     console.log(`lax build: OK — ${filename} written`);
-    if (options.profile === true) console.log(`\n${formatProfile(spans, performance.now() - started)}`);
+    if (options.profile === true) console.log(`\n${formatProfile(profiler.snapshot())}`);
     return 0;
   } finally {
     progress.clear();
