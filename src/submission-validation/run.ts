@@ -2,12 +2,18 @@ import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { Profiler } from "../shared/profile.js";
 import { decodeUtf8, isObject, requireExactKeys, ValidationError } from "../shared/validation.js";
 import {
   type ValidationRequest,
   validationRequestFromUnknown,
 } from "./contracts.js";
-import { resetValidationOutputs, writeValidationOutputs } from "./outputs.js";
+import {
+  appendProfileStepSummary,
+  recordValidationProfile,
+  resetValidationOutputs,
+  writeValidationOutputs,
+} from "./outputs.js";
 import {
   compileSubmission,
   inspectSubmission,
@@ -35,6 +41,10 @@ const outputDir = validationOutputDirectory();
 const jobDir = path.join(outputDir, "work");
 const statePath = path.join(outputDir, "stage-state.json");
 
+// One profiler per invocation. Each stage records its own span tree into the
+// shared profile file, which travels forward inside the Compile handoff.
+const profiler = new Profiler();
+
 let exitCode = 1;
 try {
   if (mode === "cleanup") {
@@ -46,7 +56,7 @@ try {
     fs.rmSync(statePath, { force: true });
     removeValidationWorkspace(jobDir);
     fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
-    const report = await validateSubmission(readRequest(), jobDir);
+    const report = await validateSubmission(readRequest(), jobDir, { profiler });
     writeValidationOutputs(outputDir, report);
     exitCode = report.ok ? 0 : 2;
   } else {
@@ -57,6 +67,13 @@ try {
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
 } finally {
+  // Record the timings whatever the outcome: a slow failure is exactly the
+  // run whose profile is worth reading.
+  if (mode !== "cleanup") {
+    const snapshot = profiler.snapshot();
+    recordValidationProfile(outputDir, mode ?? "validate", snapshot);
+    appendProfileStepSummary(mode ?? "validate", snapshot);
+  }
   // The single-process entry point retains its original cleanup behavior.
   // Staged workflow invocations deliberately preserve work until the
   // unconditional cleanup step runs after Compile, Replay, and Inspect.
@@ -66,7 +83,7 @@ process.exitCode = exitCode;
 
 async function runStage(stage: Stage, request: ValidationRequest): Promise<number> {
   if (stage === "compile") {
-    const failure = await compileSubmission(request, jobDir);
+    const failure = await compileSubmission(request, jobDir, { profiler });
     if (failure !== undefined) {
       writeValidationOutputs(outputDir, failure);
       return 2;
@@ -82,7 +99,7 @@ async function runStage(stage: Stage, request: ValidationRequest): Promise<numbe
 
   requireStageState(stage === "replay" ? ["compile"] : ["compile", "replay"], request);
   if (stage === "replay") {
-    const failure = await replaySubmission(request, jobDir);
+    const failure = await replaySubmission(request, jobDir, { profiler });
     if (failure !== undefined) {
       writeValidationOutputs(outputDir, failure);
       return 2;
@@ -96,7 +113,7 @@ async function runStage(stage: Stage, request: ValidationRequest): Promise<numbe
     return 0;
   }
 
-  const report = await inspectSubmission(request, jobDir);
+  const report = await inspectSubmission(request, jobDir, { profiler });
   writeValidationOutputs(outputDir, report);
   return report.ok ? 0 : 2;
 }

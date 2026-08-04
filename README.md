@@ -176,7 +176,13 @@ working tree and local database clone, then writes `build-output.json`.
 Server-only source fetching and artifact publication are omitted locally;
 kernel replay is opt-in with `--replay`. `--only concepts` and `--only proofs`
 provide partial iteration builds without replacing `build-output.json`, and
-`--profile` prints phase timings. Set `LAX_VALIDATION_IMAGE` to the published
+`--profile` prints the nested span tree — every phase, the container
+invocations inside it, and how much of the run was container time. The trusted
+workflow collects the same tree without being asked: each validation job writes
+its spans to `validation-profile.json` beside the validation report, uploads it
+with the run's artifacts, and echoes it into the job's step summary. The
+profile is diagnostics only; nothing that authenticates a publication reads it.
+Set `LAX_VALIDATION_IMAGE` to the published
 immutable `@sha256` validation image, or use `--build-from-source` to build and
 cache the pinned runtime locally. Independent local findings are reported once
 in a phase-grouped summary instead of as separate errors.

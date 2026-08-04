@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { ValidationRuntimeIdentity } from "../contracts.js";
+import type { Profiler } from "../../shared/profile.js";
 import { assertWorkspaceWithinLimit } from "./workspace-limit.js";
 
 export interface ContainerMount {
@@ -39,10 +40,17 @@ export class ContainerRunner {
     private readonly runtime: ValidationRuntimeIdentity,
     private readonly limits: ValidationLimits,
     private readonly workspaceRoot: string,
+    private readonly profiler?: Profiler,
   ) {}
 
+  /** Time one container invocation, so the profile prices container startup. */
+  private timed<T>(label: string, operation: () => Promise<T>): Promise<T> {
+    if (this.profiler === undefined) return operation();
+    return this.profiler.span(`container ${label}`, operation, { container: true });
+  }
+
   async verifyRuntime(): Promise<void> {
-    const result = await runProcess(
+    const result = await this.timed("runtime-manifest", () => runProcess(
       "docker",
       [
         "run",
@@ -57,7 +65,7 @@ export class ContainerRunner {
       ],
       60_000,
       64 * 1024,
-    );
+    ));
     if (result.code !== 0) throw new Error(`validation runtime is unavailable: ${result.output.trim()}`);
     let actual: unknown;
     try {
@@ -111,13 +119,13 @@ export class ContainerRunner {
       args.push("--env", `${key}=${value}`);
     }
     args.push(this.runtime.image, ...invocation.args);
-    const result = await runProcess(
+    const result = await this.timed(invocation.label, () => runProcess(
       "docker",
       args,
       invocation.timeoutMs,
       invocation.maxOutputBytes,
       () => assertWorkspaceWithinLimit(this.workspaceRoot, this.limits),
-    );
+    ));
     if (result.timedOut || result.terminationError !== undefined) {
       await runProcess("docker", ["rm", "--force", name], 10_000, 64 * 1024).catch(() => undefined);
     }

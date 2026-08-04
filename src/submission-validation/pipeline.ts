@@ -26,6 +26,7 @@ import {
 import { replayPackage } from "./phases/replay.js";
 import { runResolution } from "./phases/resolution.js";
 import { runStaticValidation } from "./phases/static.js";
+import { Profiler } from "../shared/profile.js";
 import { ContainerRunner } from "./sandbox/container.js";
 import { assertWorkspaceWithinLimit } from "./sandbox/workspace-limit.js";
 import { containedDirectory, fetchSource, type FetchedSource } from "./source/fetch.js";
@@ -43,6 +44,12 @@ export interface ValidationOptions {
   runtime?: ValidationRuntimeIdentity;
   /** Local presentation hook. Trusted workflow output remains unchanged. */
   onPhase?: (event: { name: string; state: "start" | "complete"; durationMs?: number }) => void;
+  /**
+   * Collects the span tree. The caller owns it so the timings survive the
+   * early returns that report a failed validation, and so a staged workflow
+   * invocation can persist them after the pipeline has returned.
+   */
+  profiler?: Profiler;
 }
 
 interface ReportState {
@@ -170,22 +177,21 @@ async function compileStage(
       ));
     await state.phase("compile concepts", () =>
       compileConcepts(conceptWorkspace, state.dependencyRoot, state.runner, state.limits));
-    capturePackage(
+    await state.phase("capture concepts", () => capturePackage(
       "concepts",
       state.fetched.submissionRoot,
       conceptWorkspace.libraries.concepts,
       conceptWorkspace.manifests.concepts,
       state.staticResult.concepts!.inventory,
       state.captureRoot,
-    );
+    ));
   } catch (error) {
     return { report: fail(state, "compile-concepts", "compile", error) };
   }
 
-  let proofWorkspace: ProvisionedWorkspace | undefined;
   if (state.scope !== "concepts") {
     try {
-      proofWorkspace = await state.phase("provision proofs", () =>
+      const proofWorkspace: ProvisionedWorkspace = await state.phase("provision proofs", () =>
         provisionWorkspace(
           "proofs",
           state.fetched,
@@ -198,17 +204,18 @@ async function compileStage(
           state.runner,
           state.limits,
         ));
-      installOwnConceptCapture(proofWorkspace, state.captureRoot);
+      await state.phase("install concept capture", () =>
+        installOwnConceptCapture(proofWorkspace, state.captureRoot));
       await state.phase("compile proofs", () =>
-        compileProofs(proofWorkspace!, state.dependencyRoot, state.runner, state.limits));
-      capturePackage(
+        compileProofs(proofWorkspace, state.dependencyRoot, state.runner, state.limits));
+      await state.phase("capture proofs", () => capturePackage(
         "proofs",
         state.fetched.submissionRoot,
         proofWorkspace.libraries.proofs,
         proofWorkspace.manifests.proofs,
         state.staticResult.proofs!.inventory,
         state.captureRoot,
-      );
+      ));
     } catch (error) {
       return { report: fail(state, "compile-proofs", "compile", error) };
     }
@@ -279,14 +286,14 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationReport
   } catch (error) {
     return fail(state, "inspect", "inspector", error);
   }
-  const inspection = judgeInspection(
+  const inspection = await state.phase("judge inspection", () => judgeInspection(
     conceptReport,
     proofReport,
     state.staticResult.concepts!.inventory,
     state.scope === "concepts" ? undefined : state.staticResult.proofs!.inventory,
     state.resolution,
     state.scope,
-  );
+  ));
   state.warnings.push(...inspection.findings.warnings);
   state.violations.push(...inspection.findings.violations);
   if (inspection.findings.failed) return report(state, false);
@@ -325,7 +332,8 @@ async function prepareValidation(
 ): Promise<Preparation> {
   const runtime = options.runtime ?? configuredRuntime();
   const limits = DEFAULT_LIMITS;
-  const runner = new ContainerRunner(runtime, limits, jobDir);
+  const profiler = options.profiler ?? new Profiler();
+  const runner = new ContainerRunner(runtime, limits, jobDir, profiler);
   const scope = options.scope ?? "both";
   const warnings: ValidationFinding[] = [];
   const violations: ValidationFinding[] = [];
@@ -334,9 +342,11 @@ async function prepareValidation(
     options.onPhase?.({ name, state: "start" });
     const started = performance.now();
     try {
-      const result = await operation();
-      assertWorkspaceWithinLimit(jobDir, limits);
-      return result;
+      return await profiler.span(name, async () => {
+        const result = await operation();
+        assertWorkspaceWithinLimit(jobDir, limits);
+        return result;
+      });
     } finally {
       options.onPhase?.({ name, state: "complete", durationMs: performance.now() - started });
     }
