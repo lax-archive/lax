@@ -67,8 +67,13 @@ describe("submission workflow definition", () => {
     expect(workflow).toContain("needs.validation-result.outputs.should_publish == 'true'");
     expect(workflow).not.toMatch(/^  report-validation:/mu);
     expect(workflow.match(/runs-on: ubuntu-latest/gu)!.length).toBeGreaterThanOrEqual(3);
-    expect(workflow.match(/Reclaim hosted-runner disk/gu)).toHaveLength(3);
-    expect(workflow.match(/Ensure the pinned warm runtime is local/gu)).toHaveLength(3);
+    // Each validation job frees disk and materializes the pinned runtime in one
+    // step, with the reclaim running alongside the pull rather than before it.
+    expect(workflow.match(/Reclaim disk and fetch the pinned warm runtime/gu)).toHaveLength(3);
+    expect(workflow.match(/sudo rm -rf [^\n]*&\n\s*reclaim=\$!/gu)).toHaveLength(3);
+    // `docker system prune --all` only ever guaranteed a cold image cache. The
+    // comment explaining its absence may name it; no step may run it.
+    expect(workflow).not.toMatch(/^\s*docker system prune/mu);
     expect(workflow).toContain("node dist/submission-validation/run.js compile");
     expect(workflow).toContain("node dist/submission-validation/run.js replay");
     expect(workflow).toContain("node dist/submission-validation/run.js inspect");

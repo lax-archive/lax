@@ -85,10 +85,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Reclaim hosted-runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
-          docker system prune --all --force
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -100,13 +96,49 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Ensure the pinned warm runtime is local
+      # Reclaiming disk and fetching the runtime are independent, and the
+      # reclaim only ever adds free space, so the pull cannot be starved by
+      # running alongside it. `docker system prune --all` is deliberately
+      # absent: it ran *before* the pull on a runner whose only images are the
+      # preinstalled ones, so it could never speed the pull up — it only
+      # guaranteed a cold cache, for 30-66s.
+      - name: Reclaim disk and fetch the pinned warm runtime
         env:
           IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
         run: |
+          free() { df -B1 --output=avail / | tail -1; }
+          before=$(free)
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc &
+          reclaim=$!
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull "$IMAGE"
           fi
+          wait "$reclaim"
+          after=$(free)
+          image=$(docker image inspect "$IMAGE" --format '{{.Size}}')
+          echo "runner disk free: $(numfmt --to=iec "$before") before, $(numfmt --to=iec "$after") after"
+          echo "validation image on disk: $(numfmt --to=iec "$image")"
+      # One-off measurement: where the runtime image's bytes actually sit.
+      # Remove once it has been read.
+      - name: Break down the validation image
+        continue-on-error: true
+        env:
+          IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
+        run: |
+          docker run --rm --network=none --entrypoint=/bin/sh "$IMAGE" -c '
+            W=/opt/lax-runtime/warm/.lake/packages
+            echo "== largest packages =="
+            du -sh $W/*/ | sort -h | tail -6
+            echo "== bytes by file kind, all packages =="
+            for k in olean ilean c o trace hash lean; do
+              printf "  %-6s " "$k"
+              find $W -type f -name "*.$k" -print0 | du -ch --files0-from=- 2>/dev/null | tail -1
+            done
+            echo "== git metadata =="
+            du -shc $W/*/.git 2>/dev/null | tail -1
+            echo "== outside the warm workspace =="
+            du -sh /opt/elan /opt/lax-runtime/bin /usr /var 2>/dev/null
+          '
       - name: Compile
         env:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
@@ -176,10 +208,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Reclaim hosted-runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
-          docker system prune --all --force
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -191,13 +219,28 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Ensure the pinned warm runtime is local
+      # Reclaiming disk and fetching the runtime are independent, and the
+      # reclaim only ever adds free space, so the pull cannot be starved by
+      # running alongside it. `docker system prune --all` is deliberately
+      # absent: it ran *before* the pull on a runner whose only images are the
+      # preinstalled ones, so it could never speed the pull up — it only
+      # guaranteed a cold cache, for 30-66s.
+      - name: Reclaim disk and fetch the pinned warm runtime
         env:
           IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
         run: |
+          free() { df -B1 --output=avail / | tail -1; }
+          before=$(free)
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc &
+          reclaim=$!
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull "$IMAGE"
           fi
+          wait "$reclaim"
+          after=$(free)
+          image=$(docker image inspect "$IMAGE" --format '{{.Size}}')
+          echo "runner disk free: $(numfmt --to=iec "$before") before, $(numfmt --to=iec "$after") after"
+          echo "validation image on disk: $(numfmt --to=iec "$image")"
       - name: Restore Compile handoff
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -255,10 +298,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Reclaim hosted-runner disk
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
-          docker system prune --all --force
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -270,13 +309,28 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Ensure the pinned warm runtime is local
+      # Reclaiming disk and fetching the runtime are independent, and the
+      # reclaim only ever adds free space, so the pull cannot be starved by
+      # running alongside it. `docker system prune --all` is deliberately
+      # absent: it ran *before* the pull on a runner whose only images are the
+      # preinstalled ones, so it could never speed the pull up — it only
+      # guaranteed a cold cache, for 30-66s.
+      - name: Reclaim disk and fetch the pinned warm runtime
         env:
           IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
         run: |
+          free() { df -B1 --output=avail / | tail -1; }
+          before=$(free)
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc &
+          reclaim=$!
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull "$IMAGE"
           fi
+          wait "$reclaim"
+          after=$(free)
+          image=$(docker image inspect "$IMAGE" --format '{{.Size}}')
+          echo "runner disk free: $(numfmt --to=iec "$before") before, $(numfmt --to=iec "$after") after"
+          echo "validation image on disk: $(numfmt --to=iec "$image")"
       - name: Restore Compile handoff
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
