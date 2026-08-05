@@ -192,7 +192,6 @@ describe("validation runtime boundaries retained from main", () => {
       ".",
       staticResult("lax-9"),
       { concepts: [], proofs: [], all: [] },
-      { concepts: [], proofs: [], closure: new Map() },
       job,
       warm,
     );

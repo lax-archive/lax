@@ -5,7 +5,6 @@ import type { ResolutionResult, StaticResult } from "../contracts.js";
 import type { FetchedSource } from "../source/fetch.js";
 import type { ContainerMount } from "../sandbox/container.js";
 import { seedManifest, seedOverrides } from "../host/warmstore.js";
-import { flattenClosure, type SiblingGraph } from "./siblings.js";
 
 export interface ProvisionedWorkspace {
   repositoryRoot: string;
@@ -33,7 +32,6 @@ export function provisionWorkspace(
   sourceFolder: string,
   staticResult: StaticResult,
   resolution: ResolutionResult,
-  siblings: SiblingGraph,
   jobDir: string,
   warmWs: string,
 ): ProvisionedWorkspace {
@@ -50,34 +48,25 @@ export function provisionWorkspace(
     },
   });
   const submissionRoot = sourceFolder === "." ? repositoryRoot : path.join(repositoryRoot, sourceFolder);
-  const siblingNames = new Set(siblings.closure.keys());
   for (const kind of ["concepts", "proofs"] as const) {
     const staticPackage = staticResult[kind];
     if (staticPackage === undefined) continue;
-    // The sibling graph is resolved against the fetched checkout. Rebase its
-    // package directories from that same tree; using the later workspace copy
-    // here produces paths that escape through ../../../../source/... once Lake
-    // reads the manifest from the read-only /source mount.
-    const flattened = flattenClosure(path.join(fetched.submissionRoot, kind), siblings.closure);
-    const pathDependencies = new Map<string, string>();
-    for (const dependency of staticPackage.lakefile.pathRequires)
-      pathDependencies.set(dependency.name, dependency.path);
-    for (const dependency of flattened.pathDeps)
-      pathDependencies.set(dependency.name, dependency.dir);
-    if (kind === "proofs" && staticPackage.lakefile.hasConceptPathRequire && staticResult.concepts !== undefined) {
-      pathDependencies.set(staticResult.concepts.lakefile.packageName, "../concepts");
-    }
-    const dependencies = dependencyClosure(kind, resolution)
-      .filter((dependency) => !siblingNames.has(dependency.packageName));
+    // The proof package's own concept package is the only in-tree path
+    // dependency there is; everything else is a rev-pinned require resolved
+    // to a published capture.
+    const ownConcepts =
+      kind === "proofs" && staticPackage.lakefile.hasConceptPathRequire && staticResult.concepts !== undefined
+        ? [{ name: staticResult.concepts.lakefile.packageName, dir: "../concepts" }]
+        : [];
     const pkgDir = path.join(submissionRoot, kind);
     seedManifest(warmWs, pkgDir, [
       // required submissions materialize from their published captures at the
       // read-only /deps mount; their manifest dirs are container-absolute
-      ...dependencies.map((dependency) => ({
+      ...dependencyClosure(kind, resolution).map((dependency) => ({
         name: dependency.packageName,
         dir: `/deps/${dependency.submissionId}/${dependency.kind}/package`,
       })),
-      ...[...pathDependencies].map(([name, dir]) => ({ name, dir })),
+      ...ownConcepts,
     ]);
     seedOverrides(warmWs, pkgDir, RUNTIME_PATHS.warmWorkspace);
   }
@@ -92,10 +81,8 @@ export function provisionWorkspace(
   ) as Record<"concepts" | "proofs", string>;
   const isolated = isolateBuildDirectories(
     path.join(jobDir, "workspaces", label),
-    fetched.repositoryRoot,
     repositoryRoot,
     submissionRoot,
-    siblings,
   );
   return {
     repositoryRoot,
@@ -108,24 +95,15 @@ export function provisionWorkspace(
 
 function isolateBuildDirectories(
   workspaceRoot: string,
-  fetchedRepositoryRoot: string,
   repositoryRoot: string,
   submissionRoot: string,
-  siblings: SiblingGraph,
 ): Pick<ProvisionedWorkspace, "libraries" | "buildMounts"> {
   const ownDirectories = {
     concepts: path.join(submissionRoot, "concepts"),
     proofs: path.join(submissionRoot, "proofs"),
   };
-  const canonicalFetchedRepositoryRoot = fs.realpathSync(fetchedRepositoryRoot);
-  const siblingDirectories = [...new Set([...siblings.closure.values()].map((entry) => {
-    const relative = path.relative(canonicalFetchedRepositoryRoot, fs.realpathSync(entry.pkgDir));
-    if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
-      throw new Error("sibling package escaped the provisioned repository");
-    return path.join(repositoryRoot, relative);
-  }))];
   const buildRoots = new Map<string, string>();
-  for (const packageDirectory of [...Object.values(ownDirectories), ...siblingDirectories]) {
+  for (const packageDirectory of Object.values(ownDirectories)) {
     const relative = path.relative(repositoryRoot, packageDirectory);
     if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
       throw new Error("package build directory escaped the provisioned repository");
@@ -150,21 +128,16 @@ function isolateBuildDirectories(
     target: `/source/${path.relative(repositoryRoot, packageDirectory).split(path.sep).join("/")}/.lake`,
     writable: true,
   });
-  const siblingMounts = siblingDirectories.map(mount);
   const conceptMount = mount(ownDirectories.concepts);
   return {
     libraries,
     buildMounts: {
-      concepts: [conceptMount, ...siblingMounts],
+      concepts: [conceptMount],
       // Lake may refresh dependency traces or replace stale outputs while
       // compiling proofs, so the private concepts .lake mount must remain
       // writable as a whole. The separately captured concepts artifacts are
       // never mounted here; Replay later authenticates proofs against them.
-      proofs: [
-        conceptMount,
-        mount(ownDirectories.proofs),
-        ...siblingMounts,
-      ],
+      proofs: [conceptMount, mount(ownDirectories.proofs)],
     },
   };
 }

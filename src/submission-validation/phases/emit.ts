@@ -28,14 +28,12 @@ export function emitBuildOutput(
   }));
   return {
     inputs: { manifest: staticResult.manifest, abstract: staticResult.abstract },
-    requiredByConcepts: [
-      ...staticResult.concepts.lakefile.gitRequires.map((entry) => entry.name),
-      ...staticResult.concepts.lakefile.pathRequires.map((entry) => entry.name),
-    ].sort(),
-    requiredByProofs: [
-      ...staticResult.proofs.lakefile.gitRequires.map((entry) => entry.name),
-      ...staticResult.proofs.lakefile.pathRequires.map((entry) => entry.name),
-    ].sort(),
+    requiredByConcepts: staticResult.concepts.lakefile.gitRequires
+      .map((entry) => entry.name)
+      .sort(),
+    requiredByProofs: staticResult.proofs.lakefile.gitRequires
+      .map((entry) => entry.name)
+      .sort(),
     concepts: concepts.sort((a, b) => a.id.localeCompare(b.id)),
     proofs: inspection.proofs
       .map((proof) => ({ ...proof, assumptions: [...proof.assumptions].sort() }))

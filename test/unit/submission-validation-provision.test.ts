@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_LIMITS } from "../../src/submission-validation/config.js";
@@ -29,45 +28,37 @@ function fakeWarm(): string {
 }
 
 describe("submission workspace provisioning", () => {
-  it("keeps sibling paths relative to the fetched repository after workspace copying", () => {
-    const sourceRoot = temporary("lax-provision-siblings-");
+  it("seeds only the own ../concepts edge, never a path out of the submission", () => {
+    const sourceRoot = temporary("lax-provision-tree-");
     makeSubmission("lax-1", path.join(sourceRoot, "a"));
     const submissionRoot = makeSubmission("lax-2", path.join(sourceRoot, "b"));
     const job = temporary("lax-provision-job-");
-    const checked = staticResult("lax-2");
-    checked.concepts!.lakefile.pathRequires.push({ name: "Lax1", path: "../../a/concepts" });
 
     const workspace = provisionWorkspace(
-      "concepts",
+      "proofs",
       { repositoryRoot: sourceRoot, submissionRoot },
       "b",
-      checked,
+      staticResult("lax-2"),
       { concepts: [], proofs: [], all: [] },
-      {
-        concepts: [],
-        proofs: [],
-        closure: new Map([
-          ["Lax1", {
-            pkgDir: fs.realpathSync(path.join(sourceRoot, "a", "concepts")),
-            gitRequires: [],
-            pathEntries: [],
-          }],
-        ]),
-      },
       job,
       fakeWarm(),
     );
 
-    const manifest = JSON.parse(workspace.manifests.concepts) as {
-      packages: Array<{ type: string; name: string; dir?: string }>;
-    };
-    expect(manifest.packages).toContainEqual(
-      expect.objectContaining({ type: "path", name: "Lax1", dir: "../../a/concepts" }),
+    const packages = (kind: "concepts" | "proofs") =>
+      (JSON.parse(workspace.manifests[kind]) as {
+        packages: Array<{ type: string; name: string; dir?: string }>;
+      }).packages;
+    // the proof package's own concept package, spelled relatively
+    expect(packages("proofs")).toContainEqual(
+      expect.objectContaining({ type: "path", name: "Lax2", dir: "../concepts" }),
     );
-    // sibling dirs must never escape through the absolute fetched-source tree
-    expect(manifest.packages.some((entry) => entry.dir?.includes("source"))).toBe(false);
+    // nothing reaches another submission folder, and no path escapes into the
+    // absolute fetched-source tree
+    for (const kind of ["concepts", "proofs"] as const)
+      for (const entry of packages(kind))
+        expect(entry.dir === undefined || entry.dir === "../concepts").toBe(true);
     // the warm workspace's own locked entries carry over verbatim
-    expect(manifest.packages).toContainEqual(expect.objectContaining({ name: "mathlib" }));
+    expect(packages("concepts")).toContainEqual(expect.objectContaining({ name: "mathlib" }));
   });
 
   it("materializes resolved dependencies at their in-container capture mounts", () => {
@@ -93,7 +84,6 @@ describe("submission workspace provisioning", () => {
       ".",
       staticResult("lax-2"),
       { concepts: [dependency], proofs: [dependency], all: [dependency] },
-      { concepts: [], proofs: [], closure: new Map() },
       job,
       fakeWarm(),
     );

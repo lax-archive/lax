@@ -75,7 +75,6 @@ interface PreparedValidation extends ReportState {
   fetched: FetchedSource;
   staticResult: StaticResult;
   resolution: ResolutionResult;
-  siblings: ReturnType<typeof runResolution>["siblings"];
   dependencyRoot: string;
   /** host path of the warm workspace the sandbox mounts read-only */
   warmWs: string;
@@ -138,7 +137,6 @@ async function compileStage(
         request.source.folder,
         state.staticResult,
         state.resolution,
-        state.siblings,
         state.jobDir,
         state.warmWs,
       ));
@@ -165,7 +163,6 @@ async function compileStage(
           request.source.folder,
           state.staticResult,
           state.resolution,
-          state.siblings,
           state.jobDir,
           state.warmWs,
         ));
@@ -346,14 +343,7 @@ async function prepareValidation(
     return { report: report(base(), false) };
 
   const resolution = await phase("dependency resolution", () =>
-    runResolution(
-      request,
-      staticCheck.result,
-      archive,
-      runtime,
-      fetched.repositoryRoot,
-      fetched.submissionRoot,
-    ));
+    runResolution(request, staticCheck.result, archive, runtime));
   warnings.push(...resolution.findings.warnings);
   violations.push(...resolution.findings.violations);
   dependencies = resolution.result.all;
@@ -370,7 +360,6 @@ async function prepareValidation(
       fetched,
       staticResult: staticCheck.result,
       resolution: resolution.result,
-      siblings: resolution.siblings,
       dependencyRoot: path.join(jobDir, "dependencies"),
       // the same pin-keyed warm workspace verifyRuntime asserted ready and
       // the runner mounts; provisioning reads its locked manifest on the host

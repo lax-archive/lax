@@ -90,15 +90,7 @@ function withConceptRequires(
 }
 
 function resolve(staticCheck: StaticResult, archive: ArchiveSnapshot) {
-  const repositoryRoot = temporary("lax-resolution-source-");
-  return runResolution(
-    request("lax-9"),
-    staticCheck,
-    archive,
-    RUNTIME,
-    repositoryRoot,
-    repositoryRoot,
-  );
+  return runResolution(request("lax-9"), staticCheck, archive, RUNTIME);
 }
 
 describe("Archive dependency resolution retained from main", () => {
@@ -125,9 +117,13 @@ describe("Archive dependency resolution retained from main", () => {
     expect(crossWired.findings.violations.map((finding) => finding.rule)).toContain(
       "dependency-source",
     );
-    expect(crossWired.findings.violations.map((finding) => finding.message).join("\n")).toContain(
-      "does not match the Archive source triple",
-    );
+    const crossWiredMessage = crossWired.findings.violations
+      .map((finding) => finding.message)
+      .join("\n");
+    expect(crossWiredMessage).toContain("does not match the Archive source triple");
+    // a stale pin is the chain workflow's characteristic failure: the message
+    // has to say how to relink the chain
+    expect(crossWiredMessage).toContain("chain workflow");
   });
 
   it("distinguishes missing and permanently deleted dependencies", () => {

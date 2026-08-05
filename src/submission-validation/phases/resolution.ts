@@ -7,20 +7,17 @@ import type {
   ValidationRuntimeIdentity,
 } from "../contracts.js";
 import { submissionIdForPackage } from "../contracts.js";
+import { CHAIN_WORKFLOW_HINT } from "../chain-workflow.js";
 import { FindingCollector } from "../findings.js";
 import type { ArchiveSnapshot } from "../archive/snapshot.js";
-import { resolveSiblings, type SiblingGraph } from "./siblings.js";
 
 export function runResolution(
   request: ValidationRequest,
   staticResult: StaticResult,
   archive: ArchiveSnapshot,
   runtime: ValidationRuntimeIdentity,
-  repositoryRoot: string,
-  submissionRoot: string,
-): { result: ResolutionResult; findings: FindingCollector; siblings: SiblingGraph } {
+): { result: ResolutionResult; findings: FindingCollector } {
   const findings = new FindingCollector("resolution");
-  const siblings = resolveSiblings(submissionRoot, staticResult, findings);
   const concepts: ResolvedDependency[] = [];
   const proofs: ResolvedDependency[] = [];
   const byPackage = new Map<string, ResolvedDependency>();
@@ -49,7 +46,11 @@ export function runResolution(
       return undefined;
     }
     if (record === undefined || record.source === undefined || (record.state !== "draft" && record.state !== "registered")) {
-      findings.violate("missing-dependency", `${packageName} has no content-bearing Archive record at ${archive.sha}`);
+      findings.violate(
+        "missing-dependency",
+        `${packageName} has no content-bearing Archive record at ${archive.sha}. ` +
+          CHAIN_WORKFLOW_HINT,
+      );
       return undefined;
     }
     if (record.state === "draft")
@@ -64,7 +65,9 @@ export function runResolution(
     ) {
       findings.violate(
         "dependency-source",
-        `${packageName} does not match the Archive source triple (${record.source.repository}, ${record.source.commit}, ${expectedSubDir})`,
+        `${packageName} does not match the Archive source triple ` +
+          `(${record.source.repository}, ${record.source.commit}, ${expectedSubDir}). ` +
+          CHAIN_WORKFLOW_HINT,
       );
       return undefined;
     }
@@ -111,29 +114,6 @@ export function runResolution(
     });
     if (dependency !== undefined) proofs.push(dependency);
   }
-  for (const kind of ["concepts", "proofs"] as const) {
-    for (const edge of siblings[kind]) {
-      if (edge.folder === undefined) {
-        findings.violate("sibling-source", `${edge.name} has no repository-relative submission folder`);
-        continue;
-      }
-      const dependency = resolve(edge.name, {
-        repository: request.source.repository,
-        commit: request.source.commit,
-        subDir: joinFolder(edge.folder, edge.kind),
-      });
-      if (dependency !== undefined) (kind === "concepts" ? concepts : proofs).push(dependency);
-    }
-  }
-  for (const [packageName, entry] of siblings.closure) {
-    const targetFolder = path.relative(repositoryRoot, path.dirname(entry.pkgDir)).split(path.sep).join("/") || ".";
-    const targetKind = packageName.endsWith("Proofs") ? "proofs" : "concepts";
-    resolve(packageName, {
-      repository: request.source.repository,
-      commit: request.source.commit,
-      subDir: joinFolder(targetFolder, targetKind),
-    });
-  }
 
   return {
     result: {
@@ -142,7 +122,6 @@ export function runResolution(
       all: [...byPackage.values()].sort((a, b) => a.packageName.localeCompare(b.packageName)),
     },
     findings,
-    siblings,
   };
 }
 
@@ -159,7 +138,8 @@ function checkExpectedSource(
   ) findings.violate(
     "dependency-source",
     `${dependency.packageName} does not match the Archive source triple ` +
-      `(${dependency.source.repository}, ${dependency.source.commit}, ${subDir})`,
+      `(${dependency.source.repository}, ${dependency.source.commit}, ${subDir}). ` +
+      CHAIN_WORKFLOW_HINT,
   );
 }
 

@@ -66,6 +66,42 @@ digest-addressed ghcr artifact, and commits only the authoritative
 synchronizes the issue title to the accepted manifest title, and dispatches a
 complete Website rebuild. A failed check creates no database commit.
 
+### Depending on another submission: the chain workflow
+
+Every cross-submission dependency is a `git` require pinned to an exact
+commit. A `path` require is rejected: the only one a lakefile may carry is
+the proof package's own concept package, spelled exactly
+`{ name = "LaxN", path = "../concepts" }` in `proofs/lakefile.toml`.
+
+So a chain `A -> B -> C` lands bottom-up, one full round trip per member:
+
+```sh
+# 1. C is self-contained: commit, push, submit it
+lax submit c-submission
+# 2. patch C's commit into B's lakefile, then commit, push, submit B
+#    [[require]] name = "LaxC", git = "https://github.com/you/repo",
+#                rev = "<C's commit>", subDir = "c-submission/concepts"
+lax submit b-submission
+# 3. the same for A against B's new commit
+lax submit a-submission
+```
+
+The require's `rev` is the commit that was submitted, and `subDir` is that
+submission's folder plus `concepts` or `proofs`. If a require names a triple
+that is not the dependency's registered source, validation rejects it and
+repeats this workflow in the error message.
+
+While iterating locally you do not have to chain anything: two drafts in one
+working tree can be pointed at each other through the lax-managed package
+overrides, and only the final commits need the pins.
+
+Honest caveat: the chain is not atomic. Each member is registered by its own
+round trip, so a failure part way up leaves the members below it registered
+for good while the top never lands. Registration is permanent, so start a
+chain only once the lower members are ones you are willing to keep, and
+prefer `lax build` (and `--replay`) on the whole chain before submitting any
+of it.
+
 ## 4. Register or delete
 
 ```sh

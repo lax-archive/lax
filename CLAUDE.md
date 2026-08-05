@@ -44,8 +44,10 @@ and test it, commit, and stop for Jan's go.
   `front-worker-split.md` (the reverted 2026-07 split), `oom.md` (the
   server OOM postmortem — source of the LEAN_NUM_THREADS and env-delivery
   lessons), `hiccups.md` (friction log from porting real submissions),
-  `sibling-paths-plan.md` (the old sibling-requires design; the feature is
-  being removed per rewrite.md).
+  `sibling-paths-plan.md` (the old cross-submission path-require design;
+  the feature was removed in stage 6a per rewrite.md — cross-submission
+  edges are rev-pinned git requires only, landed by the chain workflow
+  documented in instructions.md).
 
 ## Commands
 

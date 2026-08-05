@@ -238,9 +238,8 @@ export function seedOverrides(warmWs: string, pkgDir: string, overrideBase?: str
 
 /**
  * Write the package's complete `lake-manifest.json`: the given path
- * dependencies (the proof package's own concept package, sibling path
- * requires, and every required submission materialized from its published
- * capture), then the warm
+ * dependencies (the proof package's own concept package and every required
+ * submission materialized from its published capture), then the warm
  * workspace's locked mathlib closure **verbatim** — the overrides file
  * redirects those entries to the store at build time (see seedOverrides).
  * With every dependency present, lake resolves and fetches nothing.

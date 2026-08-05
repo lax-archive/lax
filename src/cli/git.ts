@@ -47,8 +47,8 @@ export function deriveLocalSource(folder: string): SourceLocation {
   try {
     repository = originUrl(root);
   } catch {
-    // Local validation needs a stable repository identity for sibling paths,
-    // but unlike submit it does not require a remote yet.
+    // Local validation still needs a stable repository identity in the
+    // request, but unlike submit it does not require a remote yet.
   }
   return {
     repository,

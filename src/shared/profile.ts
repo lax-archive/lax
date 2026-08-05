@@ -9,7 +9,7 @@
 // their own. The current span travels through `AsyncLocalStorage` rather
 // than a stack, because the pipeline really does run spans concurrently
 // (source and Archive fetch together, dependency captures four at a time) —
-// a stack would attribute those children to whichever sibling happened to
+// a stack would attribute those children to whichever peer span happened to
 // open last.
 
 import { AsyncLocalStorage } from "node:async_hooks";

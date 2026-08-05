@@ -68,15 +68,11 @@ export interface GitRequire {
   subDir?: string;
 }
 
-export interface PathRequire {
-  name: string;
-  path: string;
-}
-
 export interface ValidatedLakefile {
   packageName: string;
   gitRequires: GitRequire[];
-  pathRequires: PathRequire[];
+  /** the proof package's own `{ path = "../concepts" }` edge — the only
+   * `path` require a lakefile may carry */
   hasConceptPathRequire: boolean;
 }
 

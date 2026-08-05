@@ -333,9 +333,7 @@ describe("inspection judgments retained from main", () => {
     checked.proofs!.inventory = fixture.proofInventory;
     checked.concepts!.lakefile.gitRequires = [
       { name: "Lax9", git: REPOSITORY, rev: COMMIT, subDir: "nine/concepts" },
-    ];
-    checked.concepts!.lakefile.pathRequires = [
-      { name: "Lax2", path: "../../two/concepts" },
+      { name: "Lax2", git: REPOSITORY, rev: COMMIT, subDir: "two/concepts" },
     ];
 
     const output = emitBuildOutput(root, checked, inspected.result, {

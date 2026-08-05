@@ -130,49 +130,51 @@ describe("submission static validation retained from main", () => {
     );
   });
 
-  it("keeps the own-edge spelling exact: a variant is a sibling self-reference", () => {
-    // `./../concepts` is not the own-edge spelling; it validates as a sibling
-    // edge (and siblings.ts then refuses the self-reference — see
-    // submission-validation-siblings.test.ts)
-    const findings = new FindingCollector("static");
+  it("accepts only the proof package's own ../concepts edge and walks every other path require to the chain workflow", () => {
+    // accept: the own-concepts edge, exactly spelled, is the one path require
+    const own = new FindingCollector("static");
     const parsed = validateLakefile(
-      lakefile("Lax261Proofs", { ownConcept: "Lax261" }).replace(
-        'path = "../concepts"',
-        'path = "./../concepts"',
-      ),
+      lakefile("Lax9Proofs", { ownConcept: "Lax9" }),
       "proofs",
-      "Lax261Proofs",
+      "Lax9Proofs",
       "proofs/lakefile.toml",
       RUNTIME,
-      findings,
+      own,
     );
-    expect(findings.violations).toEqual([]);
-    expect(parsed?.hasConceptPathRequire).toBe(false);
-    expect(parsed?.pathRequires).toEqual([{ name: "Lax261", path: "../concepts" }]);
-  });
+    expect(own.violations).toEqual([]);
+    expect(parsed?.hasConceptPathRequire).toBe(true);
 
-  it("normalizes sibling paths but rejects malformed and disallowed requirements", () => {
-    const normalized = new FindingCollector("static");
-    const parsed = validateLakefile(
+    // reject: a path require into another submission, with the discoverability
+    // hook the replacement workflow depends on
+    const crossSubmission = new FindingCollector("static");
+    validateLakefile(
       lakefile("Lax9Proofs", {
         ownConcept: "Lax9",
-        requirements: ['name = "Lax7Proofs"\npath = "./../../other//proofs/"'],
+        requirements: ['name = "Lax7Proofs"\npath = "../../other/proofs"'],
       }),
       "proofs",
       "Lax9Proofs",
       "proofs/lakefile.toml",
       RUNTIME,
-      normalized,
+      crossSubmission,
     );
-    expect(normalized.violations).toEqual([]);
-    expect(parsed?.pathRequires).toEqual([{ name: "Lax7Proofs", path: "../../other/proofs" }]);
+    expect(crossSubmission.violations).toHaveLength(1);
+    const message = crossSubmission.violations[0]!.message;
+    expect(message).toContain("path require reaching another submission's package is not supported");
+    expect(message).toContain("chain workflow");
+    expect(message).toContain("commit and submit the dependency");
+    expect(message).toContain('rev = "<commit>"');
+    expect(message).toContain("package overrides");
 
     for (const [requirement, kind, expected] of [
-      ['name = "Lax7"\npath = "/abs/concepts"', "concepts", "relative POSIX"],
-      ['name = "Lax7"\npath = "..\\\\other\\\\concepts"', "concepts", "relative POSIX"],
-      ['name = "Lax7"\npath = "../../other"', "concepts", "end in concepts or proofs"],
-      ['name = "Lax7Proofs"\npath = "../../other/concepts"', "proofs", "target kind disagree"],
-      ['name = "Lax7Proofs"\npath = "../../other/proofs"', "concepts", "cannot require proof"],
+      ['name = "Lax7"\npath = "/abs/concepts"', "concepts", "is not supported"],
+      ['name = "Lax7"\npath = "../../other/concepts"', "concepts", "is not supported"],
+      // even the ../concepts spelling is only the own edge, only from proofs/
+      ['name = "Lax8"\npath = "../concepts"', "concepts", "is not supported"],
+      ['name = "Lax7"\npath = "../concepts"', "proofs", "must be named Lax9"],
+      // the own-edge spelling is exact: a `./../concepts` variant is not the
+      // own edge and lands in the general path-require rejection
+      ['name = "Lax10"\npath = "./../concepts"', "proofs", "is not supported"],
       ['name = "Lax7"\npath = "../../other/concepts"\nrev = "x"', "concepts", "exactly name and path"],
     ] as const) {
       const findings = new FindingCollector("static");

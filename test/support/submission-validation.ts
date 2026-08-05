@@ -153,7 +153,6 @@ export function staticResult(id: string): StaticResult {
       lakefile: {
         packageName: concepts,
         gitRequires: [],
-        pathRequires: [],
         hasConceptPathRequire: false,
       },
       inventory: inventory("concepts", concepts),
@@ -162,7 +161,6 @@ export function staticResult(id: string): StaticResult {
       lakefile: {
         packageName: proofs,
         gitRequires: [],
-        pathRequires: [],
         hasConceptPathRequire: true,
       },
       inventory: inventory("proofs", proofs),

@@ -27,7 +27,6 @@ import { judgeInspection } from "../phases/inspect.js";
 import { parseInspectorReport } from "../phases/inspect-runner.js";
 import { dependencyClosure } from "../phases/provision.js";
 import { runResolution } from "../phases/resolution.js";
-import { flattenClosure, type SiblingGraph } from "../phases/siblings.js";
 import { runStaticValidation } from "../phases/static.js";
 import { hostValidationRuntime } from "../pins.js";
 import type { FetchedSource } from "../source/fetch.js";
@@ -139,14 +138,7 @@ export async function validateSubmissionOnHost(
     return report(false);
 
   const resolution = await state.phase("dependency resolution", () =>
-    runResolution(
-      request,
-      staticCheck.result,
-      options.local.archive,
-      runtime,
-      state.fetched.repositoryRoot,
-      state.fetched.submissionRoot,
-    ));
+    runResolution(request, staticCheck.result, options.local.archive, runtime));
   warnings.push(...resolution.findings.warnings);
   violations.push(...resolution.findings.violations);
   state.dependencies = resolution.result.all;
@@ -194,7 +186,6 @@ export async function validateSubmissionOnHost(
           kind,
           staticCheck.result,
           resolution.result,
-          resolution.siblings,
           state,
         ));
       });
@@ -334,37 +325,25 @@ export async function validateSubmissionOnHost(
 }
 
 /** The manifest path entries a package needs, mirroring the container
- * provisioning plan: authored path requires, the flattened sibling closure,
- * the proof package's own concept package, and every resolved dependency at
- * its materialized capture. */
+ * provisioning plan: the proof package's own concept package (the only in-tree
+ * edge a lakefile may declare) and every resolved dependency at its
+ * materialized capture. */
 function hostPathDependencies(
   kind: "concepts" | "proofs",
   staticResult: StaticResult,
   resolution: ResolutionResult,
-  siblings: SiblingGraph,
   state: HostState,
 ): { name: string; dir: string }[] {
   const staticPackage = staticResult[kind]!;
-  const pathDependencies = new Map<string, string>();
-  for (const dependency of staticPackage.lakefile.pathRequires)
-    pathDependencies.set(dependency.name, dependency.path);
-  const flattened = flattenClosure(
-    path.join(state.fetched.submissionRoot, kind),
-    siblings.closure,
-  );
-  for (const dependency of flattened.pathDeps)
-    pathDependencies.set(dependency.name, dependency.dir);
+  const entries: { name: string; dir: string }[] = [];
   if (
     kind === "proofs" &&
     staticPackage.lakefile.hasConceptPathRequire &&
     staticResult.concepts !== undefined
   ) {
-    pathDependencies.set(staticResult.concepts.lakefile.packageName, "../concepts");
+    entries.push({ name: staticResult.concepts.lakefile.packageName, dir: "../concepts" });
   }
-  const siblingNames = new Set(siblings.closure.keys());
-  const entries = [...pathDependencies].map(([name, dir]) => ({ name, dir }));
   for (const dependency of dependencyClosure(kind, resolution)) {
-    if (siblingNames.has(dependency.packageName)) continue;
     entries.push({
       name: dependency.packageName,
       dir: path.join(state.dependencyRoot, dependency.submissionId, dependency.kind, "package"),

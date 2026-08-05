@@ -1,8 +1,7 @@
-import path from "node:path";
 import { parse } from "smol-toml";
+import { CHAIN_WORKFLOW_HINT } from "../chain-workflow.js";
 import type {
   GitRequire,
-  PathRequire,
   ValidatedLakefile,
   ValidationRuntimeIdentity,
 } from "../contracts.js";
@@ -57,7 +56,6 @@ export function validateLakefile(
   }
 
   const gitRequires: GitRequire[] = [];
-  const pathRequires: PathRequire[] = [];
   let mathlib = false;
   let hasConceptPathRequire = false;
   const seenRequires = new Set<string>();
@@ -89,21 +87,20 @@ export function validateLakefile(
           else hasConceptPathRequire = true;
           return;
         }
-        if (raw.path.includes("\\") || path.posix.isAbsolute(raw.path)) {
-          findings.violate("lakefile", `${label}: sibling paths must be relative POSIX paths`);
-          return;
-        }
-        const normalized = path.posix.normalize(raw.path).replace(/\/+$/u, "");
-        const targetKind = normalized.split("/").at(-1);
-        if (targetKind !== "concepts" && targetKind !== "proofs") {
-          findings.violate("lakefile", `${label}: sibling path must end in concepts or proofs`);
-          return;
-        }
-        if (kind === "concepts" && targetKind === "proofs")
-          findings.violate("lakefile", `${label}: concept packages cannot require proof packages`);
-        if (raw.name.endsWith("Proofs") !== (targetKind === "proofs"))
-          findings.violate("lakefile", `${label}: package name and target kind disagree`);
-        pathRequires.push({ name: raw.name, path: normalized });
+        // The proof package's own `../concepts` edge above is the only `path`
+        // require there is. A cross-submission path require would also break
+        // the invariant the capture cache key rests on — that every
+        // cross-submission edge is rev-pinned in source, so a submission's
+        // commit transitively pins its whole source closure (rewrite-plan
+        // addendum 2c). Forbidding it here is load-bearing for cache
+        // soundness, not just simplification.
+        findings.violate(
+          "lakefile",
+          `${label}: a \`path\` require may only be the proof package's own concept package ` +
+            '(`path = "../concepts"`, from proofs/lakefile.toml); a path require reaching ' +
+            "another submission's package is not supported. " +
+            CHAIN_WORKFLOW_HINT,
+        );
         return;
       }
 
@@ -143,7 +140,7 @@ export function validateLakefile(
     });
   }
   if (!mathlib) findings.violate("lakefile", `${where}: the package must require pinned mathlib directly`);
-  return { packageName: expectedName, gitRequires, pathRequires, hasConceptPathRequire };
+  return { packageName: expectedName, gitRequires, hasConceptPathRequire };
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {
