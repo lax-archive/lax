@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { ArchiveRepository } from "../shared/archive.js";
 import { GhcrCaptureStore } from "../shared/capture-store.js";
 import { CONTROL_REPOSITORY } from "../shared/constants.js";
@@ -29,24 +30,31 @@ import {
   type WorkflowRunRef,
 } from "../shared/workflow-comments.js";
 
-const mode = process.argv[2];
+// Dispatch only when executed as a workflow entry point; tests import the
+// exported mode functions directly and drive them against a fake fetch.
+const isMainModule =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 
-try {
-  if (mode === "route") await route();
-  else if (mode === "publish") await publish();
-  else if (mode === "prepare-update") await prepareUpdate();
-  else if (mode === "publish-update") await publishUpdate();
-  else if (mode === "website") await website();
-  else if (mode === "report-validation") await reportValidation();
-  else throw new Error(
-    "usage: submission.js route|publish|prepare-update|publish-update|website|report-validation",
-  );
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+if (isMainModule) {
+  const mode = process.argv[2];
+  try {
+    if (mode === "route") await route();
+    else if (mode === "publish") await publish();
+    else if (mode === "prepare-update") await prepareUpdate();
+    else if (mode === "publish-update") await publishUpdate();
+    else if (mode === "website") await website();
+    else if (mode === "report-validation") await reportValidation();
+    else if (mode === "report-failure") await reportFailure();
+    else throw new Error(
+      "usage: submission.js route|publish|prepare-update|publish-update|website|report-validation|report-failure",
+    );
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }
 
-async function route(): Promise<void> {
+export async function route(): Promise<void> {
   const event = readEvent();
   const eventName = requiredEnv("GITHUB_EVENT_NAME");
   const token = requiredEnv("GITHUB_TOKEN");
@@ -118,7 +126,7 @@ interface ValidationContext {
   commentId: number;
 }
 
-async function reportValidation(): Promise<void> {
+export async function reportValidation(): Promise<void> {
   const context = parseValidationContext(decodeBase64Json(requiredEnv("VALIDATION_CONTEXT")));
   const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
   const control = new ControlPlane(client, new ArchiveRepository(client), repositoryId());
@@ -162,7 +170,7 @@ async function reportValidation(): Promise<void> {
   await control.postIssueComment(context.issueNumber, appendWorkflowRun(body, workflowRun()));
 }
 
-async function publish(): Promise<void> {
+export async function publish(): Promise<void> {
   const authoritativeRepositoryId = repositoryId();
   const request = readPublishRequest(authoritativeRepositoryId);
   const controlClient = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
@@ -215,7 +223,7 @@ async function clearCommandProgress(control: ControlPlane, commentId: number): P
  * Parse all untrusted validation artifacts and repeat authorization/fresh-state
  * checks before the protected job is allowed to mint an Archive token.
  */
-async function prepareUpdate(): Promise<void> {
+export async function prepareUpdate(): Promise<void> {
   const authoritativeRepositoryId = repositoryId();
   const request = readPublishRequest(authoritativeRepositoryId);
   const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
@@ -236,7 +244,7 @@ async function prepareUpdate(): Promise<void> {
   }
 }
 
-async function publishUpdate(): Promise<void> {
+export async function publishUpdate(): Promise<void> {
   const authoritativeRepositoryId = repositoryId();
   const request = readPublishRequest(authoritativeRepositoryId);
   const controlClient = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
@@ -283,7 +291,7 @@ async function publishUpdate(): Promise<void> {
   }
 }
 
-async function website(): Promise<void> {
+export async function website(): Promise<void> {
   const authoritativeRepositoryId = repositoryId();
   const request = readPublishRequest(authoritativeRepositoryId);
   const controlClient = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
@@ -301,6 +309,44 @@ async function website(): Promise<void> {
     workflowRun(),
     process.env.TITLE_SYNC_ERROR ?? "",
   );
+}
+
+/**
+ * Final fallback for jobs that fail before their structured TS reporters can
+ * run (checkout, npm ci, compilation, App-token actions). It replaces the old
+ * inline actions/github-script body with the same typed marker helpers the
+ * rest of the control plane uses: post the correlated operational failure
+ * once per workflow run, and clear the command progress reaction that the
+ * route job may have left on the triggering comment.
+ */
+export async function reportFailure(): Promise<void> {
+  const event = readEvent();
+  const number = issueNumber(event);
+  if (number === undefined) return;
+  const triggeringComment = commentId(event);
+  const marker =
+    triggeringComment === undefined ? initializationMarker(number) : resultMarker(triggeringComment);
+  const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
+  const control = new ControlPlane(client, new ArchiveRepository(client), repositoryId());
+  const action = process.env.ACTION;
+  if ((action === "owners" || action === "update") && triggeringComment !== undefined) {
+    await clearCommandProgress(control, triggeringComment);
+  }
+  const run = workflowRun();
+  if (await control.failureReportExists(number, marker, run.id)) return;
+  const commit = process.env.ARCHIVE_COMMIT ?? "";
+  const summary =
+    commit !== ""
+      ? `lax-database changed at commit \`${commit}\`, but Website dispatch or final reporting ` +
+        `did not complete. Inspect this run before retrying.`
+      : process.env.OPERATION === "validate" && process.env.VALIDATION_RESULT === "true"
+        ? "Validation succeeded, but trusted update publication did not complete; " +
+          "no lax-database commit was created."
+        : process.env.OPERATION === "validate"
+          ? "Validation or result reporting failed; no trustworthy validation result was produced. " +
+            "lax-database was not changed."
+          : "The workflow failed before publication completed; no lax-database commit was created by this run.";
+  await control.postIssueComment(number, appendWorkflowRun(`${summary}\n\n${marker}`, run));
 }
 
 async function postPublicationFailure(

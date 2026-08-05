@@ -32,10 +32,15 @@ Suggested order of attack (details in rewrite-plan.md):
    owed: the live rehearsal on scratch repos (addendum point 3)** —
    blocked on a sandbox permission for `gh repo create`; run together
    with stage 4's publish rehearsal once unblocked, before go-live.
-4. Write path: keep CAS + credential-free preflight; CAS-only, no
-   concurrency group unless queueing semantics are positively verified;
-   thin YAML (logic in TS, delete the inline-JS failure reporter);
-   rehearsal covers publish + website dispatch.
+4. ~~Write path~~ — code complete 2026-08-05 (CAS + credential-free
+   preflight unchanged; all `concurrency:` blocks removed per addendum
+   point 4, CAS is the correctness mechanism; inline-JS failure reporter
+   replaced by a typed `report-failure` mode with byte-compatible
+   markers; YAML logic assertions converted to behavioral TS tests incl.
+   an env-poisoning canary proving prepare-update never touches the
+   database token; YAML keeps only wiring/permission/pin lints). The
+   stages-3+4 live rehearsal (publish + website dispatch) is still owed
+   — see item 3.
 5. Port the old test suite area by area onto the new seams.
 6. Independent follow-ups: forbid sibling paths (delete `phases/siblings.ts`
    + arms; add the chain-submit guidance to error messages; later the

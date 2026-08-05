@@ -10,9 +10,16 @@ permissions:
   contents: read
   issues: write
 
-concurrency:
-  group: lax-submission-${{ github.repository_id }}-${{ github.event.issue.number }}
-  queue: max
+# Deliberately no `concurrency:` blocks anywhere in this workflow (rewrite-plan
+# red-team addendum point 4): classic Actions concurrency keeps at most one
+# pending run per group and cancels older pending runs, which would silently
+# drop queued submissions under a burst, and the queueing semantics the
+# previous groups relied on were never positively verified on GitHub's side.
+# The correctness mechanism for concurrent database writes is the optimistic
+# compare-and-swap loop in src/shared/archive.ts (re-read head, re-validate,
+# non-forced ref update, retry on conflict). Consequence: concurrent runs on
+# one issue may interleave status comments — acceptable, because every comment
+# carries hidden correlation markers and readers match on those, not on order.
 
 jobs:
   # Reject unrelated issue comments before checkout or dependency installation.
@@ -204,9 +211,6 @@ jobs:
       }}
     runs-on: ubuntu-latest
     environment: lax-database-publish
-    concurrency:
-      group: lax-archive-publish-${{ github.repository_id }}-${{ github.event.issue.number }}
-      queue: max
     permissions:
       contents: read
       issues: write
@@ -275,9 +279,6 @@ jobs:
     if: needs.route.outputs.operation == 'publish'
     runs-on: ubuntu-latest
     environment: lax-database-publish
-    concurrency:
-      group: lax-archive-publish-${{ github.repository_id }}-${{ github.event.issue.number }}
-      queue: max
     permissions:
       contents: read
       issues: write
@@ -360,7 +361,11 @@ jobs:
 
   # TypeScript reports structured routing/publication failures. This final
   # fallback also covers failures before the handlers can run: checkout,
-  # dependency installation, compilation, and App-token actions.
+  # dependency installation, compilation, and App-token actions. It is a thin
+  # dispatcher into the same typed, tested TS as every other job — no inline
+  # JS (rewrite-plan.md "Write runner and concurrency"). Accepted tradeoff,
+  # per the plan's explicit decision: a breakage in checkout/npm ci/build also
+  # breaks this fallback report, in exchange for zero untyped logic in YAML.
   report-workflow-failure:
     needs:
       - precheck
@@ -384,68 +389,21 @@ jobs:
       contents: read
       issues: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
       - name: Post a correlated operational failure
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
           ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
           ACTION: ${{ needs.route.outputs.action }}
           OPERATION: ${{ needs.route.outputs.operation }}
           VALIDATION_RESULT: ${{ needs.validation-result.outputs.should_publish }}
-        with:
-          script: |
-            const issueNumber = context.payload.issue?.number;
-            if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) return;
-            const commentId = context.payload.comment?.id;
-            const marker = Number.isSafeInteger(commentId) && commentId > 0
-              ? `<!-- lax-result-comment-id:${commentId} -->`
-              : `<!-- lax-initialization-issue:${issueNumber} -->`;
-            const runMarker = `<!-- lax-workflow-run-id:${context.runId} -->`;
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              { ...context.repo, issue_number: issueNumber, per_page: 100 },
-            );
-            if (["owners", "update"].includes(process.env.ACTION) && Number.isSafeInteger(commentId) && commentId > 0) {
-              try {
-                const reactions = await github.paginate(
-                  github.rest.reactions.listForIssueComment,
-                  { ...context.repo, comment_id: commentId, per_page: 100 },
-                );
-                const rocket = reactions.find((reaction) =>
-                  reaction.content === "rocket" &&
-                  reaction.user?.id === 41898282 &&
-                  reaction.user?.login === "github-actions[bot]" &&
-                  reaction.user?.type === "Bot"
-                );
-                if (rocket !== undefined) {
-                  await github.rest.reactions.deleteForIssueComment({
-                    ...context.repo,
-                    comment_id: commentId,
-                    reaction_id: rocket.id,
-                  });
-                }
-              } catch (error) {
-                core.warning(`Could not clear command progress reaction: ${error.message}`);
-              }
-            }
-            const alreadyReported = comments.some((comment) =>
-              comment.user?.id === 41898282 &&
-              comment.user?.login === "github-actions[bot]" &&
-              comment.user?.type === "Bot" &&
-              comment.body?.includes(marker) &&
-              comment.body?.includes(runMarker)
-            );
-            if (alreadyReported) return;
-            const commit = process.env.ARCHIVE_COMMIT;
-            const summary = commit
-                ? `lax-database changed at commit \`${commit}\`, but Website dispatch or final reporting did not complete. Inspect this run before retrying.`
-                : process.env.OPERATION === "validate" && process.env.VALIDATION_RESULT === "true"
-                  ? "Validation succeeded, but trusted update publication did not complete; no lax-database commit was created."
-                  : process.env.OPERATION === "validate"
-                    ? "Validation or result reporting failed; no trustworthy validation result was produced. lax-database was not changed."
-                : "The workflow failed before publication completed; no lax-database commit was created by this run.";
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: issueNumber,
-              body: `${summary}\n\nWorkflow run: [#${context.runId}](${runUrl}).\n\n${marker}\n${runMarker}`,
-            });
+        run: node dist/workflows/submission.js report-failure

@@ -21,6 +21,7 @@ import {
   previewMarker,
   resultMarker,
   upsertCommandContext,
+  workflowRunMarker,
 } from "./workflow-comments.js";
 
 interface IssueUser {
@@ -154,6 +155,16 @@ export class ControlPlane {
 
   async initializationPreviewExists(issueNumber: number): Promise<boolean> {
     return this.markerExists(issueNumber, initializationPreviewMarker(issueNumber));
+  }
+
+  /**
+   * True when this workflow run already posted a bot comment carrying both the
+   * correlation marker and this run's marker. The fallback failure reporter
+   * uses it to stay idempotent under re-run attempts of the same run without
+   * being suppressed by result comments from earlier runs.
+   */
+  async failureReportExists(issueNumber: number, marker: string, runId: string): Promise<boolean> {
+    return this.markerExists(issueNumber, marker, workflowRunMarker(runId));
   }
 
   async resolveOwnerPairs(owners: GitHubIdentity[]): Promise<GitHubIdentity[]> {
@@ -328,7 +339,7 @@ export class ControlPlane {
     return { githubId: user.id, handle: user.login };
   }
 
-  private async markerExists(issueNumber: number, marker: string): Promise<boolean> {
+  private async markerExists(issueNumber: number, ...markers: string[]): Promise<boolean> {
     const comments = await this.github.paginate<CommentResponse>(
       `${this.controlBase}/issues/${issueNumber}/comments`,
     );
@@ -337,7 +348,7 @@ export class ControlPlane {
         comment.user?.id === GITHUB_ACTIONS_BOT_ID &&
         comment.user.login === GITHUB_ACTIONS_BOT_LOGIN &&
         comment.user.type === "Bot" &&
-        comment.body?.includes(marker) === true,
+        markers.every((marker) => comment.body?.includes(marker) === true),
     );
   }
 }
