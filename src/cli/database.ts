@@ -28,6 +28,7 @@ export function databaseRepositoryUrl(): string {
 export function updateDatabase(): void {
   const target = databaseDirectory();
   const url = databaseRepositoryUrl();
+  console.log(`Refreshing ${target} from ${url}.`);
   fs.mkdirSync(laxHome(), { recursive: true });
   migrateLegacyDatabase(target);
   if (!fs.existsSync(path.join(target, ".git"))) {

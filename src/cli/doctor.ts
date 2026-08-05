@@ -29,60 +29,33 @@ export function toolVersion(tool: string): string | undefined {
   }
 }
 
+const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;
+
+/**
+ * Every check is its own thunk and its line is printed the moment that check
+ * returns: the probes behind them (docker, two GitHub calls, `git ls-remote`,
+ * statfs) add up to a minute in the worst case, and buffering the report until
+ * the end made the whole minute look like a hang.
+ */
 export async function doctor(): Promise<number> {
   const checks: Check[] = [];
-  const platform = os.platform();
-  checks.push(
-    platform === "linux" || platform === "darwin"
-      ? { name: "platform", status: "ok", detail: platform }
-      : {
-          name: "platform",
-          status: "fail",
-          detail: platform,
-          fix: "use Linux, macOS, or WSL",
-        },
-  );
-
-  const nodeMajor = Number(process.versions.node.split(".")[0]);
-  checks.push({
-    name: "node",
-    status: nodeMajor >= 20 ? "ok" : "fail",
-    detail: `v${process.versions.node}`,
-    ...(nodeMajor >= 20 ? {} : { fix: "install Node.js 20 or newer — https://nodejs.org" }),
-  });
-  for (const tool of ["git", "npm", "elan", "lake"] as const) {
-    const version = toolVersion(tool);
-    checks.push(
-      version === undefined
-        ? { name: tool, status: "fail", detail: "not found", fix: installHint(tool) }
-        : { name: tool, status: "ok", detail: version },
-    );
-  }
-
-  checks.push(await githubCheck());
-  checks.push(databaseCheck());
-  checks.push(toolchainCheck());
-  checks.push(warmStoreCheck());
-  checks.push(pageBuilderCheck());
-  try {
-    const target = fs.existsSync(laxHome()) ? laxHome() : os.homedir();
-    const stats = fs.statfsSync(target);
-    const free = (stats.bavail * stats.bsize) / 2 ** 30;
-    checks.push({
-      name: "disk",
-      status: free < 10 ? "warn" : "ok",
-      detail: `${free.toFixed(0)} GB free at ${target}`,
-      ...(free < 10 ? { fix: "the validation runtime and Lean build need roughly 10 GB free" } : {}),
-    });
-  } catch {
-    // Filesystem capacity is best-effort.
-  }
-
-  const mark = { ok: "✓", warn: "!", fail: "✗" } as const;
-  for (const check of checks) {
-    console.log(`  ${mark[check.status]} ${check.name}: ${check.detail}`);
+  const emit = (check: Check | undefined): void => {
+    if (check === undefined) return;
+    checks.push(check);
+    console.log(`  ${MARK[check.status]} ${check.name}: ${check.detail}`);
     if (check.fix !== undefined && check.status !== "ok") console.log(`      → ${check.fix}`);
-  }
+  };
+
+  emit(platformCheck());
+  emit(nodeCheck());
+  for (const tool of ["git", "npm", "elan", "lake"] as const) emit(toolCheck(tool));
+  emit(await githubCheck());
+  emit(databaseCheck());
+  emit(toolchainCheck());
+  emit(warmStoreCheck());
+  emit(pageBuilderCheck());
+  emit(diskCheck());
+
   const failures = checks.filter((check) => check.status === "fail").length;
   if (failures > 0) {
     console.error(`lax doctor: ${failures} problem${failures === 1 ? "" : "s"} found`);
@@ -94,6 +67,47 @@ export async function doctor(): Promise<number> {
       : "lax doctor: everything is ready",
   );
   return 0;
+}
+
+function platformCheck(): Check {
+  const platform = os.platform();
+  return platform === "linux" || platform === "darwin"
+    ? { name: "platform", status: "ok", detail: platform }
+    : { name: "platform", status: "fail", detail: platform, fix: "use Linux, macOS, or WSL" };
+}
+
+function nodeCheck(): Check {
+  const major = Number(process.versions.node.split(".")[0]);
+  return {
+    name: "node",
+    status: major >= 20 ? "ok" : "fail",
+    detail: `v${process.versions.node}`,
+    ...(major >= 20 ? {} : { fix: "install Node.js 20 or newer — https://nodejs.org" }),
+  };
+}
+
+function toolCheck(tool: string): Check {
+  const version = toolVersion(tool);
+  return version === undefined
+    ? { name: tool, status: "fail", detail: "not found", fix: installHint(tool) }
+    : { name: tool, status: "ok", detail: version };
+}
+
+/** Filesystem capacity is best-effort: an unreadable mount reports nothing. */
+function diskCheck(): Check | undefined {
+  try {
+    const target = fs.existsSync(laxHome()) ? laxHome() : os.homedir();
+    const stats = fs.statfsSync(target);
+    const free = (stats.bavail * stats.bsize) / 2 ** 30;
+    return {
+      name: "disk",
+      status: free < 10 ? "warn" : "ok",
+      detail: `${free.toFixed(0)} GB free at ${target}`,
+      ...(free < 10 ? { fix: "the validation runtime and Lean build need roughly 10 GB free" } : {}),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 async function githubCheck(): Promise<Check> {

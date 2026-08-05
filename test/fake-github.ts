@@ -10,12 +10,15 @@
 // /login/device/code`, `POST /login/oauth/access_token` with device-code and
 // refresh-token grants), `GET /user`, `POST /credentials/revoke`, `GET
 // /repos/:owner/:repo/issues` (backed by the seedable `state.issues`, which
-// `lax doctor` lists), and issue comments (`POST`/`GET`
+// `lax doctor` lists), issue comments (`POST`/`GET`
 // /repos/:owner/:repo/issues/:n/comments, backed by `state.issueComments`;
 // `state.onComment` lets a test play the control-plane bot and answer a
-// posted command, e.g. with a refusal carrying the result marker). Stage 5
-// (full author journey) grows this via `state` and new routes in `handle()`:
-// issue creation/lookup, Actions runs, and Releases.
+// posted command, e.g. with a refusal carrying the result marker), and
+// workflow runs (`GET /repos/:owner/:repo/actions/runs/:id[/jobs]`, backed by
+// `state.actionsRuns`, which is what `follow`/`lax submit --resume` poll once
+// a comment's hidden marker names a run). Stage 5 (full author journey) grows
+// this via `state` and new routes in `handle()`: issue creation/lookup and
+// Releases.
 //
 // Test-only infrastructure: never import this from src/.
 
@@ -44,6 +47,12 @@ export interface FakeIssueComment {
   user: { id: number; login: string; type: string };
 }
 
+export interface FakeActionsRun {
+  status: string;
+  conclusion: string | null;
+  jobs: unknown[];
+}
+
 export interface FakeGitHubState {
   /** Issues served by `GET /repos/:owner/:repo/issues`; seed or grow in tests. */
   issues: unknown[];
@@ -51,6 +60,8 @@ export interface FakeGitHubState {
   revoked: string[];
   /** Issue comments by issue number; seed bot comments or read back posts. */
   issueComments: Map<number, FakeIssueComment[]>;
+  /** Workflow runs by run id, for the run correlation `follow`/`--resume` poll. */
+  actionsRuns: Map<string, FakeActionsRun>;
   /** Called after a comment is stored — a test's chance to answer as the bot. */
   onComment?: (issue: number, comment: FakeIssueComment) => void;
 }
@@ -81,7 +92,12 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
   if (primary === undefined) throw new Error("fake GitHub needs at least one user");
   let pendingPolls = options.pendingPolls ?? 1;
   const requests: RecordedRequest[] = [];
-  const state: FakeGitHubState = { issues: [], revoked: [], issueComments: new Map() };
+  const state: FakeGitHubState = {
+    issues: [],
+    revoked: [],
+    issueComments: new Map(),
+    actionsRuns: new Map(),
+  };
   let nextCommentId = 1000;
 
   const tokenResponse = (handle: string): Record<string, unknown> => ({
@@ -166,6 +182,15 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
           html_url: `https://github.com/lax-archive/lax/issues/${issue}#issuecomment-${comment.id}`,
         },
       };
+    }
+
+    const run = /^GET \/repos\/[^/]+\/[^/]+\/actions\/runs\/([0-9]+)(\/jobs)?$/u.exec(route);
+    if (run !== null) {
+      const record = state.actionsRuns.get(run[1]!);
+      if (record === undefined) return { status: 404, body: { message: "Not Found" } };
+      return run[2] === undefined
+        ? { status: 200, body: { status: record.status, conclusion: record.conclusion } }
+        : { status: 200, body: { jobs: record.jobs } };
     }
 
     return { status: 404, body: { message: "Not Found" } };

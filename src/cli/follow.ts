@@ -60,6 +60,13 @@ interface CommentMatch {
   runUrl?: string;
 }
 
+/**
+ * The workflow itself answered — the run finished, it just never posted a
+ * result. Distinguished from a transport failure because reattaching (`lax
+ * submit --resume`) cannot change this outcome, only re-observe it.
+ */
+export class WorkflowOutcomeError extends Error {}
+
 const base = repositoryPath(CONTROL_REPOSITORY);
 
 export async function followInitialization(client: GitHubClient, issueNumber: number): Promise<void> {
@@ -198,7 +205,7 @@ async function follow(
           completedWithoutResult = progress.completed ? completedWithoutResult + 1 : 0;
           if (completedWithoutResult >= 2) {
             const destination = runUrl === undefined ? "the GitHub Actions page" : runUrl;
-            throw new Error(
+            throw new WorkflowOutcomeError(
               `workflow #${runId} finished with ${progress.conclusion ?? "an unknown result"} ` +
                 `without posting a result; inspect ${destination}`,
             );

@@ -77,6 +77,7 @@ export async function serveWebsite(
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("port must be an integer between 1 and 65535");
   }
+  console.log("lax serve: loading the pinned lax-website renderer.");
   const archive = databaseDirectory();
   const localFolder = options.databaseOnly ? undefined : path.resolve(folder);
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "lax-site-"));

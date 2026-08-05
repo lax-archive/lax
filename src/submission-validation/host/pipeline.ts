@@ -146,7 +146,11 @@ export async function validateSubmissionOnHost(
 
   try {
     await state.phase("dependency provisioning", () =>
-      materializeHostCaptures(resolution.result.all, jobDir, limits));
+      materializeHostCaptures(resolution.result.all, jobDir, limits, (event) =>
+        options.onPhase?.({
+          name: `dependency capture ${event.submissionId} (${event.index}/${event.total})`,
+          state: "start",
+        })));
   } catch (error) {
     return fail("provision", "dependency-capture", error);
   }

@@ -4,10 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import {
   CONTROL_REPOSITORY,
+  githubOauthBase,
   HANDLE_PATTERN,
   SUBMISSION_ID_PATTERN,
 } from "../shared/constants.js";
-import { GitHubClient, repositoryPath } from "../shared/github.js";
+import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import {
   normalizeSubmissionId,
   normalizeTitle,
@@ -22,7 +23,7 @@ import { buildSubmission, hasCurrentLocalBuild } from "./build.js";
 import { confirmTyped } from "./confirm.js";
 import { databaseDirectory, tryRefreshDatabase } from "./database.js";
 import { installHint, toolVersion } from "./doctor.js";
-import { followCommand, followInitialization } from "./follow.js";
+import { followCommand, followInitialization, WorkflowOutcomeError } from "./follow.js";
 import { deriveSubmittedSource, repositoryRoot } from "./git.js";
 import { issueNumberFromFolder } from "./manifest.js";
 import { ensureEmptyFolder, scaffoldSubmission } from "./scaffold.js";
@@ -57,6 +58,7 @@ async function allocateSubmission(titleInput: string): Promise<{
   owner: GitHubIdentity;
 }> {
   const title = normalizeTitle(titleInput);
+  console.log(`Opening the submission issue on ${CONTROL_REPOSITORY}.`);
   const github = await client();
   const user = await github.request<{ id: number; login: string; type: string }>("GET", "/user");
   if (user.type !== "User") throw new Error("the authenticated GitHub identity is not a human user");
@@ -80,6 +82,7 @@ export async function replaceOwners(reference: string, handles: string[]): Promi
   if (handles.length === 0) throw new Error("--new-list requires at least one GitHub handle");
   const owners: GitHubIdentity[] = [];
   const seen = new Set<number>();
+  console.log(`Resolving ${handles.length} GitHub handle${handles.length === 1 ? "" : "s"}.`);
   const github = await client();
   for (const handle of handles) {
     if (!HANDLE_PATTERN.test(handle)) throw new Error(`invalid GitHub handle: ${handle}`);
@@ -107,23 +110,101 @@ export async function requestUpdate(
     commit: validateCommit(commitInput),
     folder: validateFolder(folderInput),
   };
-  await postCommand(resolveIssueReference(reference), `/lax update ${JSON.stringify(source)}`);
+  const issue = resolveIssueReference(reference);
+  console.log(
+    `Submitting lax-${issue} from (${source.repository}, ${source.commit}, ${source.folder}).`,
+  );
+  await withResumeHint(reference, () =>
+    postCommand(issue, `/lax update ${JSON.stringify(source)}`));
 }
 
 export async function submitFolder(folder: string, allowDirty = false): Promise<void> {
   const root = path.resolve(folder);
   const issue = issueNumberFromFolder(root);
+  console.log(`lax submit: preparing lax-${issue} in ${root}.`);
   const source = deriveSubmittedSource(root, allowDirty);
   await ensureBuiltForSubmit(root, source, allowDirty);
   console.log(
     `Submitting lax-${issue} from (${source.repository}, ${source.commit}, ${source.folder}).`,
   );
-  await postCommand(issue, `/lax update ${JSON.stringify(source)}`);
+  await withResumeHint(folder, () => postCommand(issue, `/lax update ${JSON.stringify(source)}`));
+}
+
+/**
+ * `lax submit --resume` — reattach to a submit whose CLI process lost its
+ * connection (network, Ctrl-C). The durable job record is the Actions run, and
+ * the run is correlated to the originating `/lax update` command comment by the
+ * hidden markers follow.ts already matches. Correlation is therefore re-derived
+ * from the issue's own comments rather than from anything this machine stored:
+ * the CLI can die *before* it learns whether its POST created a comment, so a
+ * remembered comment id would be exactly the thing that is missing.
+ */
+export async function resumeSubmit(target: string): Promise<void> {
+  const issue = resolveIssueReference(target);
+  console.log(`lax submit: resuming lax-${issue}; re-deriving the run from the issue.`);
+  // The whole reattach is under the hint: losing the connection again while
+  // re-deriving is as recoverable as losing it while following.
+  await withResumeHint(target, async () => {
+    const github = await client();
+    const user = await github.request<{ id: number }>("GET", "/user");
+    const comments = await github.paginate<{
+      id: number;
+      body: string | null;
+      user: { id: number } | null;
+    }>(`${base}/issues/${issue}/comments`);
+    const command = [...comments]
+      .reverse()
+      .find((comment) =>
+        comment.user?.id === user.id && comment.body?.startsWith("/lax update ") === true);
+    if (command === undefined) {
+      throw new NothingToResumeError(
+        `no submit command of yours is on lax-${issue}; nothing is running — run \`lax submit\` instead`,
+      );
+    }
+    console.log(
+      "Reattaching to " +
+        `${githubOauthBase()}/${CONTROL_REPOSITORY}/issues/${issue}#issuecomment-${command.id}`,
+    );
+    await followCommand(github, issue, command.id);
+  });
+}
+
+/** Resume found no submit to reattach to — rerunning it would say the same. */
+class NothingToResumeError extends Error {}
+
+/** The exact command that reattaches to the run this submit started. */
+function resumeCommand(target: string): string {
+  return path.resolve(target) === path.resolve(".")
+    ? "lax submit --resume"
+    : `lax submit --resume ${target}`;
+}
+
+/**
+ * A GitHub HTTP status is an authoritative answer and a finished-workflow error
+ * is final; anything else (transport failure, timeout) leaves the Actions run
+ * going, so hand the author the exact recovery command — as old lax did with
+ * its job ids.
+ */
+async function withResumeHint<T>(target: string, operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (
+      !(error instanceof GitHubError) &&
+      !(error instanceof WorkflowOutcomeError) &&
+      !(error instanceof NothingToResumeError)
+    ) {
+      console.error("lax submit: lost contact with GitHub; the workflow run may still be going");
+      console.error(`lax submit: reattach with: ${resumeCommand(target)}`);
+    }
+    throw error;
+  }
 }
 
 export async function requestDelete(reference: string, yes = false): Promise<number> {
   const issue = resolveIssueReference(reference);
   const id = `lax-${issue}`;
+  console.log(`lax delete: checking ${id} against a refreshed local lax-database.`);
   const preflight = checkDeleteLocally(id, tryRefreshDatabase());
   if (preflight.warnings.length > 0) {
     console.warn(
@@ -152,6 +233,7 @@ async function ensureBuiltForSubmit(
   source: { repository: string; commit: string; folder: string },
   allowDirty: boolean,
 ): Promise<void> {
+  console.log("lax submit: refreshing the local lax-database checkout.");
   const refresh = tryRefreshDatabase();
   if (refresh === "missing") {
     throw new Error(
@@ -220,6 +302,7 @@ export async function requestRegistration(reference: string, yes = false): Promi
       command: "lax register",
     }))
   ) return 1;
+  console.log(`lax register: sending the registration command for ${id}.`);
   await postCommand(issue, "/lax register");
   return 0;
 }

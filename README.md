@@ -152,16 +152,26 @@ lax update-db
 ```
 
 `lax create <title>` remains available when only issue allocation is wanted.
-`lax update <issue> --repository ... --commit ... --folder ...` remains the
-explicit source-triple form of `lax submit [folder]`. Submit derives the issue
-from `manifest.yaml`, derives the source triple from Git, rejects dirty work
-unless `--allow-dirty` is passed, and requires HEAD to be present on `origin`.
-Registration stays a separate `lax register` command; multi-folder submission
-is intentionally not supported yet. Before posting the issue command, submit
-reuses a full local build only when it matches the clean Git commit, folder,
-and current local Archive snapshot. Otherwise it runs `lax build`. With
-`--allow-dirty`, the CLI validates committed `HEAD` in an isolated worktree,
-so uncommitted files are never mistaken for the submitted source.
+`lax submit <issue|folder> --repository ... --commit ... --folder ...` is the
+explicit source-triple form of `lax submit [folder]`; there is no separate
+`lax update` command. That name meant CLI self-upgrade before the rework and
+is now `lax upgrade`, so it is retired with an error naming both replacements.
+Submit derives the issue from `manifest.yaml`, derives the source triple from
+Git, rejects dirty work unless `--allow-dirty` is passed, and requires HEAD to
+be present on `origin`. Registration stays a separate `lax register` command;
+multi-folder submission is intentionally not supported yet. Before posting the
+issue command, submit reuses a full local build only when it matches the clean
+Git commit, folder, and current local Archive snapshot. Otherwise it runs
+`lax build`. With `--allow-dirty`, the CLI validates committed `HEAD` in an
+isolated worktree, so uncommitted files are never mistaken for the submitted
+source.
+
+`lax submit --resume` reattaches to an interrupted submit. The durable job
+record is the Actions run, correlated to the originating `/lax update` comment
+by hidden markers, so resume re-derives both from the issue's own comments —
+nothing is stored locally, which is what makes it work even when the CLI died
+before it learned whether its comment had posted. Any transport failure during
+submit prints that exact recovery command.
 
 Commands that create an issue or post a `/lax` comment wait for the correlated
 workflow result. Once the workflow publishes its correlated run link, the CLI

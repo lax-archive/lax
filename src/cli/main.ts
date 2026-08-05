@@ -10,6 +10,7 @@ import {
   requestDelete,
   requestRegistration,
   requestUpdate,
+  resumeSubmit,
   submitFolder,
 } from "./commands.js";
 import { updateDatabase } from "./database.js";
@@ -96,30 +97,63 @@ program
   .description("replace the owner set of an init or draft submission")
   .action(run("lax set-owners", (target: string, options: { newList: string[] }) => replaceOwners(target, options.newList)));
 
+// `lax update` used to be the CLI self-upgrade (now `lax upgrade`) and, after
+// the rewrite, the explicit source-triple submit. Rather than ship that
+// collision, the triple folded into `submit` and the name is retired loudly.
 program
   .command("update")
-  .argument("<issue>", "issue number, lax-N id, or issue URL")
-  .requiredOption("--repository <url>", "canonical public HTTPS GitHub repository URL")
-  .requiredOption("--commit <sha>", "full immutable lowercase commit SHA")
-  .option("--folder <path>", "submission folder relative to repository root", ".")
-  .description("submit an explicit source triple to the issue-backed validation workflow")
-  .action(
-    run(
-      "lax update",
-      (
-        issue: string,
-        options: { repository: string; commit: string; folder: string },
-      ) => requestUpdate(issue, options.repository, options.commit, options.folder),
-    ),
-  );
+  .argument("[arguments...]")
+  .allowUnknownOption(true)
+  .allowExcessArguments(true)
+  .description("removed — see `lax submit --repository ... --commit ...` and `lax upgrade`")
+  .action(run("lax update", () => {
+    throw new Error(
+      "`lax update` was the pre-rework name for two different commands and no longer exists:\n" +
+        "  - to submit an explicit source triple: " +
+        "`lax submit <issue|folder> --repository <url> --commit <sha> --folder <path>`\n" +
+        "  - to upgrade the CLI itself: `lax upgrade`",
+    );
+  }));
 
 program
   .command("submit")
-  .argument("[folder]", "submission folder", ".")
+  .argument("[folder]", "submission folder (with --repository: issue number, lax-N id, or issue URL)", ".")
   .option("-f, --allow-dirty", "submit committed HEAD while excluding local changes")
-  .description("derive the source triple from Git and request an issue-backed import")
+  .option("--resume", "reattach to the workflow run of the submit already requested here")
+  .option("--repository <url>", "canonical public HTTPS GitHub repository URL (explicit source triple)")
+  .option("--commit <sha>", "full immutable lowercase commit SHA (explicit source triple)")
+  .option("--folder <path>", "submission folder relative to the repository root (with --repository)")
+  .description("derive the source triple from Git — or pass one explicitly — and request an issue-backed import")
   .action(
-    run("lax submit", (folder: string, options: { allowDirty?: boolean }) => {
+    run("lax submit", (
+      folder: string,
+      options: {
+        allowDirty?: boolean;
+        resume?: boolean;
+        repository?: string;
+        commit?: string;
+        folder?: string;
+      },
+    ) => {
+      const explicit = options.repository !== undefined || options.commit !== undefined;
+      if (options.resume === true) {
+        if (explicit || options.allowDirty === true) {
+          throw new Error("--resume takes no other options: it reattaches to what was already sent");
+        }
+        return resumeSubmit(folder);
+      }
+      if (explicit) {
+        if (options.repository === undefined || options.commit === undefined) {
+          throw new Error("--repository and --commit must be given together");
+        }
+        if (options.allowDirty === true) {
+          throw new Error("--allow-dirty applies to the Git-derived form, not an explicit triple");
+        }
+        return requestUpdate(folder, options.repository, options.commit, options.folder ?? ".");
+      }
+      if (options.folder !== undefined) {
+        throw new Error("--folder belongs to the explicit triple; pass the folder as the argument");
+      }
       preflight(["git"]);
       return submitFolder(folder, options.allowDirty ?? false);
     },
@@ -193,6 +227,7 @@ program
   .command("logout")
   .description("revoke the stored GitHub App login and remove its credentials")
   .action(run("lax logout", async () => {
+    console.log("Revoking any stored GitHub App credentials with GitHub.");
     console.log(
       (await logout())
         ? "Revoked the GitHub App credentials and logged out."

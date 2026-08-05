@@ -53,8 +53,14 @@ replay the trusted workflow performs.
 `lax submit` derives the `lax-N` issue id from `manifest.yaml` and the
 repository, commit, and folder from Git. It runs the local build first unless
 an existing full build matches the exact clean commit and current local
-Archive snapshot. Use `lax update` when an explicit source triple is
-preferable.
+Archive snapshot. When an explicit source triple is preferable, pass it to the
+same command: `lax submit <issue|folder> --repository <url> --commit <sha>
+--folder <path>`.
+
+If submit's polling is interrupted — a dropped connection, a closed laptop,
+Ctrl-C — nothing is lost: the workflow keeps running on GitHub, and
+`lax submit --resume` in the same folder reattaches to it. Submit prints that
+command itself whenever it loses contact with GitHub.
 
 The request is authenticated, previewed, and run through the credential-free
 Lean validation pipeline. Successful validation uploads

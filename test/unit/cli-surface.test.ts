@@ -32,6 +32,40 @@ describe("CLI compatibility surface", () => {
     expect(register.output).toContain("--yes");
   });
 
+  it("carries the explicit source triple and --resume on `submit`", () => {
+    const submit = cli(["submit", "--help"]);
+    expect(submit.code).toBe(0);
+    expect(submit.output).toContain("--resume");
+    expect(submit.output).toContain("--repository <url>");
+    expect(submit.output).toContain("--commit <sha>");
+    expect(submit.output).toContain("--folder <path>");
+    expect(submit.output).toContain("--allow-dirty");
+  });
+
+  it("refuses combinations that cannot mean anything on `submit`", () => {
+    const halfTriple = cli(["submit", "lax-42", "--repository", "https://github.com/a/b"]);
+    expect(halfTriple.code).toBe(1);
+    expect(halfTriple.output).toContain("--repository and --commit must be given together");
+
+    const resumePlus = cli(["submit", "--resume", "--allow-dirty"]);
+    expect(resumePlus.code).toBe(1);
+    expect(resumePlus.output).toContain("--resume takes no other options");
+
+    const strayFolder = cli(["submit", "--folder", "sub"]);
+    expect(strayFolder.code).toBe(1);
+    expect(strayFolder.output).toContain("--folder belongs to the explicit triple");
+  });
+
+  it("retires `lax update` with an error naming both replacements", () => {
+    const result = cli(["update", "lax-42", "--repository", "https://github.com/a/b"]);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("`lax update` was the pre-rework name");
+    expect(result.output).toContain("lax submit <issue|folder> --repository");
+    expect(result.output).toContain("lax upgrade");
+    // the self-upgrade and database commands keep their own names
+    expect(cli(["--help"]).output).toContain("update-db|pull-db");
+  });
+
   it("prints the continuous proof-preview workflow in the bundled specification", () => {
     const spec = cli(["spec"]);
     expect(spec.code).toBe(0);

@@ -42,14 +42,26 @@ function captureRegistrySeam(): string | undefined {
   return value === undefined ? undefined : new URL(value).origin;
 }
 
+/** Reported per dependency so a local build shows which capture it is pulling
+ * instead of one static line for a multi-GB download (never affects the fetch
+ * itself — presentation only, and unset on the trusted path). */
+export type CaptureProgress = (event: {
+  submissionId: string;
+  index: number;
+  total: number;
+}) => void;
+
 /** Download, verify, and unpack every dependency capture under
  * `jobDir/dependencies/<id>`; returns submission id -> capture root. */
 export async function materializeHostCaptures(
   dependencies: ResolvedDependency[],
   jobDir: string,
   limits: ValidationLimits,
+  onProgress?: CaptureProgress,
 ): Promise<Map<string, string>> {
   const bySubmission = capturesBySubmission(dependencies, limits);
+  const total = bySubmission.size;
+  let started = 0;
   const materialized = await mapConcurrent(
     [...bySubmission],
     4,
@@ -58,6 +70,7 @@ export async function materializeHostCaptures(
       const archive = path.join(jobDir, "downloads", `${id}-${capture.digest}.tar`);
       fs.mkdirSync(path.dirname(archive), { recursive: true, mode: 0o700 });
       fs.mkdirSync(path.dirname(base), { recursive: true, mode: 0o700 });
+      onProgress?.({ submissionId: id, index: ++started, total });
       try {
         await downloadCapture(capture, archive, limits);
         if (sha256File(archive) !== capture.digest)

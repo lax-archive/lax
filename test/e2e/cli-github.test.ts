@@ -16,7 +16,12 @@ import {
   GITHUB_ACTIONS_BOT_ID,
   GITHUB_ACTIONS_BOT_LOGIN,
 } from "../../src/shared/constants.js";
-import { resultMarker } from "../../src/shared/workflow-comments.js";
+import {
+  appendWorkflowRun,
+  previewMarker,
+  resultMarker,
+  upsertCommandContext,
+} from "../../src/shared/workflow-comments.js";
 import { GITHUB_APP_CLIENT_ID } from "../../src/cli/github-app.js";
 import {
   FAKE_USER_CODE,
@@ -85,6 +90,9 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(`enter code ${FAKE_USER_CODE}`);
+    // the poll loop is not silent: one heartbeat per wait (spinning on a TTY)
+    expect(result.stdout).toContain("waiting for authorization (visit https://github.com/login/device");
+    expect(result.stdout).toContain(`code ${FAKE_USER_CODE})`);
     expect(result.stdout).toContain("Logged in as alice through the Lax GitHub App.");
 
     const credentialsFile = path.join(home, "credentials.json");
@@ -163,6 +171,124 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       expect(posted?.body).toBe("/lax delete");
     } finally {
       delete github.state.onComment;
+    }
+  });
+
+  it("reattaches an interrupted submit with `lax submit --resume`", async () => {
+    // The submit that died: its `/lax update` comment is on the issue and the
+    // workflow has already appended the run correlation to it. Nothing about
+    // that run is stored on this machine — the CLI may have been killed before
+    // it learned its own comment id — so resume must re-derive both the
+    // command comment and the run from the issue's recent comments.
+    const source = JSON.stringify({
+      repository: "https://github.com/alice/formalization",
+      commit: "0".repeat(40),
+      folder: ".",
+    });
+    github.state.issueComments.set(77, [
+      {
+        id: 5001,
+        body: upsertCommandContext(
+          `/lax update ${source}`,
+          5001,
+          appendWorkflowRun(`Parsed source preview for lax-77.\n\n${previewMarker(5001)}`, {
+            id: "777",
+            url: "https://github.com/lax-archive/lax/actions/runs/777",
+          }),
+        ),
+        user: { id: 1, login: "alice", type: "User" },
+      },
+    ]);
+    github.state.actionsRuns.set("777", {
+      status: "in_progress",
+      conclusion: null,
+      jobs: [
+        {
+          name: "validate",
+          status: "in_progress",
+          conclusion: null,
+          steps: [{ name: "Compile", status: "in_progress", conclusion: null }],
+        },
+      ],
+    });
+    // The run finishes only once the reattached CLI has polled it at least
+    // once, so the test proves the live poll rather than racing it.
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
+    fs.writeFileSync(path.join(folder, "manifest.yaml"), "id: lax-77\n");
+    const finish = setInterval(() => {
+      const polled = github.requests.some(
+        (request) => request.path === "/repos/lax-archive/lax/actions/runs/777",
+      );
+      if (!polled) return;
+      clearInterval(finish);
+      github.state.actionsRuns.set("777", { status: "completed", conclusion: "success", jobs: [] });
+      github.state.issueComments.get(77)!.push({
+        id: 5002,
+        body: appendWorkflowRun(`Published **lax-77**.\n\n${resultMarker(5001)}`, {
+          id: "777",
+          url: "https://github.com/lax-archive/lax/actions/runs/777",
+        }),
+        user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
+      });
+    }, 20);
+
+    try {
+      const result = await lax(["submit", "--resume", folder], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      expect(result.status).toBe(0);
+      // the folder's manifest, not a stored job id, names the issue
+      expect(result.stdout).toContain("resuming lax-77");
+      expect(result.stdout).toContain("#issuecomment-5001");
+      expect(result.stdout).toContain(
+        "Following workflow run #777: https://github.com/lax-archive/lax/actions/runs/777",
+      );
+      expect(result.stdout).toContain("Parsed source preview for lax-77.");
+      expect(result.stdout).toContain("Published **lax-77**.");
+      expect(result.stdout).not.toContain("lax-result-comment-id");
+      // resume polled the correlated run itself, and posted no new command
+      expect(github.requests.map((r) => r.path)).toContain(
+        "/repos/lax-archive/lax/actions/runs/777",
+      );
+      expect(github.state.issueComments.get(77)).toHaveLength(2);
+      // and the live job/step line came from that run
+      expect(result.stderr).toContain("GitHub Actions · validate · Compile");
+    } finally {
+      clearInterval(finish);
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to resume an issue that carries no submit of yours", async () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
+    fs.writeFileSync(path.join(folder, "manifest.yaml"), "id: lax-78\n");
+    try {
+      const result = await lax(["submit", "--resume", folder], env);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("no submit command of yours is on lax-78");
+      expect(result.stderr).toContain("run `lax submit` instead");
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("names the exact recovery command when it loses contact with GitHub", async () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
+    fs.writeFileSync(path.join(folder, "manifest.yaml"), "id: lax-79\n");
+    try {
+      // port 1 is refused: a transport failure, not an authoritative HTTP answer
+      const result = await lax(["submit", "--resume", folder], {
+        ...env,
+        LAX_GITHUB_API_URL: "http://127.0.0.1:1",
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("lost contact with GitHub; the workflow run may still be going");
+      expect(result.stderr).toContain(`lax submit: reattach with: lax submit --resume ${folder}`);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
     }
   });
 
