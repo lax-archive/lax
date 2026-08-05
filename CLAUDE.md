@@ -116,5 +116,13 @@ author journey. The container pipeline is tested via runners injected through
 `test/e2e/host-pipeline.test.ts`, which runs the host pipeline (and the CLI)
 against the fake mathlib (`LAX_MATHLIB_URL`/`LAX_MATHLIB_REV`, wired up in
 `test/global-setup.ts`/`test/setup-env.ts` over the shared `~/.cache/lax-test`
-cache), plus the docker smoke script for the container path.
+cache), plus the docker smoke script for the container path. The capture
+registry is faked by `test/fake-ghcr.ts` behind `LAX_CAPTURE_REGISTRY_URL`
+(read per call by `src/shared/capture-store.ts` and
+`src/submission-validation/host/captures.ts`; the seam replaces the
+production allowlist, never widens it), and
+`test/e2e/dependency-capture.test.ts` proves the cross-submission capture
+path against it. `LAX_E2E=1 npx vitest run test/e2e/real-mathlib.test.ts`
+opts into the real-pins mathlib e2e, which reuses the user's own
+`~/.lax/warm` store.
 Never set test seams in production, and never import test/ files from src/.

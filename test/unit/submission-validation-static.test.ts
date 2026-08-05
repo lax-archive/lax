@@ -109,6 +109,48 @@ describe("submission static validation retained from main", () => {
     expect(proof?.hasConceptPathRequire).toBe(true);
   });
 
+  it("requires direct mathlib in a proof package too", () => {
+    // the direct-mathlib rule is a property of *every* package: the aggregated
+    // whitelist test above only exercises the concept kind
+    const findings = new FindingCollector("static");
+    validateLakefile(
+      lakefile("Lax261Proofs", { ownConcept: "Lax261" }).replace(
+        `[[require]]\nname = "mathlib"\ngit = "${RUNTIME.mathlibRepository}"\n` +
+          `rev = "${RUNTIME.mathlibCommit}"\n\n`,
+        "",
+      ),
+      "proofs",
+      "Lax261Proofs",
+      "proofs/lakefile.toml",
+      RUNTIME,
+      findings,
+    );
+    expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(
+      "must require pinned mathlib directly",
+    );
+  });
+
+  it("keeps the own-edge spelling exact: a variant is a sibling self-reference", () => {
+    // `./../concepts` is not the own-edge spelling; it validates as a sibling
+    // edge (and siblings.ts then refuses the self-reference — see
+    // submission-validation-siblings.test.ts)
+    const findings = new FindingCollector("static");
+    const parsed = validateLakefile(
+      lakefile("Lax261Proofs", { ownConcept: "Lax261" }).replace(
+        'path = "../concepts"',
+        'path = "./../concepts"',
+      ),
+      "proofs",
+      "Lax261Proofs",
+      "proofs/lakefile.toml",
+      RUNTIME,
+      findings,
+    );
+    expect(findings.violations).toEqual([]);
+    expect(parsed?.hasConceptPathRequire).toBe(false);
+    expect(parsed?.pathRequires).toEqual([{ name: "Lax261", path: "../concepts" }]);
+  });
+
   it("normalizes sibling paths but rejects malformed and disallowed requirements", () => {
     const normalized = new FindingCollector("static");
     const parsed = validateLakefile(

@@ -67,7 +67,7 @@ export async function materializeDependencyCaptures(
         });
         if (extract.code !== 0) throw new Error(`could not extract capture for ${id}: ${extract.output.trim()}`);
         verifyFiles(base, capture);
-        makeCapturedPackagesUsable(base, (kind) => `/deps/${id}/${kind}/lib`);
+        makeCapturedPackagesUsable(base, (kind, tree) => `/deps/${id}/${kind}/${tree}`);
         makeReadOnly(base);
         return [id, base];
       } finally {
@@ -98,14 +98,15 @@ export async function mapConcurrent<T, R>(
 
 /**
  * Give an extracted capture the canonical Lake build layout: link each
- * package's `.lake/build/lib/lean` at the capture's `lib` directory (the
- * link target is container-absolute in the trusted pipeline and host-absolute
- * in the host pipeline) and refresh artifact mtimes so Lake treats them as
- * newer than the captured sources.
+ * package's `.lake/build/lib/lean` at the capture's `lib` directory and its
+ * `.lake/build/ir` at the capture's `ir` directory (the link targets are
+ * container-absolute in the trusted pipeline and host-absolute in the host
+ * pipeline) and refresh artifact mtimes so Lake treats them as newer than
+ * the captured sources.
  */
 export function makeCapturedPackagesUsable(
   root: string,
-  linkTarget: (kind: "concepts" | "proofs") => string,
+  linkTarget: (kind: "concepts" | "proofs", tree: "lib" | "ir") => string,
 ): void {
   for (const kind of ["concepts", "proofs"] as const) {
     const packageRoot = path.join(root, kind, "package");
@@ -113,8 +114,13 @@ export function makeCapturedPackagesUsable(
     if (!fs.existsSync(packageRoot) || !fs.existsSync(library)) continue;
     const target = path.join(packageRoot, ".lake", "build", "lib", "lean");
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.symlinkSync(linkTarget(kind), target);
+    fs.symlinkSync(linkTarget(kind, "lib"), target);
     touchTree(library);
+    const ir = path.join(root, kind, "ir");
+    if (fs.existsSync(ir)) {
+      fs.symlinkSync(linkTarget(kind, "ir"), path.join(packageRoot, ".lake", "build", "ir"));
+      touchTree(ir);
+    }
   }
 }
 

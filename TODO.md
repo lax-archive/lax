@@ -41,7 +41,14 @@ Suggested order of attack (details in rewrite-plan.md):
    database token; YAML keeps only wiring/permission/pin lints). The
    stages-3+4 live rehearsal (publish + website dispatch) is still owed
    — see item 3.
-5. Port the old test suite area by area onto the new seams.
+5. ~~Test port~~ — done 2026-08-05 (triage executed: ~17 real-lake and
+   unit ports incl. the compiler-realized-reserved-name and scoped-build
+   regressions; cross-submission dependency e2e over a fake ghcr — which
+   exposed and fixed captures shipping only oleans while lake v4.30
+   needs the trace/hash/ilean/ir companions, a production-blocking bug;
+   CLI delete-refusal e2e; opt-in real-mathlib e2e restored under
+   LAX_E2E=1, run once, 24.7 s against the warm store; sibling and wave
+   ports skipped as moot, sitegen/DAG tests belong to lax-website).
 6. Independent follow-ups: forbid sibling paths (delete `phases/siblings.ts`
    + arms; add the chain-submit guidance to error messages; later the
    `lax submit A B C` macro), allow multiple statements per concept (drop

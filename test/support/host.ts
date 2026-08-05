@@ -18,6 +18,7 @@ import {
   type HostValidationOptions,
 } from "../../src/submission-validation/host/pipeline.js";
 import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
+import type { Profiler } from "../../src/shared/profile.js";
 import { SHARED_TOOLS, sharedWarmBase } from "../paths.js";
 
 export function tmpDir(prefix = "lax-test-"): string {
@@ -46,10 +47,18 @@ export function freshLaxHome(): string {
   return home;
 }
 
-/** Scaffold a submission against the active pins and lay extra files over it. */
-export function makeHostSubmission(id: string, files: Record<string, string> = {}): string {
+/** Scaffold a submission against the active pins and lay extra files over
+ * it. `stableBase` swaps the temp root for `<stableBase>/<id>` — the mathlib
+ * e2e's stable-dir trick (test/paths.ts E2E_WORKSPACE): the `.lake/` trees
+ * survive across runs, so rebuilds stay incremental. */
+export function makeHostSubmission(
+  id: string,
+  files: Record<string, string> = {},
+  stableBase?: string,
+): string {
   const runtime = hostValidationRuntime();
-  const root = tmpDir("lax-sub-");
+  const root = stableBase === undefined ? tmpDir("lax-sub-") : path.join(stableBase, id);
+  if (stableBase !== undefined) fs.mkdirSync(root, { recursive: true });
   const concepts = packageNameForSubmission(id);
   const proofs = `${concepts}Proofs`;
   const write = (relative: string, content: string): void => {
@@ -112,16 +121,25 @@ export async function buildOnHost(
     archive?: ArchiveSnapshot;
     replay?: HostValidationOptions["replay"];
     scope?: HostValidationOptions["scope"];
+    profiler?: Profiler;
+    /** The claimed source repository URL (defaults to a local placeholder). */
+    repository?: string;
+    /** Use this job dir so the test can inspect what the build materialized. */
+    jobDir?: string;
   } = {},
 ): Promise<ValidationReport> {
   const commit = fs.existsSync(path.join(root, ".git")) ? git(root, "rev-parse", "HEAD") : gitInitCommit(root);
   const request: ValidationRequest = {
     requestVersion: 1,
     id: options.id ?? "lax-1",
-    source: { repository: "https://github.com/local/local", commit, folder: "." },
+    source: {
+      repository: options.repository ?? "https://github.com/local/local",
+      commit,
+      folder: ".",
+    },
     archiveSha: "a".repeat(40),
   };
-  const jobDir = path.join(tmpDir("lax-job-"), "work");
+  const jobDir = options.jobDir ?? path.join(tmpDir("lax-job-"), "work");
   fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
   return validateSubmissionOnHost(request, jobDir, {
     local: {
@@ -131,5 +149,17 @@ export async function buildOnHost(
     echo: false,
     replay: options.replay,
     scope: options.scope,
+    profiler: options.profiler,
   });
+}
+
+/** The distinct rule names a report's violations carry — the old suite's
+ * `rules(result)`, which most judgment assertions were written against. */
+export function rules(report: ValidationReport): Set<string> {
+  return new Set(report.violations.map((violation) => violation.rule));
+}
+
+/** Every violation message of a report, joined for a single `toContain`. */
+export function messages(report: ValidationReport): string {
+  return report.violations.map((violation) => `[${violation.rule}] ${violation.message}`).join("\n");
 }

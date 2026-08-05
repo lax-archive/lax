@@ -31,6 +31,17 @@ const REGISTRY_HOST = "ghcr.io";
 const ALLOWED_HOSTS = new Set([REGISTRY_HOST, "pkg-containers.githubusercontent.com"]);
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
 
+/** Test seam (never set in production): point the capture registry at a local
+ * fake (test/fake-ghcr.ts) that plays both roles this module talks to — the
+ * ghcr token/blob endpoint and the redirected blob host. Read per call, like
+ * githubApiBase() in src/shared/constants.ts, so a fake started after module
+ * import is honored. When unset, the real ghcr endpoints and the fixed
+ * production host allowlist above apply unchanged. */
+function captureRegistrySeam(): string | undefined {
+  const value = process.env.LAX_CAPTURE_REGISTRY_URL;
+  return value === undefined ? undefined : new URL(value).origin;
+}
+
 /** Download, verify, and unpack every dependency capture under
  * `jobDir/dependencies/<id>`; returns submission id -> capture root. */
 export async function materializeHostCaptures(
@@ -53,7 +64,7 @@ export async function materializeHostCaptures(
           throw new Error(`capture archive digest mismatch for ${id}`);
         extractCapture(archive, base);
         verifyFiles(base, capture);
-        makeCapturedPackagesUsable(base, (kind) => path.join(base, kind, "lib"));
+        makeCapturedPackagesUsable(base, (kind, tree) => path.join(base, kind, tree));
         makeReadOnly(base);
         return [id, base];
       } finally {
@@ -75,14 +86,17 @@ async function downloadCapture(
   const reference = parseCaptureBlobReference(capture.registryBlob);
   if (reference === undefined || reference.digest !== capture.digest)
     throw new Error("capture reference is not the record's ghcr digest address");
+  const seam = captureRegistrySeam();
   const token = await anonymousPullToken(reference.repository, limits);
-  let url = new URL(`https://${REGISTRY_HOST}/v2/${reference.repository}/blobs/sha256:${reference.digest}`);
+  let url = new URL(
+    `${seam ?? `https://${REGISTRY_HOST}`}/v2/${reference.repository}/blobs/sha256:${reference.digest}`,
+  );
   let response: Response | undefined;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
     // The bearer token goes only to the registry; redirect targets are
     // pre-signed URLs that must never see it.
-    const headers: Record<string, string> =
-      url.hostname === REGISTRY_HOST ? { authorization: `Bearer ${token}` } : {};
+    const registryHosted = seam === undefined ? url.hostname === REGISTRY_HOST : url.origin === seam;
+    const headers: Record<string, string> = registryHosted ? { authorization: `Bearer ${token}` } : {};
     response = await fetch(url, {
       headers,
       redirect: "manual",
@@ -92,7 +106,7 @@ async function downloadCapture(
     const location = response.headers.get("location");
     if (location === null || redirects === 5)
       throw new Error("capture download has an invalid redirect chain");
-    url = allowedUrl(new URL(location, url).toString(), "capture redirect");
+    url = allowedUrl(new URL(location, url).toString(), "capture redirect", seam);
   }
   if (response === undefined || !response.ok || response.body === null)
     throw new Error(`capture download failed with HTTP ${response?.status ?? "error"}`);
@@ -117,7 +131,7 @@ async function downloadCapture(
 async function anonymousPullToken(repository: string, limits: ValidationLimits): Promise<string> {
   const scope = encodeURIComponent(`repository:${repository}:pull`);
   const response = await fetch(
-    `https://${REGISTRY_HOST}/token?service=${REGISTRY_HOST}&scope=${scope}`,
+    `${captureRegistrySeam() ?? `https://${REGISTRY_HOST}`}/token?service=${REGISTRY_HOST}&scope=${scope}`,
     { signal: AbortSignal.timeout(limits.fetchTimeoutMs) },
   );
   if (response.status !== 200) throw new Error(`ghcr token request failed with HTTP ${response.status}`);
@@ -134,12 +148,19 @@ async function anonymousPullToken(repository: string, limits: ValidationLimits):
   return token;
 }
 
-function allowedUrl(value: string, label: string): URL {
+function allowedUrl(value: string, label: string, seam: string | undefined): URL {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     throw new Error(`${label} is invalid`);
+  }
+  // Under the test seam the fake registry origin is the only allowed
+  // location; the seam replaces the production allowlist, never widens it.
+  if (seam !== undefined) {
+    if (url.origin !== seam || url.username || url.password)
+      throw new Error(`${label} leaves the allowed public HTTPS locations`);
+    return url;
   }
   if (url.protocol !== "https:" || !ALLOWED_HOSTS.has(url.hostname) || url.username || url.password)
     throw new Error(`${label} leaves the allowed public HTTPS locations`);

@@ -7,7 +7,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { seedManifest, seedOverrides } from "../../src/submission-validation/host/warmstore.js";
+import {
+  markWarmReady,
+  seedManifest,
+  seedOverrides,
+  warmReady,
+} from "../../src/submission-validation/host/warmstore.js";
 import { cleanupTemporary, temporary } from "../support/submission-validation.js";
 
 afterEach(cleanupTemporary);
@@ -53,6 +58,22 @@ function makeWarm(): string {
     fs.mkdirSync(path.join(warm, ".lake", "packages", pkg.name), { recursive: true });
   return warm;
 }
+
+describe("warm store readiness", () => {
+  it("requires the completion marker, not just manifest and packages", () => {
+    // manifest and clones exist as soon as lake resolved the dependencies —
+    // long before the download and build finished; an interrupted first
+    // build must not count as a usable store
+    const ws = temporary("lax-warm-unit-");
+    fs.writeFileSync(path.join(ws, "lake-manifest.json"), "{}");
+    fs.mkdirSync(path.join(ws, ".lake", "packages"), { recursive: true });
+    expect(warmReady(ws)).toBe(false);
+    markWarmReady(ws);
+    expect(warmReady(ws)).toBe(true);
+    // markWarmReady seals the root read-only; reopen it so cleanup can unlink
+    fs.chmodSync(ws, 0o755);
+  });
+});
 
 describe("warm store package overrides", () => {
   it("writes one path override per locked package, preserving inherited and scope", () => {

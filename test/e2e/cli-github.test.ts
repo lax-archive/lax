@@ -11,7 +11,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CONTROL_REPOSITORY_ID } from "../../src/shared/constants.js";
+import {
+  CONTROL_REPOSITORY_ID,
+  GITHUB_ACTIONS_BOT_ID,
+  GITHUB_ACTIONS_BOT_LOGIN,
+} from "../../src/shared/constants.js";
+import { resultMarker } from "../../src/shared/workflow-comments.js";
 import { GITHUB_APP_CLIENT_ID } from "../../src/cli/github-app.js";
 import {
   FAKE_USER_CODE,
@@ -123,6 +128,42 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       `Bearer ${tokenFor("alice")}`,
     );
     expect(during.map((r) => r.path)).toContain("/repos/lax-archive/lax/issues?per_page=1");
+  });
+
+  it("surfaces the bot's refusal comment on delete", async () => {
+    // The end-to-end refusal path: `lax delete` posts the issue command, the
+    // control-plane bot answers with a refusal result comment, and the CLI
+    // follows the correlation marker and prints the refusal to the author.
+    github.state.onComment = (issue, comment) => {
+      if (!comment.body.startsWith("/lax delete")) return;
+      github.state.issueComments.get(issue)!.push({
+        id: comment.id + 500_000,
+        body:
+          "Publication failed; lax-database was not changed by this command.\n\n" +
+          "- lax-42 is registered and immutable\n\n" +
+          resultMarker(comment.id),
+        user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
+      });
+    };
+    try {
+      const result = await lax(["delete", "lax-42", "--yes"], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Command submitted:");
+      expect(result.stdout).toContain("Publication failed");
+      expect(result.stdout).toContain("lax-42 is registered and immutable");
+      // the hidden correlation marker never reaches the author's terminal
+      expect(result.stdout).not.toContain("lax-result-comment-id");
+      // and the command itself was posted as the logged-in author
+      const posted = github.state.issueComments.get(42)!.find((c) => c.user.login === "alice");
+      expect(posted?.body).toBe("/lax delete");
+    } finally {
+      delete github.state.onComment;
+    }
   });
 
   it("revokes both stored tokens on `lax logout`", async () => {

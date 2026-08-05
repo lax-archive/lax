@@ -26,7 +26,8 @@ export function capturePackage(
   copyPackageSource(packageSource, capturedSource);
   fs.writeFileSync(path.join(capturedSource, "lake-manifest.json"), provisionedManifest, { mode: 0o444 });
   for (const moduleName of [inventory.rootModule, ...inventory.modules]) {
-    const relative = `${moduleName.split(".").join("/")}.olean`;
+    const moduleBase = moduleName.split(".").join("/");
+    const relative = `${moduleBase}.olean`;
     const source = path.join(compiledLibrary, relative);
     if (!regularContainedArtifact(compiledLibrary, source)) {
       throw new Error(`compiled artifact is missing or unsafe for module ${moduleName}`);
@@ -35,7 +36,37 @@ export function capturePackage(
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
     fs.chmodSync(destination, 0o444);
+    // Lake decides whether a path dependency's module is up to date from its
+    // stored build metadata and the full recorded output set — `<mod>.trace`,
+    // the `.hash`/`.ilean` companions, and the C artifacts under
+    // `.lake/build/ir` — not from the olean alone: with any of them missing a
+    // downstream `lake build` tries to rebuild the read-only capture and
+    // fails (verified empirically at the pinned v4.30.0; lake even rewrites a
+    // missing `.c.hash` in place, so it must ship too). Capture whichever
+    // companions the build produced; only the olean is mandatory.
+    for (const suffix of [".olean.hash", ".ilean", ".ilean.hash", ".trace"]) {
+      copyCompanion(
+        path.join(compiledLibrary, `${moduleBase}${suffix}`),
+        compiledLibrary,
+        path.join(captureRoot, kind, "lib", `${moduleBase}${suffix}`),
+      );
+    }
+    const compiledIr = path.resolve(compiledLibrary, "../../ir");
+    for (const suffix of [".c", ".c.hash"]) {
+      copyCompanion(
+        path.join(compiledIr, `${moduleBase}${suffix}`),
+        compiledLibrary,
+        path.join(captureRoot, kind, "ir", `${moduleBase}${suffix}`),
+      );
+    }
   }
+}
+
+function copyCompanion(source: string, compiledLibrary: string, destination: string): void {
+  if (!fs.existsSync(source) || !regularContainedArtifact(compiledLibrary, source)) return;
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+  fs.chmodSync(destination, 0o444);
 }
 
 function regularContainedArtifact(compiledLibrary: string, filename: string): boolean {

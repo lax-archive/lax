@@ -8,6 +8,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
+import { formatProfile, Profiler } from "../../src/shared/profile.js";
+import { packageNameForSubmission } from "../../src/submission-validation/contracts.js";
 import { warmDir } from "../../src/submission-validation/host/warmstore.js";
 import { sharedWarmBase } from "../paths.js";
 import {
@@ -17,6 +19,8 @@ import {
   gitInitCommit,
   linkSharedDirs,
   makeHostSubmission,
+  messages,
+  rules,
   tmpDir,
 } from "../support/host.js";
 
@@ -258,5 +262,157 @@ end Lax3.Broken
     };
     expect(output.id).toBe("lax-4");
     expect(output.localValidation.archiveSha).toBe(git(database, "rev-parse", "HEAD"));
+  });
+});
+
+describe("scoped builds", () => {
+  /** A submission whose concept package is sound and whose proof package
+   * claims a conclusion that is not a statement. */
+  function splitSubmission(id: string): string {
+    const concepts = packageNameForSubmission(id);
+    const proofs = `${concepts}Proofs`;
+    return makeHostSubmission(id, {
+      [`concepts/${concepts}.lean`]: `import ${concepts}.Zero\n`,
+      [`concepts/${concepts}/Zero.lean`]: `/-!
+---
+title: Zero
+type: theorem
+---
+The trivial claim.
+-/
+
+namespace ${concepts}.Zero
+
+/-- zero equals zero -/
+axiom zeroEq : 0 = 0
+
+end ${concepts}.Zero
+`,
+      [`proofs/${proofs}.lean`]: `import ${proofs}.Basic\n`,
+      [`proofs/${proofs}/Basic.lean`]: `import ${concepts}.Zero
+
+namespace ${proofs}
+
+/--
+---
+conclusion: ${concepts}.Zero.nope
+---
+no such statement
+-/
+theorem zero_eq : 0 = 0 := rfl
+
+end ${proofs}
+`,
+    });
+  }
+
+  it("--only concepts skips the proof package and emits no build output", async () => {
+    const root = splitSubmission("lax-20");
+    const report = await buildOnHost(root, { id: "lax-20", scope: "concepts" });
+    expect(report.violations).toEqual([]);
+    expect(report.ok).toBe(true);
+    // a scoped run never derives publishable artifacts
+    expect(report.buildOutput).toBeUndefined();
+    expect(report.capture).toBeUndefined();
+    // the proof package was never provisioned or compiled
+    expect(fs.existsSync(path.join(root, "proofs", "lake-manifest.json"))).toBe(false);
+    expect(fs.existsSync(path.join(root, "proofs", ".lake", "build"))).toBe(false);
+
+    // the same submission fails as a whole (reusing the concept build)
+    expect(rules(await buildOnHost(root, { id: "lax-20" }))).toContain("proof");
+  });
+
+  it("--only proofs judges proofs against its own concept package", async () => {
+    const root = splitSubmission("lax-21");
+    const profiler = new Profiler();
+    const report = await buildOnHost(root, { id: "lax-21", scope: "proofs", profiler });
+    expect(messages(report)).toContain("conclusion Lax21.Zero.nope does not resolve");
+    expect(report.buildOutput).toBeUndefined();
+    // the concept package carries the statements, so it is still built.
+    // Replay is opt-in in every local scope.
+    const phases = profiler.snapshot().children.map((span) => span.name);
+    expect(phases).toContain("compile concepts");
+    expect(phases).toContain("compile proofs");
+    expect(phases).not.toContain("replay concepts");
+    expect(phases).not.toContain("replay proofs");
+  });
+
+  it("profiles the phases it ran", async () => {
+    const root = makeHostSubmission("lax-22");
+    const profiler = new Profiler();
+    const report = await buildOnHost(root, { id: "lax-22", scope: "concepts", replay: true, profiler });
+    expect(report.violations).toEqual([]);
+    const total = profiler.snapshot();
+    const text = formatProfile(total);
+    for (const phase of [
+      "static validation",
+      "provision concepts",
+      "compile concepts",
+      "replay concepts",
+      "inspect concepts",
+    ])
+      expect(text, text).toContain(phase);
+    expect(text).not.toContain("compile proofs");
+    // every span is a child of the total, so the shares are bounded by it
+    const compile = total.children.find((span) => span.name === "compile concepts")!;
+    expect(compile.ms).toBeGreaterThan(0);
+    expect(compile.ms).toBeLessThanOrEqual(total.ms);
+  });
+
+  it("--only proofs --replay still materializes the concept artifacts Inspect needs", async () => {
+    // A malformed concept root that forgets to import its module: the module
+    // has no artifact after Compile, and the concepts replay — which would
+    // normally materialize it — is out of scope. Inspect must still get the
+    // artifact and report the clean root-module violation, not an inspector
+    // import failure.
+    const root = makeHostSubmission("lax-24", {
+      "concepts/Lax24.lean": "\n",
+      "concepts/Lax24/Zero.lean": `/-!
+---
+title: Zero
+type: theorem
+---
+The trivial claim.
+-/
+
+namespace Lax24.Zero
+
+/-- zero equals zero -/
+axiom zeroEq : 0 = 0
+
+end Lax24.Zero
+`,
+    });
+    const report = await buildOnHost(root, { id: "lax-24", scope: "proofs", replay: true });
+    expect(messages(report)).toContain("Lax24 must import exactly its package modules");
+    expect(rules(report)).toContain("root-module");
+  });
+});
+
+describe("provisioning for a plain `lake build`", () => {
+  it("leaves the scaffold so raw lake resolves and clones nothing", async () => {
+    // The overrides design's user-visible promise: after one `lax build` the
+    // author's own editor/`lake build` works with no lax in the loop. Raw
+    // lake, no lax: the seeded manifest plus the overrides file mean no
+    // resolution, no post_update hook, no network — and no `.lake/packages`
+    // tree ever appears in the submission.
+    const root = makeHostSubmission("lax-77");
+    const report = await buildOnHost(root, { id: "lax-77" });
+    expect(report.violations).toEqual([]);
+
+    for (const kind of ["concepts", "proofs"] as const) {
+      const packageDir = path.join(root, kind);
+      expect(fs.existsSync(path.join(packageDir, "lake-manifest.json"))).toBe(true);
+      expect(fs.existsSync(path.join(packageDir, ".lake", "package-overrides.json"))).toBe(true);
+      const result = spawnSync("lake", ["build"], {
+        cwd: packageDir,
+        encoding: "utf8",
+        timeout: 120_000,
+      });
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(0);
+      expect(output).not.toMatch(/clon|updating|download/iu);
+      expect(fs.existsSync(path.join(packageDir, ".lake", "packages"))).toBe(false);
+    }
   });
 });

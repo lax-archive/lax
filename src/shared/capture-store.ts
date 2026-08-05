@@ -7,6 +7,17 @@ import { validateSubmissionId, ValidationError } from "./validation.js";
 import type { CaptureManifest, PublishedCapture } from "../submission-validation/contracts.js";
 
 const REGISTRY = "https://ghcr.io";
+
+/** Test seam (never set in production): the publisher-side twin of the
+ * LAX_CAPTURE_REGISTRY_URL seam in submission-validation/host/captures.ts —
+ * point promote() at a local fake registry (test/fake-ghcr.ts). Read per
+ * call, like githubApiBase() in ./constants.js, so a fake started after
+ * module import is honored; unset means the real ghcr origin. */
+function registryOrigin(): string {
+  const value = process.env.LAX_CAPTURE_REGISTRY_URL;
+  return value === undefined ? REGISTRY : new URL(value).origin;
+}
+
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 60_000;
 const UPLOAD_TIMEOUT_MS = 60 * 60_000;
@@ -153,7 +164,7 @@ export class GhcrCaptureStore {
   private async exchangeToken(): Promise<string> {
     const scope = `repository:${this.repository}:pull,push`;
     const response = await this.fetch(
-      `${REGISTRY}/token?service=ghcr.io&scope=${encodeURIComponent(scope)}`,
+      `${registryOrigin()}/token?service=ghcr.io&scope=${encodeURIComponent(scope)}`,
       {
         headers: {
           authorization: `Basic ${Buffer.from(`x-access-token:${this.token}`, "utf8").toString("base64")}`,
@@ -185,7 +196,8 @@ export class GhcrCaptureStore {
     body: () => BodyInit,
   ): Promise<void> {
     if (await this.blobExists(bearer, digest, size)) return;
-    const session = await this.fetch(`${REGISTRY}/v2/${this.repository}/blobs/uploads/`, {
+    const registry = registryOrigin();
+    const session = await this.fetch(`${registry}/v2/${this.repository}/blobs/uploads/`, {
       method: "POST",
       headers: { authorization: `Bearer ${bearer}` },
     });
@@ -196,8 +208,8 @@ export class GhcrCaptureStore {
     if (location === null) throw new Error("ghcr blob upload session has no location");
     // The registry names the upload endpoint; keep it pinned to the registry
     // origin so the credential and the capture bytes cannot be redirected.
-    const target = new URL(location, REGISTRY);
-    if (target.origin !== REGISTRY) {
+    const target = new URL(location, registry);
+    if (target.origin !== registry) {
       throw new Error("ghcr blob upload session left the registry origin");
     }
     target.searchParams.set("digest", digest);
@@ -221,7 +233,7 @@ export class GhcrCaptureStore {
   }
 
   private async blobExists(bearer: string, digest: string, size: number): Promise<boolean> {
-    const response = await this.fetch(`${REGISTRY}/v2/${this.repository}/blobs/${digest}`, {
+    const response = await this.fetch(`${registryOrigin()}/v2/${this.repository}/blobs/${digest}`, {
       method: "HEAD",
       headers: { authorization: `Bearer ${bearer}` },
     });
@@ -238,7 +250,7 @@ export class GhcrCaptureStore {
 
   private async putManifest(bearer: string, tag: string, manifest: unknown): Promise<void> {
     const response = await this.fetch(
-      `${REGISTRY}/v2/${this.repository}/manifests/${tag}`,
+      `${registryOrigin()}/v2/${this.repository}/manifests/${tag}`,
       {
         method: "PUT",
         headers: {

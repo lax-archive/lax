@@ -8,11 +8,14 @@
 //
 // Endpoint surface today: the GitHub App device flow (`POST
 // /login/device/code`, `POST /login/oauth/access_token` with device-code and
-// refresh-token grants), `GET /user`, `POST /credentials/revoke`, and `GET
+// refresh-token grants), `GET /user`, `POST /credentials/revoke`, `GET
 // /repos/:owner/:repo/issues` (backed by the seedable `state.issues`, which
-// `lax doctor` lists). Stage 5 (full author journey) grows this via
-// `state` and new routes in `handle()`: issue creation/lookup, issue
-// comments, Actions runs, and Releases.
+// `lax doctor` lists), and issue comments (`POST`/`GET`
+// /repos/:owner/:repo/issues/:n/comments, backed by `state.issueComments`;
+// `state.onComment` lets a test play the control-plane bot and answer a
+// posted command, e.g. with a refusal carrying the result marker). Stage 5
+// (full author journey) grows this via `state` and new routes in `handle()`:
+// issue creation/lookup, Actions runs, and Releases.
 //
 // Test-only infrastructure: never import this from src/.
 
@@ -35,11 +38,21 @@ export interface RecordedRequest {
   body?: unknown;
 }
 
+export interface FakeIssueComment {
+  id: number;
+  body: string;
+  user: { id: number; login: string; type: string };
+}
+
 export interface FakeGitHubState {
   /** Issues served by `GET /repos/:owner/:repo/issues`; seed or grow in tests. */
   issues: unknown[];
   /** Tokens received by `POST /credentials/revoke`. */
   revoked: string[];
+  /** Issue comments by issue number; seed bot comments or read back posts. */
+  issueComments: Map<number, FakeIssueComment[]>;
+  /** Called after a comment is stored — a test's chance to answer as the bot. */
+  onComment?: (issue: number, comment: FakeIssueComment) => void;
 }
 
 export interface FakeGitHub {
@@ -68,7 +81,8 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
   if (primary === undefined) throw new Error("fake GitHub needs at least one user");
   let pendingPolls = options.pendingPolls ?? 1;
   const requests: RecordedRequest[] = [];
-  const state: FakeGitHubState = { issues: [], revoked: [] };
+  const state: FakeGitHubState = { issues: [], revoked: [], issueComments: new Map() };
+  let nextCommentId = 1000;
 
   const tokenResponse = (handle: string): Record<string, unknown> => ({
     access_token: tokenFor(handle),
@@ -125,6 +139,33 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
 
     if (/^GET \/repos\/[^/]+\/[^/]+\/issues$/u.test(route)) {
       return { status: 200, body: state.issues };
+    }
+
+    const comments = /^(GET|POST) \/repos\/[^/]+\/[^/]+\/issues\/([1-9][0-9]*)\/comments$/u.exec(route);
+    if (comments !== null) {
+      const issue = Number(comments[2]);
+      const list = state.issueComments.get(issue) ?? [];
+      if (comments[1] === "GET") return { status: 200, body: list };
+      const bearer = /^Bearer (.+)$/u.exec(request.authorization ?? "")?.[1];
+      const author = [...users.entries()].find(([h]) => tokenFor(h) === bearer);
+      if (author === undefined) return { status: 401, body: { message: "Bad credentials" } };
+      const body = (request.body as { body?: unknown })?.body;
+      if (typeof body !== "string") return { status: 422, body: { message: "body is required" } };
+      const comment: FakeIssueComment = {
+        id: nextCommentId++,
+        body,
+        user: { id: author[1], login: author[0], type: "User" },
+      };
+      list.push(comment);
+      state.issueComments.set(issue, list);
+      state.onComment?.(issue, comment);
+      return {
+        status: 201,
+        body: {
+          id: comment.id,
+          html_url: `https://github.com/lax-archive/lax/issues/${issue}#issuecomment-${comment.id}`,
+        },
+      };
     }
 
     return { status: 404, body: { message: "Not Found" } };

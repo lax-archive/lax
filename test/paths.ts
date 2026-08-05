@@ -32,6 +32,10 @@ export const FAKE_MATHLIB_FIXTURE = path.join(TEST_CACHE, "fake-mathlib");
  * machine rather than once per LAX_HOME. */
 export const SHARED_TOOLS = path.join(TEST_CACHE, "tools");
 
+/** The mathlib e2e's stable submission dir: its `.lake/` trees survive
+ * across runs, so the suite never re-seeds mathlib from scratch. */
+export const E2E_WORKSPACE = path.join(TEST_CACHE, "e2e-workspace");
+
 /**
  * The base dir holding warm workspaces (`warmDir()` keys a workspace inside
  * it by toolchain + mathlib rev).
