@@ -25,9 +25,11 @@ Suggested order of attack (details in rewrite-plan.md):
    read-only validation job; plain pinned stock image instead of the
    custom Containerfile; toolchain + `lake exe cache get` on the VM;
    Replay/Inspect on the VM sequentially (hand-built realpath'd LEAN_PATH,
-   never `lake env`); ghcr olean cache designed per the plan's red-team
-   addendum point 2 (pin + closure identity, digest-verified against the
-   database); live rehearsal on scratch repos before trusting any of it.
+   never `lake env`); ghcr olean cache keyed (repo, folder, commit,
+   proof|concept) **plus the toolchain/mathlib pin**, downloads
+   digest-verified against the dependency's build-output.json (see the
+   plan's corrected red-team addendum point 2); live rehearsal on scratch
+   repos before trusting any of it.
 4. Write path: keep CAS + credential-free preflight; CAS-only, no
    concurrency group unless queueing semantics are positively verified;
    thin YAML (logic in TS, delete the inline-JS failure reporter);

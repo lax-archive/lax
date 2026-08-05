@@ -44,9 +44,9 @@ Done-when per stage:
   validation job; validation-runtime.yml and the custom Containerfile are
   gone; pins live in `src/constants.ts` (or equivalent); toolchain +
   `lake exe cache get` install on the VM with actions-cache; ghcr cache
-  designed per addendum point 2 (pin + closure identity in the key,
-  digest-verified against the database), read in Provision and written by
-  the publish job; smoke fixtures pass on the new layout; **a live
+  keyed (repo, folder, commit, proof|concept) plus the toolchain/mathlib
+  pin, digest-verified per addendum point 2, read in Provision and written
+  by the publish job; smoke fixtures pass on the new layout; **a live
   rehearsal** (scratch control repo + scratch database repo) has run a
   real issue → validation round trip (addendum point 3).
 - **Stage 4 (write path)**: publish behavior unchanged (CAS + preflight,
@@ -404,18 +404,27 @@ contradicts earlier sections, the addendum wins.
    runner — two mathlib environment imports in 16 GB is the oom.md
    failure mode; the "two concurrent processes" remark in the Build
    pipeline section is retracted.
-2. **The tuple cache key is unsound as stated.** (repo, folder, commit,
-   proof|concept) omits the toolchain/mathlib pin (a pin bump silently
-   poisons the cache) and the dependency closure (a *draft* dependency is
-   mutable, so one tuple can map to different oleans over time). And ghcr
-   tags are mutable, so consumption must verify a digest recorded in the
-   dependency's build-output.json in the database — which reintroduces
-   the database join the tuple key was supposed to avoid. Design repair:
-   include the pin; either cache only captures of registered (immutable)
-   submissions or include a dependency-closure hash; keep tuple tags for
-   discovery but always digest-verify against the database. Whether the
-   tuple key still beats laxnew's content-addressed scheme is a stage-3
-   design decision, not a settled fact.
+2. **The tuple cache key — corrected after Jan's pushback; the original
+   version of this point overclaimed.** The original mutable-draft attack
+   ("one tuple can map to different oleans over time") is wrong: every
+   cross-submission require is an exact (url, rev) pin in the dependent's
+   lakefile, so a submission's commit transitively pins its entire source
+   closure — updating a draft dependency forces a lakefile edit and hence
+   a new commit in every dependent (this is the chain workflow's own
+   mechanic). Given that invariant, capture content is a function of
+   (repo, folder, commit, proof|concept) plus the global toolchain/
+   mathlib pin. What survives: (a) **include the pin in the key**, else a
+   pin bump silently serves incompatible oleans; (b) ghcr tags are
+   mutable, so **digest-verify** each downloaded blob against the digest
+   recorded in the dependency's build-output.json — nearly free, since
+   Resolution reads that record anyway (which also means the "no database
+   join" advantage claimed in the Build pipeline section was never real);
+   (c) the soundness invariant is *requires are rev-pinned in source* —
+   sibling path requires violate it, so the sibling removal is
+   load-bearing for this key, and a package-overrides file must never
+   reach a server build (the planned checked-in-overrides rejection is a
+   soundness check, not a courtesy). With those three, the tuple key is
+   sound and preferred over laxnew's content-addressed Releases scheme.
 3. **Nothing in the plan executes the Actions side before trusting it.**
    Stage 3/4 acceptance was local (`npm run check`, smoke), but the
    deliverable is remote workflow behavior, and this project's hardest
