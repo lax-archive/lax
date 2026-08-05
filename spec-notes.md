@@ -6,6 +6,47 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## GitHub Actions rewrite: control plane and auth model (implemented, 2026-08-05)
+
+This repository is the rewrite of the archive onto GitHub Actions (charter:
+rewrite.md + rewrite-plan.md). Spec-relevant deviations of the new
+architecture, recorded here until the spec is reconciled:
+
+- **The archive server is gone.** GitHub issues are the control surface:
+  the issue number permanently determines the id (`#42` → `lax-42`), `/lax`
+  issue comments request state changes, and trusted Actions jobs publish
+  them. The database is the public `lax-archive/lax-database` repository,
+  written through the GitHub API with a non-forced ref update
+  (compare-and-swap) instead of the spec's single-writer server lock;
+  dependency captures are published as immutable GitHub Releases.
+- **Auth model changed.** The CLI authenticates with a GitHub App user
+  access token (`ghu_`) obtained via the App device flow; refresh tokens
+  rotate in `~/.lax/credentials.json`. This supersedes the OAuth-App
+  device flow + `LAX_GITHUB_TOKEN` fallback recorded in the "Go-live"
+  entry below — PATs and generic OAuth tokens are now rejected, and a
+  `LAX_GITHUB_TOKEN` override is intentionally unsupported
+  (`LAX_GITHUB_APP_USER_TOKEN` exists for non-interactive use). App
+  private keys and installation tokens exist only in trusted workflow
+  jobs, never in the CLI.
+- Spec touchpoints: the server/Actions sections, the auth paragraphs, and
+  the single-writer/locking language. README.md documents the full trust
+  model; rewrite-plan.md lists the further planned deviations (sibling
+  path requires removed, multiple statements per concept, single
+  validation job).
+
+## spec.md edited by the rewrite: continuous preview (needs reconciliation, 2026-08-05)
+
+Commit `01e4700` inserted a subsection "Continuous preview while authoring"
+into this repo's spec.md (after the ~line-1026 serve/build material) —
+an agent edit, contrary to the do-not-edit rule, flagged here for Jan to
+bless in place or strip. Its substance, so stripping loses nothing: keep
+`lax serve` running in one terminal and run `lax build` after each
+completed proof in another; a successful full build atomically replaces
+`build-output.json` and regenerates the preview, while failures and
+`--only concepts|proofs` builds deliberately leave the preview at the last
+validated milestone. The behavior is implemented and uncontroversial; only
+its normative placement needs the call.
+
 ## Concept dialect: second draft, advisory model (proposed, 2026-07-29)
 
 [spec_conceptdialect_draft.md](spec_conceptdialect_draft.md) is a proposed

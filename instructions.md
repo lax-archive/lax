@@ -83,3 +83,9 @@ Commands can also be posted manually as exact comments:
 
 Whitespace before `/lax` is invalid, edits do not execute, and malformed or
 unknown commands fail closed.
+
+## 5. Other people's submissions
+
+Submission is open to any GitHub account, and the Archive does not review
+submitted code. Cloning or building another author's submission on your own
+machine is at your own risk.

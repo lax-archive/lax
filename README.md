@@ -79,8 +79,9 @@ three first-class jobs in the Actions DAG. Short-lived, credential-free
 artifacts carry the same compiled validation workspace from Compile to Replay
 and Inspect, which run in parallel; every job cleans its local copy
 unconditionally afterwards. Each phase runs on a fresh hosted runner in a fresh
-credential-free container. The workflow reclaims unused hosted-runner SDK
-space before pulling the large runtime image. A lightweight Validation result
+credential-free container. No disk reclaim runs before the
+large runtime image pull: a hosted runner reports ~88 GB free, which is
+ample. A lightweight Validation result
 job joins Replay and Inspect and requires both to succeed before publication.
 The validation request output follows the same Compile-to-checker fork. Kernel
 replay and inspection use two Lean workers inside their 16 GiB container limit
@@ -112,6 +113,22 @@ without configuration. A user access token is distinct from the App
 installation tokens and never receives the private key or the installation's
 independent authority. App private keys and installation tokens must never be
 distributed with the CLI.
+
+### Empirical notes on the pinned toolchain
+
+Two behaviors of the pinned toolchain (v4.30.0), discovered while
+implementing the inspector and worth knowing when reading the spec:
+
+- Lean strips a leading line of dashes from *persisted* docstrings, so the
+  authored opening `---` fence of an annotation never reaches the olean. The
+  inspector therefore recognizes frontmatter as grammar lines followed by a
+  closing `---` line. Consequence: a docstring like `note: text\n---\nmore`
+  is indistinguishable from frontmatter and will be parsed as such (loudly —
+  unknown keys are build errors, never guesses).
+- Statement signatures are pretty-printed with core notation only, and since
+  notation unexpanders are imported code (which the inspector never runs),
+  they render in application form (`Eq 0 0`, not `0 = 0`). The spec records
+  the upgrade path (an explicitly untrusted display pass).
 
 ## CLI
 
