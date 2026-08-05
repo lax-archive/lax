@@ -418,6 +418,19 @@ contradicts earlier sections, the addendum wins.
    runner — two mathlib environment imports in 16 GB is the oom.md
    failure mode; the "two concurrent processes" remark in the Build
    pipeline section is retracted.
+   **Measured 2026-08-05 — GO.** Heaviest real submission (word-ram, 148
+   proof modules, 96k LOC): leanchecker peak RSS **10.78 GiB at
+   LEAN_NUM_THREADS=2**, 5 min wall, inside a 14 GiB swapless cgroup
+   emulating the runner; fresh compile of the same submission peaked at
+   only 3.84 GiB at 4 threads (compile is not the constraint). The
+   mechanism: leanchecker replays only modules matching the target
+   prefix, one task per module, each holding its own imported
+   environment — one full-mathlib environment import is ~5.6 GiB, so
+   memory ≈ 5.5–6 GiB × concurrent tasks: t=1 ≈ 6–7 GiB, t=2 ≈ 11–12 GiB
+   worst case (fits), t=4 ≈ ~21 GiB (matches the oom.md incident; never
+   fits). Design consequences: replay/inspect run at **2 threads max**
+   on hosted runners, never concurrently with each other, and a third
+   mathlib-scale environment import must never coexist with them.
 2. **The tuple cache key — corrected after Jan's pushback; the original
    version of this point overclaimed.** The original mutable-draft attack
    ("one tuple can map to different oleans over time") is wrong: every

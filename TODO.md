@@ -49,9 +49,10 @@ Suggested order of attack (details in rewrite-plan.md):
 
 Verify early — see rewrite-plan.md's red-team addendum (2026-08-05), which
 wins over earlier plan text where they conflict. The three load-bearing
-unknowns: **replay memory on a 16 GB swapless hosted runner** (go/no-go for
-the whole architecture — oom.md measured 14.7 GiB RAM + 17.3 GiB swap at 4
-threads; measure a real big submission before stage 3), the `queue: max`
+unknowns: ~~replay memory on a 16 GB swapless hosted runner~~ — measured
+2026-08-05, **go** at ≤2 threads (10.78 GiB peak on word-ram at t=2;
+~5.6 GiB per concurrent mathlib environment import, so t=4 never fits;
+numbers in the plan addendum point 1), the `queue: max`
 concurrency semantics (classic Actions concurrency cancels pending runs;
 until verified, CAS-only), and ~~whether Lake package-overrides reuse built
 oleans~~ — resolved 2026-08-05, they do (see the spike verdict below).
