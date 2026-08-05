@@ -3,14 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { PublishedCapture, ResolvedDependency } from "../contracts.js";
-import type { ContainerRunner } from "../sandbox/container.js";
+import type { ValidationRunner } from "../sandbox/container.js";
 
-export async function materializeDependencyCaptures(
+/** Deduplicate the resolved captures by submission and enforce the aggregate
+ * declared-size budget; shared by the container and host materializers. */
+export function capturesBySubmission(
   dependencies: ResolvedDependency[],
-  jobDir: string,
-  runner: ContainerRunner,
   limits: ValidationLimits,
-): Promise<Map<string, string>> {
+): Map<string, PublishedCapture> {
   const bySubmission = new Map<string, PublishedCapture>();
   for (const dependency of dependencies) {
     if (dependency.capture === undefined) continue;
@@ -28,6 +28,16 @@ export async function materializeDependencyCaptures(
       }
     }
   }
+  return bySubmission;
+}
+
+export async function materializeDependencyCaptures(
+  dependencies: ResolvedDependency[],
+  jobDir: string,
+  runner: ValidationRunner,
+  limits: ValidationLimits,
+): Promise<Map<string, string>> {
+  const bySubmission = capturesBySubmission(dependencies, limits);
   const materialized = await mapConcurrent(
     [...bySubmission],
     4,
@@ -57,7 +67,7 @@ export async function materializeDependencyCaptures(
         });
         if (extract.code !== 0) throw new Error(`could not extract capture for ${id}: ${extract.output.trim()}`);
         verifyFiles(base, capture);
-        makeCapturedPackagesUsable(base, id);
+        makeCapturedPackagesUsable(base, (kind) => `/deps/${id}/${kind}/lib`);
         makeReadOnly(base);
         return [id, base];
       } finally {
@@ -68,7 +78,7 @@ export async function materializeDependencyCaptures(
   return new Map(materialized);
 }
 
-async function mapConcurrent<T, R>(
+export async function mapConcurrent<T, R>(
   values: T[],
   concurrency: number,
   operation: (value: T) => Promise<R>,
@@ -86,14 +96,24 @@ async function mapConcurrent<T, R>(
   return result;
 }
 
-function makeCapturedPackagesUsable(root: string, id: string): void {
+/**
+ * Give an extracted capture the canonical Lake build layout: link each
+ * package's `.lake/build/lib/lean` at the capture's `lib` directory (the
+ * link target is container-absolute in the trusted pipeline and host-absolute
+ * in the host pipeline) and refresh artifact mtimes so Lake treats them as
+ * newer than the captured sources.
+ */
+export function makeCapturedPackagesUsable(
+  root: string,
+  linkTarget: (kind: "concepts" | "proofs") => string,
+): void {
   for (const kind of ["concepts", "proofs"] as const) {
     const packageRoot = path.join(root, kind, "package");
     const library = path.join(root, kind, "lib");
     if (!fs.existsSync(packageRoot) || !fs.existsSync(library)) continue;
     const target = path.join(packageRoot, ".lake", "build", "lib", "lean");
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.symlinkSync(`/deps/${id}/${kind}/lib`, target);
+    fs.symlinkSync(linkTarget(kind), target);
     touchTree(library);
   }
 }
@@ -107,7 +127,7 @@ function touchTree(directory: string): void {
   }
 }
 
-function verifyFiles(root: string, capture: PublishedCapture): void {
+export function verifyFiles(root: string, capture: PublishedCapture): void {
   const expected = new Map(capture.files.map((file) => [file.path, file]));
   const seen = new Set<string>();
   const walk = (directory: string): void => {
@@ -130,7 +150,7 @@ function verifyFiles(root: string, capture: PublishedCapture): void {
   if (seen.size !== expected.size) throw new Error("dependency capture is missing declared files");
 }
 
-function makeReadOnly(directory: string): void {
+export function makeReadOnly(directory: string): void {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const filename = path.join(directory, entry.name);
     if (entry.isDirectory()) makeReadOnly(filename);
@@ -139,7 +159,7 @@ function makeReadOnly(directory: string): void {
   fs.chmodSync(directory, 0o555);
 }
 
-function sha256File(filename: string): string {
+export function sha256File(filename: string): string {
   const hash = createHash("sha256");
   const handle = fs.openSync(filename, "r");
   const buffer = Buffer.allocUnsafe(1024 * 1024);

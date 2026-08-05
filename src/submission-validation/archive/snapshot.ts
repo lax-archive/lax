@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DATABASE_REPOSITORY } from "../../shared/constants.js";
-import type { ContainerRunner } from "../sandbox/container.js";
+import type { ValidationRunner } from "../sandbox/container.js";
 import type { ValidationLimits } from "../config.js";
 import type { ArchiveSourceRecord, PublishedCapture } from "../contracts.js";
 import { isObject, validateCommit, validateFolder, validateRepositoryUrl } from "../../shared/validation.js";
@@ -103,7 +103,7 @@ export class ArchiveSnapshot {
 export async function fetchArchiveSnapshot(
   archiveSha: string,
   jobDir: string,
-  runner: ContainerRunner,
+  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<ArchiveSnapshot> {
   const root = path.join(jobDir, "archive");

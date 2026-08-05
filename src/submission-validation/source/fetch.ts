@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { SourceLocation } from "../../shared/types.js";
-import type { ContainerRunner } from "../sandbox/container.js";
+import type { ValidationRunner } from "../sandbox/container.js";
 
 export interface FetchedSource {
   repositoryRoot: string;
@@ -12,7 +12,7 @@ export interface FetchedSource {
 export async function fetchSource(
   source: SourceLocation,
   jobDir: string,
-  runner: ContainerRunner,
+  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<FetchedSource> {
   const repositoryRoot = path.join(jobDir, "source");

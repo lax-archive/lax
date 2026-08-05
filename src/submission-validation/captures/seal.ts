@@ -8,7 +8,7 @@ import type {
   ModuleInventory,
   ValidationRuntimeIdentity,
 } from "../contracts.js";
-import type { ContainerRunner } from "../sandbox/container.js";
+import type { ValidationRunner } from "../sandbox/container.js";
 
 const MAX_CAPTURE_FILES = 100_000;
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -69,7 +69,7 @@ export async function sealCapture(
   archivePath: string,
   sourceCommit: string,
   runtime: ValidationRuntimeIdentity,
-  runner: ContainerRunner,
+  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<CaptureManifest> {
   const files = inventoryFiles(captureRoot);

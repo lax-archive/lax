@@ -43,6 +43,13 @@ git commit && git push
 lax submit my-submission
 ```
 
+`lax build` validates on your own machine with the host Lean toolchain
+(`elan` and `lake`; no docker needed): it builds in place in the submission's
+`concepts/` and `proofs/` folders — incremental across runs — streaming the
+`lake` transcript, and on first use builds the shared mathlib environment
+under `~/.lax/warm` once per machine. Pass `--replay` to also run the kernel
+replay the trusted workflow performs.
+
 `lax submit` derives the `lax-N` issue id from `manifest.yaml` and the
 repository, commit, and folder from Git. It runs the local build first unless
 an existing full build matches the exact clean commit and current local

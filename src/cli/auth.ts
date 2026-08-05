@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { laxHome } from "../shared/lax-home.js";
 import {
   GITHUB_APP_CLIENT_ID,
   type GitHubAppCredentials,
@@ -9,9 +9,7 @@ import {
   validateGitHubAppUserToken,
 } from "./github-app.js";
 
-export function laxHome(): string {
-  return process.env.LAX_HOME ?? path.join(os.homedir(), ".lax");
-}
+export { laxHome } from "../shared/lax-home.js";
 
 export function credentialsFile(): string {
   return path.join(laxHome(), "credentials.json");

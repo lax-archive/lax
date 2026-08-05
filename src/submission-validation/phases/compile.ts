@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import type { ValidationLimits } from "../config.js";
-import type { ContainerRunner } from "../sandbox/container.js";
+import type { ValidationRunner } from "../sandbox/container.js";
 import type { ProvisionedWorkspace } from "./provision.js";
 
 export interface CompileResult {
@@ -10,7 +10,7 @@ export interface CompileResult {
 export async function compileConcepts(
   workspace: ProvisionedWorkspace,
   dependencyRoot: string,
-  runner: ContainerRunner,
+  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<CompileResult> {
   return compile("concepts", workspace, dependencyRoot, runner, limits);
@@ -19,7 +19,7 @@ export async function compileConcepts(
 export async function compileProofs(
   workspace: ProvisionedWorkspace,
   dependencyRoot: string,
-  runner: ContainerRunner,
+  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<CompileResult> {
   return compile("proofs", workspace, dependencyRoot, runner, limits);
@@ -29,7 +29,7 @@ async function compile(
   kind: "concepts" | "proofs",
   workspace: ProvisionedWorkspace,
   dependencyRoot: string,
-  runner: ContainerRunner,
+  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<CompileResult> {
   const result = await runner.run({

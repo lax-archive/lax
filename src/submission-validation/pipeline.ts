@@ -27,7 +27,7 @@ import { replayPackage } from "./phases/replay.js";
 import { runResolution } from "./phases/resolution.js";
 import { runStaticValidation } from "./phases/static.js";
 import { Profiler } from "../shared/profile.js";
-import { ContainerRunner } from "./sandbox/container.js";
+import { ContainerRunner, type ValidationRunner } from "./sandbox/container.js";
 import { assertWorkspaceWithinLimit } from "./sandbox/workspace-limit.js";
 import { containedDirectory, fetchSource, type FetchedSource } from "./source/fetch.js";
 
@@ -42,6 +42,12 @@ export interface ValidationOptions {
   scope?: ValidationScope;
   /** Local --build-from-source supplies the exact image it just built. */
   runtime?: ValidationRuntimeIdentity;
+  /**
+   * How phase commands execute. Defaults to the hardened ContainerRunner over
+   * the configured runtime image — the trusted workflow never sets this.
+   * Tests inject in-process fakes here.
+   */
+  runner?: ValidationRunner;
   /** Local presentation hook. Trusted workflow output remains unchanged. */
   onPhase?: (event: { name: string; state: "start" | "complete"; durationMs?: number }) => void;
   /**
@@ -64,7 +70,7 @@ interface PreparedValidation extends ReportState {
   jobDir: string;
   options: ValidationOptions;
   limits: ValidationLimits;
-  runner: ContainerRunner;
+  runner: ValidationRunner;
   scope: ValidationScope;
   fetched: FetchedSource;
   staticResult: StaticResult;
@@ -333,7 +339,7 @@ async function prepareValidation(
   const runtime = options.runtime ?? configuredRuntime();
   const limits = DEFAULT_LIMITS;
   const profiler = options.profiler ?? new Profiler();
-  const runner = new ContainerRunner(runtime, limits, jobDir, profiler);
+  const runner = options.runner ?? new ContainerRunner(runtime, limits, jobDir, profiler);
   const scope = options.scope ?? "both";
   const warnings: ValidationFinding[] = [];
   const violations: ValidationFinding[] = [];

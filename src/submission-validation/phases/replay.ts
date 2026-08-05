@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { ModuleInventory, ResolutionResult } from "../contracts.js";
-import type { ContainerRunner } from "../sandbox/container.js";
+import type { ValidationRunner } from "../sandbox/container.js";
 
 export async function replayPackage(
   kind: "concepts" | "proofs",
@@ -11,7 +11,7 @@ export async function replayPackage(
   resolution: ResolutionResult,
   jobDir: string,
   dependencyRoot: string,
-  runner: ContainerRunner,
+  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<void> {
   const containerRoot = `/capture/${kind}/package`;

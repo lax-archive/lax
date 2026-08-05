@@ -3,7 +3,7 @@ import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { ResolutionResult, StaticResult } from "../contracts.js";
 import type { FetchedSource } from "../source/fetch.js";
-import type { ContainerMount, ContainerRunner } from "../sandbox/container.js";
+import type { ContainerMount, ValidationRunner } from "../sandbox/container.js";
 import { flattenClosure, type SiblingGraph } from "./siblings.js";
 
 export interface ProvisionedWorkspace {
@@ -33,7 +33,7 @@ export async function provisionWorkspace(
   siblings: SiblingGraph,
   jobDir: string,
   dependencyRoot: string,
-  runner: ContainerRunner,
+  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<ProvisionedWorkspace> {
   const repositoryRoot = path.join(jobDir, "workspaces", label, "repository");
@@ -181,7 +181,9 @@ function isolateBuildDirectories(
   };
 }
 
-function dependencyClosure(
+/** The (transitive) resolved dependencies a package build needs on hand,
+ * shared by container provisioning and the host pipeline. */
+export function dependencyClosure(
   kind: "concepts" | "proofs",
   resolution: ResolutionResult,
 ): ResolutionResult["all"] {

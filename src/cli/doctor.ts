@@ -5,7 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONTROL_REPOSITORY } from "../shared/constants.js";
 import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
-import { configuredRuntime } from "../submission-validation/config.js";
+import { toolchainBinDir } from "../submission-validation/host/leanenv.js";
+import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
+import { LEAN_TOOLCHAIN } from "../submission-validation/pins.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, databaseFreshness } from "./database.js";
 
@@ -48,7 +50,7 @@ export async function doctor(): Promise<number> {
     detail: `v${process.versions.node}`,
     ...(nodeMajor >= 20 ? {} : { fix: "install Node.js 20 or newer — https://nodejs.org" }),
   });
-  for (const tool of ["git", "npm"] as const) {
+  for (const tool of ["git", "npm", "elan", "lake"] as const) {
     const version = toolVersion(tool);
     checks.push(
       version === undefined
@@ -57,35 +59,10 @@ export async function doctor(): Promise<number> {
     );
   }
 
-  const dockerVersion = toolVersion("docker");
-  if (dockerVersion === undefined) {
-    checks.push({
-      name: "docker",
-      status: "fail",
-      detail: "not found",
-      fix: "install and start Docker; `lax build` uses the pinned validation runtime",
-    });
-  } else {
-    try {
-      const server = execFileSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 10_000,
-      }).trim();
-      checks.push({ name: "docker", status: "ok", detail: `${dockerVersion}; server ${server}` });
-    } catch {
-      checks.push({
-        name: "docker",
-        status: "fail",
-        detail: `${dockerVersion}; daemon is unavailable`,
-        fix: "start Docker",
-      });
-    }
-  }
-
   checks.push(await githubCheck());
   checks.push(databaseCheck());
-  checks.push(runtimeCheck(dockerVersion !== undefined));
+  checks.push(toolchainCheck());
+  checks.push(warmStoreCheck());
   checks.push(pageBuilderCheck());
   try {
     const target = fs.existsSync(laxHome()) ? laxHome() : os.homedir();
@@ -211,37 +188,28 @@ function databaseCheck(): Check {
   return { name: "database clone", status: "ok", detail: `${directory} (up to date)` };
 }
 
-function runtimeCheck(dockerPresent: boolean): Check {
-  let runtime;
-  try {
-    runtime = configuredRuntime();
-  } catch (error) {
-    return {
-      name: "validation runtime",
-      status: "fail",
-      detail: (error as Error).message,
-      fix:
-        "set LAX_VALIDATION_IMAGE to the published immutable @sha256 image, or run " +
-        "`lax build --build-from-source`",
-    };
-  }
-  if (!dockerPresent) {
-    return { name: "validation runtime", status: "warn", detail: runtime.image };
-  }
-  try {
-    execFileSync("docker", ["image", "inspect", runtime.image], {
-      stdio: "ignore",
-      timeout: 10_000,
-    });
-    return { name: "validation runtime", status: "ok", detail: runtime.image };
-  } catch {
-    return {
-      name: "validation runtime",
-      status: "warn",
-      detail: `${runtime.image} is not downloaded`,
-      fix: `run \`docker pull ${runtime.image}\``,
-    };
-  }
+function toolchainCheck(): Check {
+  const binDir = toolchainBinDir();
+  return fs.existsSync(binDir)
+    ? { name: "lean toolchain", status: "ok", detail: `${LEAN_TOOLCHAIN} at ${binDir}` }
+    : {
+        name: "lean toolchain",
+        status: "warn",
+        detail: `${LEAN_TOOLCHAIN} is not installed yet`,
+        fix: "elan installs it automatically on the first `lax build`",
+      };
+}
+
+function warmStoreCheck(): Check {
+  const ws = warmDir();
+  return warmReady(ws)
+    ? { name: "mathlib store", status: "ok", detail: ws }
+    : {
+        name: "mathlib store",
+        status: "warn",
+        detail: `none at ${ws}`,
+        fix: "the first `lax build` builds it once (downloads gigabytes)",
+      };
 }
 
 function pageBuilderCheck(): Check {
@@ -268,5 +236,7 @@ export function installHint(tool: string): string {
     return "install git (macOS: `xcode-select --install`; Debian/Ubuntu: `apt install git`)";
   if (tool === "docker") return "install and start Docker — https://docs.docker.com/get-docker/";
   if (tool === "npm") return "npm ships with Node.js 20 or newer — https://nodejs.org";
+  if (tool === "elan" || tool === "lake")
+    return "install elan (ships lake) — https://leanprover-community.github.io/get_started.html";
   return `install ${tool} and make it available on PATH`;
 }

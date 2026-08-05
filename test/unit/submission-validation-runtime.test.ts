@@ -7,7 +7,11 @@ import type { ModuleInventory } from "../../src/submission-validation/contracts.
 import { compileConcepts } from "../../src/submission-validation/phases/compile.js";
 import { provisionWorkspace } from "../../src/submission-validation/phases/provision.js";
 import { replayPackage } from "../../src/submission-validation/phases/replay.js";
-import { ContainerRunner, type ContainerInvocation } from "../../src/submission-validation/sandbox/container.js";
+import {
+  ContainerRunner,
+  type ContainerInvocation,
+  type ValidationRunner,
+} from "../../src/submission-validation/sandbox/container.js";
 import { assertWorkspaceWithinLimit } from "../../src/submission-validation/sandbox/workspace-limit.js";
 import {
   cleanupTemporary,
@@ -49,12 +53,13 @@ describe("validation runtime boundaries retained from main", () => {
     writeFile(captureRoot, "concepts/package/lakefile.toml", "name = \"Lax9\"\n");
     writeFile(captureRoot, "concepts/lib/Lax9.olean", "root artifact");
     const calls: ContainerInvocation[] = [];
-    const runner = {
+    const runner: ValidationRunner = {
       run: async (invocation: ContainerInvocation) => {
         calls.push(invocation);
         return { code: 0, output: "", timedOut: false };
       },
-    } as ContainerRunner;
+      verifyRuntime: async () => {},
+    };
     const inventory: ModuleInventory = {
       packageName: "Lax9",
       packageDir: "concepts",
@@ -94,7 +99,7 @@ describe("validation runtime boundaries retained from main", () => {
     const source = path.join(repositoryRoot, "concepts", "Lax9.lean");
     writeFile(repositoryRoot, "concepts/Lax9.lean", "def archived := true\n");
     const calls: ContainerInvocation[] = [];
-    const runner = {
+    const runner: ValidationRunner = {
       run: async (invocation: ContainerInvocation) => {
         calls.push(invocation);
         const sourceMount = invocation.mounts!.find((mount) => mount.target === "/source")!;
@@ -102,7 +107,8 @@ describe("validation runtime boundaries retained from main", () => {
         writeFile(buildRoot, "build/lib/lean/Lax9.olean", "compiled artifact");
         return { code: 0, output: "", timedOut: false };
       },
-    } as ContainerRunner;
+      verifyRuntime: async () => {},
+    };
 
     await compileConcepts({
       repositoryRoot,
@@ -132,7 +138,7 @@ describe("validation runtime boundaries retained from main", () => {
   it("moves provisioned Lake state outside the read-only source tree", async () => {
     const sourceRoot = makeSubmission("lax-9");
     const job = temporary("lax-provision-job-");
-    const runner = {
+    const runner: ValidationRunner = {
       run: async () => {
         const repository = path.join(job, "workspaces", "concepts", "repository");
         for (const kind of ["concepts", "proofs"] as const) {
@@ -141,7 +147,8 @@ describe("validation runtime boundaries retained from main", () => {
         }
         return { code: 0, output: "", timedOut: false };
       },
-    } as ContainerRunner;
+      verifyRuntime: async () => {},
+    };
 
     const workspace = await provisionWorkspace(
       "concepts",
@@ -228,12 +235,13 @@ describe("validation runtime boundaries retained from main", () => {
     expect(fs.existsSync(path.join(captureRoot, "concepts", "lib", "Mathlib"))).toBe(false);
     expect(fs.existsSync(path.join(captureRoot, "concepts", "lib", "Lax9", "Generated.olean"))).toBe(false);
     const calls: ContainerInvocation[] = [];
-    const runner = {
+    const runner: ValidationRunner = {
       run: async (invocation: ContainerInvocation) => {
         calls.push(invocation);
         return { code: 0, output: "", timedOut: false };
       },
-    } as ContainerRunner;
+      verifyRuntime: async () => {},
+    };
 
     await replayPackage(
       "concepts",

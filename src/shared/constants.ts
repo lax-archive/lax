@@ -8,8 +8,15 @@ export const DATABASE_REPOSITORY =
 export const WEBSITE_REPOSITORY =
   process.env.LAX_WEBSITE_REPOSITORY ?? "lax-archive/lax-website";
 
-export const GITHUB_API_URL = process.env.LAX_GITHUB_API_URL ?? "https://api.github.com";
-export const GITHUB_OAUTH_URL = process.env.LAX_GITHUB_OAUTH_URL ?? "https://github.com";
+// Test seams (never set in production): point GitHub's REST API and OAuth
+// endpoints at local fakes. Late-bound per call so a subprocess-reachable
+// fake server (test/fake-github.ts) can be started after module import.
+export function githubApiBase(): string {
+  return process.env.LAX_GITHUB_API_URL ?? "https://api.github.com";
+}
+export function githubOauthBase(): string {
+  return process.env.LAX_GITHUB_OAUTH_URL ?? "https://github.com";
+}
 // Stable public identity used by GitHub-hosted Actions when GITHUB_TOKEN posts
 // an issue comment. Replay markers from any other author are untrusted input.
 export const GITHUB_ACTIONS_BOT_ID = 41_898_282;

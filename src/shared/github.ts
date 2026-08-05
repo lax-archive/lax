@@ -1,4 +1,4 @@
-import { GITHUB_API_URL } from "./constants.js";
+import { githubApiBase } from "./constants.js";
 import fs from "node:fs";
 import { Readable } from "node:stream";
 
@@ -16,10 +16,10 @@ export class GitHubError extends Error {
 export class GitHubClient {
   constructor(
     private readonly token?: string,
-    private readonly apiBase = GITHUB_API_URL,
+    private readonly apiBase = githubApiBase(),
   ) {}
 
-  static forGitHubAppUser(token: string, apiBase = GITHUB_API_URL): GitHubClient {
+  static forGitHubAppUser(token: string, apiBase = githubApiBase()): GitHubClient {
     if (!token.startsWith("ghu_")) {
       throw new Error("CLI authentication requires a GitHub App user access token");
     }

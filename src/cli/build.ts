@@ -4,14 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { ArchiveSnapshot } from "../submission-validation/archive/snapshot.js";
 import type { ValidationRequest, ValidationScope } from "../submission-validation/contracts.js";
-import { validateSubmission } from "../submission-validation/pipeline.js";
+import { validateSubmissionOnHost } from "../submission-validation/host/pipeline.js";
+import { hostValidationRuntime } from "../submission-validation/pins.js";
 import { formatProfile, Profiler } from "../shared/profile.js";
 import { databaseDirectory } from "./database.js";
 import { formatLocalFindings } from "./findings.js";
 import { deriveLocalSource, repositoryRoot } from "./git.js";
 import { LoadingLine } from "./loading.js";
 import { submissionIdFromFolder } from "./manifest.js";
-import { localValidationRuntime } from "./runtime.js";
 import type { SourceLocation } from "../shared/types.js";
 
 export interface LocalBuildOptions {
@@ -21,7 +21,11 @@ export interface LocalBuildOptions {
   buildFromSource?: boolean;
 }
 
-/** Run the shared validation pipeline against the working tree and local Archive clone. */
+/** Phases that stream their own transcript; the spinner stays out of the way. */
+const STREAMING_PHASES = new Set(["warm store", "compile concepts", "compile proofs", "inspector binary"]);
+
+/** Run the shared validation pipeline on the host toolchain, in place, against
+ * the working tree and local Archive clone. */
 export async function buildSubmission(
   folder: string,
   options: LocalBuildOptions = {},
@@ -41,7 +45,7 @@ export async function buildSubmission(
     source: deriveLocalSource(submissionRoot),
     archiveSha,
   };
-  const runtime = localValidationRuntime(options.buildFromSource ?? false);
+  const runtime = hostValidationRuntime();
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "lax-build-"));
   const jobDir = path.join(temporary, "work");
   fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
@@ -53,18 +57,19 @@ export async function buildSubmission(
       `${options.replay === true ? " with kernel replay" : ""}`,
   );
   try {
-    const report = await validateSubmission(request, jobDir, {
+    const report = await validateSubmissionOnHost(request, jobDir, {
       local: {
         fetched: { repositoryRoot: repository, submissionRoot },
         archive: new ArchiveSnapshot(database, archiveSha),
       },
       replay: options.replay ?? false,
-      sealCapture: false,
       scope,
-      runtime,
+      fromSource: options.buildFromSource ?? false,
       profiler,
       onPhase: (event) => {
-        if (event.state === "start") progress.update(`lax build · ${event.name}`);
+        if (event.state !== "start") return;
+        if (STREAMING_PHASES.has(event.name)) progress.clear();
+        else progress.update(`lax build · ${event.name}`);
       },
     });
     progress.clear();

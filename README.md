@@ -189,20 +189,25 @@ when the database is missing, stale, invalid, or cannot be checked. Pass
 `--database-only` to omit the local folder or `--port` to choose another port.
 
 `lax build [folder]` runs the shared submission-validation phases against the
-working tree and local database clone, then writes `build-output.json`.
-Server-only source fetching and artifact publication are omitted locally;
-kernel replay is opt-in with `--replay`. `--only concepts` and `--only proofs`
-provide partial iteration builds without replacing `build-output.json`, and
-`--profile` prints the nested span tree — every phase, the container
-invocations inside it, and how much of the run was container time. The trusted
-workflow collects the same tree without being asked: each validation job writes
-its spans to `validation-profile.json` beside the validation report, uploads it
-with the run's artifacts, and echoes it into the job's step summary. The
-profile is diagnostics only; nothing that authenticates a publication reads it.
-Set `LAX_VALIDATION_IMAGE` to the published
-immutable `@sha256` validation image, or use `--build-from-source` to build and
-cache the pinned runtime locally. Independent local findings are reported once
-in a phase-grouped summary instead of as separate errors.
+working tree and local database clone, then writes `build-output.json`. It
+needs `git` plus the host Lean toolchain (`elan` and `lake` on PATH) — no
+docker and no `LAX_VALIDATION_IMAGE`; the container runtime image is a CI-only
+concern. `lake build` runs **in place** in the submission's own `concepts/`
+and `proofs/` directories, so `.lake` persists between runs and rebuilds are
+incremental, and its transcript streams live to the terminal. On first use the
+CLI builds the shared warm mathlib workspace under `~/.lax/warm` (downloads
+gigabytes, once per machine and pin; `--build-from-source` compiles mathlib
+locally when its prebuilt artifact cache cannot be fetched). Server-only
+source fetching and artifact publication are omitted locally; kernel replay
+(the host toolchain's `leanchecker`) is opt-in with `--replay`. `--only
+concepts` and `--only proofs` provide partial iteration builds without
+replacing `build-output.json`, and `--profile` prints the nested span tree of
+every phase. The trusted workflow collects the same tree without being asked:
+each validation job writes its spans to `validation-profile.json` beside the
+validation report, uploads it with the run's artifacts, and echoes it into the
+job's step summary. The profile is diagnostics only; nothing that
+authenticates a publication reads it. Independent local findings are reported
+once in a phase-grouped summary instead of as separate errors.
 
 `lax delete` accepts an issue reference or local submission folder, refreshes
 the local database to detect immutable/deleted records and stranded

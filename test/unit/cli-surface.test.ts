@@ -47,12 +47,14 @@ describe("CLI compatibility surface", () => {
     expect(result.output).not.toContain("no GitHub App login found");
   });
 
-  it("aggregates missing tools for the new build infrastructure", () => {
+  it("aggregates missing tools for the host build toolchain", () => {
     const result = cli(["build"], { PATH: "/nonexistent" });
     expect(result.code).toBe(1);
     expect(result.output).toContain("missing required tools");
     expect(result.output).toContain("git:");
-    expect(result.output).toContain("docker:");
+    expect(result.output).toContain("elan:");
+    expect(result.output).toContain("lake:");
+    expect(result.output).not.toContain("docker:");
     expect(result.output).toContain("lax doctor");
   });
 });

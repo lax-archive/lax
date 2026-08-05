@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import runtime from "../submission-validation/runtime/validation-runtime.lock.json" with { type: "json" };
+// The pins module reads the runtime lock, so scaffolds always match what the
+// host build and the trusted container validate against (and follow the
+// fake-mathlib test seam).
+import { hostValidationRuntime } from "../submission-validation/pins.js";
+
+const runtime = hostValidationRuntime();
 
 export function ensureEmptyFolder(folder: string): string {
   const root = path.resolve(folder);

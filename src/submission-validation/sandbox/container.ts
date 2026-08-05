@@ -31,11 +31,23 @@ export interface ContainerResult {
 }
 
 /**
+ * How the validation pipeline executes its sandboxed phase commands. The
+ * trusted workflow and container-backed local builds use ContainerRunner;
+ * tests inject in-process fakes through ValidationOptions.runner. The
+ * invocation vocabulary stays container-shaped (mounts, container-absolute
+ * paths) because the trusted path is the contract every fake must mimic.
+ */
+export interface ValidationRunner {
+  run(invocation: ContainerInvocation): Promise<ContainerResult>;
+  verifyRuntime(): Promise<void>;
+}
+
+/**
  * Runs one phase in a fresh container from the immutable warm-runtime image.
  * The caller supplies an explicit mount and environment allowlist; no host
  * directory, credential, socket, or ambient environment is inherited.
  */
-export class ContainerRunner {
+export class ContainerRunner implements ValidationRunner {
   constructor(
     private readonly runtime: ValidationRuntimeIdentity,
     private readonly limits: ValidationLimits,

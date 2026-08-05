@@ -1,4 +1,4 @@
-import { GITHUB_API_URL, GITHUB_OAUTH_URL } from "../shared/constants.js";
+import { githubApiBase, githubOauthBase } from "../shared/constants.js";
 
 export const GITHUB_APP_CLIENT_ID = "Iv23lil5NgwdGZfM911w";
 
@@ -82,7 +82,7 @@ export function credentialsFromTokenResponse(
 }
 
 export async function requestDeviceCode(clientId: string): Promise<DeviceCode> {
-  const value = await formRequest<Record<string, unknown>>(`${GITHUB_OAUTH_URL}/login/device/code`, {
+  const value = await formRequest<Record<string, unknown>>(`${githubOauthBase()}/login/device/code`, {
     client_id: clientId,
   });
   if (
@@ -107,7 +107,7 @@ export async function requestDeviceToken(
   if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) {
     throw new Error("the Lax GitHub repository id is invalid");
   }
-  return formRequest<TokenResponse>(`${GITHUB_OAUTH_URL}/login/oauth/access_token`, {
+  return formRequest<TokenResponse>(`${githubOauthBase()}/login/oauth/access_token`, {
     client_id: clientId,
     device_code: deviceCode,
     grant_type: "urn:ietf:params:oauth:grant-type:device_code",
@@ -121,7 +121,7 @@ export async function refreshGitHubAppCredentials(
   if (credentials.refreshToken === undefined) {
     throw new Error("GitHub App login has expired; run `lax login` again");
   }
-  const response = await formRequest<TokenResponse>(`${GITHUB_OAUTH_URL}/login/oauth/access_token`, {
+  const response = await formRequest<TokenResponse>(`${githubOauthBase()}/login/oauth/access_token`, {
     client_id: credentials.clientId,
     grant_type: "refresh_token",
     refresh_token: credentials.refreshToken,
@@ -144,7 +144,7 @@ export async function revokeGitHubAppCredentials(
   ];
   let response: Response;
   try {
-    response = await fetch(`${GITHUB_API_URL}/credentials/revoke`, {
+    response = await fetch(`${githubApiBase()}/credentials/revoke`, {
       method: "POST",
       headers: {
         accept: "application/vnd.github+json",

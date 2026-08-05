@@ -3,7 +3,7 @@ import {
   CONTROL_REPOSITORY,
   GITHUB_ACTIONS_BOT_ID,
   GITHUB_ACTIONS_BOT_LOGIN,
-  GITHUB_OAUTH_URL,
+  githubOauthBase,
 } from "../shared/constants.js";
 import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import {
@@ -151,7 +151,7 @@ async function follow(
       const matched = matchComments(comments, matches, sourceCommentId);
       if (matched.runId !== undefined) {
         runId = matched.runId;
-        runUrl = matched.runUrl ?? `${GITHUB_OAUTH_URL}/${CONTROL_REPOSITORY}/actions/runs/${runId}`;
+        runUrl = matched.runUrl ?? `${githubOauthBase()}/${CONTROL_REPOSITORY}/actions/runs/${runId}`;
       }
 
       if (runId !== undefined && runUrl !== undefined && runId !== announcedRun) {

@@ -95,11 +95,18 @@ are published as immutable `lax-database` GitHub Releases.
 
 ## Test seams
 
-Today: GitHub is faked in-process only (`vi.stubGlobal("fetch")`, injected
-clients); Lean-touching phases are tested via injected fake runners; the only
-real-Lean coverage is the docker smoke script. There is **no** fake-mathlib
-seam, no subprocess-reachable fake GitHub, and no full-pipeline E2E in
-vitest. Restoring the old repo's seams (`LAX_MATHLIB_URL`/`LAX_MATHLIB_REV`,
-a fake-GitHub server behind `LAX_GITHUB_API_URL`/`LAX_GITHUB_OAUTH_URL`,
-runner injection in `pipeline.ts`) is part of the plan — see rewrite-plan.md
-"Tests". Never set test seams in production.
+GitHub is faked two ways: in-process (`vi.stubGlobal("fetch")`, injected
+clients) for unit tests, and via `test/fake-github.ts` — a local HTTP server
+that CLI subprocesses reach through `LAX_GITHUB_API_URL`/`LAX_GITHUB_OAUTH_URL`
+(late-bound in `src/shared/constants.ts`). It serves the GitHub App device
+flow, `/user`, `/credentials/revoke`, and a seedable issues list; tokens are
+`ghu_tok-<handle>` from a `"alice:1,bob:2"` registry. `test/e2e/cli-github.test.ts`
+drives the real CLI against it (spawn asynchronously — a blocked event loop
+starves the fake); stage 5 grows it to issues/Actions/Releases for the full
+author journey. The container pipeline is tested via runners injected through
+`ValidationOptions.runner`; real-Lean coverage comes from
+`test/e2e/host-pipeline.test.ts`, which runs the host pipeline (and the CLI)
+against the fake mathlib (`LAX_MATHLIB_URL`/`LAX_MATHLIB_REV`, wired up in
+`test/global-setup.ts`/`test/setup-env.ts` over the shared `~/.cache/lax-test`
+cache), plus the docker smoke script for the container path.
+Never set test seams in production, and never import test/ files from src/.

@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_LIMITS } from "../../src/submission-validation/config.js";
 import { provisionWorkspace } from "../../src/submission-validation/phases/provision.js";
-import { ContainerRunner } from "../../src/submission-validation/sandbox/container.js";
+import type { ValidationRunner } from "../../src/submission-validation/sandbox/container.js";
 import {
   cleanupTemporary,
   makeSubmission,
@@ -28,7 +28,7 @@ describe("submission workspace provisioning", () => {
         pathDependencies: Array<{ name: string; directory: string }>;
       }>;
     } | undefined;
-    const runner = {
+    const runner: ValidationRunner = {
       run: async () => {
         const repository = path.join(job, "workspaces", "concepts", "repository");
         plan = JSON.parse(fs.readFileSync(path.join(repository, ".lax-provision.json"), "utf8"));
@@ -36,7 +36,8 @@ describe("submission workspace provisioning", () => {
           writeFile(repository, `b/${kind}/lake-manifest.json`, "{\"packages\":[]}\n");
         return { code: 0, output: "", timedOut: false };
       },
-    } as ContainerRunner;
+      verifyRuntime: async () => {},
+    };
 
     await provisionWorkspace(
       "concepts",

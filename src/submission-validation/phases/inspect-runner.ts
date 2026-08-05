@@ -10,7 +10,7 @@ import type {
   ParsedDoc,
   ResolutionResult,
 } from "../contracts.js";
-import type { ContainerRunner } from "../sandbox/container.js";
+import type { ValidationRunner } from "../sandbox/container.js";
 
 export async function runInspector(
   kind: "concepts" | "proofs",
@@ -19,7 +19,7 @@ export async function runInspector(
   resolution: ResolutionResult,
   jobDir: string,
   dependencyRoot: string,
-  runner: ContainerRunner,
+  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<InspectorReport> {
   const containerRoot = `/capture/${kind}/package`;
@@ -61,7 +61,9 @@ export async function runInspector(
   return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown);
 }
 
-function parseInspectorReport(value: unknown): InspectorReport {
+/** Parse and bound an untrusted inspector report; shared with the host
+ * pipeline, which invokes the inspector binary directly. */
+export function parseInspectorReport(value: unknown): InspectorReport {
   const report = record(value, "inspector report");
   exactKeys(report, ["modules", "declarations"], "inspector report");
   if (!Array.isArray(report.modules) || report.modules.length > 100_000)

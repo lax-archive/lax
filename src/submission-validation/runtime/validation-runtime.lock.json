@@ -1,4 +1,5 @@
 {
+  "comment": "Container-image pins for CI validation. The host `lax build` path reads the same values through src/submission-validation/pins.ts; keep the two in step until stage 3 removes the custom image and this lock.",
   "layoutVersion": 1,
   "leanToolchain": "leanprover/lean4:v4.30.0",
   "leanVersion": "v4.30.0",

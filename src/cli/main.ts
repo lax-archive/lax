@@ -66,7 +66,7 @@ program
   .option("--only <part>", "build only `concepts` or `proofs` for fast iteration")
   .option(
     "--build-from-source",
-    "build the pinned validation runtime locally when no published image is available",
+    "build mathlib from source when its prebuilt artifacts cannot be fetched",
   )
   .description("run the shared validation pipeline locally and write build-output.json")
   .action(
@@ -77,7 +77,7 @@ program
       if (options.only !== undefined && options.only !== "concepts" && options.only !== "proofs") {
         throw new Error(`--only takes \`concepts\` or \`proofs\`, got \`${options.only}\``);
       }
-      preflight(["git", "docker"]);
+      preflight(["elan", "lake", "git"]);
       return buildSubmission(folder, {
         profile: options.profile,
         replay: options.replay,

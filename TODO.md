@@ -16,11 +16,11 @@ Suggested order of attack (details in rewrite-plan.md):
 
 1. ~~Doc consolidation~~ — done 2026-08-05 (this file, CLAUDE.md, history/,
    spec-notes entries, README fix, open-use notice).
-2. Package-overrides spike first (it decides how local build shares
-   mathlib — do not rebuild the hardlink farm), then runner seam in
-   `pipeline.ts` (host/container/fake) + restore old-lax local build (no
-   docker, incremental, streamed output) + fake-mathlib and fake-GitHub
-   test seams.
+2. ~~Runner seam + local build + test seams~~ — done 2026-08-05
+   (`ValidationRunner` injection; host-toolchain in-place incremental
+   `lax build` with streamed transcripts; warm store shared via Lake
+   package overrides per the spike below, no hardlink farm; fake-mathlib
+   + fake-GitHub seams with real-lake and CLI-subprocess e2e tests).
 3. Pipeline collapse (gated on the replay-memory measurement below): one
    read-only validation job; plain pinned stock image instead of the
    custom Containerfile; toolchain + `lake exe cache get` on the VM;
@@ -41,8 +41,8 @@ Suggested order of attack (details in rewrite-plan.md):
 6. Independent follow-ups: forbid sibling paths (delete `phases/siblings.ts`
    + arms; add the chain-submit guidance to error messages; later the
    `lax submit A B C` macro), allow multiple statements per concept (drop
-   the cardinality violation; website work in lax-website), package-overrides
-   spike (below), CLI polish (`--resume` reattach via issue→run derivation,
+   the cardinality violation; website work in lax-website), CLI polish
+   (`--resume` reattach via issue→run derivation,
    resolve the `lax update` name collision with old lax's self-upgrade,
    progressive doctor, no silent waits — stream compile output, message
    before every long operation).
@@ -53,15 +53,20 @@ unknowns: **replay memory on a 16 GB swapless hosted runner** (go/no-go for
 the whole architecture — oom.md measured 14.7 GiB RAM + 17.3 GiB swap at 4
 threads; measure a real big submission before stage 3), the `queue: max`
 concurrency semantics (classic Actions concurrency cancels pending runs;
-until verified, CAS-only), and whether Lake package-overrides reuse built
-oleans (decides stage 2's shape).
+until verified, CAS-only), and ~~whether Lake package-overrides reuse built
+oleans~~ — resolved 2026-08-05, they do (see the spike verdict below).
 
-**Package-overrides spike** (replaces the hardlink farm; also the
-recommended two-drafts-in-parallel workflow): `lax init` writes a gitignored
-Lake package-overrides file pointing mathlib at one shared local checkout;
-`lax build` rejects a checked-in overrides file. Confirm first that Lake
-reuses the override's built `.lake` artifacts (oleans), not just sources,
-and how overrides interact with the always-lax-generated `lake-manifest.json`.
+**Package-overrides spike** — ~~run 2026-08-05, verdict: yes~~. At the
+pinned v4.30.0, `.lake/package-overrides.json` is applied on every
+`lake build`, fully reuses the override target's built oleans in place,
+performs zero writes against a fully read-only store (safety + tripwire),
+and is concurrency-safe; the generated `lake-manifest.json` keeps the warm
+git pins verbatim so no drift warning fires. Landed in stage 2:
+`seedOverrides` replaces the hardlink farm, Static rejects a *tracked*
+package-overrides file, `LAKE_ARTIFACT_CACHE` stays off everywhere (the
+one landmine: a dependency lakefile enabling it would beat the env var —
+re-check on any pin bump). Two drafts in parallel now share the store with
+no extra machinery.
 
 ## spec.md reconciliation queue (Jan, manually)
 
