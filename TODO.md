@@ -24,8 +24,11 @@ Suggested order of attack (details in rewrite-plan.md):
 3. Pipeline collapse (gated on the replay-memory measurement below): one
    read-only validation job; plain pinned stock image instead of the
    custom Containerfile; toolchain + `lake exe cache get` on the VM;
-   Replay/Inspect on the VM sequentially (hand-built realpath'd LEAN_PATH,
-   never `lake env`); ghcr olean cache keyed (repo, folder, commit,
+   Compile, Replay, and Inspect all sequentially through the same
+   container runner (Jan's 2026-08-05 decision, superseding rewrite.md's
+   "outside docker" line — plan addendum point 8; hand-built realpath'd
+   LEAN_PATH, never `lake env`; local `--replay` stays host-side);
+   ghcr olean cache keyed (repo, folder, commit,
    proof|concept) **plus the toolchain/mathlib pin**, downloads
    digest-verified against the dependency's build-output.json (see the
    plan's corrected red-team addendum point 2); live rehearsal on scratch

@@ -41,7 +41,9 @@ Done-when per stage:
   each; `npm run check` green.
 - **Stage 3 (pipeline collapse)**: gated on the replay-memory measurement
   (red-team addendum, point 1). submission.yml has one read-only
-  validation job; validation-runtime.yml and the custom Containerfile are
+  validation job; all three phases (Compile, Replay, Inspect) run
+  sequentially through the same container runner and stock pinned image;
+  validation-runtime.yml and the custom Containerfile are
   gone; pins live in `src/constants.ts` (or equivalent); toolchain +
   `lake exe cache get` install on the VM with actions-cache; ghcr cache
   keyed (repo, folder, commit, proof|concept) plus the toolchain/mathlib
@@ -128,12 +130,24 @@ they can still run as two concurrent processes if it ever matters.
   size/entries/free-disk watchdog. Also keep the fail-closed pattern where the
   in-sandbox entry refuses to run if `LEAN_NUM_THREADS` is missing (the
   `--clearenv` OOM lesson, now enforced in code).
-- **Replay/Inspect on the VM, outside docker** — agreed; this is the old-lax
-  trust chain. Carry over its two rules verbatim: never `lake env` (compose
-  `LEAN_PATH` by hand from what the *runner* installed plus verified capture
-  contents, never from anything Compile wrote), and realpath every `LEAN_PATH`
-  entry (leanchecker's module scan is symlink-blind — this rationale survives
-  in old `src/pipeline/leanenv.ts:66` and must not be lost again).
+- **Replay/Inspect: containerized, same as Compile** — decided by Jan
+  2026-08-05, superseding rewrite.md's "outside docker, on the vm" line
+  after the analysis in addendum point 8: placement doesn't change the
+  integrity model either way, and since the stock image and container
+  runner exist for Compile anyway, containerizing costs no new review
+  surface while buying defense-in-depth (a partial leanchecker exploit
+  must be fully weaponized and lie within the report schema instead of
+  rewriting the report on the host) and per-phase memory/pids caps. Run
+  them with `--network=none`, read-only mounts of toolchain, mathlib, and
+  the sealed capture, and a writable mount only for the output. The two
+  old-lax trust rules carry unchanged into the container: never
+  `lake env` (compose `LEAN_PATH` by hand from what the *runner*
+  installed plus verified capture contents, never from anything Compile
+  wrote), and realpath every `LEAN_PATH` entry (leanchecker's module scan
+  is symlink-blind — this rationale survives in old
+  `src/pipeline/leanenv.ts:66` and must not be lost again). This is the
+  trusted CI path only: **local** `lax build` stays docker-free, with
+  opt-in `--replay` running the host leanchecker as before.
 
 ### Olean cache on ghcr keyed (repo, folder, commit, proof|concept) — agreed
 
@@ -471,9 +485,11 @@ contradicts earlier sections, the addendum wins.
    schema) and per-process resource caps; what it exposes is only a
    read-scoped token, public data, and an ephemeral VM. Since the same
    stock image and container runner exist for Compile anyway,
-   containerizing Replay/Inspect would cost no new review surface —
-   either placement is sanctioned; do not "fix" one into the other
-   believing it changes the security model. Separately, the single-job
+   containerizing Replay/Inspect costs no new review surface — on that
+   basis Jan decided 2026-08-05 to **containerize both** (recorded in the
+   Build pipeline section); the analysis stays here so nobody later
+   un-containerizes them believing it was a security-critical choice
+   rather than a cheap-hardening one. Separately, the single-job
    collapse itself means a docker escape during Compile owns the VM
    before Replay runs, so the Compile container boundary is load-bearing
    for verdict integrity (same posture as old lax's one box); the
