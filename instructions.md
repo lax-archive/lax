@@ -61,7 +61,7 @@ Lean validation pipeline. Successful validation uploads
 `validation-report.json`, `generated-build-output.json`, and `capture.tar`.
 The trusted publication job parses and cross-checks those files, repeats the
 current owner/state/issue/dependency checks, promotes the exact capture to an
-immutable `lax-database` release, and commits only the authoritative
+digest-addressed ghcr artifact, and commits only the authoritative
 `record.json` and `build-output.json`. It leaves `owner-list.json` untouched,
 synchronizes the issue title to the accepted manifest title, and dispatches a
 complete Website rebuild. A failed check creates no database commit.

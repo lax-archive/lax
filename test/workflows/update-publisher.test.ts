@@ -44,10 +44,20 @@ describe("trusted update publisher", () => {
     expect(parsed.buildOutput.issue).toEqual(issue);
     expect(parsed.buildOutput.capture).toMatchObject({
       ...TEST_CAPTURE,
-      downloadUrl: expect.stringContaining("/capture.tar"),
+      registryBlob: expect.stringContaining(`@sha256:${TEST_CAPTURE.digest}`),
     });
     expect(combined["owner-list.json"]).toBe(current.texts["owner-list.json"]);
-    expect(harness.captureStore.promote).toHaveBeenCalledOnce();
+    expect(harness.captureStore.promote).toHaveBeenCalledExactlyOnceWith(
+      "lax-42",
+      TEST_SOURCE,
+      TEST_CAPTURE,
+      "/capture.tar",
+    );
+    // Ordering invariant: the ghcr push completes before the database CAS
+    // commit that references the blob digest.
+    expect(harness.captureStore.promote.mock.invocationCallOrder[0]!).toBeLessThan(
+      harness.writeFiles.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("ignores owner-list digest changes but rechecks current numeric ownership", async () => {
@@ -168,7 +178,7 @@ function updateHarness(
   const archive: PublisherArchive = { load, writeFiles };
   const publishedCapture: PublishedCapture = {
     ...TEST_CAPTURE,
-    downloadUrl: "https://github.com/lax-archive/lax-database/releases/download/capture/capture.tar",
+    registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`,
   };
   const captureStore = {
     promote: vi.fn().mockResolvedValue(publishedCapture),
@@ -223,7 +233,7 @@ function dependencyLoaded(source = {
       leanToolchain: "leanprover/lean4:v4.30.0",
       mathlibCommit: "3".repeat(40),
       files: [{ path: "concepts/Lax7.olean", bytes: 1, sha256: "6".repeat(64) }],
-      downloadUrl: "https://github.com/lax-archive/lax-database/releases/download/example/capture.tar",
+      registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"8".repeat(64)}`,
     },
   });
   return {

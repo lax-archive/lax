@@ -25,7 +25,11 @@ import type {
   ValidationRequest,
   ValidationRuntimeIdentity,
 } from "./contracts.js";
-import { submissionIdForPackage, validationRequestFromUnknown } from "./contracts.js";
+import {
+  parseCaptureBlobReference,
+  submissionIdForPackage,
+  validationRequestFromUnknown,
+} from "./contracts.js";
 
 const MAX_CAPTURE_FILES = 100_000;
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -393,7 +397,7 @@ function parseSections(value: unknown, owner: string): AnnotationSection[] {
 function parseCaptureManifest(value: unknown, published: boolean): CaptureManifest | PublishedCapture {
   const object = exactObject(value, [
     "formatVersion", "digest", "sourceCommit", "leanToolchain", "mathlibCommit", "files",
-    ...(published ? ["downloadUrl"] : []),
+    ...(published ? ["registryBlob"] : []),
   ], published ? "published capture" : "capture manifest");
   if (object.formatVersion !== 1) throw new ValidationError("capture formatVersion must be 1");
   const files = boundedArray(object.files, "capture files", MAX_CAPTURE_FILES)
@@ -411,18 +415,19 @@ function parseCaptureManifest(value: unknown, published: boolean): CaptureManife
     files,
   };
   if (!published) return base;
-  if (typeof object.downloadUrl !== "string") throw new ValidationError("published capture downloadUrl must be a string");
-  let url: URL;
-  try {
-    url = new URL(object.downloadUrl);
-  } catch {
-    throw new ValidationError("published capture downloadUrl is invalid");
+  // Consumers never fetch a capture by tag: the reference must be a ghcr
+  // digest address carrying exactly the digest this record declares, and
+  // readers pull that digest and hash the received bytes. Any other
+  // reference is rejected fail-closed here instead of trusted at download.
+  if (typeof object.registryBlob !== "string") throw new ValidationError("published capture registryBlob must be a string");
+  const reference = parseCaptureBlobReference(object.registryBlob);
+  if (reference === undefined) {
+    throw new ValidationError("published capture registryBlob is not a ghcr digest reference");
   }
-  if (
-    url.protocol !== "https:" || url.username !== "" || url.password !== "" ||
-    !["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"].includes(url.hostname)
-  ) throw new ValidationError("published capture downloadUrl is not an allowed public HTTPS URL");
-  return { ...base, downloadUrl: url.toString() };
+  if (reference.digest !== base.digest) {
+    throw new ValidationError("published capture registryBlob digest does not match the capture digest");
+  }
+  return { ...base, registryBlob: object.registryBlob };
 }
 
 function parseCapturedFile(value: unknown, index: number): CapturedFile {

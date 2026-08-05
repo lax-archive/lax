@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-// The pins module reads the runtime lock, so scaffolds always match what the
-// host build and the trusted container validate against (and follow the
-// fake-mathlib test seam).
+// The pins module is the single home of the archive pins, so scaffolds always
+// match what the host build and the trusted container validate against (and
+// follow the fake-mathlib test seam).
 import { hostValidationRuntime } from "../submission-validation/pins.js";
 
 const runtime = hostValidationRuntime();

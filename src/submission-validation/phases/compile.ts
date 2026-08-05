@@ -43,6 +43,9 @@ async function compile(
     workdir: `${workspace.containerSubmissionRoot}/${kind}`,
     env: {
       HOME: "/tmp/lax-home",
+      // must stay off against the read-only warm mount — see the landmine
+      // comment in host/warmstore.ts (lake would write .hash files beside
+      // the shared oleans)
       LAKE_ARTIFACT_CACHE: "false",
       LEAN_NUM_THREADS: "4",
     },

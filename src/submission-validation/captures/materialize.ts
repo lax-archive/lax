@@ -50,7 +50,7 @@ export async function materializeDependencyCaptures(
       try {
         const download = await runner.run({
           label: `download-${id}`,
-          args: ["node", "/opt/lax-runtime/bin/download-capture.mjs", capture.downloadUrl, `/job/downloads/${archiveName}`],
+          args: ["node", "/opt/lax/bin/download-capture.mjs", capture.registryBlob, `/job/downloads/${archiveName}`],
           mounts: [{ source: jobDir, target: "/job", writable: true }],
           network: true,
           timeoutMs: limits.fetchTimeoutMs,
@@ -60,7 +60,7 @@ export async function materializeDependencyCaptures(
         if (sha256File(archive) !== capture.digest) throw new Error(`capture archive digest mismatch for ${id}`);
         const extract = await runner.run({
           label: `extract-${id}`,
-          args: ["node", "/opt/lax-runtime/bin/extract-capture.mjs", `/job/downloads/${archiveName}`, `/job/dependencies/${id}`],
+          args: ["node", "/opt/lax/bin/extract-capture.mjs", `/job/downloads/${archiveName}`, `/job/dependencies/${id}`],
           mounts: [{ source: jobDir, target: "/job", writable: true }],
           timeoutMs: 60_000,
           maxOutputBytes: limits.maxOutputBytes,

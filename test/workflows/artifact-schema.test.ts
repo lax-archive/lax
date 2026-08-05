@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseSuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
+import {
+  parsePublishedCapture,
+  parseSuccessfulValidationArtifacts,
+} from "../../src/submission-validation/artifact-schema.js";
 import {
   successfulArtifacts,
+  TEST_CAPTURE,
   TEST_RUNTIME,
   validationRequest,
 } from "../support/validation-artifacts.js";
@@ -130,5 +134,29 @@ describe("trusted validation artifact parser", () => {
     expect(() =>
       parseSuccessfulValidationArtifacts(artifact.report, artifact.buildOutput, validationRequest(), TEST_RUNTIME),
     ).toThrow("generated concept 1 id must be a canonical Lean name");
+  });
+});
+
+describe("published capture reference", () => {
+  const published = (registryBlob: unknown): unknown => ({
+    ...TEST_CAPTURE,
+    registryBlob,
+  });
+
+  it("accepts only a ghcr blob address carrying the record's own digest", () => {
+    expect(
+      parsePublishedCapture(published(`ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`)),
+    ).toMatchObject({ registryBlob: expect.stringContaining("ghcr.io/") });
+    // Consumers never fetch by tag, and never by a digest other than the one
+    // this record declares.
+    expect(() => parsePublishedCapture(published("ghcr.io/lax-archive/lax-captures:cap-a-tag")))
+      .toThrow("not a ghcr digest reference");
+    expect(() => parsePublishedCapture(published(`ghcr.io/lax-archive/lax-captures@sha256:${"9".repeat(64)}`)))
+      .toThrow("does not match the capture digest");
+    expect(() => parsePublishedCapture(published(`https://ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`)))
+      .toThrow("not a ghcr digest reference");
+    expect(() => parsePublishedCapture(published(`docker.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`)))
+      .toThrow("not a ghcr digest reference");
+    expect(() => parsePublishedCapture(published(undefined))).toThrow("must be a string");
   });
 });

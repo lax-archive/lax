@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { ArchiveRepository } from "../shared/archive.js";
-import { GitHubReleaseCaptureStore } from "../shared/capture-store.js";
+import { GhcrCaptureStore } from "../shared/capture-store.js";
 import { CONTROL_REPOSITORY } from "../shared/constants.js";
 import { ControlPlane } from "../shared/control-plane.js";
 import { GitHubClient, repositoryPath } from "../shared/github.js";
@@ -18,7 +18,6 @@ import {
   parseSuccessfulValidationArtifacts,
   type SuccessfulValidationArtifacts,
 } from "../submission-validation/artifact-schema.js";
-import { verifyCaptureArchive } from "../submission-validation/capture-archive.js";
 import { configuredRuntime } from "../submission-validation/config.js";
 import type { ValidationReport, ValidationRequest } from "../submission-validation/contracts.js";
 import { decodeUtf8, isObject, ValidationError } from "../shared/validation.js";
@@ -250,10 +249,13 @@ async function publishUpdate(): Promise<void> {
   try {
     const artifacts = readSuccessfulArtifacts(request);
     const archiveClient = new GitHubClient(requiredEnv("LAX_DATABASE_TOKEN"));
+    // The capture store pushes with the job's own GITHUB_TOKEN
+    // (packages: write on the control repository's ghcr namespace); the
+    // App-minted database token never leaves the archive write path.
     const publisher = new UpdatePublisher(
       control,
       new ArchiveRepository(archiveClient),
-      new GitHubReleaseCaptureStore(archiveClient),
+      new GhcrCaptureStore(requiredEnv("GITHUB_TOKEN")),
       authoritativeRepositoryId,
     );
     const result = await publisher.publish(
@@ -449,7 +451,7 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
     report,
     output,
     validationRequest(request),
-    configuredRuntime(requiredEnv("LAX_VALIDATION_IMAGE")),
+    configuredRuntime(),
   );
   const capturePath = requiredEnv("VALIDATION_CAPTURE_PATH");
   let stat: fs.Stats;
@@ -461,10 +463,13 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
   if (!stat.isFile() || stat.size <= 0 || stat.size > 2 * 1024 * 1024 * 1024) {
     throw new ValidationError("validation capture must be a non-empty regular file no larger than 2 GiB");
   }
+  // Credential-free revalidation stops at the whole-tarball sha256: sealing
+  // already hashed the deterministic tar, and every consumer re-verifies the
+  // per-file inventory at materialize time. (The old USTAR structural walk
+  // here was the redundant third verification; rewrite-plan.md cut it.)
   if (sha256File(capturePath) !== artifacts.report.capture.digest) {
     throw new ValidationError("validation capture digest does not match its report");
   }
-  verifyCaptureArchive(capturePath, artifacts.report.capture);
   return artifacts;
 }
 

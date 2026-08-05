@@ -1,3 +1,14 @@
+// Runs Replay (leanchecker) or Inspect (laxinspector) inside the sandbox
+// against a pipeline-composed LEAN_PATH — never `lake env`, whose search path
+// derives from workspace files Compile wrote. The absolute paths below are
+// the stable in-container mount points of the VM-installed toolchain, warm
+// mathlib workspace, and inspector (RUNTIME_PATHS in ../../config.ts — this
+// script runs inside the container and cannot import it; keep them in step).
+//
+// LEAN_NUM_THREADS is required, fail-closed: an unbounded replay once OOMed
+// the host (history/oom.md, the `--clearenv` env-delivery lesson) — refusing
+// to run without an explicit worker bound enforces that lesson in code.
+
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,18 +19,18 @@ const plan = JSON.parse(fs.readFileSync(planPath, "utf8"));
 if (!plan || !Array.isArray(plan.ownLibs) || !Array.isArray(plan.dependencyLibs) || !Array.isArray(plan.args)) process.exit(2);
 const leanNumThreads = process.env.LEAN_NUM_THREADS;
 if (leanNumThreads === undefined || !/^[1-9][0-9]*$/u.test(leanNumThreads)) process.exit(2);
-const warmPackages = "/opt/lax-runtime/warm/.lake/packages";
+const warmPackages = "/opt/lax/warm/.lake/packages";
 const warmLibs = fs.readdirSync(warmPackages, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => path.join(warmPackages, entry.name, ".lake", "build", "lib", "lean"))
   .filter((entry) => fs.existsSync(entry));
 const env = {
-  PATH: `/opt/lean/bin:${process.env.PATH ?? "/usr/bin:/bin"}`,
+  PATH: `/opt/lax/toolchain/bin:${process.env.PATH ?? "/usr/bin:/bin"}`,
   HOME: "/tmp/lax-check-home",
   LEAN_NUM_THREADS: leanNumThreads,
   LEAN_PATH: [...plan.ownLibs, ...plan.dependencyLibs, ...warmLibs].join(path.delimiter),
 };
-const executable = plan.tool === "replay" ? "/opt/lean/bin/leanchecker" : "/opt/lax-runtime/bin/laxinspector";
+const executable = plan.tool === "replay" ? "/opt/lax/toolchain/bin/leanchecker" : "/opt/lax/inspector/laxinspector";
 const result = spawnSync(executable, plan.args, {
   cwd: plan.cwd,
   env,

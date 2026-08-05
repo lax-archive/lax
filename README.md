@@ -20,16 +20,16 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 | `/lax owners <JSON>` | Replaces the complete owner list after numeric-id authorization and GitHub identity resolution. |
 | `/lax delete` | Replaces an init/draft record with a permanent three-file tombstone. |
 | `/lax register` | Makes an init/draft record immutable. |
-| `/lax update <JSON>` | Validates the immutable source, promotes its exact capture to immutable storage, and replaces only `record.json` and `build-output.json`. |
+| `/lax update <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. |
 
 The Lean validation job has no App key, installation token, or Archive write
 credential. Its successful workflow artifact contains `validation-report.json`,
 `generated-build-output.json`, and `capture.tar`. Inside the submission-scoped
 publication job, a credential-free preflight parses the exact schemas, verifies
-the USTAR inventory and every digest, and re-reads authorization, lifecycle
-state, issue binding, stale-write inputs, and dependency captures. Only then
-may the trusted job mint the database token, publish the content-addressed
-capture as an immutable `lax-database` GitHub Release, construct the
+the capture digest, and re-reads authorization, lifecycle state, issue
+binding, stale-write inputs, and dependency captures. Only then may the
+trusted job mint the database token, push the digest-addressed capture to
+`ghcr.io/<owner>/lax-captures`, construct the
 authoritative files, and commit exactly `record.json` and `build-output.json`.
 It preserves `owner-list.json`, synchronizes the issue title after the commit,
 and then dispatches the Website rebuild. Publishers for different submissions
@@ -53,34 +53,37 @@ Configure the workflow with:
 
 - repository variable `LAX_REPOSITORY_ID`: the immutable numeric id of
   `lax-archive/lax` (`1320232165`);
-- repository variable `LAX_VALIDATION_IMAGE`: the reviewed validation runtime
-  pinned as `ghcr.io/...@sha256:<digest>`;
 - `lax-database-publish` environment variable `LAX_DATABASE_APP_ID` and secret
   `LAX_DATABASE_APP_PRIVATE_KEY` for the Database Publisher App;
 - Database Publisher installation access only to `lax-database`, with
-  repository `Contents: write` and `Administration: read` so the trusted
-  publisher can verify that immutable releases remain enabled;
+  repository `Contents: write`;
 - `lax-website-dispatch` environment variable `LAX_WEBSITE_APP_ID` and secret
   `LAX_WEBSITE_APP_PRIVATE_KEY` for the Website Dispatcher App;
 - Website Dispatcher installation access only to `lax-website`, with
   repository `Contents: write`;
 - the repository Actions policy **Require actions to be pinned to a full-length
-  commit SHA** enabled; and
-- immutable releases enabled for `lax-database`. Publication fails closed
-  before any database commit if this repository setting is disabled.
+  commit SHA** enabled.
+
+Dependency captures are OCI artifacts on ghcr. Their tags are mutable and
+only aid discoverability; integrity comes from consumers fetching each blob
+by the sha256 digest recorded in the dependency's `build-output.json` and
+verifying the bytes, so no repository setting is load-bearing for them.
 
 ### Validation infrastructure
 
 Issue creation and `/lax` issue comments start `submission.yml`; it is the only
 issue-event entry point. Validation runs on the standard `ubuntu-latest`
-GitHub-hosted runner and pulls the reviewed runtime by the immutable digest in
-`LAX_VALIDATION_IMAGE`. The workflow presents Compile, Replay, and Inspect as
+GitHub-hosted runner. The sandbox is a *stock* image pinned by digest in
+`src/submission-validation/pins.ts` — no custom image, no registry login; the
+runner installs the pinned elan/toolchain and warm mathlib workspace on the VM
+(`host/setup.ts`, the same code local `lax build` uses) and every container
+gets them bind-mounted read-only. The workflow presents Compile, Replay, and Inspect as
 three first-class jobs in the Actions DAG. Short-lived, credential-free
 artifacts carry the same compiled validation workspace from Compile to Replay
 and Inspect, which run in parallel; every job cleans its local copy
 unconditionally afterwards. Each phase runs on a fresh hosted runner in a fresh
-credential-free container. No disk reclaim runs before the
-large runtime image pull: a hosted runner reports ~88 GB free, which is
+credential-free container. No disk reclaim runs before the toolchain and
+warm-store installation: a hosted runner reports ~88 GB free, which is
 ample. A lightweight Validation result
 job joins Replay and Inspect and requires both to succeed before publication.
 The validation request output follows the same Compile-to-checker fork. Kernel
@@ -88,13 +91,7 @@ replay and inspection use two Lean workers inside their 16 GiB container limit
 so large module sets cannot exhaust either hosted runner while the surrounding
 workflow remains responsive.
 
-`validation-runtime.yml` is intentionally not issue-triggered: it builds
-trusted infrastructure only when its reviewed runtime sources change on
-`main`, or when a maintainer dispatches it manually. It builds and pushes the
-runtime, smoke-tests the pushed digest, and uploads `validation-image.txt`.
-Only promote that exact `ghcr.io/...@sha256:<digest>` value after review.
-`release-cli.yml` is similarly restricted to version tags, while CI runs for
-pushes.
+`release-cli.yml` is restricted to version tags, while CI runs for pushes.
 
 `lax-database` must also have an initial commit and a real default branch before
 the control plane can pin a snapshot. An empty newly created repository has no
@@ -191,8 +188,8 @@ when the database is missing, stale, invalid, or cannot be checked. Pass
 `lax build [folder]` runs the shared submission-validation phases against the
 working tree and local database clone, then writes `build-output.json`. It
 needs `git` plus the host Lean toolchain (`elan` and `lake` on PATH) — no
-docker and no `LAX_VALIDATION_IMAGE`; the container runtime image is a CI-only
-concern. `lake build` runs **in place** in the submission's own `concepts/`
+docker; containers are a CI-only concern.
+`lake build` runs **in place** in the submission's own `concepts/`
 and `proofs/` directories, so `.lake` persists between runs and rebuilds are
 incremental, and its transcript streams live to the terminal. On first use the
 CLI builds the shared warm mathlib workspace under `~/.lax/warm` (downloads

@@ -54,7 +54,7 @@ npm run build            # compile to dist/
 npm test                 # vitest (unit + workflows)
 npm run check            # build + test
 npm run lax -- --help    # run the CLI from source
-npm run smoke:submission-validation   # real-container smoke (needs docker + LAX_VALIDATION_IMAGE)
+npm run smoke:submission-validation   # real-container smoke (needs docker; shares ~/.lax + ~/.elan)
 ```
 
 The pinned page-builder consumed by `lax serve` is assembled for release with
@@ -72,9 +72,17 @@ server-only fetching, mandatory replay, and publishable artifact creation.
 publisher/control-plane/archive code, `src/cli/` the CLI. Untrusted code
 runs in docker containers (`src/submission-validation/sandbox/`) with
 allowlist-only mounts, env allowlist, resource caps, and a workspace
-watchdog. Database writes go through the GitHub API with a non-forced ref
+watchdog; the container is a stock digest-pinned image
+(`src/submission-validation/pins.ts` — the single home of all pins) with
+the VM-installed toolchain and warm mathlib workspace bind-mounted
+read-only (`host/setup.ts` provisions them, `sandbox/layout.ts` resolves
+them). Database writes go through the GitHub API with a non-forced ref
 update (compare-and-swap) plus re-validation on retry; dependency captures
-are published as immutable `lax-database` GitHub Releases.
+are pushed as digest-addressed OCI artifacts to ghcr
+(`ghcr.io/<owner>/lax-captures`, `src/shared/capture-store.ts`) before the
+database commit that references them — tags are mutable and only for
+discoverability/GC; consumers pull anonymously by the digest recorded in
+the dependency's `build-output.json` and verify the bytes.
 
 ## Trust rules
 

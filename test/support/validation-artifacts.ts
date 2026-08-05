@@ -59,7 +59,7 @@ export function buildOutput(id = "lax-42"): BuildOutputPayload {
     requiredByProofs: [],
     concepts: [],
     proofs: [],
-    capture: TEST_CAPTURE,
+    capture: structuredClone(TEST_CAPTURE),
   };
 }
 
@@ -79,7 +79,7 @@ export function successfulArtifacts(id = "lax-42"): SuccessfulValidationArtifact
     warnings: [],
     violations: [],
     buildOutput: output,
-    capture: TEST_CAPTURE,
+    capture: structuredClone(TEST_CAPTURE),
   };
   return { report, buildOutput: output };
 }

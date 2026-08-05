@@ -13,7 +13,7 @@ export const REPOSITORY = "https://github.com/alice/monorepo";
 export const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
 export const RUNTIME: ValidationRuntimeIdentity = {
-  image: `ghcr.io/lax-archive/validation@sha256:${"1".repeat(64)}`,
+  image: `node:22-bookworm-slim@sha256:${"1".repeat(64)}`,
   imageDigest: "1".repeat(64),
   layoutVersion: 1,
   leanToolchain: "leanprover/lean4:v4.30.0",

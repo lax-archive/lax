@@ -14,6 +14,7 @@ import type {
   ValidationRuntimeIdentity,
   ValidationScope,
 } from "./contracts.js";
+import { warmDir } from "./host/warmstore.js";
 import { compileConcepts, compileProofs } from "./phases/compile.js";
 import { emitBuildOutput } from "./phases/emit.js";
 import { judgeInspection } from "./phases/inspect.js";
@@ -29,7 +30,7 @@ import { runStaticValidation } from "./phases/static.js";
 import { Profiler } from "../shared/profile.js";
 import { ContainerRunner, type ValidationRunner } from "./sandbox/container.js";
 import { assertWorkspaceWithinLimit } from "./sandbox/workspace-limit.js";
-import { containedDirectory, fetchSource, type FetchedSource } from "./source/fetch.js";
+import { fetchSource, type FetchedSource } from "./source/fetch.js";
 
 export interface ValidationOptions {
   /** A local build supplies already-available source and Archive data. */
@@ -52,8 +53,7 @@ export interface ValidationOptions {
   onPhase?: (event: { name: string; state: "start" | "complete"; durationMs?: number }) => void;
   /**
    * Collects the span tree. The caller owns it so the timings survive the
-   * early returns that report a failed validation, and so a staged workflow
-   * invocation can persist them after the pipeline has returned.
+   * early returns that report a failed validation.
    */
   profiler?: Profiler;
 }
@@ -77,6 +77,8 @@ interface PreparedValidation extends ReportState {
   resolution: ResolutionResult;
   siblings: ReturnType<typeof runResolution>["siblings"];
   dependencyRoot: string;
+  /** host path of the warm workspace the sandbox mounts read-only */
+  warmWs: string;
   captureRoot: string;
   phase<T>(name: string, operation: () => Promise<T> | T): Promise<T>;
 }
@@ -86,13 +88,17 @@ type CompiledValidation = PreparedValidation;
 type Preparation = { state: PreparedValidation } | { report: ValidationReport };
 type Compilation = { state: CompiledValidation } | { report: ValidationReport };
 
-/** Run all stages in one process for local builds and direct library callers. */
+/**
+ * Run every phase — Compile, Replay, Inspect — sequentially in one process.
+ * The trusted workflow's single validation job and local builds share this
+ * entry point; there is no staged resume any more.
+ */
 export async function validateSubmission(
   request: ValidationRequest,
   jobDir: string,
   options: ValidationOptions = {},
 ): Promise<ValidationReport> {
-  const compiled = await compileStage(request, jobDir, options, false);
+  const compiled = await compileStage(request, jobDir, options);
   if ("report" in compiled) return compiled.report;
   if (options.replay !== false) {
     const replayFailure = await replayStage(compiled.state);
@@ -101,57 +107,14 @@ export async function validateSubmission(
   return inspectStage(compiled.state);
 }
 
-/** Compile and retain the job workspace for a later workflow step. */
-export async function compileSubmission(
-  request: ValidationRequest,
-  jobDir: string,
-  options: ValidationOptions = {},
-): Promise<ValidationReport | undefined> {
-  const compiled = await compileStage(request, jobDir, options, false);
-  return "report" in compiled ? compiled.report : undefined;
-}
-
-/** Resume a successful Compile workspace and kernel-replay its artifacts. */
-export async function replaySubmission(
-  request: ValidationRequest,
-  jobDir: string,
-  options: ValidationOptions = {},
-): Promise<ValidationReport | undefined> {
-  const compiled = await compileStage(request, jobDir, options, true, "replay");
-  if ("report" in compiled) return compiled.report;
-  return replayStage(compiled.state);
-}
-
-/** Resume a compiled (or sequentially replayed) workspace and inspect it. */
-export async function inspectSubmission(
-  request: ValidationRequest,
-  jobDir: string,
-  options: ValidationOptions = {},
-): Promise<ValidationReport> {
-  const compiled = await compileStage(request, jobDir, options, true, "inspect");
-  if ("report" in compiled) return compiled.report;
-  return inspectStage(compiled.state);
-}
-
 async function compileStage(
   request: ValidationRequest,
   jobDir: string,
   options: ValidationOptions,
-  resume: boolean,
-  resumePhase: "replay" | "inspect" = "replay",
 ): Promise<Compilation> {
-  const prepared = await prepareValidation(request, jobDir, options, resume);
+  const prepared = await prepareValidation(request, jobDir, options);
   if ("report" in prepared) return prepared;
   const state = prepared.state;
-
-  if (resume) {
-    try {
-      capturedManifests(state.captureRoot, state.scope);
-      return { state };
-    } catch (error) {
-      return { report: fail(state, resumePhase, "stage-workspace", error) };
-    }
-  }
 
   try {
     await state.phase("dependency provisioning", () =>
@@ -177,9 +140,7 @@ async function compileStage(
         state.resolution,
         state.siblings,
         state.jobDir,
-        state.dependencyRoot,
-        state.runner,
-        state.limits,
+        state.warmWs,
       ));
     await state.phase("compile concepts", () =>
       compileConcepts(conceptWorkspace, state.dependencyRoot, state.runner, state.limits));
@@ -206,9 +167,7 @@ async function compileStage(
           state.resolution,
           state.siblings,
           state.jobDir,
-          state.dependencyRoot,
-          state.runner,
-          state.limits,
+          state.warmWs,
         ));
       await state.phase("install concept capture", () =>
         installOwnConceptCapture(proofWorkspace, state.captureRoot));
@@ -334,7 +293,6 @@ async function prepareValidation(
   request: ValidationRequest,
   jobDir: string,
   options: ValidationOptions,
-  resume: boolean,
 ): Promise<Preparation> {
   const runtime = options.runtime ?? configuredRuntime();
   const limits = DEFAULT_LIMITS;
@@ -370,24 +328,14 @@ async function prepareValidation(
   try {
     if (options.local !== undefined) {
       ({ fetched, archive } = options.local);
-    } else if (resume) {
-      const repositoryRoot = existingDirectory(path.join(jobDir, "source"), "fetched source");
-      fetched = {
-        repositoryRoot,
-        submissionRoot: containedDirectory(repositoryRoot, request.source.folder),
-      };
-      archive = new ArchiveSnapshot(
-        existingDirectory(path.join(jobDir, "archive"), "Archive snapshot"),
-        request.archiveSha,
-      );
     } else {
       [fetched, archive] = await Promise.all([
-        fetchSource(request.source, jobDir, runner, limits),
-        fetchArchiveSnapshot(request.archiveSha, jobDir, runner, limits),
+        fetchSource(request.source, jobDir, limits),
+        fetchArchiveSnapshot(request.archiveSha, jobDir, limits),
       ]);
     }
   } catch (error) {
-    return { report: fail(base(), "source", resume ? "resume" : "fetch", error) };
+    return { report: fail(base(), "source", "fetch", error) };
   }
 
   const staticCheck = await phase("static validation", () =>
@@ -424,37 +372,13 @@ async function prepareValidation(
       resolution: resolution.result,
       siblings: resolution.siblings,
       dependencyRoot: path.join(jobDir, "dependencies"),
+      // the same pin-keyed warm workspace verifyRuntime asserted ready and
+      // the runner mounts; provisioning reads its locked manifest on the host
+      warmWs: warmDir(),
       captureRoot: path.join(jobDir, "capture"),
       phase,
     },
   };
-}
-
-function capturedManifests(
-  captureRoot: string,
-  scope: ValidationScope,
-): Record<"concepts" | "proofs", string> {
-  const concepts = readCapturedManifest(path.join(captureRoot, "concepts", "package", "lake-manifest.json"));
-  return {
-    concepts,
-    proofs: scope === "concepts"
-      ? concepts
-      : readCapturedManifest(path.join(captureRoot, "proofs", "package", "lake-manifest.json")),
-  };
-}
-
-function readCapturedManifest(filename: string): string {
-  const stat = fs.lstatSync(filename);
-  if (!stat.isFile() || stat.size > 8 * 1024 * 1024) {
-    throw new Error("compiled stage has no bounded captured manifest");
-  }
-  return fs.readFileSync(filename, "utf8");
-}
-
-function existingDirectory(directory: string, label: string): string {
-  const absolute = path.resolve(directory);
-  if (!fs.lstatSync(absolute).isDirectory()) throw new Error(`${label} is missing`);
-  return absolute;
 }
 
 function fail(

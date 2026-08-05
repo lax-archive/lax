@@ -67,20 +67,21 @@ jobs:
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
         run: node dist/workflows/submission.js route
 
-  # Each validation phase is a first-class DAG node on a fresh hosted runner.
-  # Credential-free handoff artifacts carry only validation state forward.
-  compile:
-    name: Compile
+  # The one job that checks out and executes submission code. It holds only a
+  # read-scoped repository token: no issue write, no packages, no actions API,
+  # no App keys — everything it produces leaves as a credential-free artifact
+  # that the trusted publisher re-validates before any token is minted.
+  # Compile, Replay, and Inspect run sequentially inside one process on one
+  # runner (rewrite-plan.md "Build pipeline"); the sandbox is the stock
+  # digest-pinned Docker Hub image from src/submission-validation/pins.ts with
+  # the VM-installed toolchain and warm mathlib workspace mounted read-only.
+  validate:
+    name: Validate
     needs: route
     if: needs.route.outputs.operation == 'validate'
     runs-on: ubuntu-latest
-    outputs:
-      validation_request: ${{ needs.route.outputs.validation_request }}
     permissions:
       contents: read
-      packages: read
-      # Read this run's own step timings for the job-overhead profile.
-      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -91,232 +92,45 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+      # The pins module is the single home of every value the host setup
+      # installs (elan commit, toolchain, mathlib revision), so its hash is
+      # the cache identity; the version salt invalidates by hand when the
+      # on-disk layout changes. No restore-keys: a store for other pins would
+      # restore gigabytes of dead weight next to the fresh build.
+      - name: Restore toolchain and warm mathlib workspace
+        id: lean-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-      # No disk reclaim: a hosted runner reports 88 GB free before the pull,
-      # and the pull needs 11 GB against a 20 GiB workspace cap and a 5 GiB
-      # free-space floor. Deleting the preinstalled Android/dotnet/ghc trees
-      # bought headroom nothing wanted and cost ~20s of disk contention with
-      # the extraction (run 30941367519 vs 30937438443).
-      - name: Fetch the pinned warm runtime
+          path: |
+            ~/.elan
+            ~/.lax/warm
+            ~/.lax/tools
+          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      - name: Provision the validation host
         env:
-          IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
-        run: |
-          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-            docker pull "$IMAGE"
-          fi
-          echo "runner disk free: $(numfmt --to=iec "$(df -B1 --output=avail / | tail -1)")"
-          echo "validation image on disk: $(numfmt --to=iec "$(docker image inspect "$IMAGE" --format '{{.Size}}')")"
-      - name: Compile
+          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
+        run: node dist/submission-validation/host/setup-vm.js
+      # Save before any submission code runs: the cache must only ever hold
+      # what the trusted setup produced. Saving in the action's post step
+      # would snapshot the tree after untrusted code executed on this VM —
+      # a sandbox escape could poison the store for every later run. This
+      # placement also keeps the expensive first build cached even when the
+      # submission itself fails validation.
+      - name: Save toolchain and warm mathlib workspace
+        if: steps.lean-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.elan
+            ~/.lax/warm
+            ~/.lax/tools
+          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      - name: Validate
         env:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
-          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-        run: node dist/submission-validation/run.js compile
-
-      # Before packing, so the job's own overhead travels with the handoff and
-      # ends up in the artifact Inspect uploads. Packing and uploading are the
-      # only costs this misses.
-      - name: Record job cost
-        if: always()
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-          LAX_VALIDATION_STAGE: compile
-        run: node dist/workflows/job-profile.js
-
-      - name: Pack Compile handoff
-        if: success()
-        run: |
-          tar \
-            --exclude='./work/source/.git' \
-            --exclude='./work/archive/.git' \
-            --exclude='./work/downloads' \
-            --create \
-            --file .build/submission-validation-compile.tar \
-            --directory .build/submission-validation \
-            .
-
-      - name: Preserve Compile handoff
-        if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: submission-validation-compile-${{ github.event.issue.number }}
-          path: .build/submission-validation-compile.tar
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Clean validation workspace
-        if: always()
-        env:
-          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-        run: node dist/submission-validation/run.js cleanup
-
-      - name: Preserve failed validation report
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: submission-validation-${{ github.event.issue.number }}
-          path: |
-            .build/submission-validation/validation-report.json
-            .build/submission-validation/validation-profile.json
-          if-no-files-found: warn
-          retention-days: 30
-
-  replay:
-    name: Replay
-    needs: compile
-    if: needs.compile.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-      actions: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-      # No disk reclaim: a hosted runner reports 88 GB free before the pull,
-      # and the pull needs 11 GB against a 20 GiB workspace cap and a 5 GiB
-      # free-space floor. Deleting the preinstalled Android/dotnet/ghc trees
-      # bought headroom nothing wanted and cost ~20s of disk contention with
-      # the extraction (run 30941367519 vs 30937438443).
-      - name: Fetch the pinned warm runtime
-        env:
-          IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
-        run: |
-          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-            docker pull "$IMAGE"
-          fi
-          echo "runner disk free: $(numfmt --to=iec "$(df -B1 --output=avail / | tail -1)")"
-          echo "validation image on disk: $(numfmt --to=iec "$(docker image inspect "$IMAGE" --format '{{.Size}}')")"
-      - name: Restore Compile handoff
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: submission-validation-compile-${{ github.event.issue.number }}
-          path: .build
-      - name: Unpack Compile handoff
-        run: |
-          mkdir -p .build/submission-validation
-          tar \
-            --extract \
-            --file .build/submission-validation-compile.tar \
-            --directory .build/submission-validation
-      - name: Replay
-        env:
-          VALIDATION_REQUEST: ${{ needs.compile.outputs.validation_request }}
-          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
-          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-        run: node dist/submission-validation/run.js replay
-
-      - name: Record job cost
-        if: always()
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-          LAX_VALIDATION_STAGE: replay
-        run: node dist/workflows/job-profile.js
-
-      - name: Clean validation workspace
-        if: always()
-        env:
-          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-        run: node dist/submission-validation/run.js cleanup
-
-      - name: Preserve failed validation report
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: submission-validation-replay-report-${{ github.event.issue.number }}
-          path: |
-            .build/submission-validation/validation-report.json
-            .build/submission-validation/validation-profile.json
-          if-no-files-found: warn
-          retention-days: 30
-
-  inspect:
-    name: Inspect
-    needs: compile
-    if: needs.compile.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-      actions: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-      # No disk reclaim: a hosted runner reports 88 GB free before the pull,
-      # and the pull needs 11 GB against a 20 GiB workspace cap and a 5 GiB
-      # free-space floor. Deleting the preinstalled Android/dotnet/ghc trees
-      # bought headroom nothing wanted and cost ~20s of disk contention with
-      # the extraction (run 30941367519 vs 30937438443).
-      - name: Fetch the pinned warm runtime
-        env:
-          IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
-        run: |
-          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-            docker pull "$IMAGE"
-          fi
-          echo "runner disk free: $(numfmt --to=iec "$(df -B1 --output=avail / | tail -1)")"
-          echo "validation image on disk: $(numfmt --to=iec "$(docker image inspect "$IMAGE" --format '{{.Size}}')")"
-      - name: Restore Compile handoff
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: submission-validation-compile-${{ github.event.issue.number }}
-          path: .build
-      - name: Unpack Compile handoff
-        run: |
-          mkdir -p .build/submission-validation
-          tar \
-            --extract \
-            --file .build/submission-validation-compile.tar \
-            --directory .build/submission-validation
-      - name: Inspect
-        env:
-          VALIDATION_REQUEST: ${{ needs.compile.outputs.validation_request }}
-          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
-          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-        run: node dist/submission-validation/run.js inspect
-      - name: Record job cost
-        if: always()
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-          LAX_VALIDATION_STAGE: inspect
-        run: node dist/workflows/job-profile.js
-      - name: Clean validation workspace
-        if: always()
-        env:
-          LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-        run: node dist/submission-validation/run.js cleanup
-      - name: Preserve the report, generated build output, and capture
+        run: node dist/submission-validation/run.js
+      - name: Preserve the report, generated build output, capture, and profile
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -330,10 +144,11 @@ jobs:
           retention-days: 30
 
   # Keep success and failure handling on one visible DAG path. On failure this
-  # job reports the validation result; on success it unlocks publication.
+  # job reports the validation result; on success it unlocks publication. It
+  # never checks out or executes submission code — it only reads the artifact.
   validation-result:
     name: Validation result
-    needs: [route, replay, inspect]
+    needs: [route, validate]
     if: always() && needs.route.outputs.operation == 'validate'
     runs-on: ubuntu-latest
     permissions:
@@ -342,13 +157,12 @@ jobs:
     outputs:
       should_publish: ${{ steps.outcome.outputs.should_publish }}
     steps:
+      # run.js exits 0 only when the full report is ok, so the job result is
+      # the validation verdict; the publisher still re-parses the report.
       - name: Record validation outcome
         id: outcome
         run: >-
-          echo "should_publish=${{
-            needs.replay.result == 'success' &&
-            needs.inspect.result == 'success'
-          }}" >> "$GITHUB_OUTPUT"
+          echo "should_publish=${{ needs.validate.result == 'success' }}" >> "$GITHUB_OUTPUT"
       - if: steps.outcome.outputs.should_publish != 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -362,15 +176,8 @@ jobs:
         run: npm ci
       - if: steps.outcome.outputs.should_publish != 'true'
         run: npm run build
-      - name: Restore Replay failure report
-        if: steps.outcome.outputs.should_publish != 'true' && needs.replay.result == 'failure'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        continue-on-error: true
-        with:
-          name: submission-validation-replay-report-${{ github.event.issue.number }}
-          path: .build/submission-validation
-      - name: Restore Compile or Inspect validation report
-        if: steps.outcome.outputs.should_publish != 'true' && needs.replay.result != 'failure'
+      - name: Restore validation report
+        if: steps.outcome.outputs.should_publish != 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
@@ -403,6 +210,10 @@ jobs:
     permissions:
       contents: read
       issues: write
+      # The job's own GITHUB_TOKEN pushes the validated capture to ghcr
+      # before the database commit references it; the App-minted database
+      # token never touches the registry.
+      packages: write
     outputs:
       archive_commit: ${{ steps.publish-update.outputs.archive_commit }}
       title_sync_error: ${{ steps.publish-update.outputs.title_sync_error }}
@@ -425,7 +236,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
-          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
           PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
           VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
           GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
@@ -449,7 +259,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
-          LAX_VALIDATION_IMAGE: ${{ vars.LAX_VALIDATION_IMAGE }}
           PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
           VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
           GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json

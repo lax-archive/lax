@@ -34,7 +34,7 @@ export async function replayPackage(
   fs.writeFileSync(planPath, `${JSON.stringify(plan)}\n`, { mode: 0o600 });
   const result = await runner.run({
     label: `replay-${kind}`,
-    args: ["node", "/opt/lax-runtime/bin/run-check.mjs", `/out/plan.json`],
+    args: ["node", "/opt/lax/bin/run-check.mjs", `/out/plan.json`],
     mounts: [
       { source: captureRoot, target: "/capture" },
       { source: outputDir, target: "/out", writable: true },

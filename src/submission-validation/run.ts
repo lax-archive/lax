@@ -1,9 +1,14 @@
+// Trusted-workflow validation entry point. One read-only job runs the whole
+// pipeline — Compile, Replay, Inspect — sequentially in this single process
+// (rewrite-plan.md "Build pipeline"); there is no stage resume, so there is
+// no stage state. Exit codes: 0 validation passed, 2 violations, 1 anything
+// else. The host must already be provisioned (host/setup-vm.js).
+
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { Profiler } from "../shared/profile.js";
-import { decodeUtf8, isObject, requireExactKeys, ValidationError } from "../shared/validation.js";
+import { decodeUtf8, ValidationError } from "../shared/validation.js";
 import {
   type ValidationRequest,
   validationRequestFromUnknown,
@@ -14,116 +19,38 @@ import {
   resetValidationOutputs,
   writeValidationOutputs,
 } from "./outputs.js";
-import {
-  compileSubmission,
-  inspectSubmission,
-  replaySubmission,
-  validateSubmission,
-} from "./pipeline.js";
+import { validateSubmission } from "./pipeline.js";
 import { removeValidationWorkspace } from "./workspace-cleanup.js";
 
-type Stage = "compile" | "replay" | "inspect";
-type CompletedStage = "compile" | "replay";
-
-interface StageState {
-  stateVersion: 1;
-  completed: CompletedStage;
-  runtimeImage: string;
-  request: ValidationRequest;
-}
-
-const mode = process.argv[2] as Stage | "cleanup" | undefined;
-if (mode !== undefined && !["compile", "replay", "inspect", "cleanup"].includes(mode)) {
-  throw new Error("usage: run.js [compile|replay|inspect|cleanup]");
+if (process.argv[2] !== undefined) {
+  throw new Error("usage: run.js (single-process validation; stage modes no longer exist)");
 }
 
 const outputDir = validationOutputDirectory();
 const jobDir = path.join(outputDir, "work");
-const statePath = path.join(outputDir, "stage-state.json");
-
-// One profiler per invocation. Each stage records its own span tree into the
-// shared profile file, which travels forward inside the Compile handoff.
 const profiler = new Profiler();
 
 let exitCode = 1;
 try {
-  if (mode === "cleanup") {
-    removeValidationWorkspace(jobDir);
-    fs.rmSync(statePath, { force: true });
-    exitCode = 0;
-  } else if (mode === undefined) {
-    resetValidationOutputs(outputDir);
-    fs.rmSync(statePath, { force: true });
-    removeValidationWorkspace(jobDir);
-    fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
-    const report = await validateSubmission(readRequest(), jobDir, { profiler });
-    writeValidationOutputs(outputDir, report);
-    exitCode = report.ok ? 0 : 2;
-  } else {
-    if (mode === "compile") resetStagedValidation();
-    const request = readRequest();
-    exitCode = await runStage(mode, request);
-  }
+  // Keep the profile: host/setup-vm.js recorded its provisioning spans there
+  // moments ago in this same job. The evidence files are always reset.
+  resetValidationOutputs(outputDir, { keepProfile: true });
+  removeValidationWorkspace(jobDir);
+  fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
+  const report = await validateSubmission(readRequest(), jobDir, { profiler });
+  writeValidationOutputs(outputDir, report);
+  exitCode = report.ok ? 0 : 2;
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
 } finally {
   // Record the timings whatever the outcome: a slow failure is exactly the
   // run whose profile is worth reading.
-  if (mode !== "cleanup") {
-    const snapshot = profiler.snapshot();
-    recordValidationProfile(outputDir, mode ?? "validate", snapshot);
-    appendProfileStepSummary(mode ?? "validate", snapshot);
-  }
-  // The single-process entry point retains its original cleanup behavior.
-  // Staged workflow invocations deliberately preserve work until the
-  // unconditional cleanup step runs after Compile, Replay, and Inspect.
-  if (mode === undefined) removeValidationWorkspace(jobDir);
+  const snapshot = profiler.snapshot();
+  recordValidationProfile(outputDir, "validate", snapshot);
+  appendProfileStepSummary("validate", snapshot);
+  removeValidationWorkspace(jobDir);
 }
 process.exitCode = exitCode;
-
-async function runStage(stage: Stage, request: ValidationRequest): Promise<number> {
-  if (stage === "compile") {
-    const failure = await compileSubmission(request, jobDir, { profiler });
-    if (failure !== undefined) {
-      writeValidationOutputs(outputDir, failure);
-      return 2;
-    }
-    writeStageState({
-      stateVersion: 1,
-      completed: "compile",
-      runtimeImage: requiredEnv("LAX_VALIDATION_IMAGE"),
-      request,
-    });
-    return 0;
-  }
-
-  requireStageState(stage === "replay" ? ["compile"] : ["compile", "replay"], request);
-  if (stage === "replay") {
-    const failure = await replaySubmission(request, jobDir, { profiler });
-    if (failure !== undefined) {
-      writeValidationOutputs(outputDir, failure);
-      return 2;
-    }
-    writeStageState({
-      stateVersion: 1,
-      completed: "replay",
-      runtimeImage: requiredEnv("LAX_VALIDATION_IMAGE"),
-      request,
-    });
-    return 0;
-  }
-
-  const report = await inspectSubmission(request, jobDir, { profiler });
-  writeValidationOutputs(outputDir, report);
-  return report.ok ? 0 : 2;
-}
-
-function resetStagedValidation(): void {
-  resetValidationOutputs(outputDir);
-  fs.rmSync(statePath, { force: true });
-  removeValidationWorkspace(jobDir);
-  fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
-}
 
 function readRequest(): ValidationRequest {
   const encoded = requiredEnv("VALIDATION_REQUEST");
@@ -136,50 +63,6 @@ function readRequest(): ValidationRequest {
     throw new ValidationError("VALIDATION_REQUEST is not canonical base64-encoded JSON");
   }
   return validationRequestFromUnknown(raw);
-}
-
-function requireStageState(expected: readonly CompletedStage[], request: ValidationRequest): void {
-  const expectedLabel = expected.join(" or ");
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(statePath);
-  } catch {
-    throw new Error(`validation ${expectedLabel} stage did not complete`);
-  }
-  if (!stat.isFile() || stat.size > 64 * 1024) throw new Error("validation stage state is malformed");
-  const value = JSON.parse(fs.readFileSync(statePath, "utf8")) as unknown;
-  if (!isObject(value)) throw new Error("validation stage state must be an object");
-  requireExactKeys(
-    value,
-    ["stateVersion", "completed", "runtimeImage", "request"],
-    "validation stage state",
-  );
-  if (value.stateVersion !== 1 || !expected.includes(value.completed as CompletedStage)) {
-    throw new Error(`validation ${expectedLabel} stage did not complete`);
-  }
-  if (value.runtimeImage !== requiredEnv("LAX_VALIDATION_IMAGE")) {
-    throw new Error("validation runtime changed between steps");
-  }
-  const stagedRequest = validationRequestFromUnknown(value.request);
-  if (JSON.stringify(stagedRequest) !== JSON.stringify(request)) {
-    throw new Error("validation stage request changed between steps");
-  }
-}
-
-function writeStageState(state: StageState): void {
-  const temporary = path.join(
-    outputDir,
-    `.stage-state.${process.pid}.${randomUUID()}.tmp`,
-  );
-  try {
-    fs.writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-      flag: "wx",
-      mode: 0o600,
-    });
-    fs.renameSync(temporary, statePath);
-  } finally {
-    fs.rmSync(temporary, { force: true });
-  }
 }
 
 function validationOutputDirectory(): string {

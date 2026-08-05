@@ -1,7 +1,7 @@
 import type { ArchiveSnapshot, LoadedSubmission } from "./archive.js";
 import { samePreconditions } from "./archive.js";
 import { parseArchiveFiles, type ArchiveChanges } from "./archive-schema.js";
-import type { GitHubReleaseCaptureStore } from "./capture-store.js";
+import type { GhcrCaptureStore } from "./capture-store.js";
 import {
   commitMessage,
   parsePublishRequest,
@@ -24,7 +24,7 @@ export type UpdatePublishResult =
   | { kind: "committed"; archiveCommit: string; acceptedTitle: string };
 
 export interface UpdateCaptureStore {
-  promote: GitHubReleaseCaptureStore["promote"];
+  promote: GhcrCaptureStore["promote"];
 }
 
 export class UpdatePublisher {
@@ -55,18 +55,24 @@ export class UpdatePublisher {
     capturePath: string,
     run: WorkflowRunRef,
   ): Promise<UpdatePublishResult> {
-    if (this.captureStore === undefined) throw new Error("update publisher has no immutable capture store");
+    if (this.captureStore === undefined) throw new Error("update publisher has no capture store");
     const ready = await this.preflight(untrustedRequest, artifacts);
     if (ready.kind === "no-op") return { kind: "no-op" };
     const request = ready.request;
     const current = await this.archive.load(request.id);
     await this.validateCurrent(request, artifacts, current);
     if (current === undefined) throw new ValidationError(`${request.id} no longer exists in lax-database`);
+    // Ordering invariant: the ghcr push (blob, manifest, and tag) completes
+    // before the database CAS commit below references the blob's digest — a
+    // record must never point at a blob that is not durably stored. If the
+    // commit fails afterwards, the pushed artifact is orphaned garbage,
+    // never inconsistency, and a retry re-pushes the identical bytes onto
+    // the same content address (idempotent).
     const publishedCapture = await this.captureStore.promote(
       request.id,
+      artifacts.report.request.source,
       artifacts.report.capture,
       capturePath,
-      current.snapshot.sha,
     );
     const changes = constructUpdateChanges(request, current, artifacts.buildOutput, publishedCapture);
     const archiveCommit = await this.archive.writeFiles({

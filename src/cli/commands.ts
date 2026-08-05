@@ -173,8 +173,13 @@ async function ensureBuiltForSubmit(
       ? "lax submit: validating committed HEAD in an isolated checkout"
       : "lax submit: no current local build found; running lax build first",
   );
-  if (toolVersion("docker") === undefined) {
-    throw new Error(`the required local build needs docker: ${installHint("docker")}`);
+  // the local build runs on the host toolchain — no docker involved
+  const missingTools = ["elan", "lake", "git"].filter((tool) => toolVersion(tool) === undefined);
+  if (missingTools.length > 0) {
+    throw new Error(
+      "the required local build needs " +
+        missingTools.map((tool) => `${tool} (${installHint(tool)})`).join(", "),
+    );
   }
   const result = allowDirty
     ? await buildCommittedTree(root, source.commit, source.folder)

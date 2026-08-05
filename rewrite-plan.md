@@ -514,3 +514,27 @@ contradicts earlier sections, the addendum wins.
    plan come from exploration-agent reports that were not independently
    re-verified — workers should trust the tree over the plan and invoke
    the deviation rule when they disagree.
+
+## Stage 3 execution notes (2026-08-05, deviation record)
+
+- **Capture tag**: an escaped tuple cannot fit OCI's 128-char/`[A-Za-z0-9._-]`
+  tag rules, so the tag is `cap-<commit12>-<sha256(JSON [repo, folder,
+  commit, toolchain, mathlibCommit])>` — injective serialization hashed,
+  pin included per addendum 2a. The proof|concept axis is not in the key:
+  this tree seals one capture per submission covering both subtrees.
+- **Ordering**: blob push → manifest+tag → HEAD verify → database CAS
+  commit. The tag lands *before* the commit because only a manifest
+  reference gives a ghcr blob durable retention; a tag orphaned by a
+  failed commit is identifiable garbage, never inconsistency.
+- **Immutable-release fail-closed check (stage 4 done-when wording) is
+  superseded** with the Releases store itself, per this addendum's point
+  2 conclusion: the successor invariants, enforced fail-closed in code,
+  are (a) consumers fetch captures only by the digest recorded in the
+  database record, never by tag, and (b) the publisher never writes a
+  record whose capture digest it did not itself hash, push, and verify.
+- **Live rehearsal (point 3) is still owed** for stages 3+4 together:
+  scratch-repo creation hit a sandbox permission wall mid-campaign; the
+  validate/publish rehearsal must run before any of this is trusted live.
+- The cache save in the validate job runs *between* host setup and
+  submission-code execution — the post-job save of stock actions/cache
+  would let a sandbox escape poison the warm store for later runs.

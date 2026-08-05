@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DATABASE_REPOSITORY } from "../../shared/constants.js";
-import type { ValidationRunner } from "../sandbox/container.js";
+import { fetchGitCheckout } from "../source/fetch.js";
 import type { ValidationLimits } from "../config.js";
-import type { ArchiveSourceRecord, PublishedCapture } from "../contracts.js";
+import { parseCaptureBlobReference, type ArchiveSourceRecord, type PublishedCapture } from "../contracts.js";
 import { isObject, validateCommit, validateFolder, validateRepositoryUrl } from "../../shared/validation.js";
 
 const MAX_ARCHIVE_FILE_BYTES = 8 * 1024 * 1024;
@@ -46,7 +46,7 @@ export class ArchiveSnapshot {
 
   capture(record: ArchiveSourceRecord): PublishedCapture | undefined {
     const value = record.buildOutput?.capture;
-    if (!isObject(value) || typeof value.downloadUrl !== "string") return undefined;
+    if (!isObject(value) || typeof value.registryBlob !== "string") return undefined;
     if (
       value.formatVersion !== 1 ||
       typeof value.digest !== "string" ||
@@ -76,18 +76,11 @@ export class ArchiveSnapshot {
       return undefined;
     const totalBytes = files.reduce((total, file) => total + file.bytes, 0);
     if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_CAPTURE_BYTES) return undefined;
-    let downloadUrl: URL;
-    try {
-      downloadUrl = new URL(value.downloadUrl);
-    } catch {
-      return undefined;
-    }
-    if (
-      downloadUrl.protocol !== "https:" ||
-      downloadUrl.username !== "" ||
-      downloadUrl.password !== "" ||
-      !["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"].includes(downloadUrl.hostname)
-    ) return undefined;
+    // Fail closed: consumers fetch captures only through a ghcr digest
+    // address whose digest equals the record's own capture digest. A tag or
+    // foreign reference can never enter the resolved dependency set.
+    const reference = parseCaptureBlobReference(value.registryBlob);
+    if (reference === undefined || reference.digest !== value.digest) return undefined;
     return {
       formatVersion: 1,
       digest: value.digest,
@@ -95,29 +88,26 @@ export class ArchiveSnapshot {
       leanToolchain: value.leanToolchain,
       mathlibCommit: value.mathlibCommit,
       files,
-      downloadUrl: downloadUrl.toString(),
+      registryBlob: value.registryBlob,
     };
   }
 }
 
+/** Fetch the pinned lax-database snapshot — a trusted host-side step with the
+ * same hardened git environment as source fetching (source/fetch.ts). */
 export async function fetchArchiveSnapshot(
   archiveSha: string,
   jobDir: string,
-  runner: ValidationRunner,
   limits: ValidationLimits,
 ): Promise<ArchiveSnapshot> {
   const root = path.join(jobDir, "archive");
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const repository = `https://github.com/${DATABASE_REPOSITORY}`;
-  const result = await runner.run({
-    label: "fetch-archive",
-    args: ["node", "/opt/lax-runtime/bin/fetch-source.mjs", repository, archiveSha, "/job/archive"],
-    mounts: [{ source: jobDir, target: "/job", writable: true }],
-    network: true,
-    timeoutMs: limits.fetchTimeoutMs,
-    maxOutputBytes: limits.maxOutputBytes,
-  });
-  if (result.code !== 0) throw new Error(`could not fetch pinned lax-database snapshot: ${result.output.trim()}`);
+  try {
+    await fetchGitCheckout(repository, archiveSha, root, limits.fetchTimeoutMs);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`could not fetch pinned lax-database snapshot: ${message}`);
+  }
   return new ArchiveSnapshot(fs.realpathSync(root), archiveSha);
 }
 

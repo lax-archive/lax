@@ -206,18 +206,25 @@ interface WarmManifestEntry {
  * artifacts in place. Overridden entries fully replace resolution for their
  * package: a stale `.lake/packages` clone from the hardlink-farm era is
  * simply never consulted.
+ *
+ * `overrideBase` rebases the recorded `dir`s: the trusted container pipeline
+ * reads the warm manifest from the *host* store but the build later runs
+ * inside the sandbox, where the same store is mounted read-only at
+ * RUNTIME_PATHS.warmWorkspace — so the override dirs must be that
+ * in-container path. Host builds omit it and get the host store path.
  */
-export function seedOverrides(warmWs: string, pkgDir: string): void {
+export function seedOverrides(warmWs: string, pkgDir: string, overrideBase?: string): void {
   // resolve symlinks so the recorded dirs survive a re-linked LAX_HOME (test
   // homes symlink the warm base into a shared cache)
   const warm = fs.existsSync(warmWs) ? fs.realpathSync(warmWs) : warmWs;
+  const base = overrideBase ?? warm;
   const warmManifest = JSON.parse(
     fs.readFileSync(path.join(warm, "lake-manifest.json"), "utf8"),
   ) as { packages: WarmManifestEntry[] };
   const packages = warmManifest.packages.map((pkg) => ({
     type: "path",
     name: pkg.name,
-    dir: path.join(warm, ".lake", "packages", pkg.name),
+    dir: path.join(base, ".lake", "packages", pkg.name),
     inherited: pkg.inherited,
     ...(pkg.scope === undefined ? {} : { scope: pkg.scope }),
   }));

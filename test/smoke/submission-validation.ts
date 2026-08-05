@@ -1,3 +1,10 @@
+// Real-container smoke over the trusted validation pipeline: the pinned
+// *stock* image (pulled by verifyRuntime), the VM/host-installed toolchain
+// and warm mathlib workspace mounted read-only, and the shared
+// seedManifest/seedOverrides provisioning. Runs the same host-setup path the
+// trusted workflow uses (host/setup.ts) against the user's real ~/.lax, so an
+// existing warm store is reused and never re-downloaded. Needs docker.
+
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -9,10 +16,14 @@ import type {
   ValidationRequest,
 } from "../../src/submission-validation/contracts.js";
 import { packageNameForSubmission } from "../../src/submission-validation/contracts.js";
+import { ensureValidationHost } from "../../src/submission-validation/host/setup.js";
 import {
-  compileSubmission,
-  inspectSubmission,
-  replaySubmission,
+  LEAN_TOOLCHAIN,
+  LEAN_VERSION,
+  MATHLIB_REV,
+  MATHLIB_URL,
+} from "../../src/submission-validation/pins.js";
+import {
   validateSubmission,
   type ValidationOptions,
 } from "../../src/submission-validation/pipeline.js";
@@ -31,23 +42,20 @@ interface SmokeFixture {
   check(report: ValidationReport, jobRoot: string): void;
 }
 
-const image = process.env.LAX_VALIDATION_IMAGE;
 assert(
-  image !== undefined && /@sha256:[0-9a-f]{64}$/u.test(image),
-  "LAX_VALIDATION_IMAGE must be digest-pinned",
+  process.env.LAX_MATHLIB_URL === undefined && process.env.LAX_MATHLIB_REV === undefined,
+  "the smoke runs against the real pins; unset the LAX_MATHLIB_* test seam",
 );
 
-const runtime = JSON.parse(
-  fs.readFileSync(
-    new URL(
-      "../../src/submission-validation/runtime/validation-runtime.lock.json",
-      import.meta.url,
-    ),
-    "utf8",
-  ),
-) as RuntimePins;
+const runtime: RuntimePins = {
+  leanToolchain: LEAN_TOOLCHAIN,
+  leanVersion: LEAN_VERSION,
+  mathlibRepository: MATHLIB_URL,
+  mathlibCommit: MATHLIB_REV,
+};
+assert(await ensureValidationHost({ echo: true }), "validation host setup failed");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-submission-validation-smoke-"));
-const completed: Array<{ name: string; ok: boolean; captureFiles?: number }> = [];
+const completed: Array<{ name: string; ok: boolean; wallMs?: number; captureFiles?: number }> = [];
 const selectedFixtures = fixtures().filter(
   (fixture) => process.env.LAX_SMOKE_CASE === undefined || fixture.name === process.env.LAX_SMOKE_CASE,
 );
@@ -96,13 +104,13 @@ try {
         archive: new ArchiveSnapshot(archiveRoot, request.archiveSha),
       },
     };
-    const report = fixture.name === "minimal"
-      ? await validateInStages(request, jobRoot, options)
-      : await validateSubmission(request, jobRoot, options);
+    const started = performance.now();
+    const report = await validateSubmission(request, jobRoot, options);
     fixture.check(report, jobRoot);
     completed.push({
       name: fixture.name,
       ok: report.ok,
+      wallMs: Math.round(performance.now() - started),
       ...(report.capture === undefined ? {} : { captureFiles: report.capture.files.length }),
     });
   }
@@ -110,18 +118,6 @@ try {
 } finally {
   if (process.env.LAX_SMOKE_KEEP === "1") console.error(`smoke workspace retained at ${root}`);
   else fs.rmSync(root, { recursive: true, force: true });
-}
-
-async function validateInStages(
-  request: ValidationRequest,
-  jobRoot: string,
-  options: ValidationOptions,
-): Promise<ValidationReport> {
-  const compileFailure = await compileSubmission(request, jobRoot, options);
-  if (compileFailure !== undefined) return compileFailure;
-  const replayFailure = await replaySubmission(request, jobRoot, options);
-  if (replayFailure !== undefined) return replayFailure;
-  return inspectSubmission(request, jobRoot, options);
 }
 
 function fixtures(): SmokeFixture[] {
@@ -301,9 +297,17 @@ function compileProvenanceAttackFiles(): Record<string, string> {
   );
   return {
     "concepts/Lax43.lean": "import Lax43.Attack\nimport Lax43.Target\n",
-    "concepts/Lax43/Attack.lean": `${conceptModule(
+    // run_cmd (Lean core) executes authored IO at *compile* time: overwriting
+    // the target source must bounce off the read-only source mount, while the
+    // shadow olean lands in writable build state and must never reach the
+    // capture. (As authored upstream this module used `run_tac` without any
+    // import — a parse error, so the fixture never compiled and the smoke was
+    // red on main; repaired during stage 3A.)
+    "concepts/Lax43/Attack.lean": `import Lean
+
+${conceptModule(
       "Compile attack",
-      `run_tac do
+      `run_cmd do
   try
     IO.FS.writeFile "Lax43/Target.lean" ${JSON.stringify(replacement)}
   catch _ =>

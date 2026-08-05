@@ -12,14 +12,23 @@ export const VALIDATION_PROFILE_FILENAME = "validation-profile.json";
 const MAX_PROFILE_BYTES = 4 * 1024 * 1024;
 const MAX_PROFILE_STAGES = 16;
 
-/** Remove only this workflow's known outputs so a reused runner cannot upload stale results. */
-export function resetValidationOutputs(outputDir: string): void {
-  for (const filename of [
+/**
+ * Remove only this workflow's known outputs so a reused runner cannot upload
+ * stale results. `keepProfile` lets run.js preserve the provisioning spans
+ * host/setup-vm.js recorded earlier in the same job — the profile is
+ * diagnostics, never authenticated evidence, so keeping it is safe.
+ */
+export function resetValidationOutputs(
+  outputDir: string,
+  opts: { keepProfile?: boolean } = {},
+): void {
+  const filenames = [
     VALIDATION_REPORT_FILENAME,
     GENERATED_BUILD_OUTPUT_FILENAME,
     CAPTURE_FILENAME,
-    VALIDATION_PROFILE_FILENAME,
-  ]) {
+    ...(opts.keepProfile === true ? [] : [VALIDATION_PROFILE_FILENAME]),
+  ];
+  for (const filename of filenames) {
     fs.rmSync(path.join(outputDir, filename), { force: true });
   }
 }
@@ -30,11 +39,11 @@ export interface RecordedProfile {
 }
 
 /**
- * Append this stage's span tree to the accumulating profile. Compile's copy
- * travels forward inside the handoff, so the artifact Inspect uploads carries
- * the whole run. Purely diagnostic: this file is not part of the evidence
- * `parseSuccessfulValidationArtifacts` authenticates, and nothing here may
- * fail a validation — every error is swallowed on purpose.
+ * Append this stage's span tree to the accumulating profile: host setup
+ * (vm-setup) first, then the pipeline (validate), so the uploaded artifact
+ * carries the whole job. Purely diagnostic: this file is not part of the
+ * evidence `parseSuccessfulValidationArtifacts` authenticates, and nothing
+ * here may fail a validation — every error is swallowed on purpose.
  */
 export function recordValidationProfile(outputDir: string, stage: string, root: Span): void {
   try {

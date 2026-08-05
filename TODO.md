@@ -21,18 +21,17 @@ Suggested order of attack (details in rewrite-plan.md):
    `lax build` with streamed transcripts; warm store shared via Lake
    package overrides per the spike below, no hardlink farm; fake-mathlib
    + fake-GitHub seams with real-lake and CLI-subprocess e2e tests).
-3. Pipeline collapse (gated on the replay-memory measurement below): one
-   read-only validation job; plain pinned stock image instead of the
-   custom Containerfile; toolchain + `lake exe cache get` on the VM;
-   Compile, Replay, and Inspect all sequentially through the same
-   container runner (Jan's 2026-08-05 decision, superseding rewrite.md's
-   "outside docker" line — plan addendum point 8; hand-built realpath'd
-   LEAN_PATH, never `lake env`; local `--replay` stays host-side);
-   ghcr olean cache keyed (repo, folder, commit,
-   proof|concept) **plus the toolchain/mathlib pin**, downloads
-   digest-verified against the dependency's build-output.json (see the
-   plan's corrected red-team addendum point 2); live rehearsal on scratch
-   repos before trusting any of it.
+3. ~~Pipeline collapse~~ — code complete 2026-08-05 (one read-only
+   validate job — no issue write, no secrets where submission code runs;
+   stock digest-pinned `node:22-bookworm-slim` + VM toolchain/warm store,
+   actions-cache saved *before* untrusted code runs; Compile/Replay/
+   Inspect sequential through one container runner, replay/inspect at 2
+   threads per the measurement; captures on ghcr as digest-addressed OCI
+   artifacts — hashed tuple+pin tag, anonymous pull verified live,
+   push-before-CAS-commit ordering, Releases store deleted). **Still
+   owed: the live rehearsal on scratch repos (addendum point 3)** —
+   blocked on a sandbox permission for `gh repo create`; run together
+   with stage 4's publish rehearsal once unblocked, before go-live.
 4. Write path: keep CAS + credential-free preflight; CAS-only, no
    concurrency group unless queueing semantics are positively verified;
    thin YAML (logic in TS, delete the inline-JS failure reporter);

@@ -7,6 +7,12 @@ export const DATABASE_REPOSITORY =
   process.env.LAX_DATABASE_REPOSITORY ?? "lax-archive/lax-database";
 export const WEBSITE_REPOSITORY =
   process.env.LAX_WEBSITE_REPOSITORY ?? "lax-archive/lax-website";
+// Dependency captures are stored as digest-addressed OCI artifacts in this
+// ghcr repository under the control repository's owner. Env-derivable like
+// the repository constants above; ghcr repository paths are lowercase.
+export const CAPTURES_REPOSITORY =
+  process.env.LAX_CAPTURES_REPOSITORY ??
+  `${splitRepository(CONTROL_REPOSITORY).owner.toLowerCase()}/lax-captures`;
 
 // Test seams (never set in production): point GitHub's REST API and OAuth
 // endpoints at local fakes. Late-bound per call so a subprocess-reachable

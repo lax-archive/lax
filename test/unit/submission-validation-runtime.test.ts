@@ -7,11 +7,13 @@ import type { ModuleInventory } from "../../src/submission-validation/contracts.
 import { compileConcepts } from "../../src/submission-validation/phases/compile.js";
 import { provisionWorkspace } from "../../src/submission-validation/phases/provision.js";
 import { replayPackage } from "../../src/submission-validation/phases/replay.js";
+import { VALIDATION_IMAGE, VALIDATION_IMAGE_DIGEST } from "../../src/submission-validation/pins.js";
 import {
   ContainerRunner,
   type ContainerInvocation,
   type ValidationRunner,
 } from "../../src/submission-validation/sandbox/container.js";
+import type { RuntimeLayout } from "../../src/submission-validation/sandbox/layout.js";
 import { assertWorkspaceWithinLimit } from "../../src/submission-validation/sandbox/workspace-limit.js";
 import {
   cleanupTemporary,
@@ -29,8 +31,33 @@ afterEach(() => {
   cleanupTemporary();
 });
 
+/** A fake VM-side runtime layout over temp dirs, for direct ContainerRunner
+ * construction (production resolves the real one in verifyRuntime). */
+function fakeLayout(): RuntimeLayout {
+  const base = temporary("lax-layout-");
+  const layout = {
+    toolchainDir: path.join(base, "toolchain"),
+    warmDir: path.join(base, "warm"),
+    toolsDir: path.join(base, "tools"),
+    inspectorBin: path.join(base, "inspector", "laxinspector"),
+  };
+  fs.mkdirSync(layout.toolchainDir, { recursive: true });
+  fs.mkdirSync(layout.warmDir, { recursive: true });
+  fs.mkdirSync(layout.toolsDir, { recursive: true });
+  fs.mkdirSync(path.dirname(layout.inspectorBin), { recursive: true });
+  fs.writeFileSync(layout.inspectorBin, "");
+  return layout;
+}
+
 describe("validation runtime boundaries retained from main", () => {
-  it("requires an immutable runtime digest", () => {
+  it("pins the stock runtime image and keeps any override digest-pinned", () => {
+    // no environment requirement: the identity comes from the reviewed pins
+    expect(configuredRuntime(undefined)).toMatchObject({
+      image: VALIDATION_IMAGE,
+      imageDigest: VALIDATION_IMAGE_DIGEST,
+    });
+    expect(VALIDATION_IMAGE).toMatch(/^node:22-bookworm-slim@sha256:[0-9a-f]{64}$/u);
+    // the narrow smoke/testing override must itself be digest-pinned
     expect(configuredRuntime(RUNTIME.image)).toMatchObject({
       image: RUNTIME.image,
       imageDigest: RUNTIME.imageDigest,
@@ -42,9 +69,20 @@ describe("validation runtime boundaries retained from main", () => {
     expect(() => configuredRuntime("sha256:" + "1".repeat(64))).toThrow(
       "immutable @sha256 digest",
     );
-    expect(
-      configuredRuntime("sha256:" + "1".repeat(64), { allowLocalImageId: true }).imageDigest,
-    ).toBe("1".repeat(64));
+  });
+
+  it("keeps the in-sandbox check runner fail-closed on the Lean worker bound", () => {
+    // the `--clearenv` OOM lesson (history/oom.md): the check runner refuses
+    // to start without an explicit LEAN_NUM_THREADS, and never invents one
+    const checkRunner = fs.readFileSync(
+      new URL("../../src/submission-validation/sandbox/tools/run-check.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(checkRunner).toContain("const leanNumThreads = process.env.LEAN_NUM_THREADS");
+    expect(checkRunner).toContain("LEAN_NUM_THREADS: leanNumThreads");
+    expect(checkRunner).not.toContain('LEAN_NUM_THREADS: "4"');
+    // replay/inspect run at the measured 2-thread budget (red-team addendum)
+    expect(DEFAULT_LIMITS.leanThreads).toBe(2);
   });
 
   it("checks a complete package inventory through one root-module replay", async () => {
@@ -82,7 +120,7 @@ describe("validation runtime boundaries retained from main", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       label: "replay-concepts",
-      args: ["node", "/opt/lax-runtime/bin/run-check.mjs", "/out/plan.json"],
+      args: ["node", "/opt/lax/bin/run-check.mjs", "/out/plan.json"],
       env: { LEAN_NUM_THREADS: "2" },
     });
     const plan = JSON.parse(
@@ -135,22 +173,20 @@ describe("validation runtime boundaries retained from main", () => {
       .every((mount) => !mount.source.startsWith(repositoryRoot + path.sep))).toBe(true);
   });
 
-  it("moves provisioned Lake state outside the read-only source tree", async () => {
+  it("moves provisioned Lake state outside the read-only source tree", () => {
     const sourceRoot = makeSubmission("lax-9");
     const job = temporary("lax-provision-job-");
-    const runner: ValidationRunner = {
-      run: async () => {
-        const repository = path.join(job, "workspaces", "concepts", "repository");
-        for (const kind of ["concepts", "proofs"] as const) {
-          writeFile(repository, `${kind}/lake-manifest.json`, "{\"packages\":[]}\n");
-          writeFile(repository, `${kind}/.lake/packages/warm-marker`, "trusted\n");
-        }
-        return { code: 0, output: "", timedOut: false };
-      },
-      verifyRuntime: async () => {},
-    };
+    const warm = temporary("lax-provision-warm-");
+    writeFile(
+      warm,
+      "lake-manifest.json",
+      JSON.stringify({
+        version: "1.2.0",
+        packages: [{ type: "git", name: "mathlib", inherited: false, scope: "" }],
+      }),
+    );
 
-    const workspace = await provisionWorkspace(
+    const workspace = provisionWorkspace(
       "concepts",
       { repositoryRoot: sourceRoot, submissionRoot: sourceRoot },
       ".",
@@ -158,17 +194,33 @@ describe("validation runtime boundaries retained from main", () => {
       { concepts: [], proofs: [], all: [] },
       { concepts: [], proofs: [], closure: new Map() },
       job,
-      path.join(job, "missing-dependencies"),
-      runner,
-      DEFAULT_LIMITS,
+      warm,
     );
 
     const conceptMount = workspace.buildMounts.concepts[0]!;
     expect(conceptMount).toMatchObject({ target: "/source/concepts/.lake", writable: true });
     expect(conceptMount.source.startsWith(workspace.repositoryRoot + path.sep)).toBe(false);
     expect(fs.readdirSync(path.join(workspace.repositoryRoot, "concepts", ".lake"))).toEqual([]);
-    expect(fs.readFileSync(path.join(conceptMount.source, "packages", "warm-marker"), "utf8"))
-      .toBe("trusted\n");
+    // the host-seeded overrides moved out with the build state and point the
+    // warm packages at the sandbox's read-only warm mount
+    const overrides = JSON.parse(
+      fs.readFileSync(path.join(conceptMount.source, "package-overrides.json"), "utf8"),
+    ) as { packages: Array<{ type: string; name: string; dir: string }> };
+    expect(overrides.packages).toEqual([
+      expect.objectContaining({
+        type: "path",
+        name: "mathlib",
+        dir: "/opt/lax/warm/.lake/packages/mathlib",
+      }),
+    ]);
+    // the seeded manifest keeps the warm entries verbatim and adds the proof
+    // package's own concept path dependency
+    const conceptManifest = JSON.parse(workspace.manifests.concepts) as { packages: unknown[] };
+    expect(conceptManifest.packages).toContainEqual(expect.objectContaining({ name: "mathlib" }));
+    const proofManifest = JSON.parse(workspace.manifests.proofs) as { packages: unknown[] };
+    expect(proofManifest.packages).toContainEqual(
+      expect.objectContaining({ type: "path", name: "Lax9", dir: "../concepts" }),
+    );
     expect(workspace.buildMounts.proofs).toContainEqual(conceptMount);
     expect(workspace.buildMounts.proofs.filter(
       (mount) => mount.target.startsWith(`${conceptMount.target}/`),
@@ -292,7 +344,8 @@ describe("validation runtime boundaries retained from main", () => {
     const source = temporary("lax-container-mount-");
     const record = path.join(temporary("lax-container-bin-"), "arguments.txt");
     installDockerRecorder(record);
-    const runner = new ContainerRunner(RUNTIME, DEFAULT_LIMITS, source);
+    const layout = fakeLayout();
+    const runner = new ContainerRunner(RUNTIME, DEFAULT_LIMITS, source, undefined, layout);
 
     const result = await runner.run({
       label: "Static Check!",
@@ -316,14 +369,22 @@ describe("validation runtime boundaries retained from main", () => {
       "--workdir=/input",
       "--env",
       "ALPHA=first",
+      // the runner owns PATH: commands resolve through the mounted toolchain
+      "PATH=/opt/lax/toolchain/bin:/usr/local/bin:/usr/bin:/bin",
       "ZED=last",
       RUNTIME.image,
       "tool",
       "argument",
     ]));
-    expect(args.find((argument) => argument.startsWith("type=bind"))).toContain(
-      `src=${path.resolve(source)},dst=/input,readonly`,
-    );
+    // the VM-installed runtime is mounted read-only at its stable paths
+    const binds = args.filter((argument) => argument.startsWith("type=bind"));
+    expect(binds).toEqual(expect.arrayContaining([
+      `type=bind,src=${path.resolve(layout.toolchainDir)},dst=/opt/lax/toolchain,readonly`,
+      `type=bind,src=${path.resolve(layout.warmDir)},dst=/opt/lax/warm,readonly`,
+      `type=bind,src=${path.resolve(layout.toolsDir)},dst=/opt/lax/bin,readonly`,
+      `type=bind,src=${path.resolve(path.dirname(layout.inspectorBin))},dst=/opt/lax/inspector,readonly`,
+      `type=bind,src=${path.resolve(source)},dst=/input,readonly`,
+    ]));
     await expect(
       runner.run({
         label: "bad-env",
@@ -333,6 +394,13 @@ describe("validation runtime boundaries retained from main", () => {
         maxOutputBytes: 1_000,
       }),
     ).rejects.toThrow("invalid container environment name");
+  });
+
+  it("refuses to run before the runtime layout is verified", async () => {
+    const runner = new ContainerRunner(RUNTIME, DEFAULT_LIMITS, temporary("lax-unverified-"));
+    await expect(
+      runner.run({ label: "early", args: [], timeoutMs: 1_000, maxOutputBytes: 1_000 }),
+    ).rejects.toThrow("verifyRuntime");
   });
 
   it("bounds aggregate workspace bytes and filesystem entries", () => {
@@ -360,6 +428,8 @@ describe("validation runtime boundaries retained from main", () => {
       RUNTIME,
       { ...DEFAULT_LIMITS, maxWorkspaceBytes: 1_024, maxWorkspaceEntries: 100 },
       workspace,
+      undefined,
+      fakeLayout(),
     );
 
     await expect(runner.run({

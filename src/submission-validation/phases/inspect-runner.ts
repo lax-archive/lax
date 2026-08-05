@@ -41,7 +41,7 @@ export async function runInspector(
   fs.writeFileSync(path.join(outputDir, "plan.json"), `${JSON.stringify(plan)}\n`, { mode: 0o600 });
   const result = await runner.run({
     label: `inspect-${kind}`,
-    args: ["node", "/opt/lax-runtime/bin/run-check.mjs", "/out/plan.json"],
+    args: ["node", "/opt/lax/bin/run-check.mjs", "/out/plan.json"],
     mounts: [
       { source: captureRoot, target: "/capture" },
       { source: outputDir, target: "/out", writable: true },

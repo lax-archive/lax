@@ -31,7 +31,7 @@ function capture(overrides: Partial<PublishedCapture> = {}): PublishedCapture {
     leanToolchain: RUNTIME.leanToolchain,
     mathlibCommit: RUNTIME.mathlibCommit,
     files: [],
-    downloadUrl: "https://github.com/lax-archive/lax/releases/download/test/capture.tar",
+    registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"d".repeat(64)}`,
     ...overrides,
   };
 }
@@ -191,17 +191,21 @@ describe("Archive dependency resolution retained from main", () => {
 });
 
 describe("new validation trust boundaries", () => {
-  it("accepts only bounded capture metadata from approved HTTPS hosts", () => {
+  it("accepts only bounded capture metadata addressed by the record's own digest", () => {
     const acceptedRoot = temporary("lax-capture-accepted-");
     writeArchiveRecord(acceptedRoot, "lax-10");
     const accepted = new ArchiveSnapshot(acceptedRoot, "a".repeat(40));
     expect(accepted.capture(accepted.get("lax-10")!)).toMatchObject({
       sourceCommit: COMMIT,
-      downloadUrl: expect.stringContaining("github.com"),
+      registryBlob: expect.stringContaining("ghcr.io/"),
     });
 
     for (const invalidCapture of [
-      capture({ downloadUrl: "https://example.com/capture.tar" }),
+      // Foreign host, tag reference, and digest mismatch are all rejected:
+      // consumers may only fetch the digest the record itself declares.
+      capture({ registryBlob: "https://example.com/capture.tar" }),
+      capture({ registryBlob: "ghcr.io/lax-archive/lax-captures:cap-some-tag" }),
+      capture({ registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"e".repeat(64)}` }),
       capture({ files: [{ path: "../escape", bytes: 1, sha256: "a".repeat(64) }] }),
       capture({
         files: [

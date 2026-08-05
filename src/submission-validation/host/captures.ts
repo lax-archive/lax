@@ -1,10 +1,11 @@
-// Host-side dependency capture materialization: download each required
-// submission's published artifact capture over HTTPS, verify it against the
-// digests the pinned Archive snapshot declared, and unpack it read-only into
-// the build's dependency root. The checks mirror the trusted container path
-// (runtime/download-capture.mjs + extract-capture.mjs + captures/materialize):
-// allowlisted GitHub release hosts only, bounded size, no links or special
-// entries, per-file sha256 verification.
+// Host-side dependency capture materialization: pull each required
+// submission's published capture blob anonymously from ghcr by the digest
+// its database record declares, verify the bytes against that digest, and
+// unpack it read-only into the build's dependency root. The checks mirror
+// the trusted container path (sandbox/tools/download-capture.mjs +
+// extract-capture.mjs + captures/materialize): allowlisted public HTTPS
+// hosts only, digest-addressed fetch (never a tag), bounded size, no links
+// or special entries, per-file sha256 verification.
 
 import { spawnSync } from "node:child_process";
 import { createWriteStream } from "node:fs";
@@ -13,6 +14,7 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ValidationLimits } from "../config.js";
+import { parseCaptureBlobReference } from "../contracts.js";
 import type { PublishedCapture, ResolvedDependency } from "../contracts.js";
 import {
   capturesBySubmission,
@@ -23,11 +25,10 @@ import {
   verifyFiles,
 } from "../captures/materialize.js";
 
-const ALLOWED_HOSTS = new Set([
-  "github.com",
-  "objects.githubusercontent.com",
-  "release-assets.githubusercontent.com",
-]);
+const REGISTRY_HOST = "ghcr.io";
+// Empirically verified 2026-08-05: ghcr blob GETs answer HTTP 307 to signed
+// URLs on pkg-containers.githubusercontent.com, fetchable without auth.
+const ALLOWED_HOSTS = new Set([REGISTRY_HOST, "pkg-containers.githubusercontent.com"]);
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
 
 /** Download, verify, and unpack every dependency capture under
@@ -68,10 +69,22 @@ async function downloadCapture(
   destination: string,
   limits: ValidationLimits,
 ): Promise<void> {
-  let url = allowedUrl(capture.downloadUrl, "capture URL");
+  // The reference was already validated when the record was parsed, but
+  // re-check here: the fetch below must only ever address the digest the
+  // record declares, never a tag.
+  const reference = parseCaptureBlobReference(capture.registryBlob);
+  if (reference === undefined || reference.digest !== capture.digest)
+    throw new Error("capture reference is not the record's ghcr digest address");
+  const token = await anonymousPullToken(reference.repository, limits);
+  let url = new URL(`https://${REGISTRY_HOST}/v2/${reference.repository}/blobs/sha256:${reference.digest}`);
   let response: Response | undefined;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
+    // The bearer token goes only to the registry; redirect targets are
+    // pre-signed URLs that must never see it.
+    const headers: Record<string, string> =
+      url.hostname === REGISTRY_HOST ? { authorization: `Bearer ${token}` } : {};
     response = await fetch(url, {
+      headers,
       redirect: "manual",
       signal: AbortSignal.timeout(limits.fetchTimeoutMs),
     });
@@ -97,6 +110,28 @@ async function downloadCapture(
     counter,
     createWriteStream(destination, { flags: "wx", mode: 0o600 }),
   );
+}
+
+/** Public ghcr packages hand out pull tokens anonymously; the validation
+ * job holds no registry credential and must not need one. */
+async function anonymousPullToken(repository: string, limits: ValidationLimits): Promise<string> {
+  const scope = encodeURIComponent(`repository:${repository}:pull`);
+  const response = await fetch(
+    `https://${REGISTRY_HOST}/token?service=${REGISTRY_HOST}&scope=${scope}`,
+    { signal: AbortSignal.timeout(limits.fetchTimeoutMs) },
+  );
+  if (response.status !== 200) throw new Error(`ghcr token request failed with HTTP ${response.status}`);
+  const body = await response.text();
+  if (body.length > 1024 * 1024) throw new Error("ghcr token response exceeds the size bound");
+  let token: unknown;
+  try {
+    token = (JSON.parse(body) as { token?: unknown }).token;
+  } catch {
+    throw new Error("ghcr token response is not JSON");
+  }
+  if (typeof token !== "string" || token === "" || /[\s"\\]/u.test(token))
+    throw new Error("ghcr token response is malformed");
+  return token;
 }
 
 function allowedUrl(value: string, label: string): URL {

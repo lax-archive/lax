@@ -140,7 +140,24 @@ export interface CaptureManifest {
 }
 
 export interface PublishedCapture extends CaptureManifest {
-  downloadUrl: string;
+  /** Digest-addressed ghcr blob reference: `ghcr.io/<repository>@sha256:<digest>`.
+   * The embedded digest MUST equal the capture manifest's own digest — the
+   * parsers below and archive/snapshot.ts enforce it fail-closed, so a
+   * consumer can only ever fetch the exact bytes the database record hashes.
+   * Tags never appear here: they are mutable and only for discoverability. */
+  registryBlob: string;
+}
+
+const CAPTURE_BLOB_PATTERN =
+  /^ghcr\.io\/([a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+)@sha256:([0-9a-f]{64})$/u;
+
+/** Parse an untrusted capture blob reference; undefined when malformed. */
+export function parseCaptureBlobReference(
+  value: string,
+): { repository: string; digest: string } | undefined {
+  if (value.length > 512) return undefined;
+  const match = CAPTURE_BLOB_PATTERN.exec(value);
+  return match === null ? undefined : { repository: match[1]!, digest: match[2]! };
 }
 
 export interface StatementEntry {

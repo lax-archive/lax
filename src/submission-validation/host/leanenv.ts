@@ -3,7 +3,7 @@
 // derives from workspace files Compile wrote. The entries point at the
 // captured artifacts, the materialized dependency captures, and the warm
 // workspace lax itself provisioned — the local mirror of the trusted
-// container's composed path (runtime/run-check.mjs), so a local build
+// container's composed path (sandbox/tools/run-check.mjs), so a local build
 // exercises the same gate registration enforces.
 
 import fs from "node:fs";
@@ -23,11 +23,17 @@ export function elanHome(): string {
   return process.env.ELAN_HOME ?? path.join(os.homedir(), ".elan");
 }
 
-/** bin/ of the pinned toolchain inside elan's home (elan's directory naming:
- * `leanprover/lean4:v4.30.0` -> `leanprover--lean4---v4.30.0`). */
-export function toolchainBinDir(): string {
+/** The pinned toolchain's directory inside elan's home (elan's directory
+ * naming: `leanprover/lean4:v4.30.0` -> `leanprover--lean4---v4.30.0`). The
+ * sandbox bind-mounts this whole directory read-only into the container. */
+export function toolchainDir(): string {
   const name = LEAN_TOOLCHAIN.replace("/", "--").replace(":", "---");
-  return path.join(elanHome(), "toolchains", name, "bin");
+  return path.join(elanHome(), "toolchains", name);
+}
+
+/** bin/ of the pinned toolchain. */
+export function toolchainBinDir(): string {
+  return path.join(toolchainDir(), "bin");
 }
 
 export function leancheckerBin(): string {

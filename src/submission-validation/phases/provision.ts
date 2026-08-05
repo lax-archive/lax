@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ValidationLimits } from "../config.js";
+import { RUNTIME_PATHS } from "../config.js";
 import type { ResolutionResult, StaticResult } from "../contracts.js";
 import type { FetchedSource } from "../source/fetch.js";
-import type { ContainerMount, ValidationRunner } from "../sandbox/container.js";
+import type { ContainerMount } from "../sandbox/container.js";
+import { seedManifest, seedOverrides } from "../host/warmstore.js";
 import { flattenClosure, type SiblingGraph } from "./siblings.js";
 
 export interface ProvisionedWorkspace {
@@ -15,16 +16,18 @@ export interface ProvisionedWorkspace {
   buildMounts: Record<"concepts" | "proofs", ContainerMount[]>;
 }
 
-interface ProvisionPlan {
-  version: 1;
-  packages: Array<{
-    directory: string;
-    dependencies: Array<{ name: string; directory: string }>;
-    pathDependencies: Array<{ name: string; directory: string }>;
-  }>;
-}
-
-export async function provisionWorkspace(
+/**
+ * Provision a build workspace on the host, before any container starts: copy
+ * the fetched checkout, then seed each package's complete `lake-manifest.json`
+ * and `.lake/package-overrides.json` from the warm workspace — the same
+ * seedManifest/seedOverrides the local host build uses (see
+ * host/warmstore.ts for why lake then resolves nothing, fetches nothing, and
+ * never runs a post_update hook). The one difference is the base path: the
+ * override `dir`s must be the IN-CONTAINER warm mount, because `lake build`
+ * later runs inside the sandbox where the warm store appears at
+ * RUNTIME_PATHS.warmWorkspace.
+ */
+export function provisionWorkspace(
   label: string,
   fetched: FetchedSource,
   sourceFolder: string,
@@ -32,10 +35,8 @@ export async function provisionWorkspace(
   resolution: ResolutionResult,
   siblings: SiblingGraph,
   jobDir: string,
-  dependencyRoot: string,
-  runner: ValidationRunner,
-  limits: ValidationLimits,
-): Promise<ProvisionedWorkspace> {
+  warmWs: string,
+): ProvisionedWorkspace {
   const repositoryRoot = path.join(jobDir, "workspaces", label, "repository");
   fs.mkdirSync(path.dirname(repositoryRoot), { recursive: true, mode: 0o700 });
   fs.cpSync(fetched.repositoryRoot, repositoryRoot, {
@@ -49,11 +50,10 @@ export async function provisionWorkspace(
     },
   });
   const submissionRoot = sourceFolder === "." ? repositoryRoot : path.join(repositoryRoot, sourceFolder);
-  const containerSubmission = sourceFolder === "." ? "/work/repository" : `/work/repository/${sourceFolder}`;
   const siblingNames = new Set(siblings.closure.keys());
-  const packages = (["concepts", "proofs"] as const).flatMap((kind) => {
+  for (const kind of ["concepts", "proofs"] as const) {
     const staticPackage = staticResult[kind];
-    if (staticPackage === undefined) return [];
+    if (staticPackage === undefined) continue;
     // The sibling graph is resolved against the fetched checkout. Rebase its
     // package directories from that same tree; using the later workspace copy
     // here produces paths that escape through ../../../../source/... once Lake
@@ -69,30 +69,18 @@ export async function provisionWorkspace(
     }
     const dependencies = dependencyClosure(kind, resolution)
       .filter((dependency) => !siblingNames.has(dependency.packageName));
-    return [{
-      directory: `${containerSubmission}/${kind}`,
-      dependencies: dependencies.map((dependency) => ({
+    const pkgDir = path.join(submissionRoot, kind);
+    seedManifest(warmWs, pkgDir, [
+      // required submissions materialize from their published captures at the
+      // read-only /deps mount; their manifest dirs are container-absolute
+      ...dependencies.map((dependency) => ({
         name: dependency.packageName,
-        directory: `/deps/${dependency.submissionId}/${dependency.kind}/package`,
+        dir: `/deps/${dependency.submissionId}/${dependency.kind}/package`,
       })),
-      pathDependencies: [...pathDependencies].map(([name, directory]) => ({ name, directory })),
-    }];
-  });
-  const plan: ProvisionPlan = { version: 1, packages };
-  const planPath = path.join(repositoryRoot, ".lax-provision.json");
-  fs.writeFileSync(planPath, `${JSON.stringify(plan, null, 2)}\n`, { mode: 0o600 });
-  const result = await runner.run({
-    label: `provision-${label}`,
-    args: ["node", "/opt/lax-runtime/bin/provision-workspace.mjs", "/work/repository/.lax-provision.json"],
-    mounts: [
-      { source: path.join(jobDir, "workspaces", label), target: "/work", writable: true },
-      ...(fs.existsSync(dependencyRoot) ? [{ source: dependencyRoot, target: "/deps" }] : []),
-    ],
-    timeoutMs: 60_000,
-    maxOutputBytes: limits.maxOutputBytes,
-  });
-  fs.rmSync(planPath, { force: true });
-  if (result.code !== 0) throw new Error(`workspace provisioning failed: ${result.output.trim()}`);
+      ...[...pathDependencies].map(([name, dir]) => ({ name, dir })),
+    ]);
+    seedOverrides(warmWs, pkgDir, RUNTIME_PATHS.warmWorkspace);
+  }
   const manifests = Object.fromEntries(
     (["concepts", "proofs"] as const).map((kind) => {
       const filename = path.join(submissionRoot, kind, "lake-manifest.json");
