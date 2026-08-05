@@ -16,16 +16,22 @@ Suggested order of attack (details in rewrite-plan.md):
 
 1. ~~Doc consolidation~~ — done 2026-08-05 (this file, CLAUDE.md, history/,
    spec-notes entries, README fix, open-use notice).
-2. Runner seam in `pipeline.ts` (host/container/fake) + restore old-lax
-   local build (no docker, incremental, streamed output) + fake-mathlib and
-   fake-GitHub test seams.
-3. Pipeline collapse: one read-only validation job; plain pinned stock
-   image instead of the custom Containerfile; toolchain + `lake exe cache
-   get` on the VM; Replay/Inspect on the VM (hand-built realpath'd
-   LEAN_PATH, never `lake env`); ghcr olean cache keyed
-   (repo, folder, commit, proof|concept).
-4. Write path: keep CAS + credential-free preflight; one global concurrency
-   group; thin YAML (logic in TS, delete the inline-JS failure reporter).
+2. Package-overrides spike first (it decides how local build shares
+   mathlib — do not rebuild the hardlink farm), then runner seam in
+   `pipeline.ts` (host/container/fake) + restore old-lax local build (no
+   docker, incremental, streamed output) + fake-mathlib and fake-GitHub
+   test seams.
+3. Pipeline collapse (gated on the replay-memory measurement below): one
+   read-only validation job; plain pinned stock image instead of the
+   custom Containerfile; toolchain + `lake exe cache get` on the VM;
+   Replay/Inspect on the VM sequentially (hand-built realpath'd LEAN_PATH,
+   never `lake env`); ghcr olean cache designed per the plan's red-team
+   addendum point 2 (pin + closure identity, digest-verified against the
+   database); live rehearsal on scratch repos before trusting any of it.
+4. Write path: keep CAS + credential-free preflight; CAS-only, no
+   concurrency group unless queueing semantics are positively verified;
+   thin YAML (logic in TS, delete the inline-JS failure reporter);
+   rehearsal covers publish + website dispatch.
 5. Port the old test suite area by area onto the new seams.
 6. Independent follow-ups: forbid sibling paths (delete `phases/siblings.ts`
    + arms; add the chain-submit guidance to error messages; later the
@@ -36,10 +42,14 @@ Suggested order of attack (details in rewrite-plan.md):
    progressive doctor, no silent waits — stream compile output, message
    before every long operation).
 
-Verify early (cheap, load-bearing): the `queue: max` concurrency semantics
-in submission.yml — classic Actions concurrency cancels older *pending* runs,
-which would silently drop queued submissions; our tests only string-match the
-YAML. The CAS loop is the correctness backstop either way.
+Verify early — see rewrite-plan.md's red-team addendum (2026-08-05), which
+wins over earlier plan text where they conflict. The three load-bearing
+unknowns: **replay memory on a 16 GB swapless hosted runner** (go/no-go for
+the whole architecture — oom.md measured 14.7 GiB RAM + 17.3 GiB swap at 4
+threads; measure a real big submission before stage 3), the `queue: max`
+concurrency semantics (classic Actions concurrency cancels pending runs;
+until verified, CAS-only), and whether Lake package-overrides reuse built
+oleans (decides stage 2's shape).
 
 **Package-overrides spike** (replaces the hardlink farm; also the
 recommended two-drafts-in-parallel workflow): `lax init` writes a gitignored

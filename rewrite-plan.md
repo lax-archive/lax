@@ -32,20 +32,29 @@ is needed. That session acts as the orchestrator:
 
 Done-when per stage:
 
-- **Stage 2 (seams + local build)**: `lax build` runs without docker on the
-  host toolchain, incrementally, with streamed transcripts; `pipeline.ts`
-  accepts an injected runner; fake-mathlib and fake-GitHub seams exist with
-  at least one subprocess-level test using each; `npm run check` green.
-- **Stage 3 (pipeline collapse)**: submission.yml has one read-only
+- **Stage 2 (seams + local build)**: starts with the package-overrides
+  spike (red-team addendum, point 5) — its outcome decides how local build
+  shares mathlib; do not rebuild the hardlink farm. Then: `lax build` runs
+  without docker on the host toolchain, incrementally, with streamed
+  transcripts; `pipeline.ts` accepts an injected runner; fake-mathlib and
+  fake-GitHub seams exist with at least one subprocess-level test using
+  each; `npm run check` green.
+- **Stage 3 (pipeline collapse)**: gated on the replay-memory measurement
+  (red-team addendum, point 1). submission.yml has one read-only
   validation job; validation-runtime.yml and the custom Containerfile are
   gone; pins live in `src/constants.ts` (or equivalent); toolchain +
   `lake exe cache get` install on the VM with actions-cache; ghcr cache
-  keyed (repo, folder, commit, proof|concept) is read in Provision and
-  written by the publish job; smoke fixtures pass on the new layout.
+  designed per addendum point 2 (pin + closure identity in the key,
+  digest-verified against the database), read in Provision and written by
+  the publish job; smoke fixtures pass on the new layout; **a live
+  rehearsal** (scratch control repo + scratch database repo) has run a
+  real issue → validation round trip (addendum point 3).
 - **Stage 4 (write path)**: publish behavior unchanged (CAS + preflight,
-  fail-closed immutable-release check); one global concurrency group with
-  verified semantics; no inline JS in YAML; routing/publish logic lives in
-  TS with behavioral tests replacing the YAML string assertions.
+  fail-closed immutable-release check); **CAS-only, no concurrency group**
+  unless queueing semantics are positively verified (addendum point 4);
+  no inline JS in YAML; routing/publish logic lives in TS with behavioral
+  tests replacing the YAML string assertions; the live rehearsal covers
+  publish and website dispatch end to end.
 - **Stage 5 (test port)**: the Tests-section triage executed area by area;
   fast suite green without docker; opt-in real-mathlib E2E documented and
   run once.
@@ -377,3 +386,77 @@ polling UX; doctor's docker/daemon/db-freshness checks.
 5. Port the test suite area by area.
 6. Sibling removal, statement-cardinality relaxation, package-overrides spike,
    CLI polish (--resume, naming, progressive doctor) as independent follow-ups.
+
+## Red-team addendum (2026-08-05)
+
+An adversarial pass over this plan after it was written. Where the addendum
+contradicts earlier sections, the addendum wins.
+
+1. **Replay memory is a go/no-go gate for the whole architecture, measure
+   it before stage 3.** history/oom.md: a full replay peaked at 14.7 GiB
+   RAM + 17.3 GiB swap at 4 threads. A standard hosted runner has 16 GB
+   total, no swap, OS and Node included (laxnew's `--memory=16GiB`
+   container cap exceeds the VM's usable RAM and never actually bound).
+   If mathlib-scale replay doesn't fit at 1–2 threads, the options are
+   paid larger runners or self-hosted ones — either changes the
+   architecture's economics. Measure with a real big submission first.
+   Corollary: do **not** run Replay and Inspect concurrently on one
+   runner — two mathlib environment imports in 16 GB is the oom.md
+   failure mode; the "two concurrent processes" remark in the Build
+   pipeline section is retracted.
+2. **The tuple cache key is unsound as stated.** (repo, folder, commit,
+   proof|concept) omits the toolchain/mathlib pin (a pin bump silently
+   poisons the cache) and the dependency closure (a *draft* dependency is
+   mutable, so one tuple can map to different oleans over time). And ghcr
+   tags are mutable, so consumption must verify a digest recorded in the
+   dependency's build-output.json in the database — which reintroduces
+   the database join the tuple key was supposed to avoid. Design repair:
+   include the pin; either cache only captures of registered (immutable)
+   submissions or include a dependency-closure hash; keep tuple tags for
+   discovery but always digest-verify against the database. Whether the
+   tuple key still beats laxnew's content-addressed scheme is a stage-3
+   design decision, not a settled fact.
+3. **Nothing in the plan executes the Actions side before trusting it.**
+   Stage 3/4 acceptance was local (`npm run check`, smoke), but the
+   deliverable is remote workflow behavior, and this project's hardest
+   lesson (history/front-worker-split.md) is that everything written but
+   never run was broken. Stages 3 and 4 require a live rehearsal: a
+   scratch control repo + scratch database repo where a real
+   issue → validation → publish → website-dispatch round trip runs.
+4. **CAS-only is the default; the global concurrency group is retracted.**
+   Classic Actions concurrency keeps one pending run and cancels older
+   pending ones — under a burst, publish jobs would be cancelled after
+   successful validation, silently losing work. laxnew's `queue: max` is
+   only string-asserted by tests. Use the CAS retry loop alone unless
+   real queueing semantics are positively verified.
+5. **Ordering: the package-overrides spike moves into stage 2.**
+   "Restore old-lax local build" naively means restoring the warm-store
+   hardlink farm, which rewrite.md wants dead. The spike's outcome decides
+   what stage 2 builds; running it in stage 6 risks building the farm to
+   delete it.
+6. **Dropping the baked image is an availability trade, sanctioned but
+   real.** With the image, a submission needed ghcr up; with
+   toolchain-on-VM it needs the elan endpoint, the Lean release CDN, and
+   mathlib's cache CDN up and still serving the pinned artifacts, at
+   submission time. If that bites, the sanctioned fallback is a warm
+   *tarball* (toolchain + mathlib tree) published to ghcr by a small
+   trusted workflow — data, not a reviewed executable image; the
+   review-surface argument survives, the third-party dependence doesn't.
+7. **The real price of forbidding siblings is atomicity.** Waves gave
+   all-or-nothing registration; the chain workflow serializes each member
+   on a full publication round trip, and a mid-chain failure during
+   bottom-up registration leaves earlier members registered forever with
+   the top never landed. Name this cost in the eventual design
+   (registration ordering, what a stranded half-chain means) instead of
+   rediscovering it.
+8. Smaller, for the record: the bwrap/AppArmor-on-ubuntu-24.04 claim in
+   the Sandbox section is unverified — check it if it ever becomes
+   load-bearing. Running leanchecker outside docker means parsing
+   untrusted olean data (mmap'd, pointer-fixup format) directly on the
+   runner — the same posture old lax chose deliberately, restated here as
+   a choice, not an accident. `--resume` must handle the CLI dying before
+   it learns whether its command comment posted, so run correlation
+   cannot rely on a stored comment id. And the file:line pointers in this
+   plan come from exploration-agent reports that were not independently
+   re-verified — workers should trust the tree over the plan and invoke
+   the deviation rule when they disagree.
