@@ -49,14 +49,18 @@ Suggested order of attack (details in rewrite-plan.md):
    CLI delete-refusal e2e; opt-in real-mathlib e2e restored under
    LAX_E2E=1, run once, 24.7 s against the warm store; sibling and wave
    ports skipped as moot, sitegen/DAG tests belong to lax-website).
-6. Independent follow-ups: forbid sibling paths (delete `phases/siblings.ts`
-   + arms; add the chain-submit guidance to error messages; later the
-   `lax submit A B C` macro), allow multiple statements per concept (drop
-   the cardinality violation; website work in lax-website), CLI polish
-   (`--resume` reattach via issue→run derivation,
-   resolve the `lax update` name collision with old lax's self-upgrade,
-   progressive doctor, no silent waits — stream compile output, message
-   before every long operation).
+6. ~~Independent follow-ups~~ — done 2026-08-06, one commit each:
+   sibling paths forbidden (siblings.ts + arms deleted, chain-workflow
+   guidance in static/resolution errors and instructions.md; note: the
+   repo-wide H5 duplicate-id/nesting scan died with siblings.ts — no
+   longer correctness-relevant, revive only as hygiene if missed; the
+   `lax submit A B C` macro is still future CLI work); multiple
+   statements per concept allowed (inspect gate + the trusted artifact
+   parser's cardinality bound removed; presentation is lax-website
+   work); CLI polish (`lax submit --resume` re-deriving the run from
+   issue comments, source-triple submit replaces `lax update`,
+   progressive doctor, no-silent-waits sweep incl. login heartbeat and
+   per-dependency capture progress).
 
 Verify early — see rewrite-plan.md's red-team addendum (2026-08-05), which
 wins over earlier plan text where they conflict. The three load-bearing
@@ -95,17 +99,17 @@ no extra machinery.
 
 ## Found by the 2026-08-05 rewrite review
 
-- **Shallow-fetch gap carried over verbatim**: when a host refuses the
-  unadvertised-SHA fetch, `runtime/fetch-source.mjs`'s `git fetch --depth 1
-  origin` fallback retrieves only ref tips and misses valid historical
-  commits. Restore a fallback that can fetch any commit reachable from a
-  remote branch while bounding resource use.
-- **Memory numbers are unmeasured**: Compile hardcodes `LEAN_NUM_THREADS=4`
-  (`phases/compile.ts`), Replay/Inspect use 2, inside a hard 16 GiB
-  container cap with **no swap** (the old box's 32 GiB swap once absorbed a
-  17.3 GiB replay overflow — history/oom.md). Measure a big submission
-  before trusting the caps; the failure mode at the ceiling is a kill, not
-  degradation, so confirm rather than assume.
+- **Shallow-fetch gap carried over verbatim** (still open; the fetch now
+  lives host-side in `source/fetch.ts` since stage 3): when a host
+  refuses the unadvertised-SHA fetch, the `git fetch --depth 1 origin`
+  fallback retrieves only ref tips and misses valid historical commits.
+  Restore a fallback that can fetch any commit reachable from a remote
+  branch while bounding resource use.
+- ~~Memory numbers are unmeasured~~ — measured 2026-08-05 (plan addendum
+  point 1): replay is ~5.6 GiB per concurrent mathlib environment
+  import; 2 threads (10.78 GiB peak on word-ram) fits a 16 GB swapless
+  runner, 4 never does; compile peaked at 3.84 GiB at 4 threads. Caps
+  now carry the measured rationale in config.ts.
 - **Author frictions, unchanged since hiccups.md and re-filed here**:
   - Apache-2.0-only license gate — salvaged MIT/BSD source has no path;
     decide allowlist vs. loud documentation.
@@ -115,15 +119,13 @@ no extra machinery.
     what *is* importable — restore that.
   - Flat concepts + per-module namespace ownership makes faithful
     multi-module ports impossible (28 modules → one 762 KB module).
-- Local compile errors are flattened to one truncated line
-  (`pipeline.ts` `safeError`) — fixed for free by the host-runner local
-  mode (stage 2), but don't lose it.
-- Lost rationale to re-home as comments when the affected code is rewritten
-  in stage 3: leanchecker's module scan is symlink-blind (realpath every
-  LEAN_PATH entry — old `src/pipeline/leanenv.ts`); why `lake update` never
-  runs / mathlib's `post_update` hook must never fire; the `--clearenv`
-  lesson (an env var can be set, visible, and still not arrive — keep
-  fail-closed consumers).
+- ~~Local compile errors flattened to one line~~ — fixed in stage 2
+  (host local mode streams the full transcript; guarded by e2e).
+- ~~Lost rationale to re-home~~ — done in stages 2–3: symlink-blind
+  leanchecker realpath comment lives in `host/leanenv.ts`, the
+  no-`lake update`/`post_update` rationale in `host/warmstore.ts`, the
+  `--clearenv` fail-closed lesson at run-check.mjs's LEAN_NUM_THREADS
+  gate (asserted by test).
 
 ## Concept dialect (spec_conceptdialect_draft.md — advisory model)
 
