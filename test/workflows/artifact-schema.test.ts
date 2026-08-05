@@ -37,6 +37,38 @@ describe("trusted validation artifact parser", () => {
     ).toEqual([]);
   });
 
+  it("accepts a concept declaring several statements", () => {
+    // The parser used to cap `statements` at one entry, mirroring the
+    // one-statement-per-concept gate; that gate is gone (rewrite.md,
+    // "multiple statements per concept") and the bound is now just a size cap.
+    const fixture = successfulArtifacts();
+    fixture.buildOutput.concepts.push({
+      id: "Lax42.Two",
+      path: "concepts/Lax42/Two.lean",
+      title: "Two",
+      type: "theorem",
+      description: "A concept with two statements.",
+      imports: [],
+      mathlibImports: [],
+      sourceText: "",
+      statements: [
+        { id: "Lax42.Two.claimA", signature: "claimA : True" },
+        { id: "Lax42.Two.claimB", signature: "claimB : True" },
+      ],
+    });
+
+    const parsed = parseSuccessfulValidationArtifacts(
+      fixture.report,
+      fixture.buildOutput,
+      validationRequest(),
+      TEST_RUNTIME,
+    );
+    expect(parsed.buildOutput.concepts[0]!.statements.map((statement) => statement.id)).toEqual([
+      "Lax42.Two.claimA",
+      "Lax42.Two.claimB",
+    ]);
+  });
+
   it("rejects unknown trusted fields and any standalone/report mismatch", () => {
     const unknown = successfulArtifacts();
     (unknown.report as unknown as Record<string, unknown>).extra = true;

@@ -176,6 +176,51 @@ describe("inspection judgments retained from main", () => {
     expect(judged.result.proofs).toHaveLength(1);
   });
 
+  it("accepts several statements in one concept module and a proof of either", () => {
+    // The one-statement-per-concept gate (one-axiom-plan.md) is gone: a
+    // concept module may declare any number of axioms, each of them a
+    // first-class statement that a proof may conclude.
+    const fixture = reports();
+    fixture.concepts.modules[1]!.declCount = 2;
+    fixture.concepts.declarations.push({
+      name: "Lax1.Claim.second",
+      userName: "Lax1.Claim.second",
+      kind: "axiom",
+      module: "Lax1.Claim",
+      axioms: ["Lax1.Claim.second"],
+      signature: "True",
+      doc: { hasFrontmatter: false, scalars: [], lists: [], description: "The second statement." },
+    });
+    fixture.proofs.modules[1]!.declCount = 2;
+    fixture.proofs.declarations.push({
+      ...fixture.proofs.declarations[0]!,
+      name: "Lax1Proofs.other",
+      userName: "Lax1Proofs.other",
+      doc: document([["conclusion", "Lax1.Claim.second"]], "Proof of the second statement."),
+    });
+
+    const judged = judgeInspection(
+      fixture.concepts,
+      fixture.proofs,
+      fixture.conceptInventory,
+      fixture.proofInventory,
+      EMPTY_RESOLUTION,
+    );
+
+    expect(judged.findings.violations).toEqual([]);
+    expect(judged.result.concepts).toHaveLength(1);
+    expect(judged.result.concepts[0]?.statements.map((statement) => statement.id)).toEqual([
+      "Lax1.Claim.statement",
+      "Lax1.Claim.second",
+    ]);
+    // proofs come back sorted by declaration id: Lax1Proofs.other before
+    // Lax1Proofs.proof
+    expect(judged.result.proofs.map((proof) => proof.conclusion)).toEqual([
+      "Lax1.Claim.second",
+      "Lax1.Claim.statement",
+    ]);
+  });
+
   it("splits named sections, detects duplicates, and ignores fenced headings", () => {
     const duplicated = reports();
     duplicated.concepts.modules[1]!.moduleDocs[0]!.description =
@@ -220,6 +265,8 @@ describe("inspection judgments retained from main", () => {
       [["conclusion", "Lax1.Claim.statement"]],
       "misplaced proof metadata",
     );
+    // a second axiom in the same module: no longer a violation of its own,
+    // and it must not suppress or duplicate any of the others
     fixture.concepts.declarations.push({
       name: "Lax1.Claim.second",
       userName: "Lax1.Claim.second",
@@ -261,13 +308,13 @@ describe("inspection judgments retained from main", () => {
       "annotation",
       "namespace",
       "axiom-free",
-      "one-statement",
       "axiom-hygiene",
       "frontmatter",
       "proof",
     ]) {
       expect(rules).toContain(rule);
     }
+    expect(rules).not.toContain("one-statement");
   });
 
   it("accepts inspected upstream statements and derives the exact assumption set", () => {

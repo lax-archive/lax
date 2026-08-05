@@ -6,6 +6,35 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## Multiple statements per concept (implemented, 2026-08-06)
+
+**Supersedes "One statement per concept" below**, which is now history. A
+concept module may declare any number of axioms; every one of them is a
+statement of that concept, with its own id, and each may independently be
+the `conclusion` of a proof or appear in an `assumptions` set. The
+`one-statement` violation kind no longer exists. Reason (rewrite.md,
+"multiple statements per concept"): the bound existed for the website —
+one concept, one status — and Jan has a presentation for several
+statements per concept (anonymous per-statement indices in the proof
+network and proof list), so the backend constraint is no longer bought by
+anything. That presentation is lax-website work; nothing in this
+repository presents statements.
+
+The `type`-frontmatter consistency questions one-axiom-plan.md raised
+(theorem/lemma/proposition/corollary ⇒ exactly one axiom, definition ⇒
+zero) stay **deliberately punted**, per rewrite.md: `type` remains a
+required key with a free prose value and nothing mechanical hangs off it.
+
+Record schema unchanged — `statements` was always an array, and the
+trusted artifact parser's cap on it (previously 1) is now just a size
+bound — so no `specVersion` bump and no re-verdict machinery.
+
+Spec touchpoint: **none, and that is the point.** The superseded entry's
+amendment was never folded in: spec.md §Concept packages still reads
+"The statements of a concept are the axioms whose module of origin it
+is" (plural, no cardinality), which is exactly the restored rule. The
+cardinality sentence that entry proposed must simply not be added.
+
 ## GitHub Actions rewrite: control plane and auth model (implemented, 2026-08-05)
 
 This repository is the rewrite of the archive onto GitHub Actions (charter:

@@ -106,13 +106,16 @@ export function judgeInspection(
       }
     }
   }
-  for (const concept of concepts) {
-    if (concept.statements.length > 1)
-      findings.violate(
-        "one-statement",
-        `concept ${concept.id} declares ${concept.statements.length} statements; a concept declares at most one axiom`,
-      );
-  }
+  // A concept module may declare any number of statements. The
+  // `one-statement` cardinality gate that used to stand here (one-axiom-plan.md)
+  // is deliberately gone: it existed to keep the concept the unit of the proof
+  // network so the website could show one status per concept, and the website
+  // now handles several statements per concept with anonymous per-statement
+  // indices (rewrite.md, "multiple statements per concept"). Statement ids are
+  // first-class everywhere downstream, so nothing else had to change. The
+  // `type`-frontmatter consistency questions that plan also raised (does
+  // `type: definition` forbid axioms, does `type: theorem` require one) are
+  // deliberately punted, per rewrite.md — `type` stays an unchecked label.
 
   const upstreamStatements = new Set(
     resolution.proofs

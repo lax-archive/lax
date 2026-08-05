@@ -44,6 +44,8 @@ function writeArchiveRecord(
     folder?: string;
     concepts?: string[];
     proofs?: string[];
+    /** Statement ids per concept entry of the record's build output. */
+    statements?: string[][];
     capture?: PublishedCapture | Record<string, unknown>;
   } = {},
 ): void {
@@ -70,7 +72,10 @@ function writeArchiveRecord(
       id,
       requiredByConcepts: options.concepts ?? [],
       requiredByProofs: options.proofs ?? [],
-      concepts: [],
+      concepts: (options.statements ?? []).map((ids, index) => ({
+        id: `Concept${index + 1}`,
+        statements: ids.map((statementId) => ({ id: statementId, signature: `${statementId} : True` })),
+      })),
       capture: options.capture ?? capture(),
     }),
   );
@@ -124,6 +129,27 @@ describe("Archive dependency resolution retained from main", () => {
     // a stale pin is the chain workflow's characteristic failure: the message
     // has to say how to relink the chain
     expect(crossWiredMessage).toContain("chain workflow");
+  });
+
+  it("carries every statement of a multi-statement upstream concept", () => {
+    // Statement ids are the currency of resolution; a concept declaring
+    // several of them (no longer gated — see rewrite.md, "multiple statements
+    // per concept") must expose all of them to the downstream submission, so
+    // a downstream proof may conclude or assume either.
+    const archiveRoot = temporary("lax-resolution-archive-");
+    writeArchiveRecord(archiveRoot, "lax-10", {
+      folder: "a",
+      statements: [["Lax10.Two.claimB", "Lax10.Two.claimA"], ["Lax10.Fine.claim"]],
+    });
+    const archive = new ArchiveSnapshot(archiveRoot, "a".repeat(40));
+
+    const resolved = resolve(withConceptRequires([{ name: "Lax10", folder: "a" }]), archive);
+    expect(resolved.findings.violations).toEqual([]);
+    expect(resolved.result.all[0]!.statements).toEqual([
+      "Lax10.Fine.claim",
+      "Lax10.Two.claimA",
+      "Lax10.Two.claimB",
+    ]);
   });
 
   it("distinguishes missing and permanently deleted dependencies", () => {

@@ -328,7 +328,9 @@ function parseConcept(value: unknown, index: number): ConceptEntry {
     ...(value.sections === undefined ? [] : ["sections"]),
     "imports", "mathlibImports", "sourceText", "statements",
   ], label);
-  const statements = boundedArray(value.statements, `${label} statements`, 1)
+  // A concept may declare any number of statements; the cap is only a
+  // trusted-parse bound, not the old one-statement-per-concept rule.
+  const statements = boundedArray(value.statements, `${label} statements`, MAX_ENTRIES)
     .map((entry, statementIndex) => parseStatement(entry, `${label} statement ${statementIndex + 1}`));
   return {
     id: identifier(value.id, `${label} id`, 2_048),

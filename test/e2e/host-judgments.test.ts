@@ -16,9 +16,14 @@ beforeAll(() => {
   freshLaxHome();
 });
 
-describe("one statement per concept", () => {
-  /** A concept package with the given modules, built concepts-only: the rule
-   * is a property of the concept package alone. */
+// Ported as the old one-statement-per-concept suite and inverted here: the
+// cardinality gate (one-axiom-plan.md) is gone, so the fixtures are kept
+// verbatim and only the expectations flipped — a concept module declaring two
+// axioms is now ordinary content (rewrite.md, "multiple statements per
+// concept").
+describe("statements per concept", () => {
+  /** A concept package with the given modules, built concepts-only: statement
+   * cardinality is a property of the concept package alone. */
   function conceptPackage(id: string, name: string, modules: Record<string, string>): string {
     const names = Object.keys(modules);
     return makeHostSubmission(id, {
@@ -44,27 +49,104 @@ end ${name}.${module}
     });
   }
 
-  it("accepts a definition-concept and a claim-concept", async () => {
+  it("accepts zero, one, and several axioms in a concept module", async () => {
     const root = conceptPackage("lax-25", "Lax25", {
       // zero axioms: vocabulary only
       Vocab: "/-- vocabulary, no claim -/\ndef two : Nat := 2\n",
-      // exactly one axiom
+      // one axiom
       Claim: "/-- the claim -/\naxiom claim : 2 = 2\n",
+      // several axioms in one module: no longer a violation
+      Two: "/-- first claim -/\naxiom claimA : 5 = 5\n\n/-- second claim -/\naxiom claimB : 6 = 6\n",
     });
     const report = await buildOnHost(root, { id: "lax-25", scope: "concepts" });
     expect(report.violations).toEqual([]);
   });
 
-  it("rejects a concept module declaring more than one axiom", async () => {
-    const root = conceptPackage("lax-26", "Lax26", {
-      Two: "/-- first claim -/\naxiom claimA : 2 = 2\n\n/-- second claim -/\naxiom claimB : 3 = 3\n",
-      Fine: "/-- the claim -/\naxiom claim : 4 = 4\n",
+  it("carries every statement of a multi-statement concept into the build output", async () => {
+    // The fixture the gate used to reject, now taken all the way through a
+    // full concept+proof build: both axioms of Lax26.Two are statements, each
+    // separately concludable, and both reach the build output.
+    const root = makeHostSubmission("lax-26", {
+      "concepts/Lax26.lean": "import Lax26.Two\nimport Lax26.Fine\n",
+      "concepts/Lax26/Two.lean": `/-!
+---
+title: Two
+type: theorem
+---
+a concept module with two statements.
+-/
+
+namespace Lax26.Two
+
+/-- first claim -/
+axiom claimA : 2 = 2
+
+/-- second claim -/
+axiom claimB : 3 = 3
+
+end Lax26.Two
+`,
+      "concepts/Lax26/Fine.lean": `/-!
+---
+title: Fine
+type: theorem
+---
+a concept module with one statement.
+-/
+
+namespace Lax26.Fine
+
+/-- the claim -/
+axiom claim : 4 = 4
+
+end Lax26.Fine
+`,
+      "proofs/Lax26Proofs.lean": "import Lax26Proofs.Basic\n",
+      "proofs/Lax26Proofs/Basic.lean": `import Lax26.Two
+
+namespace Lax26Proofs
+
+/--
+---
+conclusion: Lax26.Two.claimA
+---
+proves the first statement of the concept
+-/
+theorem provesA : 2 = 2 := rfl
+
+/--
+---
+conclusion: Lax26.Two.claimB
+assumptions:
+  - Lax26.Two.claimA
+---
+proves the second statement of the same concept, assuming the first
+-/
+theorem provesB : 3 = 3 := by
+  have h := Lax26.Two.claimA
+  rfl
+
+end Lax26Proofs
+`,
     });
-    const report = await buildOnHost(root, { id: "lax-26", scope: "concepts" });
-    expect(rules(report)).toEqual(new Set(["one-statement"]));
-    const message = report.violations[0]!.message;
-    expect(message).toContain("concept Lax26.Two declares 2 statements");
-    expect(message).not.toContain("Lax26.Fine");
+    const report = await buildOnHost(root, { id: "lax-26" });
+    expect(rules(report)).toEqual(new Set());
+    const output = report.buildOutput!;
+    const two = output.concepts.find((concept) => concept.id === "Lax26.Two")!;
+    expect(two.statements.map((statement) => statement.id)).toEqual([
+      "Lax26.Two.claimA",
+      "Lax26.Two.claimB",
+    ]);
+    expect(two.statements.map((statement) => statement.doc)).toEqual([
+      "first claim",
+      "second claim",
+    ]);
+    // both statements of the one concept are independently concludable, and
+    // one may be assumed while proving the other
+    expect(output.proofs.map((proof) => [proof.conclusion, proof.assumptions])).toEqual([
+      ["Lax26.Two.claimA", []],
+      ["Lax26.Two.claimB", ["Lax26.Two.claimA"]],
+    ]);
   });
 });
 
@@ -400,7 +482,8 @@ end Lax3Proofs
     expect(found).toContain("[annotation] concept Lax3.Plain must carry exactly one module docstring");
     expect(found).toContain("[annotation] concept declaration Lax3.Zero.misplacedProof carries proof frontmatter");
     expect(found).toContain("[axiom-free] concept declaration Lax3.Zero.usesStatement");
-    expect(found).toContain("[one-statement] concept Lax3.Zero declares 2 statements");
+    // Lax3.Zero declares two axioms; that is no longer a violation of its own
+    expect(found).not.toContain("[one-statement]");
     expect(found).toContain("[namespace] concept declaration Lax3Escape.bad");
     expect(found).toContain("[namespace] proof declaration LaxEscape.p");
     expect(found).toContain("[axiom-hygiene] proof declaration Lax3Proofs.stray");
