@@ -460,10 +460,26 @@ contradicts earlier sections, the addendum wins.
    rediscovering it.
 8. Smaller, for the record: the bwrap/AppArmor-on-ubuntu-24.04 claim in
    the Sandbox section is unverified — check it if it ever becomes
-   load-bearing. Running leanchecker outside docker means parsing
-   untrusted olean data (mmap'd, pointer-fixup format) directly on the
-   runner — the same posture old lax chose deliberately, restated here as
-   a choice, not an accident. `--resume` must handle the CLI dying before
+   load-bearing. On host-vs-container for Replay/Inspect (analyzed
+   2026-08-05): both consume attacker-controlled olean bytes through a
+   loader that is not a hardened boundary, and whoever owns the replay
+   process owns the verdict — a compromised *containerized* replay lies
+   through its report just as effectively, so the placement does not
+   change the integrity model. What host-straight actually forgoes is
+   defense-in-depth (a partial exploit on the host can rewrite the report
+   directly; in a container it must be fully weaponized and lie within
+   schema) and per-process resource caps; what it exposes is only a
+   read-scoped token, public data, and an ephemeral VM. Since the same
+   stock image and container runner exist for Compile anyway,
+   containerizing Replay/Inspect would cost no new review surface —
+   either placement is sanctioned; do not "fix" one into the other
+   believing it changes the security model. Separately, the single-job
+   collapse itself means a docker escape during Compile owns the VM
+   before Replay runs, so the Compile container boundary is load-bearing
+   for verdict integrity (same posture as old lax's one box); the
+   systemic backstop is that records and captures are public and anyone
+   can re-run leanchecker offline, so a forged verdict is detectable
+   rather than silently permanent. `--resume` must handle the CLI dying before
    it learns whether its command comment posted, so run correlation
    cannot rely on a stored comment id. And the file:line pointers in this
    plan come from exploration-agent reports that were not independently
