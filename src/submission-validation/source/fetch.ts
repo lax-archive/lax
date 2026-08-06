@@ -19,6 +19,18 @@ export interface FetchedSource {
   submissionRoot: string;
 }
 
+/** Runs one git command in the fetch workspace and reports exit code + output. */
+export type GitRunner = (args: string[]) => Promise<{ code: number; output: string }>;
+
+// Cap on how deep the progressive-deepening fallback digs behind the remote
+// branch tips before giving up. Submitted commits are normally at or near a
+// tip, so this is generous; the point of the cap is that an
+// attacker-controlled repository cannot make us walk millions of commits of
+// fabricated history. Together with the per-job fetch deadline (every git
+// call shares it) and the post-checkout file/size inspection, it bounds the
+// total work a hostile remote can cost us.
+const MAX_FALLBACK_DEPTH = 8192;
+
 /**
  * Fetch one commit of a public GitHub repository into `destination` with an
  * isolated git environment: no inherited HOME or git config, https protocol
@@ -52,17 +64,39 @@ export async function fetchGitCheckout(
     GIT_TERMINAL_PROMPT: "0",
   };
   const deadline = Date.now() + timeoutMs;
-  const git = (args: string[]): Promise<{ code: number; output: string }> =>
+  const git: GitRunner = (args) =>
     runGit(args, destination, env, Math.max(1, deadline - Date.now()));
+  await checkoutRemoteCommit(git, repository, commit);
+}
 
+/**
+ * The git sequence behind {@link fetchGitCheckout}, parameterized over the
+ * runner so tests can drive it with real git against local fixture remotes:
+ * try the cheap unadvertised-SHA fetch first; when the host refuses it, fetch
+ * the ref tips and progressively deepen (geometrically, capped at `maxDepth`
+ * total commits behind the tips) until the requested commit is present. Ends
+ * with a checkout and a `rev-parse HEAD` equality assertion, so whatever the
+ * fetch path, only the exact requested commit can come out.
+ */
+export async function checkoutRemoteCommit(
+  git: GitRunner,
+  repository: string,
+  commit: string,
+  maxDepth = MAX_FALLBACK_DEPTH,
+): Promise<void> {
   if ((await git(["init", "--quiet"])).code !== 0) throw new Error("could not initialize the fetch workspace");
   if ((await git(["remote", "add", "origin", repository])).code !== 0) {
     throw new Error("could not configure the fetch remote");
   }
-  let fetched = await git(["fetch", "--quiet", "--depth", "1", "origin", commit]);
-  if (fetched.code !== 0) fetched = await git(["fetch", "--quiet", "--depth", "1", "origin"]);
-  if (fetched.code !== 0) {
-    throw new Error("repository or commit could not be fetched anonymously");
+  const direct = await git(["fetch", "--quiet", "--depth", "1", "origin", commit]);
+  if (direct.code !== 0) {
+    // The host refused the unadvertised-SHA fetch. Fetch the branch tips,
+    // then deepen until the commit shows up (or a bound is hit — the
+    // checkout below then reports the failure).
+    if ((await git(["fetch", "--quiet", "--depth", "1", "origin"])).code !== 0) {
+      throw new Error("repository or commit could not be fetched anonymously");
+    }
+    await deepenUntilPresent(git, commit, maxDepth);
   }
   if ((await git(["-c", "advice.detachedHead=false", "checkout", "--quiet", commit])).code !== 0) {
     throw new Error("requested commit is not present in the fetched repository");
@@ -70,6 +104,26 @@ export async function fetchGitCheckout(
   const resolved = await git(["rev-parse", "HEAD"]);
   if (resolved.code !== 0 || resolved.output.trim() !== commit) {
     throw new Error("checkout did not resolve to the requested immutable commit");
+  }
+}
+
+/**
+ * Deepens the shallow tip-only fetch until `commit` is present locally, the
+ * history is complete (the commit is simply absent), the depth cap is
+ * reached, or a fetch fails (including hitting the shared deadline). Never
+ * throws: the caller's checkout is the single authority on absence.
+ */
+async function deepenUntilPresent(git: GitRunner, commit: string, maxDepth: number): Promise<void> {
+  let depth = 1;
+  let step = 32;
+  while ((await git(["cat-file", "-e", `${commit}^{commit}`])).code !== 0) {
+    if (depth >= maxDepth) return;
+    const shallow = await git(["rev-parse", "--is-shallow-repository"]);
+    if (shallow.code !== 0 || shallow.output.trim() !== "true") return;
+    const deepenBy = Math.min(step, maxDepth - depth);
+    if ((await git(["fetch", "--quiet", `--deepen=${deepenBy}`, "origin"])).code !== 0) return;
+    depth += deepenBy;
+    step *= 2;
   }
 }
 
