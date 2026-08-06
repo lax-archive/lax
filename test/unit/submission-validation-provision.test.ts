@@ -1,9 +1,13 @@
+import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_LIMITS } from "../../src/submission-validation/config.js";
 import { materializeHostCaptures } from "../../src/submission-validation/host/captures.js";
 import type { ResolvedDependency } from "../../src/submission-validation/contracts.js";
-import { provisionWorkspace } from "../../src/submission-validation/phases/provision.js";
+import {
+  installOwnConceptCapture,
+  provisionWorkspace,
+} from "../../src/submission-validation/phases/provision.js";
 import {
   cleanupTemporary,
   makeSubmission,
@@ -98,6 +102,43 @@ describe("submission workspace provisioning", () => {
         dir: "/deps/lax-7/concepts/package",
       }),
     );
+  });
+
+  it("installs the own concept capture's full output set, ir included", () => {
+    const sourceRoot = makeSubmission("lax-2");
+    const job = temporary("lax-provision-install-job-");
+    const workspace = provisionWorkspace(
+      "proofs",
+      { repositoryRoot: sourceRoot, submissionRoot: sourceRoot },
+      ".",
+      staticResult("lax-2"),
+      { concepts: [], proofs: [], all: [] },
+      job,
+      fakeWarm(),
+    );
+    const captureRoot = temporary("lax-provision-capture-");
+    // Lake treats a path dependency's module as stale unless the trace AND
+    // every companion — including the C artifacts under build/ir — are
+    // present (captures/seal.ts); the concepts tree is read-only during the
+    // proofs compile, so a missing companion breaks the build.
+    writeFile(captureRoot, "concepts/lib/Lax2/Basic.olean", "olean");
+    writeFile(captureRoot, "concepts/lib/Lax2/Basic.trace", "trace");
+    writeFile(captureRoot, "concepts/ir/Lax2/Basic.c", "c");
+    writeFile(captureRoot, "concepts/ir/Lax2/Basic.c.hash", "hash");
+
+    installOwnConceptCapture(workspace, captureRoot);
+
+    const lib = workspace.libraries.concepts;
+    const ir = path.resolve(lib, "..", "..", "ir");
+    for (const filename of [
+      path.join(lib, "Lax2", "Basic.olean"),
+      path.join(lib, "Lax2", "Basic.trace"),
+      path.join(ir, "Lax2", "Basic.c"),
+      path.join(ir, "Lax2", "Basic.c.hash"),
+    ]) {
+      expect(fs.existsSync(filename)).toBe(true);
+      expect(fs.statSync(filename).mode & 0o222).toBe(0);
+    }
   });
 });
 

@@ -163,14 +163,24 @@ export function dependencyClosure(
 }
 
 export function installOwnConceptCapture(workspace: ProvisionedWorkspace, captureRoot: string): void {
-  const source = path.join(captureRoot, "concepts", "lib");
-  const destination = workspace.libraries.concepts;
-  fs.rmSync(destination, { recursive: true, force: true });
-  fs.mkdirSync(destination, { recursive: true });
-  fs.cpSync(source, destination, { recursive: true });
   const now = new Date();
-  touch(destination, now);
-  makeFilesReadOnly(destination);
+  // Install the full recorded output set, not just lib: lake judges a path
+  // dependency's freshness from the trace plus every companion including the
+  // C artifacts under build/ir (see the capture rationale in captures/seal.ts
+  // and the ir handling in captures/materialize.ts). With ir missing, the
+  // proofs build tries to rebuild the read-only concept modules and fails.
+  const trees: Array<[string, string]> = [
+    [path.join(captureRoot, "concepts", "lib"), workspace.libraries.concepts],
+    [path.join(captureRoot, "concepts", "ir"), path.resolve(workspace.libraries.concepts, "..", "..", "ir")],
+  ];
+  for (const [source, destination] of trees) {
+    fs.rmSync(destination, { recursive: true, force: true });
+    if (!fs.existsSync(source)) continue;
+    fs.mkdirSync(destination, { recursive: true });
+    fs.cpSync(source, destination, { recursive: true });
+    touch(destination, now);
+    makeFilesReadOnly(destination);
+  }
 }
 
 function touch(directory: string, time: Date): void {
