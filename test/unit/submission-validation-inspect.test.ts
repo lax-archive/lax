@@ -317,6 +317,50 @@ describe("inspection judgments retained from main", () => {
     expect(rules).not.toContain("one-statement");
   });
 
+  it("names the offending import and the importable prefixes", () => {
+    const fixture = reports();
+    fixture.concepts.modules[1]!.imports.push("Batteries.Data.List.Basic");
+    const judged = judgeInspection(
+      fixture.concepts,
+      fixture.proofs,
+      fixture.conceptInventory,
+      fixture.proofInventory,
+      EMPTY_RESOLUTION,
+    );
+    const finding = judged.findings.violations.find((violation) => violation.rule === "imports");
+    expect(finding?.message).toBe(
+      "module Lax1.Claim imports undeclared package module Batteries.Data.List.Basic; " +
+        "importable prefixes: Init, Lax1, Lean, Mathlib, Std",
+    );
+  });
+
+  it("lists required dependency packages among the importable prefixes", () => {
+    const fixture = reports();
+    fixture.proofs.modules[1]!.imports.push("Batteries");
+    const upstream = {
+      packageName: "Lax2",
+      submissionId: "lax-2",
+      kind: "concepts" as const,
+      source: { repository: REPOSITORY, commit: COMMIT, folder: "." },
+      state: "registered" as const,
+      statements: [],
+      requiredPackages: [],
+    };
+    const resolution: ResolutionResult = { concepts: [], proofs: [upstream], all: [upstream] };
+    const judged = judgeInspection(
+      fixture.concepts,
+      fixture.proofs,
+      fixture.conceptInventory,
+      fixture.proofInventory,
+      resolution,
+    );
+    const finding = judged.findings.violations.find((violation) => violation.rule === "imports");
+    expect(finding?.message).toBe(
+      "module Lax1Proofs.Basic imports undeclared package module Batteries; " +
+        "importable prefixes: Init, Lax1, Lax1Proofs, Lax2, Lean, Mathlib, Std",
+    );
+  });
+
   it("accepts inspected upstream statements and derives the exact assumption set", () => {
     const fixture = reports();
     fixture.proofs.declarations[0]!.axioms = ["Lax2.Upstream.statement"];

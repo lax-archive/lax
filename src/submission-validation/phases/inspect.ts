@@ -208,11 +208,15 @@ function checkImports(
   findings: FindingCollector,
 ): void {
   const allowed = new Set([inventory.packageName, ...IMPORT_PREFIXES, ...required]);
+  const importable = [...allowed].sort().join(", ");
   for (const module of report.modules) {
     if (module.name === inventory.rootModule) continue;
     for (const imported of new Set(module.imports)) {
       if (!allowed.has(imported.split(".")[0]!))
-        findings.violate("imports", `module ${module.name} imports undeclared package module ${imported}`);
+        findings.violate(
+          "imports",
+          `module ${module.name} imports undeclared package module ${imported}; importable prefixes: ${importable}`,
+        );
     }
   }
 }
