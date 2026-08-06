@@ -133,9 +133,12 @@ All 13 drafts republished with ghcr captures via `scripts/port-db/`; the 3
   after a timed-out POST (a duplicate comment raced — CAS rejected it
   correctly, but the driver should not create the race). Also lax-17's
   validate runs ~28 min: the 20-min default timeout is too tight.
-- `lax build` cleanup bug: temp-workspace removal hits EACCES on the
-  read-only materialized dependency dirs (`work/dependencies/…`) and
-  litters /tmp; chmod +w before rmdir in workspace-cleanup.
+- ~~`lax build` cleanup bug~~ — fixed 2026-08-06: the original trigger
+  (read-only materialized dependency dirs) disappeared with local
+  source-built dependencies, and the CLI's finally now runs
+  `removeValidationWorkspace` (chmod +w before rm) so any read-only
+  content in the temp job dir is removed regardless (e2e-asserted via a
+  private TMPDIR).
 - The old `lax-capture-*` GitHub Releases on lax-database are now dead
   store; delete them at leisure. The stale `LAX_VALIDATION_IMAGE` Actions
   variable on lax-archive/lax can be deleted too.
@@ -211,11 +214,12 @@ initial batch verification over every record in dependency order.
   and show the offending line. (The rewrite's 25 distinct violation kinds
   are a good base to build on.)
 - **Support channel**: point `--help` / failure output at the issue tracker.
-- **Stale `.lake/packages/<LaxN>` clones** linger in author trees after a
-  repo switches from git pins to path edges (~170 MB each); nothing collects
-  them. Candidate: `lax build` collects packages absent from the manifest it
-  just wrote, or `lax doctor` gains a fix. (Interacts with the
-  package-overrides spike.)
+- **Stale `.lake/packages/<LaxN>` clones** linger in author trees once a
+  require is dropped or re-pinned (since 2026-08-06 local builds
+  materialize dependency clones there *by design* — full repo clones, so
+  potentially large); nothing collects entries the current manifest no
+  longer names. Candidate: `lax build` collects packages absent from the
+  manifest it just wrote, or `lax doctor` gains a fix.
 - **Registered submission depending on a deleted draft**: deletion only
   warns about stranded dependents; nothing prunes or blocks the registered
   side. Verify the rewrite's publisher has the same gap, then decide.

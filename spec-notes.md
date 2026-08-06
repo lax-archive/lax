@@ -6,6 +6,41 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## Local builds compile cross-submission dependencies from source (implemented, 2026-08-06)
+
+Local `lax build` no longer downloads dependency captures from ghcr. For
+every resolved cross-submission dependency, the host pipeline seeds a locked
+**git** entry into the generated `lake-manifest.json` — the database
+record's canonical repository URL, its full commit as the locked rev, and
+the package's folder as `subDir`, i.e. exactly the triple resolution just
+validated the author's declared rev-pinned require against — and plain
+`lake build` clones it at that rev into `.lake/packages/` and builds it
+in-workspace (verified at the pinned v4.30.0: no `lake update`, no
+post_update hook, the overrides file still redirects the dependencies'
+inherited mathlib to the warm store, and `LAKE_ARTIFACT_CACHE=false` stays
+effective). **The trusted container path is unchanged**: captures remain
+the archival and trusted mechanism, materialized read-only and verified
+against the record's digests before any untrusted code runs.
+
+Rationale: source semantics match what the author's lakefile already
+declares (since the sibling-paths removal, every cross-submission edge is a
+rev-pinned git require — the chain workflow in instructions.md), the
+dependency builds are incremental across runs in `.lake/packages/` instead
+of multi-GB re-downloads into a fresh temp dir per build, and the
+security-sensitive download/verification code no longer runs on author
+machines at all. Trade-offs, accepted: the first local build pays a
+dependency compile (cached thereafter); a local build breaks if a
+dependency's upstream repository vanishes while CI, holding the capture,
+still works (the registered-repo-mirrors TODO idea would close this); and
+capture-materialization bugs now surface only in the container-side tests
+and the docker smoke, not in local builds.
+
+Spec touchpoint: the local-validation paragraph (local mode "may omit only
+server-only fetching, mandatory replay, and publishable artifact
+creation") — dependency provisioning now *differs in mechanism* locally
+(source builds) rather than being the same capture materialization; the
+validated dependency graph is identical.
+
 ## Multiple statements per concept (implemented, 2026-08-06)
 
 **Supersedes "One statement per concept" below**, which is now history. A
