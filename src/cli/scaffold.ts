@@ -4,6 +4,11 @@ import { fileURLToPath } from "node:url";
 // The pins module is the single home of the archive pins, so scaffolds always
 // match what the host build and the trusted container validate against (and
 // follow the fake-mathlib test seam).
+import {
+  ensureLocalWarm,
+  seedManifest,
+  seedOverrides,
+} from "../submission-validation/host/warmstore.js";
 import { hostValidationRuntime } from "../submission-validation/pins.js";
 
 const runtime = hostValidationRuntime();
@@ -54,6 +59,40 @@ export function scaffoldSubmission(
   write("proofs/lakefile.toml", lakefile(proofs, concepts, true));
   write(`proofs/${proofs}.lean`, "");
   fs.mkdirSync(path.join(root, "proofs", proofs), { recursive: true });
+}
+
+/**
+ * Seed the freshly scaffolded packages with the generated Lake files a build
+ * would write — package overrides pointing the mathlib closure at the shared
+ * warm store plus a complete locked manifest — so an immediate bare
+ * `lake build` replays the store in place instead of cloning gigabytes of
+ * mathlib. Builds the warm store first when this machine has none yet.
+ * Returns false when the store could not be built; the scaffold stays valid
+ * and `lax build` retries.
+ */
+export async function provisionScaffold(root: string, issueNumber: number): Promise<boolean> {
+  try {
+    const warm = await ensureLocalWarm();
+    if (warm === undefined) return false;
+    const concepts = `Lax${issueNumber}`;
+    for (const kind of ["concepts", "proofs"] as const) {
+      const pkgDir = path.join(root, kind);
+      seedOverrides(warm, pkgDir);
+      seedManifest(
+        warm,
+        pkgDir,
+        kind === "proofs" ? [{ name: concepts, dir: "../concepts" }] : [],
+      );
+    }
+    return true;
+  } catch (error) {
+    console.error(
+      `lax: could not provision mathlib for the new submission: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
 }
 
 function lakefile(packageName: string, conceptsName: string, proofs: boolean): string {

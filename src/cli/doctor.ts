@@ -7,9 +7,11 @@ import { CONTROL_REPOSITORY } from "../shared/constants.js";
 import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import { toolchainBinDir } from "../submission-validation/host/leanenv.js";
 import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
-import { LEAN_TOOLCHAIN } from "../submission-validation/pins.js";
+import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../submission-validation/pins.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, databaseFreshness } from "./database.js";
+import { issueNumberFromFolder } from "./manifest.js";
+import { registeredSubmissions } from "./registry.js";
 
 interface Check {
   name: string;
@@ -55,6 +57,7 @@ export async function doctor(): Promise<number> {
   emit(warmStoreCheck());
   emit(pageBuilderCheck());
   emit(diskCheck());
+  for (const root of registeredSubmissions()) emit(submissionCheck(root));
 
   const failures = checks.filter((check) => check.status === "fail").length;
   if (failures > 0) {
@@ -243,6 +246,111 @@ function pageBuilderCheck(): Check {
         fix: "reinstall the CLI package",
       }
     : { name: "website renderer", status: "ok", detail: root };
+}
+
+/**
+ * Local-only health of one registered submission (`lax init`/`lax build`
+ * record them; see registry.ts): pins, seeded Lake files, hardlink-farm-era
+ * leftovers, and git hygiene. Deliberately no network and no subprocess
+ * beyond a local `git ls-files`, so a long registry cannot stall the report.
+ */
+function submissionCheck(root: string): Check {
+  const name = `submission ${path.basename(root)}`;
+  const problems: string[] = [];
+  const fixes = new Set<string>();
+  try {
+    issueNumberFromFolder(root);
+  } catch {
+    problems.push("manifest.yaml is missing a valid lax-N id");
+  }
+  for (const kind of ["concepts", "proofs"] as const) {
+    const pkg = path.join(root, kind);
+    if (!fs.existsSync(path.join(pkg, "lakefile.toml"))) {
+      problems.push(`${kind}/lakefile.toml is missing`);
+      continue;
+    }
+    const toolchain = tryRead(path.join(pkg, "lean-toolchain"))?.trim();
+    if (toolchain !== LEAN_TOOLCHAIN) {
+      problems.push(`${kind}/lean-toolchain is ${toolchain ?? "missing"} (pins want ${LEAN_TOOLCHAIN})`);
+      fixes.add("update the toolchain and mathlib pins to the current archive pins");
+    }
+    if (tryRead(path.join(pkg, "lakefile.toml"))?.includes(MATHLIB_REV) !== true) {
+      problems.push(`${kind}/lakefile.toml pins a different mathlib than the archive`);
+      fixes.add("update the toolchain and mathlib pins to the current archive pins");
+    }
+    // The seeded overrides are what keeps a bare `lake build` from cloning
+    // mathlib; validate their targets so a pin bump (new warm store) or a
+    // deleted store surfaces here instead of as a surprise download.
+    const overrides = tryRead(path.join(pkg, ".lake", "package-overrides.json"));
+    let overrideNames: string[] = [];
+    if (overrides === undefined) {
+      problems.push(`${kind}/ has no package overrides — a bare \`lake build\` would download mathlib`);
+      fixes.add("run `lax build`");
+    } else {
+      try {
+        const parsed = JSON.parse(overrides) as { packages: Array<{ name: string; dir: string }> };
+        overrideNames = parsed.packages.map((pkgEntry) => pkgEntry.name);
+        const dead = parsed.packages.find((pkgEntry) => !fs.existsSync(pkgEntry.dir));
+        if (dead !== undefined) {
+          problems.push(`${kind}/ package overrides point at a missing mathlib store (${path.dirname(path.dirname(path.dirname(dead.dir)))})`);
+          fixes.add("run `lax build`");
+        }
+      } catch {
+        problems.push(`${kind}/ package overrides are not valid JSON`);
+        fixes.add("run `lax build`");
+      }
+    }
+    const packagesDir = path.join(pkg, ".lake", "packages");
+    const staleNames = (overrideNames.length > 0 ? overrideNames : ["mathlib"]).filter((dep) =>
+      fs.existsSync(path.join(packagesDir, dep)),
+    );
+    if (staleNames.length > 0 || fs.existsSync(path.join(packagesDir, ".lax-warm-generation"))) {
+      problems.push(
+        `${kind}/.lake/packages holds mathlib-closure clones from the pre-overrides era (${staleNames.join(", ") || ".lax-warm-generation"})`,
+      );
+      fixes.add("delete the listed clones — the overrides make them dead weight");
+    }
+  }
+  for (const tracked of trackedGeneratedFiles(root)) {
+    problems.push(`${tracked} is tracked in git but must stay generated`);
+    fixes.add("`git rm --cached` it and add it to .gitignore");
+  }
+  if (problems.length === 0) return { name, status: "ok", detail: root };
+  return {
+    name,
+    status: "warn",
+    detail: problems.join("; "),
+    fix: [...fixes].join("; "),
+  };
+}
+
+function tryRead(filename: string): string | undefined {
+  try {
+    return fs.readFileSync(filename, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** Generated Lake files git-tracked under the submission — static validation
+ * rejects them at submission time, so doctor flags them early. Best-effort:
+ * outside a git repository there is nothing to check. */
+function trackedGeneratedFiles(root: string): string[] {
+  try {
+    const listing = execFileSync("git", ["ls-files"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return listing
+      .split("\n")
+      .filter((line) =>
+        /(^|\/)(lake-manifest\.json|package-overrides\.json|build-output\.json)$/.test(line) ||
+        /(^|\/)\.lake\//.test(line),
+      );
+  } catch {
+    return [];
+  }
 }
 
 export function installHint(tool: string): string {

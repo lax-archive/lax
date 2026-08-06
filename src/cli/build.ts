@@ -13,6 +13,7 @@ import { formatLocalFindings } from "./findings.js";
 import { deriveLocalSource, repositoryRoot } from "./git.js";
 import { LoadingLine } from "./loading.js";
 import { submissionIdFromFolder } from "./manifest.js";
+import { recordSubmission } from "./registry.js";
 import type { SourceLocation } from "../shared/types.js";
 
 export interface LocalBuildOptions {
@@ -46,6 +47,7 @@ export async function buildSubmission(
     source: deriveLocalSource(submissionRoot),
     archiveSha,
   };
+  recordSubmission(submissionRoot);
   const runtime = hostValidationRuntime();
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "lax-build-"));
   const jobDir = path.join(temporary, "work");
