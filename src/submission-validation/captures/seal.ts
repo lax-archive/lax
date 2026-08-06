@@ -25,13 +25,20 @@ export function capturePackage(
   const capturedSource = path.join(captureRoot, kind, "package");
   copyPackageSource(packageSource, capturedSource);
   fs.writeFileSync(path.join(capturedSource, "lake-manifest.json"), provisionedManifest, { mode: 0o444 });
-  for (const moduleName of [inventory.rootModule, ...inventory.modules]) {
+  const modules = [inventory.rootModule, ...inventory.modules];
+  const olean = (moduleName: string): string =>
+    path.join(compiledLibrary, `${moduleName.split(".").join("/")}.olean`);
+  // Diagnose the whole inventory before copying anything: the container path
+  // carries no self-heal, so this message is the author's only clue.
+  const unusable = modules.filter((moduleName) => !regularContainedArtifact(compiledLibrary, olean(moduleName)));
+  if (unusable.length > 0) throw missingArtifacts(inventory, unusable);
+  for (const moduleName of modules) {
     const moduleBase = moduleName.split(".").join("/");
     const relative = `${moduleBase}.olean`;
     const source = path.join(compiledLibrary, relative);
-    if (!regularContainedArtifact(compiledLibrary, source)) {
-      throw new Error(`compiled artifact is missing or unsafe for module ${moduleName}`);
-    }
+    // Re-checked immediately before the copy that trusts it, so the guard is
+    // never separated from its use.
+    if (!regularContainedArtifact(compiledLibrary, source)) throw missingArtifacts(inventory, [moduleName]);
     const destination = path.join(captureRoot, kind, "lib", relative);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
@@ -60,6 +67,15 @@ export function capturePackage(
       );
     }
   }
+}
+
+function missingArtifacts(inventory: ModuleInventory, modules: string[]): Error {
+  return new Error(
+    `compiled artifact is missing or unsafe for ${modules.length === 1 ? "module" : "modules"} ` +
+      `${modules.join(", ")} of package ${inventory.packageName}; root module ` +
+      `${inventory.rootModule} must import exactly the other modules of its package, so a ` +
+      "module outside the root's import closure is never built",
+  );
 }
 
 function copyCompanion(source: string, compiledLibrary: string, destination: string): void {

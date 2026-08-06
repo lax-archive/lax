@@ -9,6 +9,7 @@ import {
   databaseFreshness,
   updateDatabase,
 } from "../../src/cli/database.js";
+import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
 
 const homes: string[] = [];
 
@@ -111,11 +112,52 @@ describe("local command preflights", () => {
       path.join(root, "build-output.json"),
       JSON.stringify({
         id: "lax-7",
-        localValidation: { version: 1, source, archiveSha: "b".repeat(40) },
+        localValidation: {
+          version: 1,
+          source,
+          archiveSha: "b".repeat(40),
+          runtimeImageDigest: hostValidationRuntime().imageDigest,
+        },
       }),
     );
     expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(true);
     expect(hasCurrentLocalBuild(root, source, "c".repeat(40))).toBe(false);
+  });
+
+  it("rejects a build-output produced before a pin bump", () => {
+    // The same sources compile to different artifacts across a toolchain pin
+    // bump, so a pre-bump build-output must not let `lax submit` skip the
+    // local rebuild.
+    const root = temporary("lax-submission-");
+    fs.writeFileSync(path.join(root, "manifest.yaml"), "id: lax-7\n");
+    const source = {
+      repository: "https://github.com/alice/example",
+      commit: "a".repeat(40),
+      folder: ".",
+    };
+    const write = (runtimeImageDigest: unknown): void => {
+      fs.writeFileSync(
+        path.join(root, "build-output.json"),
+        JSON.stringify({
+          id: "lax-7",
+          localValidation: {
+            version: 1,
+            source,
+            archiveSha: "b".repeat(40),
+            ...(runtimeImageDigest === undefined ? {} : { runtimeImageDigest }),
+          },
+        }),
+      );
+    };
+
+    write(hostValidationRuntime().imageDigest);
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(true);
+
+    write(`${hostValidationRuntime().imageDigest}-before-the-bump`);
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
+
+    write(undefined);
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
   });
 });
 

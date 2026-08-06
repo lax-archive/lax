@@ -339,6 +339,41 @@ describe("validation runtime boundaries retained from main", () => {
     )).toThrow("compiled artifact is missing or unsafe for module Lax9");
   });
 
+  it("names every module whose compiled artifact is missing and the likely cause", () => {
+    // The container path deliberately has no self-heal, so the throw is the
+    // whole diagnosis: it has to name the modules and the rule they broke.
+    const pristine = temporary("lax-missing-pristine-");
+    const compiled = temporary("lax-missing-build-");
+    const library = path.join(compiled, "concepts", ".lake", "build", "lib", "lean");
+    writeFile(pristine, "concepts/Lax9.lean", "import Lax9.A\n");
+    writeFile(pristine, "concepts/Lax9/A.lean", "def a := 1\n");
+    writeFile(pristine, "concepts/Lax9/B.lean", "def b := 2\n");
+    writeFile(library, "Lax9.olean", "root artifact");
+    const inventory: ModuleInventory = {
+      packageName: "Lax9",
+      packageDir: path.join(pristine, "concepts"),
+      rootModule: "Lax9",
+      modules: ["Lax9.A", "Lax9.B"],
+      paths: new Map(),
+    };
+    const captureRoot = temporary("lax-missing-capture-");
+
+    expect(() => capturePackage(
+      "concepts",
+      pristine,
+      library,
+      "{\"packages\":[]}",
+      inventory,
+      captureRoot,
+    )).toThrow(
+      "compiled artifact is missing or unsafe for modules Lax9.A, Lax9.B of package Lax9; " +
+        "root module Lax9 must import exactly the other modules of its package, so a module " +
+        "outside the root's import closure is never built",
+    );
+    // the whole inventory is diagnosed before anything is copied
+    expect(fs.existsSync(path.join(captureRoot, "concepts", "lib"))).toBe(false);
+  });
+
   it("constructs hardened, explicit container invocations", async () => {
     const source = temporary("lax-container-mount-");
     const record = path.join(temporary("lax-container-bin-"), "arguments.txt");

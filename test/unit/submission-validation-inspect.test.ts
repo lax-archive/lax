@@ -254,6 +254,55 @@ describe("inspection judgments retained from main", () => {
     expect(fencedJudgment.result.concepts[0]?.sections).toBeUndefined();
   });
 
+  it("warns about a docstring whose `---` line was not recognized as frontmatter", () => {
+    // Mistyped frontmatter demotes a proof to a helper without any violation,
+    // so the warning is the author's only signal that the proof went unseen.
+    const fixture = reports();
+    fixture.proofs.declarations[0]!.doc = {
+      hasFrontmatter: false,
+      scalars: [],
+      lists: [],
+      description: "conclusion Lax1.Claim.statement\n---\nThe proof.",
+    };
+
+    const judged = judgeInspection(
+      fixture.concepts,
+      fixture.proofs,
+      fixture.conceptInventory,
+      fixture.proofInventory,
+      EMPTY_RESOLUTION,
+    );
+
+    expect(judged.findings.violations).toEqual([]);
+    expect(judged.findings.warnings).toEqual([
+      {
+        phase: "inspect",
+        rule: "frontmatter",
+        message:
+          "docstring of Lax1Proofs.proof contains a `---` line but was not recognized as " +
+          "frontmatter (the lines above it do not parse as `key: value`)",
+      },
+    ]);
+    expect(judged.result.proofs).toEqual([]);
+
+    const helper = reports();
+    helper.proofs.declarations[0]!.doc = {
+      hasFrontmatter: false,
+      scalars: [],
+      lists: [],
+      description: "A genuine helper.",
+    };
+    const helperJudgment = judgeInspection(
+      helper.concepts,
+      helper.proofs,
+      helper.conceptInventory,
+      helper.proofInventory,
+      EMPTY_RESOLUTION,
+    );
+    expect(helperJudgment.findings.warnings).toEqual([]);
+    expect(helperJudgment.result.proofs).toEqual([]);
+  });
+
   it("collects independent root, import, annotation, namespace, axiom, and proof failures", () => {
     const fixture = reports();
     fixture.concepts.modules[0]!.imports = [];

@@ -601,11 +601,14 @@ end Lax6Proofs.Deep
       "proofs/Lax6Proofs/Deep/A.lean",
       "proofs/Lax6Proofs/Helper.lean",
     ]);
-    // DEVIATION from the old suite: `helperWithRule`'s docstring carries a
-    // `---` rule that does not parse as frontmatter. The old inspect phase
-    // warned about the ambiguity; this tree drops the declaration silently as
-    // a helper. The must-pass behavior — no violation — is what is asserted.
-    expect(report.warnings.map((warning) => warning.message).join()).not.toContain("helperWithRule");
+    // `helperWithRule`'s docstring carries a `---` rule that does not parse as
+    // frontmatter. The declaration is admissible as a helper, so this is a
+    // warning and never a violation — but it stays visible, because the same
+    // shape is what a mistyped proof frontmatter looks like.
+    expect(report.warnings.map((warning) => warning.message).join("\n")).toContain(
+      "docstring of Lax6Proofs.helperWithRule contains a `---` line but was not recognized as " +
+        "frontmatter (the lines above it do not parse as `key: value`)",
+    );
   });
 });
 

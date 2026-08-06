@@ -11,6 +11,15 @@ import { CHAIN_WORKFLOW_HINT } from "../chain-workflow.js";
 import { FindingCollector } from "../findings.js";
 import type { ArchiveSnapshot } from "../archive/snapshot.js";
 
+/**
+ * Resolution reads the Archive snapshot the request names. A trusted run is
+ * always handed a fresh one, so only a local build can be looking at an
+ * out-of-date clone — which turns a landed dependency into a missing record
+ * and a current pin into a mismatched triple.
+ */
+const STALE_DATABASE_HINT =
+  "A locally stale lax-database can also cause this: run `lax update-db` and retry.";
+
 export function runResolution(
   request: ValidationRequest,
   staticResult: StaticResult,
@@ -49,7 +58,7 @@ export function runResolution(
       findings.violate(
         "missing-dependency",
         `${packageName} has no content-bearing Archive record at ${archive.sha}. ` +
-          CHAIN_WORKFLOW_HINT,
+          `${CHAIN_WORKFLOW_HINT} ${STALE_DATABASE_HINT}`,
       );
       return undefined;
     }
@@ -67,7 +76,7 @@ export function runResolution(
         "dependency-source",
         `${packageName} does not match the Archive source triple ` +
           `(${record.source.repository}, ${record.source.commit}, ${expectedSubDir}). ` +
-          CHAIN_WORKFLOW_HINT,
+          `${CHAIN_WORKFLOW_HINT} ${STALE_DATABASE_HINT}`,
       );
       return undefined;
     }
@@ -139,7 +148,7 @@ function checkExpectedSource(
     "dependency-source",
     `${dependency.packageName} does not match the Archive source triple ` +
       `(${dependency.source.repository}, ${dependency.source.commit}, ${subDir}). ` +
-      CHAIN_WORKFLOW_HINT,
+      `${CHAIN_WORKFLOW_HINT} ${STALE_DATABASE_HINT}`,
   );
 }
 

@@ -114,7 +114,9 @@ export async function buildSubmission(
   }
 }
 
-/** A clean checkout can reuse a full build only when both source and Archive snapshot match. */
+/** A clean checkout can reuse a full build only when source, Archive snapshot,
+ * and the runtime that produced it all match: a pin bump changes what the same
+ * sources compile to, so a pre-bump build-output is not current. */
 export function hasCurrentLocalBuild(
   folder: string,
   source: SourceLocation,
@@ -130,6 +132,7 @@ export function hasCurrentLocalBuild(
       value.id === submissionIdFromFolder(folder) &&
       validation?.version === 1 &&
       validation.archiveSha === archiveSha &&
+      validation.runtimeImageDigest === hostValidationRuntime().imageDigest &&
       builtSource?.repository === source.repository &&
       builtSource.commit === source.commit &&
       builtSource.folder === source.folder

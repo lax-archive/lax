@@ -131,7 +131,19 @@ export function judgeInspection(
       if (!BACKGROUND_AXIOMS.has(axiom) && !admissibleStatement(axiom))
         findings.violate("axiom-hygiene", `proof declaration ${declaration.name} depends on inadmissible axiom ${axiom}`);
     const doc = declaration.doc;
-    if (doc === undefined || !doc.hasFrontmatter) continue;
+    if (doc === undefined) continue;
+    if (!doc.hasFrontmatter) {
+      // A declaration without frontmatter is a helper, so mistyped frontmatter
+      // demotes an intended proof in silence; a stray `---` line is the only
+      // remaining evidence of the intent.
+      if (doc.description.split("\n").some((line) => line.trim() === "---"))
+        findings.warn(
+          "frontmatter",
+          `docstring of ${declaration.name} contains a \`---\` line but was not recognized as ` +
+            "frontmatter (the lines above it do not parse as `key: value`)",
+        );
+      continue;
+    }
     const where = `proof ${declaration.name}`;
     checkFrontmatter(doc, where, ["conclusion"], ["assumptions"], findings);
     const conclusion = scalar(doc, "conclusion");
