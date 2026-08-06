@@ -532,9 +532,15 @@ contradicts earlier sections, the addendum wins.
   are (a) consumers fetch captures only by the digest recorded in the
   database record, never by tag, and (b) the publisher never writes a
   record whose capture digest it did not itself hash, push, and verify.
-- **Live rehearsal (point 3) is still owed** for stages 3+4 together:
-  scratch-repo creation hit a sandbox permission wall mid-campaign; the
-  validate/publish rehearsal must run before any of this is trusted live.
+- **Live rehearsal (point 3): run 2026-08-06** for stages 3+4 together on
+  scratch repos (record: history/live-rehearsal.md). The addendum's thesis
+  held — the first real validation caught a production-blocking bug
+  (`installOwnConceptCapture` installed lib without the ir companions;
+  fixed with a test, commit ca6db0f). Everything else round-tripped:
+  init, update validation (both failure and success paths), ghcr capture
+  promotion with anonymous pull-by-digest verified, CAS publish, title
+  sync, register, website dispatch, and the registered-immutability
+  rejection.
 - The cache save in the validate job runs *between* host setup and
   submission-code execution — the post-job save of stock actions/cache
   would let a sandbox escape poison the warm store for later runs.

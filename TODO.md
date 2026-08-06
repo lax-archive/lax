@@ -28,10 +28,11 @@ Suggested order of attack (details in rewrite-plan.md):
    Inspect sequential through one container runner, replay/inspect at 2
    threads per the measurement; captures on ghcr as digest-addressed OCI
    artifacts — hashed tuple+pin tag, anonymous pull verified live,
-   push-before-CAS-commit ordering, Releases store deleted). **Still
-   owed: the live rehearsal on scratch repos (addendum point 3)** —
-   blocked on a sandbox permission for `gh repo create`; run together
-   with stage 4's publish rehearsal once unblocked, before go-live.
+   push-before-CAS-commit ordering, Releases store deleted). ~~Live
+   rehearsal on scratch repos~~ — run 2026-08-06 together with stage 4's
+   publish rehearsal (record: history/live-rehearsal.md); it caught and
+   fixed a production-blocking container bug (`installOwnConceptCapture`
+   shipped lib without the ir companions; commit ca6db0f).
 4. ~~Write path~~ — code complete 2026-08-05 (CAS + credential-free
    preflight unchanged; all `concurrency:` blocks removed per addendum
    point 4, CAS is the correctness mechanism; inline-JS failure reporter
@@ -39,8 +40,7 @@ Suggested order of attack (details in rewrite-plan.md):
    markers; YAML logic assertions converted to behavioral TS tests incl.
    an env-poisoning canary proving prepare-update never touches the
    database token; YAML keeps only wiring/permission/pin lints). The
-   stages-3+4 live rehearsal (publish + website dispatch) is still owed
-   — see item 3.
+   stages-3+4 live rehearsal ran 2026-08-06 — see item 3.
 5. ~~Test port~~ — done 2026-08-05 (triage executed: ~17 real-lake and
    unit ports incl. the compiler-realized-reserved-name and scoped-build
    regressions; cross-submission dependency e2e over a fake ghcr — which
@@ -83,6 +83,29 @@ package-overrides file, `LAKE_ARTIFACT_CACHE` stays off everywhere (the
 one landmine: a dependency lakefile enabling it would beat the env var —
 re-check on any pin bump). Two drafts in parallel now share the store with
 no extra machinery.
+
+## From the 2026-08-06 live rehearsal (history/live-rehearsal.md)
+
+- **Gate the docker smoke.** The rehearsal's container bug was invisible
+  to `npm run check` (the host build never runs `installOwnConceptCapture`)
+  and the smoke that catches it is not part of any gate. Decide: a CI job
+  with docker for `npm run smoke:submission-validation`, or a release
+  checklist that requires the smoke before any pin/capture/pipeline change
+  ships.
+- **Script the rehearsal for collaborators.** Keep the scratch repos
+  disposable but turn the procedure into `scripts/rehearsal/`: a setup
+  script parameterized by owner/prefix that creates the repos, derives the
+  token/env patch mechanically from the *current* submission.yml (never a
+  stale fork), sets vars + environments, scaffolds and pushes the
+  submission; plus a short doc naming the manual credential step and the
+  three round trips with expected evidence. A pre-release drill, not CI.
+- **Confirm org ghcr visibility at go-live.** The capture package was
+  auto-created publicly because the personal source repo is public;
+  anonymous pull-by-digest verified. If the lax-archive org forces new
+  packages private, the first cross-submission capture download fails.
+- **Tear down the scratch repos** (`jan3er/lax-scratch-{control,database,
+  submission}`, ghcr package `lax-scratch-captures`) and rotate the
+  personal token that stood in for the App mints (Jan).
 
 ## spec.md reconciliation queue (Jan, manually)
 

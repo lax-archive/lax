@@ -47,7 +47,9 @@ and test it, commit, and stop for Jan's go.
   `sibling-paths-plan.md` (the old cross-submission path-require design;
   the feature was removed in stage 6a per rewrite.md — cross-submission
   edges are rev-pinned git requires only, landed by the chain workflow
-  documented in instructions.md).
+  documented in instructions.md), `live-rehearsal.md` (the 2026-08-06
+  stages-3+4 scratch-repo rehearsal — its setup recipe, the ir-companions
+  bug it caught, and the smoke-gating lesson).
 
 ## Commands
 
