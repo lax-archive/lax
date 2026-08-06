@@ -12,7 +12,6 @@ export const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.met
 export const buildRoot = path.join(repositoryRoot, ".build", "page-builder");
 export const sourceDirectory = path.join(buildRoot, "source");
 export const vendorDirectory = path.join(repositoryRoot, "dist", "cli", "vendor");
-export const archiveFile = path.join(vendorDirectory, "page-builder.tgz");
 export const metadataFile = path.join(vendorDirectory, "page-builder.json");
 export const runtimeDirectory = path.join(vendorDirectory, "page-builder");
 

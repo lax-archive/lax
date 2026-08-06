@@ -56,7 +56,7 @@ There is no checked-in fork of `submission.yml`. `setup.sh` calls
 - **(b)** the three `actions/create-github-app-token` mint steps deleted, and
   each consuming step's token env switched to
   `${{ secrets.LAX_SCRATCH_TOKEN }}`;
-- **(c)** `ci.yml` and `release-cli.yml` dropped from the pushed tree.
+- **(c)** `ci.yml` and `release.yml` dropped from the pushed tree.
 
 Everything else is byte-identical, and the generated file carries a header
 saying so. The script asserts every structure it depends on — the number of

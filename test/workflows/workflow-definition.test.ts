@@ -1,5 +1,6 @@
-// Wiring, permission, and pin assertions over .github/workflows/submission.yml
-// and .github/workflows/ci.yml. Everything here is structure that only exists
+// Wiring, permission, and pin assertions over .github/workflows/submission.yml,
+// .github/workflows/ci.yml, and .github/workflows/release.yml. Everything here
+// is structure that only exists
 // in YAML: job graph shape, per-job token grants, action pins, and step
 // ordering that separates credentials from untrusted input. All *logic*
 // (routing, reporting, marker text, idempotence, credential-free preflight)
@@ -21,6 +22,10 @@ const workflowFiles = fs
   .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"));
 const workflow = fs.readFileSync(new URL("../../.github/workflows/submission.yml", import.meta.url), "utf8");
 const ciWorkflow = fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+const releaseWorkflow = fs.readFileSync(
+  new URL("../../.github/workflows/release.yml", import.meta.url),
+  "utf8",
+);
 
 interface WorkflowJob {
   needs?: string | string[];
@@ -46,6 +51,10 @@ const ciParsed = YAML.parse(ciWorkflow) as {
   jobs: Record<string, WorkflowJob & { "timeout-minutes"?: number }>;
 };
 const ciJobs = ciParsed.jobs;
+const releaseParsed = YAML.parse(releaseWorkflow) as {
+  on: unknown;
+  jobs: Record<string, WorkflowJob>;
+};
 
 /** The one cache identity both the trusted validate job and the CI smoke use. */
 const HOST_CACHE_KEY =
@@ -382,6 +391,76 @@ describe("CI workflow wiring", () => {
     expect(ciWorkflow).not.toContain("LAX_MATHLIB_");
     expect(ciWorkflow).not.toContain("LAX_CAPTURE_REGISTRY_URL");
     expect(ciWorkflow).not.toContain("LAX_GITHUB_API_URL");
+  });
+});
+
+describe("release workflow wiring", () => {
+  // The npm trusted-publisher registration names this repository and the
+  // workflow *file*, so the filename itself is load-bearing: renaming
+  // release.yml silently breaks publishing until the registration follows.
+  const job = releaseParsed.jobs.publish!;
+
+  it("publishes only from version tags, with OIDC and nothing else", () => {
+    expect(Object.keys(releaseParsed.jobs)).toEqual(["publish"]);
+    expect(releaseParsed.on).toEqual({ push: { tags: ["v*"] } });
+    // id-token is the trusted-publishing credential; contents stays read-only
+    // and no other grant exists that a compromised test could reach.
+    expect(job.permissions).toEqual({ contents: "read", "id-token": "write" });
+    const checkout = job.steps.find((step) => step.uses?.startsWith("actions/checkout"));
+    expect(checkout?.with).toMatchObject({ "persist-credentials": false });
+    const setupNode = job.steps.find((step) => step.uses?.startsWith("actions/setup-node"));
+    expect(setupNode?.with).toMatchObject({ "registry-url": "https://registry.npmjs.org" });
+  });
+
+  it("provisions the host toolchain before the test gate", () => {
+    // The fast suite drives real elan/lake against the fake mathlib; without
+    // this ordering the release gate dies at `spawn lake ENOENT` on a bare
+    // runner. Same store identity and save-from-trusted-provisioning-only
+    // discipline as ci.yml and the trusted validate job.
+    const runs = job.steps.map((step) => step.run ?? step.uses ?? "");
+    const build = runs.indexOf("npm run build");
+    const restore = runs.findIndex((run) => run.startsWith("actions/cache/restore"));
+    const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
+    const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
+    const test = runs.indexOf("npm test");
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(build).toBeLessThan(restore);
+    expect(restore).toBeLessThan(setup);
+    expect(setup).toBeLessThan(save);
+    expect(save).toBeLessThan(test);
+    expect(job.steps[save]?.if).toBe("steps.lean-cache.outputs.cache-hit != 'true'");
+    let cacheSteps = 0;
+    for (const step of job.steps) {
+      if (step.uses?.startsWith("actions/cache/") !== true) continue;
+      cacheSteps += 1;
+      expect(step.with?.key).toBe(HOST_CACHE_KEY);
+      for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
+    }
+    expect(cacheSteps).toBe(2);
+  });
+
+  it("vendors the page-builder after the last build and packs without scripts", () => {
+    // `npm run build` wipes dist/ (including dist/cli/vendor), so the vendored
+    // page-builder must land after the final build, and `npm pack` must run
+    // with --ignore-scripts or prepack would rebuild and wipe it again.
+    const runs = job.steps.map((step) => step.run ?? step.uses ?? "");
+    const vendor = runs.findIndex((run) => run.includes("page-builder:fetch"));
+    expect(runs[vendor]).toContain("page-builder:package");
+    expect(runs[vendor]).toContain("page-builder:verify");
+    const pack = runs.findIndex((run) => run.startsWith("npm pack"));
+    const publish = runs.findIndex((run) => run.startsWith("npm publish"));
+    const lastBuild = runs.lastIndexOf("npm run build");
+    expect(lastBuild).toBeLessThan(vendor);
+    expect(vendor).toBeLessThan(pack);
+    expect(runs[pack]).toContain("--ignore-scripts");
+    // Publishing the packed tarball (not the working tree) is what keeps
+    // prepack from running a vendor-wiping rebuild inside `npm publish`.
+    expect(pack).toBeLessThan(publish);
+    expect(runs[publish]).toContain(".tgz");
+    // The tag/package.json equality check must gate everything downstream.
+    const tagCheck = job.steps.findIndex((step) => step.name === "Check release tag");
+    expect(tagCheck).toBeGreaterThanOrEqual(0);
+    expect(tagCheck).toBeLessThan(vendor);
   });
 });
 

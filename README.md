@@ -91,7 +91,7 @@ replay and inspection use two Lean workers inside their 16 GiB container limit
 so large module sets cannot exhaust either hosted runner while the surrounding
 workflow remains responsive.
 
-`release-cli.yml` is restricted to version tags, while CI runs for pushes.
+`release.yml` is restricted to version tags, while CI runs for pushes.
 
 `lax-database` must also have an initial commit and a real default branch before
 the control plane can pin a snapshot. An empty newly created repository has no
@@ -239,7 +239,7 @@ removes the local credentials after GitHub accepts the revocation.
 
 ## CLI release
 
-`release-cli.yml` tests the package, fetches the Website revision pinned in
+`release.yml` tests the package, fetches the Website revision pinned in
 `src/cli/deployment/website-source.lock.json`, builds and bundles its
-page-builder, verifies the revision and package digest, and publishes through
+page-builder, verifies the revision and bundle digest, and publishes through
 npm trusted publishing. No Website source is maintained here.

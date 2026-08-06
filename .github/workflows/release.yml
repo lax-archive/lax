@@ -1,0 +1,81 @@
+# Release = CI on a git tag.
+#
+# The fast suite gates the publish, so no release can come from an untested
+# tree, and the publish itself uses npm's OIDC trusted publishing — no npm
+# token on any laptop, in any secret store, or in this repository. The npm
+# trusted-publisher registration names this repository and this workflow
+# file; keep the filename `release.yml` unless that registration moves too.
+#
+# A successful `npm publish` moves `latest`. Rollback is moving `latest`
+# back: `npm dist-tag add lax-archive@<old-version> latest`.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC: this is what stands in for an npm token
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      # npm 12 changed `npm pack --json` and requires a newer Node 22 patch.
+      # Keep trusted publishing on the latest compatible npm 11 release.
+      - run: npm install --global npm@11.19.0
+      - run: npm ci
+      # The tag is the source of truth for what is released: a mismatch means
+      # someone tagged without bumping, and the publish would lie.
+      - name: Check release tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          package_version=$(node -p "require('./package.json').version")
+          test "$version" = "$package_version"
+      - run: npm run build
+      # The fast suite is docker-free but not toolchain-free: the real-lake
+      # e2e tests drive elan/lake against the fake mathlib, so the release
+      # gate provisions the same host toolchain CI does — same store, same
+      # pins-hashed key, saved before anything but trusted setup touches it.
+      - name: Restore toolchain and warm mathlib workspace
+        id: lean-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.elan
+            ~/.lax/warm
+            ~/.lax/tools
+          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      - name: Provision the validation host
+        run: node dist/submission-validation/host/setup-vm.js
+      - name: Save toolchain and warm mathlib workspace
+        if: steps.lean-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.elan
+            ~/.lax/warm
+            ~/.lax/tools
+          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      - run: npm test
+      # After the gate: `npm run build` wipes dist/, so the vendored
+      # page-builder must land after the last build, and `npm pack` runs with
+      # --ignore-scripts because prepack would rebuild and wipe it again.
+      - name: Import pinned page-builder
+        run: |
+          npm run page-builder:fetch
+          npm run page-builder:package
+          npm run page-builder:verify
+      - name: Pack deterministic CLI artifact
+        run: npm pack --ignore-scripts
+      - name: Publish with npm trusted publishing
+        run: npm publish "lax-archive-${GITHUB_REF_NAME#v}.tgz"

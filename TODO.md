@@ -251,6 +251,20 @@ rotate the S3 credentials for the same reason, and confirm bucket versioning
 key — without versioning every night overwrites the only copy). Plan the
 decommission itself (DNS, redirects, data export) as part of go-live.
 
+## First npm release from this tree (before tagging v0.1.18)
+
+- **Stop the box's auto-deploy first.** The live box's `lax-deploy` timer
+  polls npm every 2 minutes and installs whatever `latest` points at, then
+  restarts `lax-server` — and this tree's package no longer ships a
+  `lax-server` bin. Publishing from here upgrades the box into a broken
+  server. Stop/disable `lax-deploy.timer` (or pin `LAX_DIST_TAG` in
+  `/etc/lax-deploy.env`) before the first tag; fold into the decommission.
+- **Confirm the npm trusted-publisher registration** for `lax-archive`
+  (account `jan3er`) names repository `lax-archive/lax` and workflow
+  `release.yml`. The workflow was renamed from `release-cli.yml` back to
+  `release.yml` (2026-08-06) so the old repo's registration keeps working —
+  if it was ever re-registered against `release-cli.yml`, re-point it.
+
 ## Second maintainer onboarding
 
 Carried and adapted: invite the second maintainer to the `lax-archive` org

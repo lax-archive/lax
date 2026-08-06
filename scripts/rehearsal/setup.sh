@@ -90,7 +90,7 @@ mkdir -p "$CONTROL_TREE"
   | tar --extract --file=- --directory="$CONTROL_TREE"
 
 # Deviation (c): the rehearsal exercises the submission control plane only.
-rm -f "$CONTROL_TREE/.github/workflows/ci.yml" "$CONTROL_TREE/.github/workflows/release-cli.yml"
+rm -f "$CONTROL_TREE/.github/workflows/ci.yml" "$CONTROL_TREE/.github/workflows/release.yml"
 
 # Deviations (a) and (b), derived from the live submission.yml at run time.
 node "$REPO_ROOT/scripts/rehearsal/patch-workflow.mjs" \

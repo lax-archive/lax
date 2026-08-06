@@ -13,7 +13,7 @@
 //      their consumers switched to `${{ secrets.LAX_SCRATCH_TOKEN }}`, an
 //      environment-scoped personal token that mirrors the production posture
 //      (present only inside the two protected environments),
-//   c. ci.yml / release-cli.yml dropped from the pushed tree (done by
+//   c. ci.yml / release.yml dropped from the pushed tree (done by
 //      setup.sh, not here — this script only rewrites submission.yml).
 //
 // Usage:
@@ -155,7 +155,7 @@ function header(repositories) {
     "#      their consumers now read the environment-scoped personal token",
     "#      secrets.LAX_SCRATCH_TOKEN, which exists only inside the two",
     `#      protected environments (${ENVIRONMENTS.join(", ")}).`,
-    "#   c. ci.yml and release-cli.yml are absent from the pushed tree.",
+    "#   c. ci.yml and release.yml are absent from the pushed tree.",
     "#",
     "# Everything else is byte-identical to the tree this was derived from.",
     "",
