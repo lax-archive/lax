@@ -98,6 +98,11 @@ carry the custom domain) and a verify step that polls the *live site's
 bytes* against the pushed tree (`792fc2b`) — not the Pages build status,
 which proved to be a false-negative source: the Pages backend can exceed
 its own 10-minute deploy timeout and report "errored" while still
-finishing minutes later (it ran ~12 min all afternoon after the cert
-churn, vs ~30 s in the morning). Edge cache is `max-age=600`; unique
-query strings bust it.
+finishing minutes later. Deeper investigation showed the ~12-minute
+deploys are likely the steady-state cost of the custom domain + enforced
+HTTPS, not a transient: every "fast" deploy since the domain attach had
+been a dedup no-op, and the site had never done a real custom-domain
+deploy before 14:50Z. Consequence: GitHub's managed legacy build (fixed
+10-minute timeout) shows a cosmetic red run on every content push; our
+own verify budgets 25 minutes and stays green. Edge cache is
+`max-age=600`; unique query strings bust it.
