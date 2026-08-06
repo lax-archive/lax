@@ -81,13 +81,23 @@ change pushed to lax-submissions branch `roundtrip-20260806` (commit
 `42a14ff9`), `/lax submit` comment on issue 14, validate → publish
 (archive commit `629f760b`) → website dispatch → Pages deploy — and the
 round trip earned its keep by exposing a silent deploy bug. **Pages
-dedupes deployments by `pages_build_version`, which deploy-pages takes
-from `GITHUB_SHA`.** Dispatch- and schedule-triggered rebuilds run on an
-unchanged lax-website main, so every database-driven redeploy declared
-the same version and GitHub kept serving the *first* deployment of that
-SHA: the run reported success, the artifact contained the new page, the
-site never changed. Fixed in lax-website commit `31ada74` by overriding
-`GITHUB_SHA` on the deploy step with the just-pushed gh-pages commit,
-which changes exactly when the published content changes. (Pages also
-sits behind a 10-minute edge cache, `max-age=600` — mere freshness lag,
-not to be confused with the above.)
+dedupes artifact deployments by `pages_build_version`, which
+deploy-pages takes from `GITHUB_SHA`.** Dispatch- and schedule-triggered
+rebuilds run on an unchanged lax-website main, so every database-driven
+redeploy declared the same version and GitHub kept serving the *first*
+deployment of that SHA: the run reported success, the artifact contained
+the new page, the site never changed. An attempted fix that overrode
+`GITHUB_SHA` on the deploy step (lax-website `31ada74`) was ineffective —
+the runner's own `GITHUB_*` variables beat step-level `env`. The real
+fix (lax-website `48206c3` + the config flip) switched Pages to serve
+the `gh-pages` branch directly: the workflow already maintains that tree
+and only commits when content changes, so publishing is triggered by the
+content push itself and the dedup trap cannot exist. Two hardenings
+rode along: a `CNAME` file committed into the tree (branch builds must
+carry the custom domain) and a verify step that polls the *live site's
+bytes* against the pushed tree (`792fc2b`) — not the Pages build status,
+which proved to be a false-negative source: the Pages backend can exceed
+its own 10-minute deploy timeout and report "errored" while still
+finishing minutes later (it ran ~12 min all afternoon after the cert
+churn, vs ~30 s in the morning). Edge cache is `max-age=600`; unique
+query strings bust it.
