@@ -4,7 +4,6 @@ import type { ValidationScope } from "../submission-validation/contracts.js";
 import { logout } from "./auth.js";
 import { buildSubmission } from "./build.js";
 import {
-  createSubmission,
   initializeSubmission,
   replaceOwners,
   requestDelete,
@@ -25,34 +24,28 @@ const { version } = createRequire(import.meta.url)("../../package.json") as { ve
 checkForCliUpdate(version);
 const program = new Command()
   .name("lax")
-  .description("the Lax archive CLI (backed by GitHub issues and Actions)")
+  .description("the Lax archive CLI")
   .version(version);
 program.addHelpText(
   "after",
   `
 Typical workflow:
-  lax init my-work --title "My formalization"   allocate an issue and scaffold locally
-  lax build my-work                              validate the local submission
-  lax serve my-work                              preview it with the pinned Website renderer
-  git commit && git push                         publish an immutable source commit
-  lax submit my-work                             request the issue-backed import
-  lax register my-work                           make the accepted record immutable
+  lax init my-work                allocate an id and scaffold a submission
+  lax build my-work               validate it locally
+  lax serve my-work               preview the generated pages
+  git commit && git push          publish the source commit
+  lax submit my-work              submit it as a replaceable draft
+  lax register my-work            register it: immutable and citable
 
 \`lax doctor\` checks your setup; \`lax <command> --help\` shows command options.
 `,
 );
 
 program
-  .command("create")
-  .argument("<title>", "submission title")
-  .description("open the authoritative submission issue and allocate a provisional lax-N id")
-  .action(run("lax create", createSubmission));
-
-program
   .command("init")
   .argument("[folder]", "target folder", ".")
   .option("--title <title>", "submission title (defaults to the folder name)")
-  .description("allocate an issue and scaffold a complete local submission")
+  .description("start a submission: allocate its id and scaffold the complete layout")
   .action(
     run("lax init", (folder: string, options: { title?: string }) =>
       initializeSubmission(folder, options.title),
@@ -69,7 +62,7 @@ program
     "--build-from-source",
     "build mathlib from source when its prebuilt artifacts cannot be fetched",
   )
-  .description("run the shared validation pipeline locally and write build-output.json")
+  .description("run the archive validation pipeline locally and write build-output.json")
   .action(
     run("lax build", (
       folder: string,
@@ -91,20 +84,20 @@ program
 
 program
   .command("owners")
-  .argument("<target>", "issue number, lax-N id, issue URL, or submission folder")
+  .argument("<target>", "submission folder or lax-N id")
   .requiredOption("--new-list <handles...>", "complete replacement list of GitHub handles")
   .description("replace the owner set of an init or draft submission")
   .action(run("lax owners", (target: string, options: { newList: string[] }) => replaceOwners(target, options.newList)));
 
 program
   .command("submit")
-  .argument("[folder]", "submission folder (with --repository: issue number, lax-N id, or issue URL)", ".")
+  .argument("[folder]", "submission folder (with --repository: a lax-N id)", ".")
   .option("-f, --allow-dirty", "submit committed HEAD while excluding local changes")
-  .option("--resume", "reattach to the workflow run of the submit already requested here")
-  .option("--repository <url>", "canonical public HTTPS GitHub repository URL (explicit source triple)")
-  .option("--commit <sha>", "full immutable lowercase commit SHA (explicit source triple)")
-  .option("--folder <path>", "submission folder relative to the repository root (with --repository)")
-  .description("derive the source triple from Git — or pass one explicitly — and request an issue-backed import")
+  .option("--resume", "reattach to the submit already requested here")
+  .option("--repository <url>", "public HTTPS GitHub repository URL of an explicit source")
+  .option("--commit <sha>", "full commit SHA of an explicit source")
+  .option("--folder <path>", "folder relative to the repository root (with --repository)")
+  .description("submit the pushed commit to the archive as a replaceable draft")
   .action(
     run("lax submit", (
       folder: string,
@@ -143,9 +136,9 @@ program
 
 program
   .command("delete")
-  .argument("<target>", "issue number, lax-N id, issue URL, or submission folder")
+  .argument("<target>", "submission folder or lax-N id")
   .option("--yes", "skip the irreversible-action confirmation prompt")
-  .description("permanently retire an init or draft submission")
+  .description("delete an init or draft submission — its id is retired, never reused")
   .action(
     run("lax delete", (target: string, options: { yes?: boolean }) =>
       requestDelete(target, options.yes ?? false),
@@ -154,15 +147,15 @@ program
 
 program
   .command("register")
-  .argument("<target>", "issue number, lax-N id, issue URL, or submission folder")
+  .argument("<target>", "submission folder or lax-N id")
   .option("--yes", "skip the irreversible-action confirmation prompt")
-  .description("make an init or draft Archive record immutable")
+  .description("register an init or draft submission: immutable and citable")
   .action(run("lax register", (target: string, options: { yes?: boolean }) =>
     requestRegistration(target, options.yes ?? false)));
 
 program
   .command("pull-db")
-  .description("clone or fast-forward ~/.lax/lax-database from lax-archive/lax-database")
+  .description("refresh the local database clone at ~/.lax/lax-database")
   .action(run("lax pull-db", async () => {
     preflight(["git"]);
     pullDatabase();
@@ -173,7 +166,7 @@ program
   .argument("[folder]", "local submission folder", ".")
   .option("--port <port>", "local preview port", "8123")
   .option("--database-only", "render only lax-database, without the local folder")
-  .description("build the website with the pinned lax-website renderer and serve it locally")
+  .description("render the website locally and serve it for preview")
   .action(
     run(
       "lax serve",
@@ -186,13 +179,13 @@ program
 
 program
   .command("doctor")
-  .description("check local tools, GitHub login, validation runtime, database, and Website renderer")
+  .description("check tools, login, and local state — with fixes")
   .action(run("lax doctor", doctor));
 
 program
   .command("update")
   .alias("upgrade")
-  .description("upgrade the CLI to the latest release, then refresh lax-database")
+  .description("upgrade the CLI to the latest release, then refresh the local database")
   .action(run("lax update", () => {
     preflight(["npm", "git"]);
     return updateCli();
@@ -202,11 +195,11 @@ program.command("spec").description("print the specification this CLI enforces")
 
 program
   .command("login")
-  .description("authenticate through the Lax GitHub App device flow")
+  .description("log in with your GitHub account (device flow — no configuration needed)")
   .action(run("lax login", login));
 program
   .command("logout")
-  .description("revoke the stored GitHub App login and remove its credentials")
+  .description("revoke and remove the login stored by `lax login`")
   .action(run("lax logout", async () => {
     console.log("Revoking any stored GitHub App credentials with GitHub.");
     console.log(

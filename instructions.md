@@ -7,8 +7,9 @@ issue `#42` owns `lax-42`.
 ## 1. Log in and allocate the id
 
 ```sh
+npm install -g lax-archive
 lax login
-lax init my-submission --title "A concise submission title"
+lax init my-submission
 ```
 
 Login walks through the bundled Lax GitHub App's device flow; no App
@@ -19,8 +20,12 @@ creates the three stub files in `lax-archive/lax-database`. Keep the issue
 open; every later command is a new comment on it.
 
 `lax init` also scaffolds `manifest.yaml`, `abstract.md`, `LICENSE`, and the
-two Lean packages locally. Use `lax create` instead when only issue allocation
-is wanted.
+two Lean packages locally, then provisions mathlib immediately: it builds the
+shared environment under `~/.lax/warm` when the machine has none yet
+(downloads gigabytes, once per machine) and seeds the generated Lake files so
+that even a bare `lake build` straight after init replays the shared store
+instead of downloading and compiling mathlib inside the submission. The
+submission title defaults to the folder name; pass `--title` to set one.
 
 ## 2. Manage owners
 

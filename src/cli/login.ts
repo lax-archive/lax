@@ -25,7 +25,9 @@ export async function login(): Promise<void> {
   // wait visible (spinning on a TTY, printed once when redirected) instead of
   // leaving the terminal silent between polls.
   const waiting = new LoadingLine(process.stdout);
-  const heartbeat = `waiting for authorization (visit ${device.verification_uri}, code ${device.user_code})`;
+  // Keep the URL free of trailing punctuation: terminals linkify up to the
+  // next whitespace, so a comma or paren right after it breaks the link.
+  const heartbeat = `waiting for authorization — enter code ${device.user_code} at ${device.verification_uri}`;
   try {
     while (Date.now() < deadline) {
       waiting.update(heartbeat);

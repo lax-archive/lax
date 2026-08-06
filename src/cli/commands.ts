@@ -26,7 +26,8 @@ import { installHint, toolVersion } from "./doctor.js";
 import { followCommand, followInitialization, WorkflowOutcomeError } from "./follow.js";
 import { deriveSubmittedSource, repositoryRoot } from "./git.js";
 import { issueNumberFromFolder } from "./manifest.js";
-import { ensureEmptyFolder, scaffoldSubmission } from "./scaffold.js";
+import { recordSubmission } from "./registry.js";
+import { ensureEmptyFolder, provisionScaffold, scaffoldSubmission } from "./scaffold.js";
 
 const base = repositoryPath(CONTROL_REPOSITORY);
 
@@ -34,15 +35,21 @@ async function client(): Promise<GitHubClient> {
   return GitHubClient.forGitHubAppUser(await githubAppUserToken());
 }
 
-export async function createSubmission(titleInput: string): Promise<void> {
-  await allocateSubmission(titleInput);
-}
-
 export async function initializeSubmission(folder: string, titleInput?: string): Promise<void> {
   const root = ensureEmptyFolder(folder);
   const title = titleInput ?? (path.basename(root) || "Untitled submission");
   const allocation = await allocateSubmission(title);
   scaffoldSubmission(root, allocation.issue, allocation.title, allocation.owner.handle);
+  recordSubmission(root);
+  // Provision mathlib right away: a bare `lake build` straight after init
+  // (agents do this) must replay the shared store, not clone mathlib.
+  if (!(await provisionScaffold(root, allocation.issue))) {
+    console.warn(
+      "warning: the shared mathlib environment is not ready; run `lax build` before any\n" +
+        "         direct `lake build` — without the seeded overrides lake would download\n" +
+        "         and compile mathlib from scratch inside the submission",
+    );
+  }
   try {
     repositoryRoot(root);
   } catch {
@@ -67,7 +74,7 @@ async function allocateSubmission(titleInput: string): Promise<{
     body:
       "This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.",
   });
-  console.log(`Allocated provisional id lax-${issue.number}: ${issue.html_url}`);
+  console.log(`Allocated lax-${issue.number}: ${issue.html_url}`);
   console.log("Waiting for initialization to commit the three stub files.");
   await followInitialization(github, issue.number);
   return {

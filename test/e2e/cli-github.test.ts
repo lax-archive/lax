@@ -90,9 +90,11 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(`enter code ${FAKE_USER_CODE}`);
-    // the poll loop is not silent: one heartbeat per wait (spinning on a TTY)
-    expect(result.stdout).toContain("waiting for authorization (visit https://github.com/login/device");
-    expect(result.stdout).toContain(`code ${FAKE_USER_CODE})`);
+    // the poll loop is not silent: one heartbeat per wait (spinning on a TTY),
+    // ending in the bare URL so terminal linkification stays intact
+    expect(result.stdout).toContain(
+      `waiting for authorization — enter code ${FAKE_USER_CODE} at https://github.com/login/device\n`,
+    );
     expect(result.stdout).toContain("Logged in as alice through the Lax GitHub App.");
 
     const credentialsFile = path.join(home, "credentials.json");
@@ -212,13 +214,20 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       ],
     });
     // The run finishes only once the reattached CLI has polled it at least
-    // once, so the test proves the live poll rather than racing it.
+    // once, so the test proves the live poll rather than racing it. Both
+    // progress requests must have been served before the flip: the CLI fetches
+    // the run status and the job list in parallel, and flipping between them
+    // would hand the job/step assertion an already-emptied job list.
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
     fs.writeFileSync(path.join(folder, "manifest.yaml"), "id: lax-77\n");
     const finish = setInterval(() => {
-      const polled = github.requests.some(
-        (request) => request.path === "/repos/lax-archive/lax/actions/runs/777",
-      );
+      const polled =
+        github.requests.some(
+          (request) => request.path === "/repos/lax-archive/lax/actions/runs/777",
+        ) &&
+        github.requests.some((request) =>
+          request.path.startsWith("/repos/lax-archive/lax/actions/runs/777/jobs"),
+        );
       if (!polled) return;
       clearInterval(finish);
       github.state.actionsRuns.set("777", { status: "completed", conclusion: "success", jobs: [] });

@@ -10,7 +10,7 @@ repository. Every successful database commit dispatches a complete rebuild to
 The repository no longer contains an archive server, generated Website pages,
 Website source, deployment units, or database records.
 
-## Current migration boundary
+## Control plane
 
 The following actions are implemented by `.github/workflows/submission.yml`:
 
@@ -36,7 +36,6 @@ and then dispatches the Website rebuild. Publishers for different submissions
 may run concurrently. Each advances the shared database branch without force
 and, on a concurrent advance, re-reads and revalidates the latest head before
 retrying.
-[spec-notes.md](spec-notes.md) remains retained unchanged as a design input.
 
 ## Trust model
 
@@ -77,19 +76,16 @@ GitHub-hosted runner. The sandbox is a *stock* image pinned by digest in
 `src/submission-validation/pins.ts` — no custom image, no registry login; the
 runner installs the pinned elan/toolchain and warm mathlib workspace on the VM
 (`host/setup.ts`, the same code local `lax build` uses) and every container
-gets them bind-mounted read-only. The workflow presents Compile, Replay, and Inspect as
-three first-class jobs in the Actions DAG. Short-lived, credential-free
-artifacts carry the same compiled validation workspace from Compile to Replay
-and Inspect, which run in parallel; every job cleans its local copy
-unconditionally afterwards. Each phase runs on a fresh hosted runner in a fresh
-credential-free container. No disk reclaim runs before the toolchain and
-warm-store installation: a hosted runner reports ~88 GB free, which is
-ample. A lightweight Validation result
-job joins Replay and Inspect and requires both to succeed before publication.
-The validation request output follows the same Compile-to-checker fork. Kernel
-replay and inspection use two Lean workers inside their 16 GiB container limit
-so large module sets cannot exhaust either hosted runner while the surrounding
-workflow remains responsive.
+gets them bind-mounted read-only. Validation is one read-only `Validate` job:
+Compile, Replay, and Inspect run sequentially through one container runner,
+each phase in a fresh credential-free container, and the toolchain cache is
+saved *before* any untrusted code runs so a hostile submission can never
+poison it. A lightweight Validation result job gates publication on the
+validate job's success. No disk reclaim runs before the toolchain and
+warm-store installation: a hosted runner reports ~88 GB free, which is ample.
+Kernel replay and inspection use two Lean workers inside their 16 GiB
+container limit so large module sets cannot exhaust the hosted runner while
+the surrounding workflow remains responsive.
 
 `release.yml` is restricted to version tags, while CI runs for pushes.
 
@@ -129,8 +125,12 @@ implementing the inspector and worth knowing when reading the spec:
 
 ## CLI
 
+Install the released CLI from npm, or run it from source:
+
 ```sh
-npm install
+npm install -g lax-archive   # released CLI: `lax --help`
+
+npm install                  # from source:
 npm run build
 npm test
 npm run lax -- --help
@@ -140,7 +140,7 @@ The CLI creates issues and posts exact command comments; it never writes the
 database directly:
 
 ```sh
-lax init submission --title "My formalization"
+lax init submission
 lax build submission
 lax serve submission
 git commit && git push
@@ -151,7 +151,6 @@ lax delete submission
 lax pull-db
 ```
 
-`lax create <title>` remains available when only issue allocation is wanted.
 `lax submit <issue|folder> --repository ... --commit ... --folder ...` is the
 explicit source-triple form of `lax submit [folder]`. Every issue-protocol verb
 is the CLI verb that posts it — `submit`, `owners`, `delete`, `register` — and
