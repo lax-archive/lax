@@ -86,19 +86,21 @@ no extra machinery.
 
 ## From the 2026-08-06 live rehearsal (history/live-rehearsal.md)
 
-- **Gate the docker smoke.** The rehearsal's container bug was invisible
-  to `npm run check` (the host build never runs `installOwnConceptCapture`)
-  and the smoke that catches it is not part of any gate. Decide: a CI job
-  with docker for `npm run smoke:submission-validation`, or a release
-  checklist that requires the smoke before any pin/capture/pipeline change
-  ships.
-- **Script the rehearsal for collaborators.** Keep the scratch repos
-  disposable but turn the procedure into `scripts/rehearsal/`: a setup
-  script parameterized by owner/prefix that creates the repos, derives the
-  token/env patch mechanically from the *current* submission.yml (never a
-  stale fork), sets vars + environments, scaffolds and pushes the
-  submission; plus a short doc naming the manual credential step and the
-  three round trips with expected evidence. A pre-release drill, not CI.
+- ~~Gate the docker smoke~~ — done 2026-08-06: ci.yml gained a `smoke`
+  job running `npm run smoke:submission-validation` on every push, with
+  the validate job's cache pattern (shared pins-hashed key, save before
+  any container runs) and workflow-lint coverage.
+- **Flaky `--resume` e2e under parallel load**: `test/e2e/cli-github.test.ts`
+  "reattaches an interrupted submit" intermittently sees
+  `waiting for workflow` instead of `validate · Compile` when the full
+  suite runs concurrently; passes in isolation. A timing race in the
+  fake-Actions poller — fix the test (or the poller's readiness signal),
+  found 2026-08-06 by the CI-gate worker.
+- ~~Script the rehearsal for collaborators~~ — done 2026-08-06:
+  `scripts/rehearsal/` (setup/drive/teardown + README); the workflow
+  patch is derived from the current submission.yml at run time by
+  patch-workflow.mjs, whose drift assertions run against the real
+  workflow on every `npm test`.
 - **Confirm org ghcr visibility at go-live.** The capture package was
   auto-created publicly because the personal source repo is public;
   anonymous pull-by-digest verified. If the lax-archive org forces new
@@ -122,12 +124,11 @@ no extra machinery.
 
 ## Found by the 2026-08-05 rewrite review
 
-- **Shallow-fetch gap carried over verbatim** (still open; the fetch now
-  lives host-side in `source/fetch.ts` since stage 3): when a host
-  refuses the unadvertised-SHA fetch, the `git fetch --depth 1 origin`
-  fallback retrieves only ref tips and misses valid historical commits.
-  Restore a fallback that can fetch any commit reachable from a remote
-  branch while bounding resource use.
+- ~~Shallow-fetch gap carried over verbatim~~ — closed 2026-08-06:
+  `source/fetch.ts` now progressively deepens (geometric `--deepen`,
+  8192-commit cap, shared fetch deadline) after a refused
+  unadvertised-SHA fetch, with fixture-remote tests pinning the found /
+  capped / absent cases.
 - ~~Memory numbers are unmeasured~~ — measured 2026-08-05 (plan addendum
   point 1): replay is ~5.6 GiB per concurrent mathlib environment
   import; 2 threads (10.78 GiB peak on word-ram) fits a 16 GB swapless

@@ -63,6 +63,8 @@ npm run smoke:submission-validation   # real-container smoke (needs docker; shar
 
 The pinned page-builder consumed by `lax serve` is assembled for release with
 `page-builder:fetch`, `page-builder:package`, and `page-builder:verify`.
+The live-rehearsal drill (scratch-repo round trips before any Actions-side
+change ships) is scripted in `scripts/rehearsal/` — see its README.
 
 ## Architecture (current state; rewrite-plan.md governs upcoming changes)
 
