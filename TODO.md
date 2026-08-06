@@ -240,25 +240,33 @@ initial batch verification over every record in dependency order.
   source cards (v0.4), and the multiple-statements presentation
   (anonymous per-statement indices) from rewrite.md.
 
-## Old deployment (the box) — owed until decommission
+## Old deployment (the box) — stopped 2026-08-06, decommission owed
 
-The live box (laxarchive.org) still runs the old-repo server and is retired
-only when this tree goes live. Until then, still owed (from the old TODO):
-revoke the old Hetzner API token in the console (pasted into a chat
-transcript 2026-07-26; deleting the file did not kill the credential),
-rotate the S3 credentials for the same reason, and confirm bucket versioning
-+ a lifecycle rule on `lax-ops-backup` (the nightly backup writes one stable
-key — without versioning every night overwrites the only copy). Plan the
-decommission itself (DNS, redirects, data export) as part of go-live.
+The box was fully stopped and powered off 2026-08-06: all units disabled
+(`lax-deploy.timer`, `lax-ops-backup.timer`, `lax-server.service`, `caddy`)
+and the irreplaceable state (db.git + ops.sqlite) exported to
+`~/lax-box-final-20260806-153311.tar.gz` on Jan's machine — move that
+somewhere durable. Still owed:
+
+- **Delete the server** (`lax-server`, id 154491090) in the Hetzner console —
+  a powered-off server still bills.
+- Revoke the old Hetzner API token in the console (pasted into a chat
+  transcript 2026-07-26; deleting the file did not kill the credential) and
+  rotate/retire the S3 credentials for the same reason. The `lax-ops-backup`
+  bucket still holds the last `ops.sql`; decide keep-or-delete when the
+  final export has a durable home.
+- **DNS cutover in progress** (2026-08-06): laxarchive.org set as the
+  lax-website Pages custom domain; Cloudflare A/CNAME records to repoint at
+  GitHub Pages, then re-enable Enforce HTTPS. Consider verifying the domain
+  for the lax-archive org (Settings → Pages → verified domains) against
+  domain takeover.
 
 ## First npm release from this tree (before tagging v0.1.18)
 
-- **Stop the box's auto-deploy first.** The live box's `lax-deploy` timer
-  polls npm every 2 minutes and installs whatever `latest` points at, then
-  restarts `lax-server` — and this tree's package no longer ships a
-  `lax-server` bin. Publishing from here upgrades the box into a broken
-  server. Stop/disable `lax-deploy.timer` (or pin `LAX_DIST_TAG` in
-  `/etc/lax-deploy.env`) before the first tag; fold into the decommission.
+- ~~Stop the box's auto-deploy first~~ — done 2026-08-06: the box is fully
+  stopped and powered off (see the old-deployment section), so its
+  latest-following `lax-deploy` timer can no longer install a
+  `lax-server`-less package onto the live server.
 - **Confirm the npm trusted-publisher registration** for `lax-archive`
   (account `jan3er`) names repository `lax-archive/lax` and workflow
   `release.yml`. The workflow was renamed from `release-cli.yml` back to
