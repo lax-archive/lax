@@ -6,6 +6,7 @@ import { ArchiveSnapshot } from "../submission-validation/archive/snapshot.js";
 import type { ValidationRequest, ValidationScope } from "../submission-validation/contracts.js";
 import { validateSubmissionOnHost } from "../submission-validation/host/pipeline.js";
 import { hostValidationRuntime } from "../submission-validation/pins.js";
+import { removeValidationWorkspace } from "../submission-validation/workspace-cleanup.js";
 import { formatProfile, Profiler } from "../shared/profile.js";
 import { databaseDirectory } from "./database.js";
 import { formatLocalFindings } from "./findings.js";
@@ -110,7 +111,18 @@ export async function buildSubmission(
     return 0;
   } finally {
     progress.clear();
-    fs.rmSync(temporary, { recursive: true, force: true });
+    try {
+      // parts of the job dir may be read-only (e.g. sealed capture files);
+      // removeValidationWorkspace restores directory write bits before rm so
+      // the temp tree never lingers in /tmp
+      removeValidationWorkspace(temporary);
+    } catch (error) {
+      // never mask the build result with a cleanup failure
+      console.warn(
+        `lax build: could not remove the temporary workspace ${temporary}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }
 

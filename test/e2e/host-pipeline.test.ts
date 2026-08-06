@@ -238,6 +238,9 @@ end Lax3.Broken
     const root = makeHostSubmission("lax-4");
     gitInitCommit(root);
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+    // a private TMPDIR proves the build's temporary workspace is removed
+    // even though parts of it (the sealed capture files) are read-only
+    const tmp = tmpDir("lax-cli-tmp-");
     const result = spawnSync(
       process.execPath,
       [
@@ -249,13 +252,16 @@ end Lax3.Broken
       {
         cwd: repoRoot,
         encoding: "utf8",
-        env: { ...process.env, LAX_HOME: clientHome },
+        env: { ...process.env, LAX_HOME: clientHome, TMPDIR: tmp },
         timeout: 590_000,
       },
     );
     expect(result.stderr).not.toContain("lax build:");
     expect(result.stdout).toContain("lax build: OK");
     expect(result.status).toBe(0);
+    // no lax-build-* workspace lingers in the temp dir (the EACCES littering
+    // bug: cleanup must restore write bits before removal)
+    expect(fs.readdirSync(tmp).filter((name) => name.startsWith("lax-build-"))).toEqual([]);
     const output = JSON.parse(fs.readFileSync(path.join(root, "build-output.json"), "utf8")) as {
       id: string;
       localValidation: { archiveSha: string };
