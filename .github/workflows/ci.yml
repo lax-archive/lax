@@ -24,7 +24,33 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run check
+      - run: npm run build
+      # The fast suite is docker-free but not toolchain-free: the real-lake
+      # e2e tests (test/e2e/host-pipeline.test.ts and friends) drive elan/lake
+      # against the fake mathlib, so the runner needs the same host toolchain
+      # the smoke job provisions — same store, same key, same save-before-
+      # untrusted-code rule (the suite builds fixture code with lake).
+      - name: Restore toolchain and warm mathlib workspace
+        id: lean-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.elan
+            ~/.lax/warm
+            ~/.lax/tools
+          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      - name: Provision the validation host
+        run: node dist/submission-validation/host/setup-vm.js
+      - name: Save toolchain and warm mathlib workspace
+        if: steps.lean-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.elan
+            ~/.lax/warm
+            ~/.lax/tools
+          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      - run: npm test
 
   # `npm run check` cannot see the container-only seam: it builds on the host,
   # in place, and never provisions a fresh workspace from a read-only capture.
