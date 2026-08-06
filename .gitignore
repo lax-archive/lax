@@ -2,5 +2,7 @@ node_modules/
 dist/
 .build/
 inspector/.lake/
+# Operational output of scripts/port-db/ (run reports and downloaded artifacts).
+reports/
 *.tgz
 .DS_Store

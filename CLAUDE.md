@@ -64,7 +64,10 @@ npm run smoke:submission-validation   # real-container smoke (needs docker; shar
 The pinned page-builder consumed by `lax serve` is assembled for release with
 `page-builder:fetch`, `page-builder:package`, and `page-builder:verify`.
 The live-rehearsal drill (scratch-repo round trips before any Actions-side
-change ships) is scripted in `scripts/rehearsal/` — see its README.
+change ships) is scripted in `scripts/rehearsal/` — see its README. The
+one-shot go-live migration that re-validates every existing `lax-database`
+record through the control plane, bottom-up in dependency order, is
+`scripts/port-db/` — start with `node scripts/port-db/port.mjs --dry-run`.
 
 ## Architecture (current state; rewrite-plan.md governs upcoming changes)
 

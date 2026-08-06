@@ -109,6 +109,25 @@ no extra machinery.
   submission}`, ghcr package `lax-scratch-captures`) and rotate the
   personal token that stood in for the App mints (Jan).
 
+## Port the production database (go-live)
+
+The 16 records in `lax-archive/lax-database` (13 `draft`, 3 `init` stubs,
+none registered) still carry the pre-rework Releases capture (`downloadUrl`,
+no `registryBlob`), which `archive/snapshot.ts` reads as "no capture" — so
+every dependent fails Resolution until its dependencies are re-validated.
+Driver: `scripts/port-db/` (`--dry-run`, `--only` canary, `--start-after`
+resume; see its README). Planned order as of 2026-08-06: lax-9, lax-10,
+lax-13, lax-14, lax-16, lax-17, lax-18, lax-41, then lax-11, lax-12, then
+lax-3, lax-5, lax-15.
+
+- **Ownership blocks six records.** `/lax update` requires record ownership;
+  `jan3er` is not an owner of lax-9, lax-10, lax-16, lax-17, lax-18, lax-41
+  (clemenskuske and EdouardBonnet are). Either they run the driver for their
+  records or the owner lists change first.
+- Run the canary (`--only lax-13`, a leaf) before the full run, and confirm
+  the ghcr package visibility item above first — the port is what creates the
+  production capture packages.
+
 ## spec.md reconciliation queue (Jan, manually)
 
 - The "Continuous preview while authoring" subsection an agent inserted into
