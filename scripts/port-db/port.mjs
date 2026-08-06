@@ -278,8 +278,12 @@ function heartbeat(id, startedAt, text) {
   console.log(`  [${id}] ${clock}  ${text}`);
 }
 
-async function postUpdateComment(record) {
-  const body = updateCommandBody(record.source);
+async function postUpdateComment(record, options) {
+  const source =
+    options.commitOverride === undefined
+      ? record.source
+      : { ...record.source, commit: options.commitOverride };
+  const body = updateCommandBody(source);
   const response = await gh(
     ["api", `repos/${CONTROL_REPOSITORY}/issues/${record.issueNumber}/comments`, "--method", "POST", "--input", "-"],
     { input: JSON.stringify({ body }) },
@@ -440,7 +444,7 @@ async function portRecord(record, options, reportsDir) {
   };
   console.log("");
   console.log(`== ${record.id} (${record.state}) — ${row.issueUrl}`);
-  const comment = await postUpdateComment(record);
+  const comment = await postUpdateComment(record, options);
   row.commentId = comment.id;
   row.commentUrl = comment.url;
   console.log(`  posted ${comment.body}`);
@@ -498,6 +502,7 @@ function parseArguments(argv) {
     startAfter: undefined,
     continueOnFailure: false,
     ignoreOwnership: false,
+    commitOverride: undefined,
     timeoutMs: 20 * 60 * 1000,
     pollMs: 20 * 1000,
     reportsDir: path.join(repositoryRoot, "reports"),
@@ -515,6 +520,7 @@ function parseArguments(argv) {
     else if (flag === "--start-after") options.startAfter = value();
     else if (flag === "--continue-on-failure") options.continueOnFailure = true;
     else if (flag === "--ignore-ownership") options.ignoreOwnership = true;
+    else if (flag === "--commit") options.commitOverride = value();
     else if (flag === "--timeout-minutes") options.timeoutMs = positive(value(), flag) * 60 * 1000;
     else if (flag === "--poll-seconds") options.pollMs = positive(value(), flag) * 1000;
     else if (flag === "--reports-dir") options.reportsDir = path.resolve(value());
@@ -523,6 +529,12 @@ function parseArguments(argv) {
   }
   if (options.only !== undefined && options.startAfter !== undefined) {
     throw new PortError("--only and --start-after are mutually exclusive");
+  }
+  if (options.commitOverride !== undefined) {
+    if (options.only === undefined) throw new PortError("--commit requires --only");
+    if (!/^[0-9a-f]{40}$/u.test(options.commitOverride)) {
+      throw new PortError("--commit must be a full 40-hex commit sha");
+    }
   }
   return options;
 }

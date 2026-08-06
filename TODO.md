@@ -109,24 +109,36 @@ no extra machinery.
   submission}`, ghcr package `lax-scratch-captures`) and rotate the
   personal token that stood in for the App mints (Jan).
 
-## Port the production database (go-live)
+## Port the production database (go-live) — ~~done 2026-08-06~~
 
-The 16 records in `lax-archive/lax-database` (13 `draft`, 3 `init` stubs,
-none registered) still carry the pre-rework Releases capture (`downloadUrl`,
-no `registryBlob`), which `archive/snapshot.ts` reads as "no capture" — so
-every dependent fails Resolution until its dependencies are re-validated.
-Driver: `scripts/port-db/` (`--dry-run`, `--only` canary, `--start-after`
-resume; see its README). Planned order as of 2026-08-06: lax-9, lax-10,
-lax-13, lax-14, lax-16, lax-17, lax-18, lax-41, then lax-11, lax-12, then
-lax-3, lax-5, lax-15.
+All 13 drafts republished with ghcr captures via `scripts/port-db/`; the 3
+`init` stubs need nothing. Notes from the run, and its leftovers:
 
-- **Ownership blocks six records.** `/lax update` requires record ownership;
-  `jan3er` is not an owner of lax-9, lax-10, lax-16, lax-17, lax-18, lax-41
-  (clemenskuske and EdouardBonnet are). Either they run the driver for their
-  records or the owner lists change first.
-- Run the canary (`--only lax-13`, a leaf) before the full run, and confirm
-  the ghcr package visibility item above first — the port is what creates the
-  production capture packages.
+- **Keep `port/chain-requires` in lax-submissions reachable.** lax-11/12
+  (commit `7567bb4e`) and lax-3/5/15 (commit `8c4d271`) record source
+  commits that exist only on that branch (the sibling-path→git-require
+  chain conversion). Deleting the branch strands their sources; merge or
+  keep it.
+- The six unowned records (lax-9/10/16/17/18/41) were ported via a
+  temporary maintainer exception: repo-admin ruleset bypass on
+  lax-database + `jan3er` inserted into `owner-list.json` (numeric-id
+  sorted!), then both restored. Scripts in the 2026-08-06 session
+  scratchpad; owner lists verified restored.
+- ghcr org policy initially forced `lax-captures` private (the go-live
+  risk above, confirmed) — fixed by allowing public packages org-wide,
+  flipping the package, then re-restricting. Anonymous pull verified.
+- Driver robustness follow-ups: retry transient `gh` failures during
+  polling instead of failing the record (three i/o-timeout casualties
+  had to be re-driven); check for our command marker before re-posting
+  after a timed-out POST (a duplicate comment raced — CAS rejected it
+  correctly, but the driver should not create the race). Also lax-17's
+  validate runs ~28 min: the 20-min default timeout is too tight.
+- `lax build` cleanup bug: temp-workspace removal hits EACCES on the
+  read-only materialized dependency dirs (`work/dependencies/…`) and
+  litters /tmp; chmod +w before rmdir in workspace-cleanup.
+- The old `lax-capture-*` GitHub Releases on lax-database are now dead
+  store; delete them at leisure. The stale `LAX_VALIDATION_IMAGE` Actions
+  variable on lax-archive/lax can be deleted too.
 
 ## spec.md reconciliation queue (Jan, manually)
 
