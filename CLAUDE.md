@@ -12,15 +12,14 @@ state changes, and trusted GitHub Actions jobs publish to the public
 `lax-archive/lax-database` repository and dispatch rebuilds of
 `lax-archive/lax-website`.
 
-**This tree is mid-rework.** It was produced by an outside AI rewrite of the
-old repository (`../lax`) and is now being reshaped to our design. The
-charter is `rewrite.md` (Jan's change list, written in the old repo — "this
-folder" there means `../lax`) and `rewrite-plan.md` (the reviewed plan and
-order of attack). Read both before structural work; prefer them over
-inferring intent from the current code. When Jan says **"continue the
-rework"**, follow rewrite-plan.md's "Running the plan" protocol: run the
-next unfinished stage from TODO.md via a worktree-isolated worker, review
-and test it, commit, and stop for Jan's go.
+**The rework is executed and live.** This tree was produced by an outside
+AI rewrite of the old repository (`../lax`, now `lax-legacy` on GitHub) and
+then reshaped to our design per `rewrite.md` (Jan's change list, written in
+the old repo — "this folder" there means `../lax`) and `rewrite-plan.md`
+(the reviewed plan). All stages ran 2026-08-05/06 and the system went live
+2026-08-06 (`history/rework-execution.md`, `history/go-live.md`). The
+charter documents remain the intent record for structural questions —
+prefer them over inferring intent from the current code.
 
 ## The documents and their roles
 
@@ -49,7 +48,11 @@ and test it, commit, and stop for Jan's go.
   edges are rev-pinned git requires only, landed by the chain workflow
   documented in instructions.md), `live-rehearsal.md` (the 2026-08-06
   stages-3+4 scratch-repo rehearsal — its setup recipe, the ir-companions
-  bug it caught, and the smoke-gating lesson).
+  bug it caught, and the smoke-gating lesson), `rework-execution.md` (the
+  executed rewrite stages, measurements, and spike verdicts), `go-live.md`
+  (the database port, box stop, DNS/HTTPS cutover, first npm releases —
+  with the trusted-publisher rebinding and tarball-packaging lessons —
+  and the production round trip).
 
 ## Commands
 
@@ -72,8 +75,9 @@ record through the control plane, bottom-up in dependency order, is
 ## Architecture (current state; rewrite-plan.md governs upcoming changes)
 
 `.github/workflows/submission.yml` is the only issue-event entry point: it
-routes issue/comment events, runs validation (Compile → Replay/Inspect as
-separate jobs today; planned: one job), and publishes through trusted jobs.
+routes issue/comment events, runs validation (one read-only Validate job:
+Compile → Replay → Inspect sequential through one container runner), and
+publishes through trusted jobs.
 The validation phases live in `src/submission-validation/` and are shared
 between the trusted workflow and local `lax build`; local mode may omit only
 server-only fetching, mandatory replay, and publishable artifact creation.

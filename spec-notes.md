@@ -599,3 +599,25 @@ the website (lax.md):
 Spec touchpoints: the concept-annotation and proof-annotation format
 paragraphs (frontmatter key lists, body semantics) and the build-output
 determinism sentence.
+
+## `lax init` provisions mathlib; doctor gains a submission registry (2026-08-06)
+
+`lax init` now finishes what the scaffold starts: after writing the two
+packages it ensures the shared warm store exists (building it on first use)
+and seeds the same generated Lake files a build would write — the package
+overrides pointing the mathlib closure at the store plus the complete locked
+manifest. Rationale: an agent (or author) that runs a bare `lake build`
+straight after init would otherwise clone and compile mathlib inside the
+submission; the overrides must exist *before* the first lake invocation, not
+after the first `lax build`. When the store cannot be built (offline), init
+warns and stays valid; `lax build` retries.
+
+Companion: `lax init` and `lax build` record every submission root they
+touch in `~/.lax/submissions.json` (pruned when a manifest.yaml vanishes),
+and `lax doctor` runs local-only health checks over the registry — pin
+drift against pins.ts, missing/dead package overrides, hardlink-farm-era
+mathlib clones under `.lake/packages`, and git-tracked generated files.
+No filesystem scanning: only roots lax has touched are checked.
+
+Spec touchpoint: the CLI init/scaffold description (init is no longer a
+pure scaffold step) and the doctor command summary.
