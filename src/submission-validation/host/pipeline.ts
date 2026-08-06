@@ -4,9 +4,14 @@
 // between runs and rebuilds stay incremental. Static validation, dependency
 // resolution, inspection judging, and build-output emission are the exact
 // modules the trusted container pipeline runs; only the Lean-touching
-// execution differs. Replay and Inspect still run against the captured
-// artifacts with a pipeline-composed LEAN_PATH (never `lake env`), so a local
-// pass exercises the same gate registration enforces.
+// execution differs. Cross-submission dependencies build **from source**
+// here: resolution validates every declared rev-pinned require against the
+// database, and the seeded manifest's locked git entries make lake clone and
+// build each one in-workspace under `.lake/packages/` (the trusted path
+// instead materializes published captures — see phases/provision.ts). Replay
+// and Inspect still run against the captured artifacts with a
+// pipeline-composed LEAN_PATH (never `lake env`), so a local pass exercises
+// the same gate registration enforces.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -25,17 +30,21 @@ import type {
 import { emitBuildOutput } from "../phases/emit.js";
 import { judgeInspection } from "../phases/inspect.js";
 import { parseInspectorReport } from "../phases/inspect-runner.js";
-import { dependencyClosure } from "../phases/provision.js";
+import { dependencyClosure, dependencySubDir } from "../phases/provision.js";
 import { runResolution } from "../phases/resolution.js";
 import { runStaticValidation } from "../phases/static.js";
 import { hostValidationRuntime } from "../pins.js";
 import type { FetchedSource } from "../source/fetch.js";
 import { Profiler } from "../../shared/profile.js";
-import { materializeHostCaptures } from "./captures.js";
 import { inspectorBinary } from "./inspector.js";
 import { hostLeanEnv, packageLibDir, type LeanEnv } from "./leanenv.js";
 import { run } from "./proc.js";
-import { ensureLocalWarm, seedManifest, seedOverrides } from "./warmstore.js";
+import {
+  ensureLocalWarm,
+  seedManifest,
+  seedOverrides,
+  type SeededDependency,
+} from "./warmstore.js";
 
 export interface HostValidationOptions {
   /** The working tree and local Archive clone the build validates against. */
@@ -66,7 +75,6 @@ interface HostState {
   echo: boolean;
   jobDir: string;
   captureRoot: string;
-  dependencyRoot: string;
   fetched: FetchedSource;
   warnings: ValidationFinding[];
   violations: ValidationFinding[];
@@ -95,7 +103,6 @@ export async function validateSubmissionOnHost(
     echo,
     jobDir,
     captureRoot: path.join(jobDir, "capture"),
-    dependencyRoot: path.join(jobDir, "dependencies"),
     fetched: options.local.fetched,
     warnings,
     violations,
@@ -144,17 +151,6 @@ export async function validateSubmissionOnHost(
   state.dependencies = resolution.result.all;
   if (resolution.findings.failed) return report(false);
 
-  try {
-    await state.phase("dependency provisioning", () =>
-      materializeHostCaptures(resolution.result.all, jobDir, limits, (event) =>
-        options.onPhase?.({
-          name: `dependency capture ${event.submissionId} (${event.index}/${event.total})`,
-          state: "start",
-        })));
-  } catch (error) {
-    return fail("provision", "dependency-capture", error);
-  }
-
   let warmWs: string | undefined;
   try {
     warmWs = await state.phase("warm store", () =>
@@ -186,12 +182,7 @@ export async function validateSubmissionOnHost(
     try {
       await state.phase(`provision ${kind}`, () => {
         seedOverrides(warm, pkgDir);
-        seedManifest(warm, pkgDir, hostPathDependencies(
-          kind,
-          staticCheck.result,
-          resolution.result,
-          state,
-        ));
+        seedManifest(warm, pkgDir, hostDependencies(kind, staticCheck.result, resolution.result));
       });
     } catch (error) {
       return fail(failurePhase, "provision", error);
@@ -230,14 +221,28 @@ export async function validateSubmissionOnHost(
     }
   }
 
+  // Dependency lib dirs come from the packages lake built in-workspace: a
+  // git-type manifest entry is cloned to `<pkgDir>/.lake/packages/<name>` and
+  // the package (at its subDir) builds into `<clone>/<subDir>/.lake/build/
+  // lib/lean` — layout verified empirically at the pinned v4.30.0. Lake only
+  // builds the dependency modules the package imports, so absent lib dirs
+  // (a dependency nothing imported) are filtered like before.
+  const dependencyLibDirs = (kind: "concepts" | "proofs"): string[] =>
+    dependencyClosure(kind, resolution.result)
+      .map((dependency) => packageLibDir(path.join(
+        state.fetched.submissionRoot,
+        kind,
+        ".lake",
+        "packages",
+        dependency.packageName,
+        dependencySubDir(dependency),
+      )))
+      .filter((directory) => fs.existsSync(directory));
   const leanEnvFor = (kind: "concepts" | "proofs"): LeanEnv => hostLeanEnv(
     kind === "proofs"
       ? [path.join(state.captureRoot, "proofs", "lib"), path.join(state.captureRoot, "concepts", "lib")]
       : [path.join(state.captureRoot, "concepts", "lib")],
-    resolution.result.all
-      .map((dependency) =>
-        path.join(state.dependencyRoot, dependency.submissionId, dependency.kind, "lib"))
-      .filter((directory) => fs.existsSync(directory)),
+    dependencyLibDirs(kind),
     warm,
     limits.leanThreads,
   );
@@ -328,18 +333,20 @@ export async function validateSubmissionOnHost(
   }
 }
 
-/** The manifest path entries a package needs, mirroring the container
- * provisioning plan: the proof package's own concept package (the only in-tree
- * edge a lakefile may declare) and every resolved dependency at its
- * materialized capture. */
-function hostPathDependencies(
+/** The manifest entries a package build needs: the proof package's own
+ * concept package (the only in-tree path edge a lakefile may declare) and a
+ * locked git entry per resolved dependency in the closure — its database
+ * record's canonical repository URL, full commit, and package folder, i.e.
+ * exactly the triple resolution just validated the author's declared require
+ * against. Nothing resolution did not bless is ever seeded. The trusted
+ * container path materializes captures instead (phases/provision.ts). */
+function hostDependencies(
   kind: "concepts" | "proofs",
   staticResult: StaticResult,
   resolution: ResolutionResult,
-  state: HostState,
-): { name: string; dir: string }[] {
+): SeededDependency[] {
   const staticPackage = staticResult[kind]!;
-  const entries: { name: string; dir: string }[] = [];
+  const entries: SeededDependency[] = [];
   if (
     kind === "proofs" &&
     staticPackage.lakefile.hasConceptPathRequire &&
@@ -350,7 +357,9 @@ function hostPathDependencies(
   for (const dependency of dependencyClosure(kind, resolution)) {
     entries.push({
       name: dependency.packageName,
-      dir: path.join(state.dependencyRoot, dependency.submissionId, dependency.kind, "package"),
+      url: dependency.source.repository,
+      rev: dependency.source.commit,
+      subDir: dependencySubDir(dependency),
     });
   }
   return entries;

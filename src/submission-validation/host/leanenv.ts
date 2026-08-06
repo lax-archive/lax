@@ -1,10 +1,11 @@
 // How host Replay and Inspect invoke toolchain binaries: always directly,
 // with a pipeline-composed LEAN_PATH — never `lake env`, whose search path
 // derives from workspace files Compile wrote. The entries point at the
-// captured artifacts, the materialized dependency captures, and the warm
-// workspace lax itself provisioned — the local mirror of the trusted
-// container's composed path (sandbox/tools/run-check.mjs), so a local build
-// exercises the same gate registration enforces.
+// captured artifacts, the dependency packages lake built from source
+// in-workspace, and the warm workspace lax itself provisioned — the local
+// mirror of the trusted container's composed path
+// (sandbox/tools/run-check.mjs), so a local build exercises the same gate
+// registration enforces.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -59,8 +60,8 @@ export function workspaceLibDirs(ws: string): string[] {
 
 /**
  * The host pipeline's LeanEnv: LEAN_PATH over the given own lib dirs (the
- * captured package artifacts), the materialized dependency captures' lib
- * dirs, and the warm workspace's mathlib dirs — the local mirror of the
+ * captured package artifacts), the in-workspace-built dependency packages'
+ * lib dirs, and the warm workspace's mathlib dirs — the local mirror of the
  * container's composed path. Entries are realpath'd where they may be
  * symlinks (test homes symlink the warm workspace into a shared cache;
  * leanchecker's module scan is symlink-blind).

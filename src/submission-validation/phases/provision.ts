@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { RUNTIME_PATHS } from "../config.js";
-import type { ResolutionResult, StaticResult } from "../contracts.js";
+import type { ResolutionResult, ResolvedDependency, StaticResult } from "../contracts.js";
 import type { FetchedSource } from "../source/fetch.js";
 import type { ContainerMount } from "../sandbox/container.js";
 import { seedManifest, seedOverrides } from "../host/warmstore.js";
@@ -143,7 +143,12 @@ function isolateBuildDirectories(
 }
 
 /** The (transitive) resolved dependencies a package build needs on hand,
- * shared by container provisioning and the host pipeline. */
+ * shared by container provisioning and the host pipeline. The proofs
+ * workspace also loads the own concept package through its `../concepts`
+ * path require, so it needs the concept package's closure too — both for the
+ * manifest (lake refuses a loaded package whose require is not an entry) and
+ * for the proofs Replay/Inspect search path (proof modules import concept
+ * modules, which may import concept-only dependencies). */
 export function dependencyClosure(
   kind: "concepts" | "proofs",
   resolution: ResolutionResult,
@@ -157,9 +162,18 @@ export function dependencyClosure(
     dependency.requiredPackages.forEach(visit);
     if (dependency.kind === "proofs") visit(name.slice(0, -"Proofs".length));
   };
-  (kind === "concepts" ? resolution.concepts : resolution.proofs)
+  (kind === "concepts" ? resolution.concepts : [...resolution.proofs, ...resolution.concepts])
     .forEach((dependency) => visit(dependency.packageName));
   return [...result.values()].sort((a, b) => a.packageName.localeCompare(b.packageName));
+}
+
+/** The repository-relative folder a resolved dependency's package lives in —
+ * the exact `subDir` shape resolution validated the author's declared require
+ * against (see joinFolder in phases/resolution.ts). */
+export function dependencySubDir(dependency: ResolvedDependency): string {
+  return dependency.source.folder === "."
+    ? dependency.kind
+    : path.posix.join(dependency.source.folder, dependency.kind);
 }
 
 export function installOwnConceptCapture(workspace: ProvisionedWorkspace, captureRoot: string): void {

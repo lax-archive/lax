@@ -12,7 +12,7 @@
 // never run `lake update`.
 //
 // Alongside the overrides, seedManifest writes a complete
-// `lake-manifest.json`: the validated path dependencies, then the warm
+// `lake-manifest.json`: the validated dependency entries, then the warm
 // workspace's own locked entries **verbatim** — the git-type mathlib pins
 // stay a faithful record of what the build ran against (and keep lake from
 // warning that the manifest is out of date), while the overrides file
@@ -20,9 +20,16 @@
 // everywhere, gitignored by the scaffold and never trusted from the author
 // (static validation rejects a checked-in overrides file: it is a
 // dependency-redirection primitive). With a complete manifest in place, lake
-// performs no dependency resolution at all — no `post_update` hook (mathlib's
-// would run `cache get`), no URL re-check, no network (required submissions
-// are materialized from their published captures as path dependencies).
+// performs no dependency *resolution* at all — no `post_update` hook
+// (mathlib's would run `cache get`; hooks cannot exist in the validated TOML
+// lakefiles of submission dependencies), no URL re-check. The trusted
+// container path stays fully offline: required submissions are materialized
+// from their published captures as path dependencies. The local host path
+// instead seeds locked **git** entries for the resolved cross-submission
+// dependencies: `lake build` materializes each one (clone at the locked rev
+// into `.lake/packages/`, verified empirically at the pinned v4.30.0 to
+// happen without `lake update` and without running any post_update hook) and
+// builds it from source in-workspace, incrementally across runs.
 //
 // The store is chmod'd fully read-only — files *and* directories — once the
 // warm build completes: consumers only ever read it, so read-only is both the
@@ -237,17 +244,28 @@ export function seedOverrides(warmWs: string, pkgDir: string, overrideBase?: str
 }
 
 /**
- * Write the package's complete `lake-manifest.json`: the given path
- * dependencies (the proof package's own concept package and every required
- * submission materialized from its published capture), then the warm
- * workspace's locked mathlib closure **verbatim** — the overrides file
- * redirects those entries to the store at build time (see seedOverrides).
- * With every dependency present, lake resolves and fetches nothing.
+ * A dependency entry seedManifest writes ahead of the warm closure: a path
+ * entry (the proof package's own concept package, and — in the trusted
+ * container — every required submission materialized from its published
+ * capture), or a locked git entry (the local host build's cross-submission
+ * dependencies, built from source at exactly the rev-pinned require
+ * resolution validated against the database).
+ */
+export type SeededDependency =
+  | { name: string; dir: string }
+  | { name: string; url: string; rev: string; subDir: string };
+
+/**
+ * Write the package's complete `lake-manifest.json`: the given dependency
+ * entries, then the warm workspace's locked mathlib closure **verbatim** —
+ * the overrides file redirects those entries to the store at build time (see
+ * seedOverrides). With every dependency present, lake resolves nothing; the
+ * only fetches are the locked git entries it materializes (host builds).
  */
 export function seedManifest(
   warmWs: string,
   pkgDir: string,
-  pathDeps: { name: string; dir: string }[],
+  deps: SeededDependency[],
 ): void {
   const warmManifest = JSON.parse(
     fs.readFileSync(path.join(warmWs, "lake-manifest.json"), "utf8"),
@@ -255,18 +273,37 @@ export function seedManifest(
 
   const entries: Record<string, unknown>[] = [];
   const seen = new Set<string>();
-  for (const dep of pathDeps) {
+  for (const dep of deps) {
     if (seen.has(dep.name)) continue;
     seen.add(dep.name);
-    entries.push({
-      type: "path",
-      scope: "",
-      name: dep.name,
-      manifestFile: "lake-manifest.json",
-      inherited: false,
-      dir: dep.dir,
-      configFile: "lakefile.toml",
-    });
+    // Entry shapes verified against the pinned lake v4.30.0: `inputRev` must
+    // equal the require's declared rev or lake reports the manifest out of
+    // date; `inherited: false` is accepted for transitive entries (the same
+    // shape the container's capture path entries have always used).
+    entries.push(
+      "dir" in dep
+        ? {
+            type: "path",
+            scope: "",
+            name: dep.name,
+            manifestFile: "lake-manifest.json",
+            inherited: false,
+            dir: dep.dir,
+            configFile: "lakefile.toml",
+          }
+        : {
+            url: dep.url,
+            type: "git",
+            subDir: dep.subDir,
+            scope: "",
+            rev: dep.rev,
+            name: dep.name,
+            manifestFile: "lake-manifest.json",
+            inputRev: dep.rev,
+            inherited: false,
+            configFile: "lakefile.toml",
+          },
+    );
   }
   entries.push(...warmManifest.packages);
   const target = path.join(pkgDir, "lake-manifest.json");

@@ -27,15 +27,17 @@ export interface PublishedUpstream {
 }
 
 /** Build `root` on the host, seal and push its capture to the fake registry,
- * and return everything a database record needs to reference it. */
+ * and return everything a database record needs to reference it. `archive`
+ * carries the upstream's own dependencies for chained submissions. */
 export async function publishLocalCapture(
   id: string,
   root: string,
   repository: string,
+  archive?: ArchiveSnapshot,
 ): Promise<PublishedUpstream> {
   const jobDir = path.join(tmpDir("lax-upstream-job-"), "work");
   fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
-  const report = await buildOnHost(root, { id, repository, jobDir });
+  const report = await buildOnHost(root, { id, repository, jobDir, archive });
   if (!report.ok || report.capture === undefined || report.buildOutput === undefined) {
     throw new Error(`upstream build failed:\n${JSON.stringify(report.violations, null, 2)}`);
   }

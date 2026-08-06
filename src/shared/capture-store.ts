@@ -8,11 +8,10 @@ import type { CaptureManifest, PublishedCapture } from "../submission-validation
 
 const REGISTRY = "https://ghcr.io";
 
-/** Test seam (never set in production): the publisher-side twin of the
- * LAX_CAPTURE_REGISTRY_URL seam in submission-validation/host/captures.ts —
- * point promote() at a local fake registry (test/fake-ghcr.ts). Read per
- * call, like githubApiBase() in ./constants.js, so a fake started after
- * module import is honored; unset means the real ghcr origin. */
+/** Test seam (never set in production): LAX_CAPTURE_REGISTRY_URL points
+ * promote() at a local fake registry (test/fake-ghcr.ts). Read per call,
+ * like githubApiBase() in ./constants.js, so a fake started after module
+ * import is honored; unset means the real ghcr origin. */
 function registryOrigin(): string {
   const value = process.env.LAX_CAPTURE_REGISTRY_URL;
   return value === undefined ? REGISTRY : new URL(value).origin;

@@ -139,4 +139,38 @@ describe("warm store package overrides", () => {
     expect(manifest.packages.slice(1)).toEqual(WARM_PACKAGES);
     expect(fs.readdirSync(pkgDir)).toEqual(["lake-manifest.json"]);
   });
+
+  it("seeds locked git entries for cross-submission dependencies (host source builds)", () => {
+    const warm = makeWarm();
+    const pkgDir = temporary("lax-consumer-");
+    seedManifest(warm, pkgDir, [
+      {
+        name: "Lax7",
+        url: "https://github.com/alice/dependency",
+        rev: "7".repeat(40),
+        subDir: "sub/folder/concepts",
+      },
+      { name: "Lax9", dir: "../concepts" },
+    ]);
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(pkgDir, "lake-manifest.json"), "utf8"),
+    ) as { packages: Record<string, unknown>[] };
+    // the exact entry shape the pinned lake v4.30.0 materializes on `lake
+    // build` (clone at the locked rev, no `lake update`): inputRev must equal
+    // the require's declared rev or lake reports the manifest out of date
+    expect(manifest.packages[0]).toEqual({
+      url: "https://github.com/alice/dependency",
+      type: "git",
+      subDir: "sub/folder/concepts",
+      scope: "",
+      rev: "7".repeat(40),
+      name: "Lax7",
+      manifestFile: "lake-manifest.json",
+      inputRev: "7".repeat(40),
+      inherited: false,
+      configFile: "lakefile.toml",
+    });
+    expect(manifest.packages[1]).toMatchObject({ type: "path", name: "Lax9", dir: "../concepts" });
+    expect(manifest.packages.slice(2)).toEqual(WARM_PACKAGES);
+  });
 });

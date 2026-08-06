@@ -1,15 +1,14 @@
-// A local stand-in for ghcr.io's OCI distribution API, reachable from CLI
-// subprocesses and the in-process host pipeline through the
+// A local stand-in for ghcr.io's OCI distribution API, reachable through the
 // LAX_CAPTURE_REGISTRY_URL test seam (never set in production — see
-// src/submission-validation/host/captures.ts and src/shared/capture-store.ts).
-// One server plays every registry role the capture path uses, on both sides:
+// src/shared/capture-store.ts). One server plays every registry role the
+// capture path uses, on both sides:
 //
 // - publisher (GhcrCaptureStore.promote): token exchange (Basic auth),
 //   HEAD blob by digest, POST upload session, PUT upload by digest,
 //   PUT manifest by tag;
-// - consumer (materializeHostCaptures): anonymous pull token, GET blob by
-//   digest (served directly — the real ghcr's 307 redirect to a signed host
-//   is an optimization the consumer treats as optional);
+// - consumer: anonymous pull token, GET blob by digest (served directly —
+//   the real ghcr's 307 redirect to a signed host is an optimization a
+//   consumer treats as optional);
 // - plus HEAD/GET manifests by tag or digest for completeness.
 //
 // In-memory, request-recording, seedable: tests may pre-seed `state.blobs`
