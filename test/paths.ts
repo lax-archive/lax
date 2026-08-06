@@ -53,3 +53,22 @@ export function sharedWarmBase(): string {
     ? path.join(userLaxHome, "warm")
     : path.join(TEST_CACHE, "warm");
 }
+
+/**
+ * Put the pinned toolchain's bin dir and elan's own bin dir first on PATH,
+ * mirroring ensureValidationHost (host/setup.ts): the warm/inspector builds
+ * and the host pipeline spawn `lake` by name, and CLI subprocesses preflight
+ * `elan` — the suite must find them even when the caller's PATH has neither
+ * (CI provisions ~/.elan but never edits the step's PATH). The src import is
+ * dynamic so this module stays env-seam-safe to import (see the header).
+ */
+export async function putToolchainOnPath(): Promise<void> {
+  const { elanHome, toolchainBinDir } = await import(
+    "../src/submission-validation/host/leanenv.js"
+  );
+  const current = (process.env.PATH ?? "").split(path.delimiter);
+  const missing = [toolchainBinDir(), path.join(elanHome(), "bin")].filter(
+    (dir) => !current.includes(dir),
+  );
+  if (missing.length > 0) process.env.PATH = [...missing, ...current].join(path.delimiter);
+}

@@ -7,13 +7,14 @@
 // happen after the env seam is set.
 import fs from "node:fs";
 import { fakeMathlib } from "./fake-mathlib.js";
-import { SHARED_TOOLS, sharedWarmBase } from "./paths.js";
+import { putToolchainOnPath, SHARED_TOOLS, sharedWarmBase } from "./paths.js";
 
 export default async function setup(): Promise<void> {
   if (process.env.LAX_E2E === "1") return;
   const { url, rev } = fakeMathlib();
   process.env.LAX_MATHLIB_URL = url;
   process.env.LAX_MATHLIB_REV = rev;
+  await putToolchainOnPath();
   const { inspectorBinary } = await import("../src/submission-validation/host/inspector.js");
   await inspectorBinary(SHARED_TOOLS);
   const { buildWarmWorkspace, makeStoreReadOnly, markWarmReady, warmDir, warmReady } = await import(
