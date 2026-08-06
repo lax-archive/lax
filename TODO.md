@@ -261,6 +261,34 @@ somewhere durable. Still owed:
   for the lax-archive org (Settings → Pages → verified domains) against
   domain takeover.
 
+## Finish and test the deployment (next session)
+
+Where the 2026-08-06 cutover session left off. Working state: old box
+stopped and powered off (export safe, see the old-deployment section);
+laxarchive.org DNS repointed at GitHub Pages and serving the new site over
+HTTP; release workflow ported and green but never run.
+
+1. **HTTPS**: the Let's Encrypt cert for laxarchive.org was still
+   provisioning at session end (a watcher was set to flip enforcement, but
+   verify). If `gh api repos/lax-archive/lax-website/pages` shows
+   `https_enforced: false`, wait for the cert
+   (`curl -sI https://laxarchive.org/`) then
+   `gh api -X PUT repos/lax-archive/lax-website/pages -F https_enforced=true`.
+   Also check the `www.laxarchive.org` → apex redirect works.
+2. **First npm release**: Jan confirms the trusted publisher (next
+   section), then tag `v0.1.18` on main and watch `release.yml` — first run
+   is cold (provisions the toolchain cache). After publish: real-install
+   test on a clean PATH — `npm i -g lax-archive`, `lax doctor`,
+   `lax build`/`lax serve` on a real submission folder.
+3. **Production round trip**: one real submission update through
+   issues → validate → publish → website dispatch, then confirm the record
+   renders at laxarchive.org. This is the first post-cutover proof that the
+   dispatch and the Pages deploy meet in the middle.
+4. **Leftovers, unblocked but not urgent**: Hetzner console cleanup and
+   export housekeeping (old-deployment section), scratch-repo teardown +
+   rehearsal token rotation (live-rehearsal section), org domain
+   verification for laxarchive.org (Settings → Pages → verified domains).
+
 ## First npm release from this tree (before tagging v0.1.18)
 
 - ~~Stop the box's auto-deploy first~~ — done 2026-08-06: the box is fully
