@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LoadedSubmission } from "../../src/shared/archive.js";
 import {
+  deletedFiles,
   fileDigests,
   initialFiles,
+  jsonFile,
   parseArchiveFiles,
   registeredFiles,
   replaceOwnerList,
@@ -263,6 +265,74 @@ describe("trusted Archive publisher modes", () => {
     expect(Object.keys(registration.changes())).toEqual(["record.json"]);
   });
 
+  it("register admits only registered dependencies", async () => {
+    const current = loadedWithRequires(["Lax7", "mathlib"]);
+    const harness = publisherHarness(current, current, () => undefined, {
+      "lax-7": dependencyLoaded("lax-7", "draft"),
+    });
+    await expect(
+      harness.publisher.publish(
+        request({
+          action: "register",
+          commentId: 79,
+          command: { action: "register" },
+          preconditions: current.preconditions,
+        }),
+        run,
+      ),
+    ).rejects.toThrow(
+      "dependency lax-7 is draft; registration admits only registered dependencies — register lax-7 first",
+    );
+    // dependency states are read at the same snapshot the CAS commit is built on
+    expect(harness.load).toHaveBeenCalledWith("lax-7", current.snapshot);
+    expect(harness.website.request).not.toHaveBeenCalled();
+  });
+
+  it("register refuses deleted and missing dependencies without a register hint", async () => {
+    const current = loadedWithRequires(["Lax7"], ["Lax9"]);
+    const harness = publisherHarness(current, current, () => undefined, {
+      "lax-7": dependencyLoaded("lax-7", "deleted"),
+    });
+    try {
+      await harness.publisher.publish(
+        request({
+          action: "register",
+          commentId: 79,
+          command: { action: "register" },
+          preconditions: current.preconditions,
+        }),
+        run,
+      );
+      throw new Error("expected publication validation to fail");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("dependency lax-7 is deleted and its id is retired");
+      expect(message).toContain("dependency lax-9 is missing from lax-database");
+      expect(message).not.toContain("register lax-7 first");
+    }
+    expect(harness.website.request).not.toHaveBeenCalled();
+  });
+
+  it("register proceeds when every dependency is registered", async () => {
+    const current = loadedWithRequires(["Lax7"], ["Lax7", "Lax9"]);
+    const harness = publisherHarness(current, current, () => undefined, {
+      "lax-7": dependencyLoaded("lax-7", "registered"),
+      "lax-9": dependencyLoaded("lax-9", "registered"),
+    });
+    const result = await harness.publisher.publish(
+      request({
+        action: "register",
+        commentId: 79,
+        command: { action: "register" },
+        preconditions: current.preconditions,
+      }),
+      run,
+    );
+    expect(result.kind).toBe("committed");
+    expect(Object.keys(harness.changes())).toEqual(["record.json"]);
+    expect(harness.changes()["record.json"]).toContain('"state": "registered"');
+  });
+
   it("routes Lean updates away from the ordinary publisher", async () => {
     const current = loaded();
     const harness = publisherHarness(current);
@@ -379,6 +449,7 @@ function publisherHarness(
   current: LoadedSubmission | undefined,
   latest = current,
   afterValidation: () => void = () => undefined,
+  dependencies: Record<string, LoadedSubmission> = {},
 ): {
   publisher: Publisher;
   control: PublisherControl;
@@ -386,6 +457,7 @@ function publisherHarness(
   comments: string[];
   successes: number[];
   clearedProgress: number[];
+  load: ReturnType<typeof vi.fn>;
   writeFiles: ReturnType<typeof vi.fn>;
   website: { request: ReturnType<typeof vi.fn> };
 } {
@@ -409,14 +481,12 @@ function publisherHarness(
   };
   const writeFiles = vi.fn(async (args: Parameters<PublisherArchive["writeFiles"]>[0]) => {
     changes = args.changes;
-    args.validateCurrent(latest);
+    await args.validateCurrent(latest);
     afterValidation();
     return "c".repeat(40);
   });
-  const archive: PublisherArchive = {
-    load: vi.fn().mockResolvedValue(current),
-    writeFiles,
-  };
+  const load = vi.fn(async (id: string) => (id === "lax-42" ? current : dependencies[id]));
+  const archive: PublisherArchive = { load, writeFiles };
   const website = { request: vi.fn().mockResolvedValue(undefined) };
   return {
     publisher: new Publisher(control, archive, issue.repositoryId),
@@ -425,6 +495,7 @@ function publisherHarness(
     comments,
     successes,
     clearedProgress,
+    load,
     writeFiles,
     website,
   };
@@ -437,6 +508,41 @@ function loaded(
     snapshot: { branch: "main", sha: "a".repeat(40) },
     texts,
     files: parseArchiveFiles("lax-42", texts),
+    preconditions: fileDigests(texts),
+  };
+}
+
+function loadedWithRequires(concepts: string[], proofs: string[] = []): LoadedSubmission {
+  const texts = initialFiles("lax-42", issue, alice, "2026-07-30T10:00:00Z");
+  const output = JSON.parse(texts["build-output.json"]!) as Record<string, unknown>;
+  texts["build-output.json"] = jsonFile({
+    ...output,
+    requiredByConcepts: concepts,
+    requiredByProofs: proofs,
+  });
+  return loaded(texts);
+}
+
+function dependencyLoaded(id: string, state: "draft" | "registered" | "deleted"): LoadedSubmission {
+  const binding = { repositoryId: issue.repositoryId, number: Number(id.slice("lax-".length)) };
+  let texts = initialFiles(id, binding, alice, "2026-07-30T09:00:00Z");
+  if (state === "draft") {
+    const record = JSON.parse(texts["record.json"]!) as Record<string, unknown>;
+    texts = {
+      ...texts,
+      "record.json": jsonFile({
+        ...record,
+        state: "draft",
+        source: { repository: "https://github.com/alice/repo", commit: "b".repeat(40), folder: "." },
+      }),
+    };
+  }
+  if (state === "registered") texts = registeredFiles(id, texts);
+  if (state === "deleted") texts = deletedFiles(id, texts, "2026-07-30T09:30:00Z");
+  return {
+    snapshot: { branch: "main", sha: "a".repeat(40) },
+    texts,
+    files: parseArchiveFiles(id, texts),
     preconditions: fileDigests(texts),
   };
 }

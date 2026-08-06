@@ -10,6 +10,7 @@ import {
   type ArchiveFilename,
 } from "./archive-schema.js";
 import { samePreconditions, type ArchiveSnapshot, type LoadedSubmission } from "./archive.js";
+import { submissionIdForPackage } from "../submission-validation/contracts.js";
 import { WEBSITE_REPOSITORY } from "./constants.js";
 import { repositoryPath } from "./github.js";
 import type {
@@ -110,7 +111,7 @@ export class Publisher {
       request.command?.action === "owners" &&
       sameOwners(current.files.ownerList.owners, request.command.owners)
     ) {
-      this.validateCurrent(request, current, plan);
+      await this.validateCurrent(request, current, plan);
       await this.control.completeCommand(request.commentId!);
       return { kind: "no-op" };
     }
@@ -176,11 +177,11 @@ export class Publisher {
     throw new ValidationError("unsupported publication action");
   }
 
-  private validateCurrent(
+  private async validateCurrent(
     request: PublishRequest,
     current: LoadedSubmission | undefined,
     plan: PublishPlan,
-  ): void {
+  ): Promise<void> {
     if (plan.mode === "init") {
       if (current !== undefined) throw new ValidationError(`${request.id} already exists in lax-database`);
       return;
@@ -198,6 +199,22 @@ export class Publisher {
     }
     if (current.files.record.state !== "init" && current.files.record.state !== "draft") {
       problems.push(`${request.id} is now ${current.files.record.state}`);
+    }
+    if (request.action === "register") {
+      // Registration admits only registered dependencies (spec.md). States
+      // are read at the snapshot the non-forced ref update commits against,
+      // so a passing check cannot be overtaken before the CAS succeeds.
+      for (const dependency of requiredSubmissionIds(current)) {
+        const state = (await this.archive.load(dependency, current.snapshot))?.files.record.state;
+        if (state === "registered") continue;
+        problems.push(
+          state === undefined
+            ? `dependency ${dependency} is missing from lax-database; registration admits only registered dependencies`
+            : state === "deleted"
+              ? `dependency ${dependency} is deleted and its id is retired; registration admits only registered dependencies`
+              : `dependency ${dependency} is ${state}; registration admits only registered dependencies — register ${dependency} first`,
+        );
+      }
     }
     if (
       request.preconditions === undefined ||
@@ -491,6 +508,24 @@ function trustedDependents(value: unknown): string[] {
     throw new ValidationError("publication dependents must be unique and sorted by submission number");
   }
   return dependents;
+}
+
+/**
+ * The submissions whose packages this record's build requires. The
+ * requiredByConcepts/requiredByProofs entries are package names; non-Lax
+ * packages (mathlib and friends) carry no Archive record and drop out.
+ */
+function requiredSubmissionIds(current: LoadedSubmission): string[] {
+  const names = [current.files.buildOutput.requiredByConcepts, current.files.buildOutput.requiredByProofs]
+    .flatMap((value) =>
+      Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [],
+    );
+  const ids = new Set<string>();
+  for (const name of names) {
+    const id = submissionIdForPackage(name);
+    if (id !== undefined && id !== current.files.record.id) ids.add(id);
+  }
+  return [...ids].sort((left, right) => Number(left.slice("lax-".length)) - Number(right.slice("lax-".length)));
 }
 
 function sameOwners(left: GitHubIdentity[], right: GitHubIdentity[]): boolean {

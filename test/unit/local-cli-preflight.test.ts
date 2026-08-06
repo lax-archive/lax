@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkDeleteLocally } from "../../src/cli/archive-preflight.js";
+import { checkDeleteLocally, checkRegisterLocally } from "../../src/cli/archive-preflight.js";
 import { hasCurrentLocalBuild } from "../../src/cli/build.js";
 import {
   databaseDirectory,
@@ -97,6 +97,52 @@ describe("local command preflights", () => {
 
     expect(checkDeleteLocally("lax-7", "refreshed")).toEqual({
       warnings: ["deleting lax-7 will strand lax-8"],
+    });
+  });
+
+  it("refuses a registration whose dependency is not registered", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-5", "draft", []);
+    writeRecord(database, "lax-7", "draft", ["Lax5", "mathlib"]);
+
+    expect(checkRegisterLocally("lax-7", "refreshed")).toEqual({
+      refusal:
+        "registration admits only registered dependencies — lax-5 is draft; " +
+        "a chain lands bottom-up: register lax-5 first",
+      warnings: [],
+    });
+  });
+
+  it("names deleted and missing dependencies without a register hint", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-5", "deleted", []);
+    writeRecord(database, "lax-7", "draft", ["Lax5", "Lax9Proofs"]);
+
+    expect(checkRegisterLocally("lax-7", "refreshed")).toEqual({
+      refusal:
+        "registration admits only registered dependencies — lax-5 is deleted, " +
+        "lax-9 is not in the local lax-database",
+      warnings: [],
+    });
+  });
+
+  it("permits registration once every dependency is registered", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-5", "registered", []);
+    writeRecord(database, "lax-6", "draft", []);
+    writeRecord(database, "lax-7", "draft", ["Lax5", "mathlib"]);
+
+    expect(checkRegisterLocally("lax-7", "refreshed")).toEqual({ warnings: [] });
+    expect(checkRegisterLocally("lax-6", "refreshed")).toEqual({ warnings: [] });
+    expect(checkRegisterLocally("lax-5", "refreshed")).toEqual({
+      refusal: "lax-5 is already registered",
+      warnings: [],
     });
   });
 

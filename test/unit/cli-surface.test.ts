@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -83,11 +84,18 @@ describe("CLI compatibility surface", () => {
   });
 
   it("requires explicit confirmation before non-interactive registration", () => {
-    const result = cli(["register", "lax-42"]);
-    expect(result.code).toBe(1);
-    expect(result.output).toContain("registering lax-42 is permanent");
-    expect(result.output).toContain("rerun with --yes");
-    expect(result.output).not.toContain("no GitHub App login found");
+    // an empty LAX_HOME keeps the register preflight off the developer's ~/.lax
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "lax-home-"));
+    try {
+      const result = cli(["register", "lax-42"], { LAX_HOME: home });
+      expect(result.code).toBe(1);
+      expect(result.output).toContain("no local lax-database checkout");
+      expect(result.output).toContain("registering lax-42 is permanent");
+      expect(result.output).toContain("rerun with --yes");
+      expect(result.output).not.toContain("no GitHub App login found");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("aggregates missing tools for the host build toolchain", () => {

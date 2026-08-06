@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { packageNameForSubmission } from "../submission-validation/contracts.js";
+import { packageNameForSubmission, submissionIdForPackage } from "../submission-validation/contracts.js";
 import { SUBMISSION_ID_PATTERN } from "../shared/constants.js";
 import { databaseDirectory, type DatabaseRefreshResult } from "./database.js";
 
@@ -61,6 +61,73 @@ export function checkDeleteLocally(id: string, refresh: DatabaseRefreshResult): 
     warnings.push(`deleting ${id} will strand ${dependents.join(", ")}`);
   }
   return { warnings };
+}
+
+export interface RegisterPreflight {
+  refusal?: string;
+  warnings: string[];
+}
+
+export function checkRegisterLocally(id: string, refresh: DatabaseRefreshResult): RegisterPreflight {
+  if (refresh === "missing") {
+    return {
+      warnings: [
+        "no local lax-database checkout; lifecycle state and dependency states could not be checked",
+      ],
+    };
+  }
+  let records: LocalRecord[];
+  try {
+    records = readRecords(databaseDirectory());
+  } catch (error) {
+    return { warnings: [`local lax-database could not be read: ${(error as Error).message}`] };
+  }
+  const current = records.find((record) => record.id === id);
+  const stale = refresh === "failed";
+  const warnings: string[] = [];
+  if (stale) warnings.push("local lax-database could not be refreshed; GitHub will make the final decision");
+  if (current === undefined) {
+    const message = `${id} does not exist in the local lax-database`;
+    return stale ? { warnings: [...warnings, message] } : { refusal: message, warnings };
+  }
+  if (current.state === "registered" || current.state === "deleted") {
+    const message =
+      current.state === "registered"
+        ? `${id} is already registered`
+        : `${id} is deleted and its id is retired`;
+    if (!stale) return { refusal: message, warnings };
+    warnings.push(message);
+  }
+  const states = new Map(records.map((record) => [record.id, record.state]));
+  const blockers = dependencyIds(id, current.requirements)
+    .map((dependency) => ({ dependency, state: states.get(dependency) }))
+    .filter((entry) => entry.state !== "registered");
+  if (blockers.length > 0) {
+    const registrable = blockers
+      .filter((entry) => entry.state !== undefined && entry.state !== "deleted")
+      .map((entry) => entry.dependency);
+    const message =
+      "registration admits only registered dependencies — " +
+      blockers
+        .map(({ dependency, state }) => `${dependency} is ${state ?? "not in the local lax-database"}`)
+        .join(", ") +
+      (registrable.length > 0
+        ? `; a chain lands bottom-up: register ${registrable.join(", ")} first`
+        : "");
+    if (!stale) return { refusal: message, warnings };
+    warnings.push(message);
+  }
+  return { warnings };
+}
+
+/** The requirements are package names; non-Lax packages carry no record. */
+function dependencyIds(id: string, requirements: string[]): string[] {
+  const ids = new Set<string>();
+  for (const name of requirements) {
+    const dependency = submissionIdForPackage(name);
+    if (dependency !== undefined && dependency !== id) ids.add(dependency);
+  }
+  return [...ids].sort((left, right) => Number(left.slice("lax-".length)) - Number(right.slice("lax-".length)));
 }
 
 function readRecords(root: string): LocalRecord[] {

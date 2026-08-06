@@ -17,7 +17,7 @@ import {
   validateRepositoryUrl,
 } from "../shared/validation.js";
 import type { GitHubIdentity } from "../shared/types.js";
-import { checkDeleteLocally } from "./archive-preflight.js";
+import { checkDeleteLocally, checkRegisterLocally } from "./archive-preflight.js";
 import { githubAppUserToken } from "./auth.js";
 import { buildSubmission, hasCurrentLocalBuild } from "./build.js";
 import { confirmTyped } from "./confirm.js";
@@ -294,6 +294,16 @@ async function buildCommittedTree(root: string, commit: string, folder: string):
 export async function requestRegistration(reference: string, yes = false): Promise<number> {
   const issue = resolveIssueReference(reference);
   const id = `lax-${issue}`;
+  console.log(`lax register: checking ${id} against a refreshed local lax-database.`);
+  const preflight = checkRegisterLocally(id, tryRefreshDatabase());
+  if (preflight.warnings.length > 0) {
+    console.warn(
+      `lax register: local preflight warnings:\n${preflight.warnings.map((warning) => `  - ${warning}`).join("\n")}`,
+    );
+  }
+  if (preflight.refusal !== undefined) {
+    throw new Error(`${preflight.refusal}; the issue command was not created`);
+  }
   if (
     !yes &&
     !(await confirmTyped({
