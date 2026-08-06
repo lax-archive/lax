@@ -110,7 +110,7 @@ describe("submission workflow wiring", () => {
     expect(Object.keys(jobs).sort()).toEqual([
       "precheck",
       "publish",
-      "publish-update",
+      "publish-submit",
       "report-workflow-failure",
       "route",
       "validate",
@@ -203,7 +203,7 @@ describe("submission workflow wiring", () => {
     }
     expect(workflow.match(/upload-artifact/gu)).toHaveLength(1);
     // Every download must name the same artifact the validate job uploaded.
-    for (const name of ["validation-result", "publish-update"]) {
+    for (const name of ["validation-result", "publish-submit"]) {
       const download = jobs[name].steps.find((step) => step.uses?.startsWith("actions/download-artifact"));
       expect(download?.with?.name, name).toBe("submission-validation-${{ github.event.issue.number }}");
       expect(download?.with?.path, name).toBe(".build/submission-validation");
@@ -215,7 +215,7 @@ describe("submission workflow wiring", () => {
   // -------------------------------------------------------------------------
   it("joins the validation result before reporting or publishing", () => {
     // validation-result is the single join between the untrusted validate job
-    // and everything privileged; publish-update must run only behind it.
+    // and everything privileged; publish-submit must run only behind it.
     expect(jobs["validation-result"].needs).toEqual(["route", "validate"]);
     expect(jobs["validation-result"].if).toBe(
       "always() && needs.route.outputs.operation == 'validate'",
@@ -226,8 +226,8 @@ describe("submission workflow wiring", () => {
     );
     // A failed validate job may have uploaded nothing; reporting still runs.
     expect(download?.["continue-on-error"]).toBe(true);
-    expect(jobs["publish-update"].needs).toEqual(["route", "validation-result"]);
-    expect(jobs["publish-update"].if).toContain(
+    expect(jobs["publish-submit"].needs).toEqual(["route", "validation-result"]);
+    expect(jobs["publish-submit"].if).toContain(
       "needs.validation-result.outputs.should_publish == 'true'",
     );
   });
@@ -235,21 +235,21 @@ describe("submission workflow wiring", () => {
   // -------------------------------------------------------------------------
   // Credential separation: each App key scoped to its own environment/job.
   // -------------------------------------------------------------------------
-  it("checks update artifacts and fresh state before minting the database token", () => {
+  it("checks submit artifacts and fresh state before minting the database token", () => {
     // Trust rule 2: the credential-free preflight step must complete before
     // the App key is touched, so a forged artifact can never reach a token.
-    const update = workflow.slice(workflow.indexOf("  publish-update:"), workflow.indexOf("  publish:"));
-    const prepare = update.indexOf("Parse artifacts and revalidate current state");
-    const mint = update.indexOf("Mint lax-database token");
-    const publish = update.indexOf("Promote capture and publish trusted update");
+    const submit = workflow.slice(workflow.indexOf("  publish-submit:"), workflow.indexOf("  publish:"));
+    const prepare = submit.indexOf("Parse artifacts and revalidate current state");
+    const mint = submit.indexOf("Mint lax-database token");
+    const publish = submit.indexOf("Promote capture and publish trusted submit");
     expect(prepare).toBeGreaterThan(0);
     expect(prepare).toBeLessThan(mint);
     expect(mint).toBeLessThan(publish);
-    expect(update).toContain("steps.prepare-update.outputs.should_publish == 'true'");
-    expect(update).toContain("environment: lax-database-publish");
-    // Only the trusted update publisher pushes captures to ghcr, with the
+    expect(submit).toContain("steps.prepare-submit.outputs.should_publish == 'true'");
+    expect(submit).toContain("environment: lax-database-publish");
+    // Only the trusted submit publisher pushes captures to ghcr, with the
     // job's own GITHUB_TOKEN; no other job holds a packages grant.
-    expect(jobs["publish-update"].permissions).toEqual({
+    expect(jobs["publish-submit"].permissions).toEqual({
       contents: "read",
       issues: "write",
       packages: "write",
@@ -273,9 +273,9 @@ describe("submission workflow wiring", () => {
     expect(website).toContain("secrets.LAX_WEBSITE_APP_PRIVATE_KEY");
     expect(website).not.toContain("LAX_DATABASE_APP_PRIVATE_KEY");
     // Website credentials exist only after lax-database advanced.
-    expect(jobs.website.needs).toEqual(["route", "publish", "publish-update"]);
+    expect(jobs.website.needs).toEqual(["route", "publish", "publish-submit"]);
     expect(jobs.website.if).toContain("needs.publish.outputs.archive_commit != ''");
-    expect(jobs.website.if).toContain("needs.publish-update.outputs.archive_commit != ''");
+    expect(jobs.website.if).toContain("needs.publish-submit.outputs.archive_commit != ''");
     // The one-key-per-workflow-secret rule: no legacy combined App secrets.
     expect(workflow).not.toContain("secrets.LAX_APP_ID");
     expect(workflow).not.toContain("secrets.LAX_APP_PRIVATE_KEY");
@@ -293,7 +293,7 @@ describe("submission workflow wiring", () => {
       "precheck",
       "route",
       "publish",
-      "publish-update",
+      "publish-submit",
       "website",
       "validation-result",
     ]);
@@ -320,7 +320,7 @@ describe("submission workflow wiring", () => {
     // Declaration order drives GitHub's automatic DAG layout; keep the long
     // validation row on top so run pages stay readable.
     expect(workflow.indexOf("  validate:")).toBeLessThan(workflow.indexOf("  publish:"));
-    expect(workflow.indexOf("  publish-update:")).toBeLessThan(workflow.indexOf("  publish:"));
+    expect(workflow.indexOf("  publish-submit:")).toBeLessThan(workflow.indexOf("  publish:"));
     expect(workflow.indexOf("  publish:")).toBeLessThan(workflow.indexOf("  website:"));
   });
 });

@@ -19,19 +19,19 @@ import type { SuccessfulValidationArtifacts } from "../submission-validation/art
 import { parsePublishedCapture } from "../submission-validation/artifact-schema.js";
 import type { WorkflowRunRef } from "./workflow-comments.js";
 
-export type UpdatePublishResult =
+export type SubmitPublishResult =
   | { kind: "no-op" }
   | { kind: "committed"; archiveCommit: string; acceptedTitle: string };
 
-export interface UpdateCaptureStore {
+export interface SubmitCaptureStore {
   promote: GhcrCaptureStore["promote"];
 }
 
-export class UpdatePublisher {
+export class SubmitPublisher {
   constructor(
     private readonly control: PublisherControl,
     private readonly archive: PublisherArchive,
-    private readonly captureStore: UpdateCaptureStore | undefined,
+    private readonly captureStore: SubmitCaptureStore | undefined,
     private readonly repositoryId: number,
   ) {}
 
@@ -54,8 +54,8 @@ export class UpdatePublisher {
     artifacts: SuccessfulValidationArtifacts,
     capturePath: string,
     run: WorkflowRunRef,
-  ): Promise<UpdatePublishResult> {
-    if (this.captureStore === undefined) throw new Error("update publisher has no capture store");
+  ): Promise<SubmitPublishResult> {
+    if (this.captureStore === undefined) throw new Error("submit publisher has no capture store");
     const ready = await this.preflight(untrustedRequest, artifacts);
     if (ready.kind === "no-op") return { kind: "no-op" };
     const request = ready.request;
@@ -74,7 +74,7 @@ export class UpdatePublisher {
       artifacts.report.capture,
       capturePath,
     );
-    const changes = constructUpdateChanges(request, current, artifacts.buildOutput, publishedCapture);
+    const changes = constructSubmitChanges(request, current, artifacts.buildOutput, publishedCapture);
     const archiveCommit = await this.archive.writeFiles({
       id: request.id,
       changes,
@@ -90,11 +90,11 @@ export class UpdatePublisher {
 
   private async canonicalRequest(untrustedRequest: PublishRequest): Promise<PublishRequest> {
     let request = parsePublishRequest(untrustedRequest, this.repositoryId);
-    if (request.action !== "update" || request.command?.action !== "update" || request.commentId === undefined) {
-      throw new ValidationError("trusted update publication requires an update request");
+    if (request.action !== "submit" || request.command?.action !== "submit" || request.commentId === undefined) {
+      throw new ValidationError("trusted submit publication requires a submit request");
     }
     const actor = (await this.control.resolveOwnerPairs([request.actor]))[0];
-    if (actor === undefined) throw new ValidationError("update actor no longer resolves on GitHub");
+    if (actor === undefined) throw new ValidationError("submit actor no longer resolves on GitHub");
     request = parsePublishRequest({ ...request, actor }, this.repositoryId);
     return request;
   }
@@ -120,9 +120,9 @@ export class UpdatePublisher {
       request.preconditions === undefined ||
       !samePreconditions(current.preconditions, request.preconditions, ["record", "buildOutput"])
     ) problems.push(`${request.id} changed after validation; submit a new command comment`);
-    const command = request.command?.action === "update" ? request.command : undefined;
+    const command = request.command?.action === "submit" ? request.command : undefined;
     if (command === undefined || JSON.stringify(source(command)) !== JSON.stringify(artifacts.report.request.source)) {
-      problems.push("validated source does not match the authorized update command");
+      problems.push("validated source does not match the authorized submit command");
     }
     const dependencyProblems = await this.validateDependencies(
       artifacts.report.dependencies,
@@ -191,13 +191,13 @@ export class UpdatePublisher {
   }
 }
 
-function constructUpdateChanges(
+function constructSubmitChanges(
   request: PublishRequest,
   current: LoadedSubmission,
   payload: BuildOutputPayload,
   publishedCapture: PublishedCapture,
 ): ArchiveChanges {
-  if (request.command?.action !== "update") throw new ValidationError("update command is missing");
+  if (request.command?.action !== "submit") throw new ValidationError("submit command is missing");
   const record = {
     specVersion: "1",
     id: request.id,

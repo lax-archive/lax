@@ -147,7 +147,7 @@ async function githubCheck(): Promise<Check> {
           name: "github auth",
           status: "fail",
           detail: `credentials do not authorize the current ${CONTROL_REPOSITORY} repository`,
-          fix: "run `lax logout`, `lax upgrade`, then `lax login` again",
+          fix: "run `lax logout`, `lax update`, then `lax login` again",
         };
       }
       throw error;
@@ -180,19 +180,19 @@ function databaseCheck(): Check {
     name: "database clone",
     status: "warn",
     detail: `none at ${directory}`,
-    fix: "run `lax update-db` before building or serving",
+    fix: "run `lax pull-db` before building or serving",
   };
   if (freshness.status === "invalid") return {
     name: "database clone",
     status: "warn",
     detail: `${directory} is not a usable git clone`,
-    fix: "move it aside and run `lax update-db`",
+    fix: "move it aside and run `lax pull-db`",
   };
   if (freshness.status === "stale") return {
     name: "database clone",
     status: "warn",
     detail: `${directory} is behind lax-database`,
-    fix: "run `lax update-db`",
+    fix: "run `lax pull-db`",
   };
   if (freshness.status === "unreachable") return {
     name: "database clone",

@@ -312,11 +312,11 @@ export class ControlPlane {
       preconditions: loaded.preconditions,
       dependents,
     };
-    if (command.action === "update") {
+    if (command.action === "submit") {
       return {
         kind: "validate",
         request,
-        preview: updatePreview(id, command, commentId!),
+        preview: submitPreview(id, command, commentId!),
       };
     }
     const preview =
@@ -386,9 +386,9 @@ function nodeId(value: unknown): string {
   return value;
 }
 
-function updatePreview(id: string, command: Extract<ParsedCommand, { action: "update" }>, commentId: number): string {
+function submitPreview(id: string, command: Extract<ParsedCommand, { action: "submit" }>, commentId: number): string {
   return (
-    `Update preview for **${id}**:\n\n` +
+    `Submit preview for **${id}**:\n\n` +
     `- Repository: \`${command.repository}\`\n` +
     `- Commit: \`${command.commit}\`\n` +
     `- Folder: \`${command.folder}\`\n\n` +

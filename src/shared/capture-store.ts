@@ -83,7 +83,7 @@ export function captureTag(source: SourceLocation, manifest: CaptureManifest): s
  *   blob before returning the reference the caller embeds in the record.
  * - Ordering: promote() completes — blob, config, manifest, and tag —
  *   strictly before the database CAS commit that references the blob
- *   (update-publisher.ts). A record must never point at a blob that is not
+ *   (submit-publisher.ts). A record must never point at a blob that is not
  *   durably stored, and only a manifest reference makes a ghcr blob
  *   durable, so the tag is pushed here rather than trailed after the
  *   commit. If the commit then fails, the orphaned tag is garbage — never

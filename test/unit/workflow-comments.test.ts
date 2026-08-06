@@ -50,7 +50,7 @@ describe("workflow comment correlation", () => {
   });
 
   it("replaces workflow-owned context on the original command without duplicating it", () => {
-    const command = '/lax update {"repository":"https://github.com/alice/repo"}';
+    const command = '/lax submit {"repository":"https://github.com/alice/repo"}';
     const first = upsertCommandContext(
       command,
       77,

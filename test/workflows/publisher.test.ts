@@ -182,14 +182,14 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.comments[0]).toContain("lax-initialization-issue:42");
   });
 
-  it("reports update title synchronization as a recoverable partial result", async () => {
+  it("reports submit title synchronization as a recoverable partial result", async () => {
     const current = loaded();
     const harness = publisherHarness(current);
     const publication = request({
-      action: "update",
+      action: "submit",
       commentId: 80,
       command: {
-        action: "update",
+        action: "submit",
         repository: "https://github.com/alice/repo",
         commit: "a".repeat(40),
         folder: ".",
@@ -212,14 +212,14 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.clearedProgress).toEqual([80]);
   });
 
-  it("keeps the final update comment and completes its progress reaction", async () => {
+  it("keeps the final submit comment and completes its progress reaction", async () => {
     const current = loaded();
     const harness = publisherHarness(current);
     const publication = request({
-      action: "update",
+      action: "submit",
       commentId: 80,
       command: {
-        action: "update",
+        action: "submit",
         repository: "https://github.com/alice/repo",
         commit: "a".repeat(40),
         folder: ".",
@@ -333,16 +333,16 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.changes()["record.json"]).toContain('"state": "registered"');
   });
 
-  it("routes Lean updates away from the ordinary publisher", async () => {
+  it("routes Lean submits away from the ordinary publisher", async () => {
     const current = loaded();
     const harness = publisherHarness(current);
     await expect(
       harness.publisher.publish(
         request({
-          action: "update",
+          action: "submit",
           commentId: 80,
           command: {
-            action: "update",
+            action: "submit",
             repository: "https://github.com/alice/repo",
             commit: "a".repeat(40),
             folder: ".",
@@ -351,7 +351,7 @@ describe("trusted Archive publisher modes", () => {
         }),
         run,
       ),
-    ).rejects.toThrow("UpdatePublisher");
+    ).rejects.toThrow("SubmitPublisher");
     expect(harness.writeFiles).not.toHaveBeenCalled();
   });
 

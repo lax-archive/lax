@@ -7,7 +7,7 @@ import { hasCurrentLocalBuild } from "../../src/cli/build.js";
 import {
   databaseDirectory,
   databaseFreshness,
-  updateDatabase,
+  pullDatabase,
 } from "../../src/cli/database.js";
 import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
 
@@ -27,7 +27,7 @@ describe("local command preflights", () => {
     expect(databaseDirectory()).toBe(path.join(home, "lax-database"));
   });
 
-  it("migrates the previous checkout name during an update", () => {
+  it("migrates the previous checkout name during a pull", () => {
     const home = temporary("lax-home-");
     const seed = temporary("lax-database-seed-");
     const remote = path.join(temporary("lax-database-remote-"), "database.git");
@@ -44,7 +44,7 @@ describe("local command preflights", () => {
     process.env.LAX_DATABASE_URL = remote;
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    updateDatabase();
+    pullDatabase();
 
     expect(fs.existsSync(path.join(home, "database"))).toBe(false);
     expect(fs.existsSync(path.join(home, "lax-database", ".git"))).toBe(true);

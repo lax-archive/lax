@@ -18,7 +18,7 @@ export function commandWord(body: string): CommandWord | "unknown" | "ignore" {
   if (!body.startsWith("/lax")) return "ignore";
   const match = /^\/lax(?:\s+([^\s]+))?/u.exec(body);
   const word = match?.[1];
-  if (word === "owners" || word === "update" || word === "delete" || word === "register") {
+  if (word === "owners" || word === "submit" || word === "delete" || word === "register") {
     return word;
   }
   return "unknown";
@@ -30,7 +30,7 @@ export function parseCommand(body: string): ParsedCommand {
   }
   const word = commandWord(body);
   if (word === "ignore" || word === "unknown") {
-    throw new ValidationError("unknown command; use owners, update, delete, or register");
+    throw new ValidationError("unknown command; use owners, submit, delete, or register");
   }
   if (word === "delete" || word === "register") {
     if (!new RegExp(`^/lax\\s+${word}\\s*$`, "u").test(body)) {
@@ -45,7 +45,7 @@ export function parseCommand(body: string): ParsedCommand {
   const rawJson = body.slice(prefix.length).trim();
   if (rawJson === "") throw new ValidationError(`${word} requires a JSON argument`);
   const value = parseJson(rawJson, `${word} argument`);
-  if (word === "update") return { action: "update", ...validateSource(value) };
+  if (word === "submit") return { action: "submit", ...validateSource(value) };
   if (!Array.isArray(value)) throw new ValidationError("owners must be a JSON array");
   const problems = new ValidationCollector();
   if (value.length === 0 || value.length > MAX_OWNERS) {

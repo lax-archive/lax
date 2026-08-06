@@ -36,7 +36,7 @@ export async function buildSubmission(
   const database = databaseDirectory();
   if (!fs.existsSync(path.join(database, ".git"))) {
     throw new Error(
-      `local lax-database checkout is missing at ${database}; run \`lax update-db\``,
+      `local lax-database checkout is missing at ${database}; run \`lax pull-db\``,
     );
   }
   const archiveSha = git(database, ["rev-parse", "HEAD"]);

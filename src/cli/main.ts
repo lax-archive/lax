@@ -9,15 +9,15 @@ import {
   replaceOwners,
   requestDelete,
   requestRegistration,
-  requestUpdate,
   resumeSubmit,
+  submitExplicitSource,
   submitFolder,
 } from "./commands.js";
-import { updateDatabase } from "./database.js";
+import { pullDatabase } from "./database.js";
 import { doctor, installHint, toolVersion } from "./doctor.js";
 import { login } from "./login.js";
 import { printSpec } from "./spec.js";
-import { upgradeCli } from "./upgrade.js";
+import { updateCli } from "./update.js";
 import { serveWebsite } from "./website.js";
 import { checkForCliUpdate } from "./update-check.js";
 
@@ -90,30 +90,11 @@ program
   );
 
 program
-  .command("set-owners")
-  .alias("owners")
+  .command("owners")
   .argument("<target>", "issue number, lax-N id, issue URL, or submission folder")
   .requiredOption("--new-list <handles...>", "complete replacement list of GitHub handles")
   .description("replace the owner set of an init or draft submission")
-  .action(run("lax set-owners", (target: string, options: { newList: string[] }) => replaceOwners(target, options.newList)));
-
-// `lax update` used to be the CLI self-upgrade (now `lax upgrade`) and, after
-// the rewrite, the explicit source-triple submit. Rather than ship that
-// collision, the triple folded into `submit` and the name is retired loudly.
-program
-  .command("update")
-  .argument("[arguments...]")
-  .allowUnknownOption(true)
-  .allowExcessArguments(true)
-  .description("removed — see `lax submit --repository ... --commit ...` and `lax upgrade`")
-  .action(run("lax update", () => {
-    throw new Error(
-      "`lax update` was the pre-rework name for two different commands and no longer exists:\n" +
-        "  - to submit an explicit source triple: " +
-        "`lax submit <issue|folder> --repository <url> --commit <sha> --folder <path>`\n" +
-        "  - to upgrade the CLI itself: `lax upgrade`",
-    );
-  }));
+  .action(run("lax owners", (target: string, options: { newList: string[] }) => replaceOwners(target, options.newList)));
 
 program
   .command("submit")
@@ -149,7 +130,7 @@ program
         if (options.allowDirty === true) {
           throw new Error("--allow-dirty applies to the Git-derived form, not an explicit triple");
         }
-        return requestUpdate(folder, options.repository, options.commit, options.folder ?? ".");
+        return submitExplicitSource(folder, options.repository, options.commit, options.folder ?? ".");
       }
       if (options.folder !== undefined) {
         throw new Error("--folder belongs to the explicit triple; pass the folder as the argument");
@@ -180,12 +161,11 @@ program
     requestRegistration(target, options.yes ?? false)));
 
 program
-  .command("update-db")
-  .aliases(["pull-db", "update-database"])
+  .command("pull-db")
   .description("clone or fast-forward ~/.lax/lax-database from lax-archive/lax-database")
-  .action(run("lax update-db", async () => {
+  .action(run("lax pull-db", async () => {
     preflight(["git"]);
-    updateDatabase();
+    pullDatabase();
   }));
 
 program
@@ -210,11 +190,12 @@ program
   .action(run("lax doctor", doctor));
 
 program
-  .command("upgrade")
+  .command("update")
+  .alias("upgrade")
   .description("upgrade the CLI to the latest release, then refresh lax-database")
-  .action(run("lax upgrade", () => {
+  .action(run("lax update", () => {
     preflight(["npm", "git"]);
-    return upgradeCli();
+    return updateCli();
   }));
 
 program.command("spec").description("print the specification this CLI enforces").action(printSpec);

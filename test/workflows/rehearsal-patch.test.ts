@@ -62,7 +62,7 @@ describe("the rehearsal workflow patch", () => {
         .map((step) => [job, step.name, definition.environment] as const),
     );
     expect(consumers).toEqual([
-      ["publish-update", "Promote capture and publish trusted update", "lax-database-publish"],
+      ["publish-submit", "Promote capture and publish trusted submit", "lax-database-publish"],
       ["publish", "Revalidate and publish lax-database", "lax-database-publish"],
       ["website", "Dispatch Website and report the final result", "lax-website-dispatch"],
     ]);

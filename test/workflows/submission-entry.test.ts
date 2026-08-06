@@ -16,7 +16,7 @@ import {
   workflowRunMarker,
 } from "../../src/shared/workflow-comments.js";
 import {
-  prepareUpdate,
+  prepareSubmit,
   publish,
   reportFailure,
   reportValidation,
@@ -26,7 +26,7 @@ import { successfulArtifacts, TEST_RUNTIME, TEST_SOURCE } from "../support/valid
 
 // The suite-wide fake-mathlib seam makes the real pins module carry a
 // non-GitHub mathlib URL, which the artifact schema rightly rejects; pin the
-// runtime identity to the valid test fixture instead. Only prepare-update
+// runtime identity to the valid test fixture instead. Only prepare-submit
 // consults it, and only for the equality check against the report.
 vi.mock("../../src/submission-validation/config.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../src/submission-validation/config.js")>();
@@ -70,7 +70,7 @@ describe("report-failure entry point", () => {
   });
 
   it("posts one correlated failure, clears the rocket, and stays idempotent on re-runs", async () => {
-    stubWorkflowEnv({ ACTION: "update", OPERATION: "validate", VALIDATION_RESULT: "true" });
+    stubWorkflowEnv({ ACTION: "submit", OPERATION: "validate", VALIDATION_RESULT: "true" });
     writeEvent({ issue: { number: issueNumber }, comment: { id: commentId } });
     const state: IssueState = {
       comments: [],
@@ -83,7 +83,7 @@ describe("report-failure entry point", () => {
     expect(state.comments).toHaveLength(1);
     const body = state.comments[0]!.body;
     expect(body).toContain(
-      "Validation succeeded, but trusted update publication did not complete; no lax-database commit was created.",
+      "Validation succeeded, but trusted submit publication did not complete; no lax-database commit was created.",
     );
     expect(body).toContain(resultMarker(commentId));
     // The CLI's follow loop must keep correlating the comment to its run.
@@ -99,7 +99,7 @@ describe("report-failure entry point", () => {
   });
 
   it("does not suppress a report because an earlier run already reported this comment", async () => {
-    stubWorkflowEnv({ ACTION: "update", OPERATION: "validate" });
+    stubWorkflowEnv({ ACTION: "submit", OPERATION: "validate" });
     writeEvent({ issue: { number: issueNumber }, comment: { id: commentId } });
     const state: IssueState = {
       comments: [{
@@ -176,7 +176,7 @@ describe("report-validation entry point", () => {
   });
 });
 
-describe("prepare-update entry point", () => {
+describe("prepare-submit entry point", () => {
   it("revalidates artifacts and fresh state credential-free", async () => {
     const texts = initialFiles("lax-42", { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z");
     const directory = workDirectory();
@@ -193,7 +193,7 @@ describe("prepare-update entry point", () => {
     const canary = "ghs_canary_token_that_must_never_be_read";
     stubWorkflowEnv({
       GITHUB_OUTPUT: outputFile,
-      PUBLISH_REQUEST: encode(updateRequest(fileDigests(texts))),
+      PUBLISH_REQUEST: encode(submitRequest(fileDigests(texts))),
       VALIDATION_REPORT_PATH: path.join(directory, "validation-report.json"),
       GENERATED_BUILD_OUTPUT_PATH: path.join(directory, "generated-build-output.json"),
       VALIDATION_CAPTURE_PATH: path.join(directory, "capture.tar"),
@@ -203,7 +203,7 @@ describe("prepare-update entry point", () => {
     });
     const requests = installIssueFetch({ comments: [], reactions: [] }, texts);
 
-    await prepareUpdate();
+    await prepareSubmit();
 
     expect(fs.readFileSync(outputFile, "utf8")).toMatch(/should_publish<<[^\n]+\ntrue\n/u);
     expect(requests.length).toBeGreaterThan(0);
@@ -310,9 +310,9 @@ function encode(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
 }
 
-function updateRequest(preconditions: PublishRequest["preconditions"]): PublishRequest {
+function submitRequest(preconditions: PublishRequest["preconditions"]): PublishRequest {
   return {
-    action: "update",
+    action: "submit",
     id: "lax-42",
     issue: { repositoryId, number: issueNumber },
     actor: alice,
@@ -320,7 +320,7 @@ function updateRequest(preconditions: PublishRequest["preconditions"]): PublishR
     eventCreatedAt: "2026-07-30T11:00:00Z",
     archiveSha,
     commentId,
-    command: { action: "update", ...TEST_SOURCE },
+    command: { action: "submit", ...TEST_SOURCE },
     preconditions,
   };
 }

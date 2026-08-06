@@ -38,7 +38,7 @@ Suggested order of attack (details in rewrite-plan.md):
    point 4, CAS is the correctness mechanism; inline-JS failure reporter
    replaced by a typed `report-failure` mode with byte-compatible
    markers; YAML logic assertions converted to behavioral TS tests incl.
-   an env-poisoning canary proving prepare-update never touches the
+   an env-poisoning canary proving prepare-submit never touches the
    database token; YAML keeps only wiring/permission/pin lints). The
    stages-3+4 live rehearsal ran 2026-08-06 — see item 3.
 5. ~~Test port~~ — done 2026-08-05 (triage executed: ~17 real-lake and

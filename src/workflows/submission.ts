@@ -13,7 +13,7 @@ import {
   PostCommitError,
   Publisher,
 } from "../shared/publisher.js";
-import { UpdatePublisher } from "../shared/update-publisher.js";
+import { SubmitPublisher } from "../shared/submit-publisher.js";
 import type { PublishRequest } from "../shared/types.js";
 import {
   parseSuccessfulValidationArtifacts,
@@ -40,13 +40,13 @@ if (isMainModule) {
   try {
     if (mode === "route") await route();
     else if (mode === "publish") await publish();
-    else if (mode === "prepare-update") await prepareUpdate();
-    else if (mode === "publish-update") await publishUpdate();
+    else if (mode === "prepare-submit") await prepareSubmit();
+    else if (mode === "publish-submit") await publishSubmit();
     else if (mode === "website") await website();
     else if (mode === "report-validation") await reportValidation();
     else if (mode === "report-failure") await reportFailure();
     else throw new Error(
-      "usage: submission.js route|publish|prepare-update|publish-update|website|report-validation|report-failure",
+      "usage: submission.js route|publish|prepare-submit|publish-submit|website|report-validation|report-failure",
     );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -77,7 +77,7 @@ export async function route(): Promise<void> {
           ? appendWorkflowRun(result.preview, run)
           : workflowRunMarker(run.id);
       await control.annotateIssueComment(result.request.commentId, context);
-      if (result.request.action === "owners" || result.request.action === "update") {
+      if (result.request.action === "owners" || result.request.action === "submit") {
         await control.markCommandStarted(result.request.commentId);
         startedCommandCommentId = result.request.commentId;
       }
@@ -94,11 +94,11 @@ export async function route(): Promise<void> {
       }
     }
     if (result.kind === "validate") {
-      if (result.request.command?.action !== "update" || result.request.commentId === undefined)
-        throw new Error("validated update route has no update command context");
+      if (result.request.command?.action !== "submit" || result.request.commentId === undefined)
+        throw new Error("validated submit route has no submit command context");
       const request = validationRequest(result.request);
       writeOutput("operation", "validate");
-      writeOutput("action", "update");
+      writeOutput("action", "submit");
       writeOutput("validation_request", encode(request));
       writeOutput("publish_request", encode(result.request));
       writeOutput("context", encode({
@@ -223,14 +223,14 @@ async function clearCommandProgress(control: ControlPlane, commentId: number): P
  * Parse all untrusted validation artifacts and repeat authorization/fresh-state
  * checks before the protected job is allowed to mint an Archive token.
  */
-export async function prepareUpdate(): Promise<void> {
+export async function prepareSubmit(): Promise<void> {
   const authoritativeRepositoryId = repositoryId();
   const request = readPublishRequest(authoritativeRepositoryId);
   const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
   const control = new ControlPlane(client, new ArchiveRepository(client), authoritativeRepositoryId);
   try {
     const artifacts = readSuccessfulArtifacts(request);
-    const publisher = new UpdatePublisher(
+    const publisher = new SubmitPublisher(
       control,
       new ArchiveRepository(client),
       undefined,
@@ -244,7 +244,7 @@ export async function prepareUpdate(): Promise<void> {
   }
 }
 
-export async function publishUpdate(): Promise<void> {
+export async function publishSubmit(): Promise<void> {
   const authoritativeRepositoryId = repositoryId();
   const request = readPublishRequest(authoritativeRepositoryId);
   const controlClient = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
@@ -260,7 +260,7 @@ export async function publishUpdate(): Promise<void> {
     // The capture store pushes with the job's own GITHUB_TOKEN
     // (packages: write on the control repository's ghcr namespace); the
     // App-minted database token never leaves the archive write path.
-    const publisher = new UpdatePublisher(
+    const publisher = new SubmitPublisher(
       control,
       new ArchiveRepository(archiveClient),
       new GhcrCaptureStore(requiredEnv("GITHUB_TOKEN")),
@@ -329,7 +329,7 @@ export async function reportFailure(): Promise<void> {
   const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
   const control = new ControlPlane(client, new ArchiveRepository(client), repositoryId());
   const action = process.env.ACTION;
-  if ((action === "owners" || action === "update") && triggeringComment !== undefined) {
+  if ((action === "owners" || action === "submit") && triggeringComment !== undefined) {
     await clearCommandProgress(control, triggeringComment);
   }
   const run = workflowRun();
@@ -340,7 +340,7 @@ export async function reportFailure(): Promise<void> {
       ? `lax-database changed at commit \`${commit}\`, but Website dispatch or final reporting ` +
         `did not complete. Inspect this run before retrying.`
       : process.env.OPERATION === "validate" && process.env.VALIDATION_RESULT === "true"
-        ? "Validation succeeded, but trusted update publication did not complete; " +
+        ? "Validation succeeded, but trusted submit publication did not complete; " +
           "no lax-database commit was created."
         : process.env.OPERATION === "validate"
           ? "Validation or result reporting failed; no trustworthy validation result was produced. " +
@@ -472,8 +472,8 @@ function readPublishRequest(expectedRepositoryId: number): PublishRequest {
 }
 
 function validationRequest(request: PublishRequest): ValidationRequest {
-  if (request.action !== "update" || request.command?.action !== "update") {
-    throw new ValidationError("validation artifacts require an update publication request");
+  if (request.action !== "submit" || request.command?.action !== "submit") {
+    throw new ValidationError("validation artifacts require a submit publication request");
   }
   return {
     requestVersion: 1,

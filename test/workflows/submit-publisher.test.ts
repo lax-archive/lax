@@ -10,7 +10,7 @@ import {
 } from "../../src/shared/archive-schema.js";
 import type { PublisherArchive, PublisherControl } from "../../src/shared/publisher.js";
 import type { PublishRequest } from "../../src/shared/types.js";
-import { UpdatePublisher, type UpdateCaptureStore } from "../../src/shared/update-publisher.js";
+import { SubmitPublisher, type SubmitCaptureStore } from "../../src/shared/submit-publisher.js";
 import type { PublishedCapture, ResolvedDependency } from "../../src/submission-validation/contracts.js";
 import {
   successfulArtifacts,
@@ -26,10 +26,10 @@ const run = {
   url: "https://github.com/lax-archive/lax/actions/runs/123456789",
 };
 
-describe("trusted update publisher", () => {
+describe("trusted submit publisher", () => {
   it("promotes the capture and commits exactly record.json and build-output.json", async () => {
     const current = loaded();
-    const harness = updateHarness(new Map([["lax-42", current]]));
+    const harness = submitHarness(new Map([["lax-42", current]]));
     const result = await harness.publisher.publish(request(current), successfulArtifacts(), "/capture.tar", run);
     expect(result).toMatchObject({
       kind: "committed",
@@ -63,13 +63,13 @@ describe("trusted update publisher", () => {
   it("ignores owner-list digest changes but rechecks current numeric ownership", async () => {
     const routed = loaded();
     const ownerChanged = loaded(replaceOwnerList("lax-42", routed.texts, [alice, { githubId: 20, handle: "bob" }]));
-    const harness = updateHarness(new Map([["lax-42", ownerChanged]]));
+    const harness = submitHarness(new Map([["lax-42", ownerChanged]]));
     await expect(
       harness.publisher.publish(request(routed), successfulArtifacts(), "/capture.tar", run),
     ).resolves.toMatchObject({ kind: "committed" });
 
     const removed = loaded(replaceOwnerList("lax-42", routed.texts, [{ githubId: 20, handle: "bob" }]));
-    const rejected = updateHarness(new Map([["lax-42", removed]]));
+    const rejected = submitHarness(new Map([["lax-42", removed]]));
     await expect(
       rejected.publisher.publish(request(routed), successfulArtifacts(), "/capture.tar", run),
     ).rejects.toThrow("no longer an owner");
@@ -91,7 +91,7 @@ describe("trusted update publisher", () => {
       createdAt: "2026-07-30T10:00:00Z",
     });
     const stale = loaded(texts);
-    const harness = updateHarness(new Map([["lax-42", stale]]));
+    const harness = submitHarness(new Map([["lax-42", stale]]));
     try {
       await harness.publisher.publish(request(routed), successfulArtifacts(), "/capture.tar", run);
       throw new Error("expected rejection");
@@ -123,13 +123,13 @@ describe("trusted update publisher", () => {
     artifacts.report.dependencies.push(expected);
     artifacts.buildOutput.requiredByConcepts.push("Lax7");
     const archive = new Map([["lax-42", current], ["lax-7", dependency]]);
-    const harness = updateHarness(archive);
+    const harness = submitHarness(archive);
     await harness.publisher.publish(request(current), artifacts, "/capture.tar", run);
     const dependencyReads = (harness.load.mock.calls as Array<[string]>).filter(([id]) => id === "lax-7");
     expect(dependencyReads.length).toBeGreaterThanOrEqual(3);
 
     const changed = dependencyLoaded({ ...dependency.files.record.source!, commit: "9".repeat(40) });
-    const rejected = updateHarness(new Map([["lax-42", current], ["lax-7", changed]]));
+    const rejected = submitHarness(new Map([["lax-42", current], ["lax-7", changed]]));
     await expect(
       rejected.publisher.publish(request(current), artifacts, "/capture.tar", run),
     ).rejects.toThrow("source changed after validation");
@@ -138,7 +138,7 @@ describe("trusted update publisher", () => {
 
   it("treats an existing correlated result as a no-op", async () => {
     const current = loaded();
-    const harness = updateHarness(new Map([["lax-42", current]]), true);
+    const harness = submitHarness(new Map([["lax-42", current]]), true);
     await expect(
       harness.publisher.publish(request(current), successfulArtifacts(), "/capture.tar", run),
     ).resolves.toEqual({ kind: "no-op" });
@@ -148,11 +148,11 @@ describe("trusted update publisher", () => {
   });
 });
 
-function updateHarness(
+function submitHarness(
   values: Map<string, LoadedSubmission>,
   resultExists = false,
 ): {
-  publisher: UpdatePublisher;
+  publisher: SubmitPublisher;
   captureStore: { promote: ReturnType<typeof vi.fn> };
   load: ReturnType<typeof vi.fn>;
   writeFiles: ReturnType<typeof vi.fn>;
@@ -182,9 +182,9 @@ function updateHarness(
   };
   const captureStore = {
     promote: vi.fn().mockResolvedValue(publishedCapture),
-  } satisfies UpdateCaptureStore;
+  } satisfies SubmitCaptureStore;
   return {
-    publisher: new UpdatePublisher(control, archive, captureStore, repositoryId),
+    publisher: new SubmitPublisher(control, archive, captureStore, repositoryId),
     captureStore,
     load,
     writeFiles,
@@ -246,7 +246,7 @@ function dependencyLoaded(source = {
 
 function request(current: LoadedSubmission): PublishRequest {
   return {
-    action: "update",
+    action: "submit",
     id: "lax-42",
     issue,
     actor: alice,
@@ -254,7 +254,7 @@ function request(current: LoadedSubmission): PublishRequest {
     eventCreatedAt: "2026-07-30T11:00:00Z",
     archiveSha: "a".repeat(40),
     commentId: 80,
-    command: { action: "update", ...TEST_SOURCE },
+    command: { action: "submit", ...TEST_SOURCE },
     preconditions: current.preconditions,
   };
 }

@@ -25,7 +25,7 @@ is wanted.
 ## 2. Manage owners
 
 ```sh
-lax set-owners my-submission --new-list alice bob
+lax owners my-submission --new-list alice bob
 ```
 
 This is a complete replacement, not an add/remove patch. The CLI resolves the
@@ -125,7 +125,7 @@ Commands can also be posted manually as exact comments:
 
 ```text
 /lax owners [{"githubId":583231,"handle":"alice"}]
-/lax update {"repository":"https://github.com/alice/formalization","commit":"0123456789abcdef0123456789abcdef01234567","folder":"."}
+/lax submit {"repository":"https://github.com/alice/formalization","commit":"0123456789abcdef0123456789abcdef01234567","folder":"."}
 /lax delete
 /lax register
 ```

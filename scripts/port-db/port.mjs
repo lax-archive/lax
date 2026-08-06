@@ -9,7 +9,7 @@
 // is ported, every record that depends on it fails Resolution with "no
 // capture". Hence the order: dependencies first, always.
 //
-// Porting a record is not a data migration. It is one `/lax update` comment
+// Porting a record is not a data migration. It is one `/lax submit` comment
 // carrying the record's *own* recorded source triple, posted on its own issue
 // by a maintainer who owns it. The workflow does the rest: it re-fetches the
 // source, re-runs the whole pipeline, pushes a fresh capture to ghcr, and
@@ -42,7 +42,7 @@ import {
   planOrder,
   skipReason,
   SUBMISSION_ID_PATTERN,
-  updateCommandBody,
+  submitCommandBody,
   visibleComment,
 } from "./plan.mjs";
 
@@ -259,7 +259,7 @@ function printPlan(plan, records, scope, viewer) {
   if (strangers.length > 0) {
     console.log("");
     console.log(`!! ${viewer.login} is not an owner of: ${strangers.join(", ")}`);
-    console.log("   /lax update on those issues is rejected by the route job before anything runs.");
+    console.log("   /lax submit on those issues is rejected by the route job before anything runs.");
     console.log("   Pass --ignore-ownership to try anyway.");
   }
   return strangers;
@@ -278,12 +278,12 @@ function heartbeat(id, startedAt, text) {
   console.log(`  [${id}] ${clock}  ${text}`);
 }
 
-async function postUpdateComment(record, options) {
+async function postSubmitComment(record, options) {
   const source =
     options.commitOverride === undefined
       ? record.source
       : { ...record.source, commit: options.commitOverride };
-  const body = updateCommandBody(source);
+  const body = submitCommandBody(source);
   const response = await gh(
     ["api", `repos/${CONTROL_REPOSITORY}/issues/${record.issueNumber}/comments`, "--method", "POST", "--input", "-"],
     { input: JSON.stringify({ body }) },
@@ -444,7 +444,7 @@ async function portRecord(record, options, reportsDir) {
   };
   console.log("");
   console.log(`== ${record.id} (${record.state}) — ${row.issueUrl}`);
-  const comment = await postUpdateComment(record, options);
+  const comment = await postSubmitComment(record, options);
   row.commentId = comment.id;
   row.commentUrl = comment.url;
   console.log(`  posted ${comment.body}`);
@@ -580,7 +580,7 @@ async function main(argv) {
   }
   if (strangers.length > 0 && !options.ignoreOwnership) {
     throw new PortError(
-      `${viewer.login} does not own ${strangers.join(", ")}; those /lax update comments would be ` +
+      `${viewer.login} does not own ${strangers.join(", ")}; those /lax submit comments would be ` +
         "rejected. Re-run with --ignore-ownership to post them anyway, or narrow the scope with --only.",
     );
   }

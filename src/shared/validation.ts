@@ -206,9 +206,9 @@ export function validateFolder(raw: unknown): string {
 }
 
 export function validateSource(value: unknown): SourceLocation {
-  if (!isObject(value)) throw new ValidationError("update argument must be a JSON object");
+  if (!isObject(value)) throw new ValidationError("submit argument must be a JSON object");
   const problems = new ValidationCollector();
-  problems.capture(() => requireExactKeys(value, ["repository", "commit", "folder"], "update argument"));
+  problems.capture(() => requireExactKeys(value, ["repository", "commit", "folder"], "submit argument"));
   const repository = problems.capture(() => validateRepositoryUrl(value.repository));
   const commit = problems.capture(() => validateCommit(value.commit));
   const folder = problems.capture(() => validateFolder(value.folder));

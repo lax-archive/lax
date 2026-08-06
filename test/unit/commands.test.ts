@@ -9,13 +9,13 @@ describe("issue command parser", () => {
     expect(commandWord("/lax surprise")).toBe("unknown");
   });
 
-  it("parses an exact immutable update request", () => {
+  it("parses an exact immutable submit request", () => {
     expect(
       parseCommand(
-        '/lax update {"repository":"https://github.com/alice/formalization","commit":"0123456789abcdef0123456789abcdef01234567","folder":"."}',
+        '/lax submit {"repository":"https://github.com/alice/formalization","commit":"0123456789abcdef0123456789abcdef01234567","folder":"."}',
       ),
     ).toEqual({
-      action: "update",
+      action: "submit",
       repository: "https://github.com/alice/formalization",
       commit: "0123456789abcdef0123456789abcdef01234567",
       folder: ".",
@@ -25,11 +25,11 @@ describe("issue command parser", () => {
   it("rejects unknown JSON fields and trailing command arguments", () => {
     expect(() =>
       parseCommand(
-        '/lax update {"repository":"https://github.com/alice/repo","commit":"0123456789abcdef0123456789abcdef01234567","folder":".","id":"lax-4"}',
+        '/lax submit {"repository":"https://github.com/alice/repo","commit":"0123456789abcdef0123456789abcdef01234567","folder":".","id":"lax-4"}',
       ),
     ).toThrow("exactly");
     expect(() => parseCommand("/lax delete lax-4")).toThrow("does not accept arguments");
-    expect(() => parseCommand('/lax update {"repository":true} {"folder":"."}')).toThrow(
+    expect(() => parseCommand('/lax submit {"repository":true} {"folder":"."}')).toThrow(
       "not valid JSON",
     );
   });

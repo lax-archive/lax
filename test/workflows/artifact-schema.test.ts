@@ -99,7 +99,7 @@ describe("trusted validation artifact parser", () => {
         { ...validationRequest(), archiveSha: "b".repeat(40) },
         TEST_RUNTIME,
       ),
-    ).toThrow("authorized update request");
+    ).toThrow("authorized submit request");
 
     const wrongRuntime = successfulArtifacts();
     expect(() =>

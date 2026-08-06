@@ -154,14 +154,14 @@ expect_job "$RUN1" route success
 expect_job "$RUN1" publish success
 expect_job "$RUN1" website success
 
-# --- round trip 2: /lax update -> validation and publication -----------------
+# --- round trip 2: /lax submit -> validation and publication -----------------
 COMMIT="$(gh api "repos/$SUBMISSION/commits/main" --jq .sha)"
-UPDATE="/lax update {\"repository\":\"https://github.com/$SUBMISSION\",\"commit\":\"$COMMIT\",\"folder\":\".\"}"
-RUN2="$(drive "round trip 2/4 -- /lax update" comment "$UPDATE")"
+SUBMIT="/lax submit {\"repository\":\"https://github.com/$SUBMISSION\",\"commit\":\"$COMMIT\",\"folder\":\".\"}"
+RUN2="$(drive "round trip 2/4 -- /lax submit" comment "$SUBMIT")"
 expect_job "$RUN2" route success
 expect_job "$RUN2" Validate success
 expect_job "$RUN2" "Validation result" success
-expect_job "$RUN2" publish-update success
+expect_job "$RUN2" publish-submit success
 expect_job "$RUN2" website success
 
 # --- round trip 3: /lax register ---------------------------------------------
@@ -171,13 +171,13 @@ expect_job "$RUN3" publish success
 expect_job "$RUN3" website success
 
 # --- round trip 4: the negative probe ----------------------------------------
-# A registered record is immutable: the route job must reject the update before
+# A registered record is immutable: the route job must reject the submit before
 # anything privileged runs, and say so on the issue.
 MARK="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-RUN4="$(drive "round trip 4/4 -- post-registration /lax update must be rejected" comment "$UPDATE")"
+RUN4="$(drive "round trip 4/4 -- post-registration /lax submit must be rejected" comment "$SUBMIT")"
 expect_job "$RUN4" route failure
 refute_job_success "$RUN4" Validate
-refute_job_success "$RUN4" publish-update
+refute_job_success "$RUN4" publish-submit
 refute_job_success "$RUN4" publish
 refute_job_success "$RUN4" website
 if gh api "repos/$CONTROL/issues/$ISSUE/comments?per_page=100" --paginate \

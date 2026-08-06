@@ -175,7 +175,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
   });
 
   it("reattaches an interrupted submit with `lax submit --resume`", async () => {
-    // The submit that died: its `/lax update` comment is on the issue and the
+    // The submit that died: its `/lax submit` comment is on the issue and the
     // workflow has already appended the run correlation to it. Nothing about
     // that run is stored on this machine — the CLI may have been killed before
     // it learned its own comment id — so resume must re-derive both the
@@ -189,7 +189,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       {
         id: 5001,
         body: upsertCommandContext(
-          `/lax update ${source}`,
+          `/lax submit ${source}`,
           5001,
           appendWorkflowRun(`Parsed source preview for lax-77.\n\n${previewMarker(5001)}`, {
             id: "777",

@@ -28,13 +28,13 @@ describe("submission control-plane routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("authorizes and routes validated update requests", async () => {
+  it("authorizes and routes validated submit requests", async () => {
     const fetchMock = installArchiveFetch();
     const control = controlPlane();
     const result = await control.route(
       "issue_comment",
       commentEvent(
-        `/lax update ${JSON.stringify({
+        `/lax submit ${JSON.stringify({
           repository: "https://github.com/alice/formalization",
           commit: "0123456789abcdef0123456789abcdef01234567",
           folder: ".",
@@ -45,7 +45,7 @@ describe("submission control-plane routing", () => {
     expect(result.kind).toBe("validate");
     if (result.kind !== "validate") throw new Error("unexpected route result");
     expect(result.request.id).toBe("lax-42");
-    expect(result.request.command).toMatchObject({ action: "update", folder: "." });
+    expect(result.request.command).toMatchObject({ action: "submit", folder: "." });
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/users/alice"))).toBe(true);
     expect(fetchMock.mock.calls.every(([url, init]) => (init as RequestInit | undefined)?.method !== "PATCH")).toBe(
       true,
@@ -56,7 +56,7 @@ describe("submission control-plane routing", () => {
     installArchiveFetch({ githubId: 20, handle: "bob" });
     const control = controlPlane();
     await expect(
-      control.route("issue_comment", commentEvent("/lax update definitely-not-json", {
+      control.route("issue_comment", commentEvent("/lax submit definitely-not-json", {
         githubId: 20,
         handle: "bob",
       })),
@@ -182,7 +182,7 @@ describe("submission control-plane routing", () => {
   });
 
   it("replaces workflow context and transitions the bot rocket to thumbs-up", async () => {
-    let body = "/lax update {}";
+    let body = "/lax submit {}";
     let nextReactionId = 2;
     const reactions = [{
       id: 1,
@@ -227,7 +227,7 @@ describe("submission control-plane routing", () => {
     await control.annotateIssueComment(9001, "Update preview changed.\n\n<!-- lax-workflow-run-id:456 -->");
     await control.markCommandStarted(9001);
 
-    expect(body).toContain("/lax update {}");
+    expect(body).toContain("/lax submit {}");
     expect(body).toContain("Update preview changed.");
     expect(body).not.toContain("lax-workflow-run-id:123");
     expect(body.match(/lax-command-context:9001:start/gu)).toHaveLength(1);
@@ -276,13 +276,13 @@ describe("submission control-plane routing", () => {
     ).toBe(true);
   });
 
-  it("aggregates update argument errors without reaching a mutation", async () => {
+  it("aggregates submit argument errors without reaching a mutation", async () => {
     const fetchMock = installArchiveFetch();
     await expect(
       controlPlane().route(
         "issue_comment",
         commentEvent(
-          '/lax update {"repository":"http://example.com/x","commit":"BAD","folder":"../x","extra":true}',
+          '/lax submit {"repository":"http://example.com/x","commit":"BAD","folder":"../x","extra":true}',
           alice,
         ),
       ),
@@ -291,7 +291,7 @@ describe("submission control-plane routing", () => {
       await controlPlane().route(
         "issue_comment",
         commentEvent(
-          '/lax update {"repository":"http://example.com/x","commit":"BAD","folder":"../x","extra":true}',
+          '/lax submit {"repository":"http://example.com/x","commit":"BAD","folder":"../x","extra":true}',
           alice,
         ),
       );

@@ -2,7 +2,7 @@
 //
 // Everything here is a total function over plain data: no network, no gh, no
 // filesystem. That is what makes the risky part of the port — the order in
-// which records are re-validated, and the exact bytes of the `/lax update`
+// which records are re-validated, and the exact bytes of the `/lax submit`
 // comment — testable without touching production. The drift guards live in
 // test/unit/port-db-plan.test.ts, which checks these formats against the real
 // src/shared implementations rather than against a copy of them.
@@ -52,12 +52,12 @@ export function compareIds(left, right) {
 /**
  * Why a record is not portable. `init` records are stubs with no source triple
  * and nothing to re-validate; `registered` records are immutable and a `/lax
- * update` against one is rejected by the route job (and would be a loud
+ * submit` against one is rejected by the route job (and would be a loud
  * mistake, not a no-op); `deleted` ids are retired.
  */
 export function skipReason(record) {
   if (record.state === "init") return "init stub: no source triple to re-validate";
-  if (record.state === "registered") return "REGISTERED: immutable; /lax update would be rejected";
+  if (record.state === "registered") return "REGISTERED: immutable; /lax submit would be rejected";
   if (record.state === "deleted") return "deleted: the id is retired";
   if (record.state !== "draft") return `unknown state ${JSON.stringify(record.state)}`;
   if (record.source === undefined) return "draft without a source triple";
@@ -138,13 +138,13 @@ export function planOrder(records) {
 }
 
 /**
- * The `/lax update` comment body. The exact accepted syntax is `/lax update`
+ * The `/lax submit` comment body. The exact accepted syntax is `/lax submit`
  * followed by whitespace and the source triple as JSON with exactly the keys
  * repository, commit, folder (src/shared/commands.ts parseCommand ->
  * validateSource). Porting a record means replaying its *own* recorded triple:
  * the source does not change, only the pipeline that validates it.
  */
-export function updateCommandBody(source) {
+export function submitCommandBody(source) {
   for (const key of ["repository", "commit", "folder"]) {
     if (typeof source?.[key] !== "string" || source[key] === "") {
       throw new Error(`source triple is missing ${key}`);
@@ -155,7 +155,7 @@ export function updateCommandBody(source) {
     commit: source.commit,
     folder: source.folder,
   };
-  return `/lax update ${JSON.stringify(triple)}`;
+  return `/lax submit ${JSON.stringify(triple)}`;
 }
 
 /**

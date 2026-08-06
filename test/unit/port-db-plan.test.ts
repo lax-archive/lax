@@ -2,7 +2,7 @@
 // through the issue control plane. Two things in it are worth proving without
 // a network: the order it picks (a dependent ported before its dependency
 // fails Resolution, because archive/snapshot.ts sees no capture yet) and the
-// exact bytes it posts (a malformed /lax update comment is rejected, and a
+// exact bytes it posts (a malformed /lax submit comment is rejected, and a
 // well-formed one against the wrong triple would rewrite the record).
 //
 // The format tests are drift guards, not copies: they check the driver's
@@ -23,7 +23,7 @@ import {
   resultMarker,
   skipReason,
   submissionIdForPackage,
-  updateCommandBody,
+  submitCommandBody,
   visibleComment,
   // @ts-expect-error -- a plain .mjs script, deliberately untyped like scripts/rehearsal
 } from "../../scripts/port-db/plan.mjs";
@@ -135,23 +135,23 @@ describe("the port plan", () => {
   });
 });
 
-describe("the /lax update comment", () => {
+describe("the /lax submit comment", () => {
   const source = triple("word-ram");
 
   it("is accepted by the real command parser and carries the record's own triple", () => {
-    const body = updateCommandBody(source);
+    const body = submitCommandBody(source);
     expect(body).toBe(
-      '/lax update {"repository":"https://github.com/lax-archive/lax-submissions",' +
+      '/lax submit {"repository":"https://github.com/lax-archive/lax-submissions",' +
         '"commit":"311ae7cf15e1bde644721958e05203bb6791d04b","folder":"word-ram"}',
     );
     // The drift guard: whatever the driver emits must parse, and must parse
     // back into exactly the triple that was already recorded. Porting must not
     // change what a record points at.
-    expect(parseCommand(body)).toEqual({ action: "update", ...source });
+    expect(parseCommand(body)).toEqual({ action: "submit", ...source });
   });
 
   it("refuses to build a command from an incomplete triple", () => {
-    expect(() => updateCommandBody({ repository: source.repository, commit: source.commit })).toThrow(
+    expect(() => submitCommandBody({ repository: source.repository, commit: source.commit })).toThrow(
       /missing folder/u,
     );
   });

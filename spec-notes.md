@@ -6,6 +6,44 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## Command naming: one word per meaning (implemented, 2026-08-06)
+
+Every issue-protocol verb is now exactly the CLI verb that posts it, and
+each meaning owns exactly one word:
+
+- **`/lax update` → `/lax submit`.** The comment `lax submit` posts is the
+  same word as the command. The issue protocol is therefore `submit`,
+  `owners`, `delete`, `register` — a one-to-one map onto `lax submit`,
+  `lax owners`, `lax delete`, `lax register`, with no verb appearing under
+  two names on either side. Internally the publisher, its module, and the
+  workflow jobs follow: `SubmitPublisher` in `src/shared/submit-publisher.ts`,
+  and the `prepare-submit`/`publish-submit` jobs and entry-point modes.
+  (`Publisher`'s file-scoped `plan.mode === "update"` is unrelated — it
+  names a database-files-changing commit shared with delete/register — and
+  keeps its name.)
+- **`lax update` self-upgrades the CLI again** (spec.md ~1069), with
+  `lax upgrade` kept as an alias. This restores the spec's original
+  meaning and resolves that reconciliation point: the source-triple sense
+  the rewrite had briefly given the word now lives in `submit`, so the
+  collision that forced the retirement tombstone is gone and the tombstone
+  is deleted.
+- **`lax pull-db` refreshes the database clone**, superseding the earlier
+  note below that renamed it `lax update-db` with `pull-db` as an alias.
+  `update-db`/`update-database` are dropped outright rather than aliased —
+  pre-release, nothing depends on them — so "update" means one thing.
+- **`lax owners`** is the only spelling; the `set-owners` primary name is
+  removed rather than kept as an alias.
+
+The website dispatch's `client_payload.action` value changes with the
+internal rename (`"update"` → `"submit"`). No compatibility shim is
+needed: `lax-archive/lax-website`'s deploy workflow triggers on the
+`repository_dispatch` event type `lax-db-updated` only and never reads
+`client_payload.action`.
+
+Spec touchpoints: the command list (spec.md ~1069 for `lax update`, ~1070
+for the database refresh) and every occurrence of the `/lax update` issue
+command.
+
 ## Local builds compile cross-submission dependencies from source (implemented, 2026-08-06)
 
 Local `lax build` no longer downloads dependency captures from ghcr. For

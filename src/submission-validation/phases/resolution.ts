@@ -18,7 +18,7 @@ import type { ArchiveSnapshot } from "../archive/snapshot.js";
  * and a current pin into a mismatched triple.
  */
 const STALE_DATABASE_HINT =
-  "A locally stale lax-database can also cause this: run `lax update-db` and retry.";
+  "A locally stale lax-database can also cause this: run `lax pull-db` and retry.";
 
 export function runResolution(
   request: ValidationRequest,

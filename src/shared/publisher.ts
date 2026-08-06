@@ -68,7 +68,7 @@ export type PublishResult =
 /**
  * File-scoped publisher modes: init creates all files, owners changes only the
  * owner list, and update never includes the owner list. Delete and register
- * are also update-mode mutations; validated source imports use UpdatePublisher.
+ * are also update-mode mutations; validated source imports use SubmitPublisher.
  */
 export type PublisherMode = "init" | "owners" | "update";
 
@@ -87,8 +87,8 @@ export class Publisher {
 
   async publish(untrustedRequest: PublishRequest, run: WorkflowRunRef): Promise<PublishResult> {
     let request = parsePublishRequest(untrustedRequest, this.repositoryId);
-    if (request.action === "update") {
-      throw new ValidationError("validated update publication must use UpdatePublisher");
+    if (request.action === "submit") {
+      throw new ValidationError("validated submit publication must use SubmitPublisher");
     }
     if (request.commentId !== undefined) {
       const alreadyFinished =
@@ -265,9 +265,9 @@ export async function dispatchWebsiteAndReport(
           run,
         ),
       );
-      if (request.action === "update" && dispatched && titleSyncError === "") {
+      if (request.action === "submit" && dispatched && titleSyncError === "") {
         await control.completeCommand(request.commentId!);
-      } else if (request.action === "owners" || request.action === "update") {
+      } else if (request.action === "owners" || request.action === "submit") {
         await control.clearCommandProgress(request.commentId!);
       }
     }
@@ -406,7 +406,7 @@ export class PostCommitError extends Error {
 type PublishAction = PublishRequest["action"];
 
 function isPublishAction(value: unknown): value is PublishAction {
-  return ["create", "owners", "update", "delete", "register"].includes(String(value));
+  return ["create", "owners", "submit", "delete", "register"].includes(String(value));
 }
 
 function trustedNodeId(value: unknown): string {
@@ -460,13 +460,13 @@ function trustedCommand(value: unknown, expectedAction: Exclude<PublishAction, "
     requireExactKeys(value, ["action", "owners"], "publication owners command");
     return { action: "owners", owners: parseOwnerList({ specVersion: "1", owners: value.owners }).owners };
   }
-  if (expectedAction === "update") {
+  if (expectedAction === "submit") {
     requireExactKeys(
       value,
       ["action", "repository", "commit", "folder"],
-      "publication update command",
+      "publication submit command",
     );
-    return { action: "update", ...validateSource({
+    return { action: "submit", ...validateSource({
       repository: value.repository,
       commit: value.commit,
       folder: value.folder,
@@ -579,7 +579,7 @@ function successComment(
         ? `Updated the owners of **${request.id}**.`
         : request.action === "delete"
           ? `Deleted **${request.id}**; the id is permanently retired.`
-          : request.action === "update"
+          : request.action === "submit"
             ? `Updated **${request.id}** from its validated immutable source.`
           : `Registered **${request.id}**; it is now immutable.`;
   const dispatchText = dispatched

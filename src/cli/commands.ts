@@ -99,7 +99,7 @@ export async function replaceOwners(reference: string, handles: string[]): Promi
   await postCommand(resolveIssueReference(reference), `/lax owners ${JSON.stringify(owners)}`);
 }
 
-export async function requestUpdate(
+export async function submitExplicitSource(
   reference: string,
   repositoryInput: string,
   commitInput: string,
@@ -115,7 +115,7 @@ export async function requestUpdate(
     `Submitting lax-${issue} from (${source.repository}, ${source.commit}, ${source.folder}).`,
   );
   await withResumeHint(reference, () =>
-    postCommand(issue, `/lax update ${JSON.stringify(source)}`));
+    postCommand(issue, `/lax submit ${JSON.stringify(source)}`));
 }
 
 export async function submitFolder(folder: string, allowDirty = false): Promise<void> {
@@ -127,13 +127,13 @@ export async function submitFolder(folder: string, allowDirty = false): Promise<
   console.log(
     `Submitting lax-${issue} from (${source.repository}, ${source.commit}, ${source.folder}).`,
   );
-  await withResumeHint(folder, () => postCommand(issue, `/lax update ${JSON.stringify(source)}`));
+  await withResumeHint(folder, () => postCommand(issue, `/lax submit ${JSON.stringify(source)}`));
 }
 
 /**
  * `lax submit --resume` — reattach to a submit whose CLI process lost its
  * connection (network, Ctrl-C). The durable job record is the Actions run, and
- * the run is correlated to the originating `/lax update` command comment by the
+ * the run is correlated to the originating `/lax submit` command comment by the
  * hidden markers follow.ts already matches. Correlation is therefore re-derived
  * from the issue's own comments rather than from anything this machine stored:
  * the CLI can die *before* it learns whether its POST created a comment, so a
@@ -155,7 +155,7 @@ export async function resumeSubmit(target: string): Promise<void> {
     const command = [...comments]
       .reverse()
       .find((comment) =>
-        comment.user?.id === user.id && comment.body?.startsWith("/lax update ") === true);
+        comment.user?.id === user.id && comment.body?.startsWith("/lax submit ") === true);
     if (command === undefined) {
       throw new NothingToResumeError(
         `no submit command of yours is on lax-${issue}; nothing is running — run \`lax submit\` instead`,
@@ -237,7 +237,7 @@ async function ensureBuiltForSubmit(
   const refresh = tryRefreshDatabase();
   if (refresh === "missing") {
     throw new Error(
-      "a local lax-database checkout is required for pre-submit validation; run `lax update-db`",
+      "a local lax-database checkout is required for pre-submit validation; run `lax pull-db`",
     );
   }
   if (refresh === "failed") {

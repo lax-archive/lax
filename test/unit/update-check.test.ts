@@ -41,6 +41,6 @@ describe("background CLI update check", () => {
     checkForCliUpdate("0.1.17", 2);
 
     expect(reported).toHaveBeenCalledWith(expect.stringContaining("version 0.2.0 is available"));
-    expect(reported).toHaveBeenCalledWith(expect.stringContaining("lax upgrade"));
+    expect(reported).toHaveBeenCalledWith(expect.stringContaining("lax update"));
   });
 });

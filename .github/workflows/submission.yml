@@ -202,7 +202,7 @@ jobs:
   # The first step has only the lax workflow token. It parses and hashes the
   # downloaded files and repeats all authorization, issue, state, stale-write,
   # and dependency checks before the protected App key is used.
-  publish-update:
+  publish-submit:
     needs: [route, validation-result]
     if: >-
       ${{
@@ -219,8 +219,8 @@ jobs:
       # token never touches the registry.
       packages: write
     outputs:
-      archive_commit: ${{ steps.publish-update.outputs.archive_commit }}
-      title_sync_error: ${{ steps.publish-update.outputs.title_sync_error }}
+      archive_commit: ${{ steps.publish-submit.outputs.archive_commit }}
+      title_sync_error: ${{ steps.publish-submit.outputs.title_sync_error }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -236,7 +236,7 @@ jobs:
           name: submission-validation-${{ github.event.issue.number }}
           path: .build/submission-validation
       - name: Parse artifacts and revalidate current state without Archive credentials
-        id: prepare-update
+        id: prepare-submit
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
@@ -244,9 +244,9 @@ jobs:
           VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
           GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
-        run: node dist/workflows/submission.js prepare-update
+        run: node dist/workflows/submission.js prepare-submit
       - name: Mint lax-database token
-        if: steps.prepare-update.outputs.should_publish == 'true'
+        if: steps.prepare-submit.outputs.should_publish == 'true'
         id: database-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
@@ -256,9 +256,9 @@ jobs:
           repositories: lax-database
           permission-administration: read
           permission-contents: write
-      - name: Promote capture and publish trusted update
-        if: steps.prepare-update.outputs.should_publish == 'true'
-        id: publish-update
+      - name: Promote capture and publish trusted submit
+        if: steps.prepare-submit.outputs.should_publish == 'true'
+        id: publish-submit
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
@@ -267,7 +267,7 @@ jobs:
           VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
           GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
-        run: node dist/workflows/submission.js publish-update
+        run: node dist/workflows/submission.js publish-submit
 
   # Keep the shorter publish branch after the validation branch in declaration
   # order so GitHub's automatic DAG layout prefers it as the lower row.
@@ -318,12 +318,12 @@ jobs:
   # Website credentials do not exist until lax-database has advanced. This job
   # receives no Archive token and can only dispatch the complete rebuild.
   website:
-    needs: [route, publish, publish-update]
+    needs: [route, publish, publish-submit]
     if: >-
       ${{
         always() &&
         ((needs.publish.result == 'success' && needs.publish.outputs.archive_commit != '') ||
-         (needs.publish-update.result == 'success' && needs.publish-update.outputs.archive_commit != ''))
+         (needs.publish-submit.result == 'success' && needs.publish-submit.outputs.archive_commit != ''))
       }}
     runs-on: ubuntu-latest
     environment: lax-website-dispatch
@@ -355,8 +355,8 @@ jobs:
           LAX_WEBSITE_TOKEN: ${{ steps.website-token.outputs.token }}
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
           PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
-          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
-          TITLE_SYNC_ERROR: ${{ needs.publish-update.outputs.title_sync_error }}
+          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-submit.outputs.archive_commit) }}
+          TITLE_SYNC_ERROR: ${{ needs.publish-submit.outputs.title_sync_error }}
         run: node dist/workflows/submission.js website
 
   # TypeScript reports structured routing/publication failures. This final
@@ -371,7 +371,7 @@ jobs:
       - precheck
       - route
       - publish
-      - publish-update
+      - publish-submit
       - website
       - validation-result
     if: >-
@@ -380,7 +380,7 @@ jobs:
         (needs.precheck.result == 'failure' ||
          needs.route.result == 'failure' ||
          needs.publish.result == 'failure' ||
-         needs.publish-update.result == 'failure' ||
+         needs.publish-submit.result == 'failure' ||
          needs.website.result == 'failure' ||
          needs.validation-result.result == 'failure')
       }}
@@ -402,7 +402,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
-          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-update.outputs.archive_commit) }}
+          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-submit.outputs.archive_commit) }}
           ACTION: ${{ needs.route.outputs.action }}
           OPERATION: ${{ needs.route.outputs.operation }}
           VALIDATION_RESULT: ${{ needs.validation-result.outputs.should_publish }}

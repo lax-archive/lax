@@ -251,7 +251,7 @@ Then put it in BOTH environments, and nowhere else:
 
   OWNER=$OWNER PREFIX=$PREFIX scripts/rehearsal/drive.sh
 
-That opens issue #1, then drives /lax update, /lax register, and the
+That opens issue #1, then drives /lax submit, /lax register, and the
 post-registration rejection probe, reporting per-job conclusions. Local build
 of the submission first, if you want the fast failure:
 

@@ -19,10 +19,10 @@ describe("CLI compatibility surface", () => {
   it("keeps the local workflow commands and build iteration options discoverable", () => {
     const help = cli(["--help"]);
     expect(help.code).toBe(0);
-    expect(help.output).toContain("set-owners|owners");
-    expect(help.output).toContain("update-db|pull-db");
+    expect(help.output).toContain("owners");
+    expect(help.output).toContain("pull-db");
     expect(help.output).toContain("serve [options]");
-    expect(help.output).toContain("upgrade");
+    expect(help.output).toContain("update|upgrade");
 
     const build = cli(["build", "--help"]);
     expect(build.output).toContain("--profile");
@@ -57,14 +57,23 @@ describe("CLI compatibility surface", () => {
     expect(strayFolder.output).toContain("--folder belongs to the explicit triple");
   });
 
-  it("retires `lax update` with an error naming both replacements", () => {
-    const result = cli(["update", "lax-42", "--repository", "https://github.com/a/b"]);
-    expect(result.code).toBe(1);
-    expect(result.output).toContain("`lax update` was the pre-rework name");
-    expect(result.output).toContain("lax submit <issue|folder> --repository");
-    expect(result.output).toContain("lax upgrade");
-    // the self-upgrade and database commands keep their own names
-    expect(cli(["--help"]).output).toContain("update-db|pull-db");
+  it("gives every meaning exactly one word", () => {
+    // `lax update` is the CLI self-upgrade again (spec.md's original meaning);
+    // the source triple lives on `submit`, the database refresh on `pull-db`.
+    const update = cli(["update", "--help"]);
+    expect(update.code).toBe(0);
+    expect(update.output).toContain("upgrade the CLI to the latest release");
+
+    const pull = cli(["pull-db", "--help"]);
+    expect(pull.code).toBe(0);
+    expect(pull.output).toContain("~/.lax/lax-database");
+
+    // The retired second names are gone rather than kept as aliases.
+    for (const retired of ["set-owners", "update-db", "update-database"]) {
+      const result = cli([retired]);
+      expect(result.code, retired).not.toBe(0);
+      expect(result.output, retired).toContain(`unknown command '${retired}'`);
+    }
   });
 
   it("prints the continuous proof-preview workflow in the bundled specification", () => {

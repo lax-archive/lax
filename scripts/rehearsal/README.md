@@ -94,16 +94,16 @@ pages the script prints.
    Three stub files appear in the database repo by compare-and-swap, the
    staging ref is cleaned up, the preview and result comments carry their
    correlation markers, and the dispatch reaches the receiver. ≈ 1 min.
-2. **`/lax update` → validation and publication.** `route`, `Validate`,
-   `Validation result`, `publish-update`, `website` succeed. The trusted
+2. **`/lax submit` → validation and publication.** `route`, `Validate`,
+   `Validation result`, `publish-submit`, `website` succeed. The trusted
    publisher re-validates the artifacts credential-free, pushes the capture to
    ghcr, advances the database, and synchronizes the issue title. ≈ 5 min
    author-visible; the cold run also provisions elan, the toolchain, and
    mathlib, and saves the Actions cache before untrusted code runs.
 3. **`/lax register`.** `route`, `publish`, `website` succeed; the record
    flips to `registered`.
-4. **Negative probe.** A second `/lax update` after registration must be
-   rejected: the `route` job fails, no `Validate`/`publish`/`publish-update`/
+4. **Negative probe.** A second `/lax submit` after registration must be
+   rejected: the `route` job fails, no `Validate`/`publish`/`publish-submit`/
    `website` job succeeds, no database commit is made, and a comment saying
    `lax-1 is registered and cannot be changed` appears on the issue.
 

@@ -83,7 +83,7 @@ export async function serveWebsite(
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "lax-site-"));
   let warning = fs.existsSync(path.join(archive, ".git"))
     ? undefined
-    : `The local lax-database checkout is missing. Run \`lax update-db\` at ${archive}.`;
+    : `The local lax-database checkout is missing. Run \`lax pull-db\` at ${archive}.`;
   writePlaceholder(outDir, warning);
   let timer: NodeJS.Timeout | undefined;
   let building = false;
@@ -209,13 +209,13 @@ export function websiteDatabaseWarning(
 ): string | undefined {
   if (freshness.status === "current") return undefined;
   if (freshness.status === "stale") {
-    return "The local lax-database is out of date. Run `lax update-db` and reload this preview.";
+    return "The local lax-database is out of date. Run `lax pull-db` and reload this preview.";
   }
   if (freshness.status === "missing") {
-    return `The local lax-database checkout is missing. Run \`lax update-db\` at ${directory}.`;
+    return `The local lax-database checkout is missing. Run \`lax pull-db\` at ${directory}.`;
   }
   if (freshness.status === "invalid") {
-    return `The local lax-database checkout at ${directory} is invalid. Move it aside and run \`lax update-db\`.`;
+    return `The local lax-database checkout at ${directory} is invalid. Move it aside and run \`lax pull-db\`.`;
   }
   return "The local lax-database freshness could not be verified because its remote is unreachable.";
 }

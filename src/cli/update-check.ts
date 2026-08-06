@@ -39,7 +39,7 @@ export function checkForCliUpdate(currentVersion: string, now = Date.now()): voi
   ) {
     console.error(
       `lax: version ${previous.latestVersion} is available (currently ${currentVersion}); ` +
-        "run `lax upgrade`",
+        "run `lax update`",
     );
   }
   if (process.env.LAX_DISABLE_UPDATE_CHECK === "1") return;

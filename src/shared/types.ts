@@ -45,7 +45,7 @@ export interface ArchiveFiles {
 
 export type ParsedCommand =
   | { action: "owners"; owners: GitHubIdentity[] }
-  | ({ action: "update" } & SourceLocation)
+  | ({ action: "submit" } & SourceLocation)
   | { action: "delete" }
   | { action: "register" };
 

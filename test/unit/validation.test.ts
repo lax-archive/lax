@@ -136,7 +136,7 @@ describe("shared input validation", () => {
     }
   });
 
-  it("aggregates independent update-source schema errors", () => {
+  it("aggregates independent submit-source schema errors", () => {
     try {
       validateSource({ repository: "http://example.com/x", commit: "ABC", folder: "../x", extra: true });
       throw new Error("expected validation to fail");

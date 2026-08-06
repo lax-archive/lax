@@ -80,7 +80,7 @@ export function parseSuccessfulValidationArtifacts(
   }
   const request = validationRequestFromUnknown(reportObject.request);
   if (JSON.stringify(request) !== JSON.stringify(validationRequestFromUnknown(expectedRequest))) {
-    throw new ValidationError("validation report request does not match the authorized update request");
+    throw new ValidationError("validation report request does not match the authorized submit request");
   }
   const runtime = parseRuntime(reportObject.runtime);
   if (JSON.stringify(runtime) !== JSON.stringify(expectedRuntime)) {

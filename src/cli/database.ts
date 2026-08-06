@@ -25,7 +25,7 @@ export function databaseRepositoryUrl(): string {
   );
 }
 
-export function updateDatabase(): void {
+export function pullDatabase(): void {
   const target = databaseDirectory();
   const url = databaseRepositoryUrl();
   console.log(`Refreshing ${target} from ${url}.`);

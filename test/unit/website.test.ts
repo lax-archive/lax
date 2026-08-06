@@ -111,7 +111,7 @@ describe("local website Archive adapter", () => {
   it("starts with local content when the database is missing", () => {
     const missing = path.join(temporaryDirectory("lax-site-missing-"), "database");
     expect(loadWebsiteSubmissions(missing)).toEqual([]);
-    expect(websiteDatabaseWarning({ status: "missing" }, missing)).toContain("lax update-db");
+    expect(websiteDatabaseWarning({ status: "missing" }, missing)).toContain("lax pull-db");
   });
 
   it("adds a visible database warning to every generated page", () => {

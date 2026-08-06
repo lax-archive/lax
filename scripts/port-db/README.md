@@ -20,7 +20,7 @@ fails Resolution with "no immutable published artifact capture".
 
 Hence: **dependencies before dependents, always.**
 
-Porting is not a data migration. It is one `/lax update` comment carrying the
+Porting is not a data migration. It is one `/lax submit` comment carrying the
 record's *own* recorded source triple, posted on its own issue. The workflow
 re-fetches the source, re-runs the whole pipeline, pushes a fresh capture, and
 commits the new `build-output.json` through the trusted publisher. The driver
@@ -74,7 +74,7 @@ Skipped, never ported:
 
 - **`init`** records are stubs with no source triple — there is nothing to
   re-validate.
-- **`registered`** records are immutable; `/lax update` on one is rejected by
+- **`registered`** records are immutable; `/lax submit` on one is rejected by
   the route job. They are printed with a `!!` so they cannot be missed.
 - **`deleted`** ids are retired.
 
@@ -83,7 +83,7 @@ rather than silently dropped — that dependent will never resolve.
 
 ## Ownership
 
-Only an owner of a record may post `/lax update` on it (`ControlPlane.route`
+Only an owner of a record may post `/lax submit` on it (`ControlPlane.route`
 checks the record's `owner-list.json`). The driver refuses to start when the
 authenticated user does not own something in scope, naming the records, rather
 than posting comments that the route job will reject. `--ignore-ownership`
@@ -95,7 +95,7 @@ driver or an owner-list change first.
 
 ## Correlation and the verdict
 
-Per record the driver posts the `/lax update` comment, then polls. It
+Per record the driver posts the `/lax submit` comment, then polls. It
 correlates on the hidden markers of `src/shared/workflow-comments.ts`, exactly
 as the CLI's follow logic does: the route job annotates our own comment with
 `<!-- lax-workflow-run-id:… -->`, and the terminal comment carries
@@ -128,6 +128,6 @@ gitignored, since this is operational output and not archive data).
 `test/unit/port-db-plan.test.ts` covers `plan.mjs` with no network: the
 topological order and its determinism, cycle detection, the skip rules, the
 report formatting, and — as drift guards against the real implementations, not
-copies of them — that the emitted `/lax update` body parses back through
+copies of them — that the emitted `/lax submit` body parses back through
 `parseCommand` into exactly the recorded triple, and that the markers and the
 bot identity match `src/shared`.

@@ -20,7 +20,7 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 | `/lax owners <JSON>` | Replaces the complete owner list after numeric-id authorization and GitHub identity resolution. |
 | `/lax delete` | Replaces an init/draft record with a permanent three-file tombstone. |
 | `/lax register` | Makes an init/draft record immutable. |
-| `/lax update <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. |
+| `/lax submit <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. |
 
 The Lean validation job has no App key, installation token, or Archive write
 credential. Its successful workflow artifact contains `validation-report.json`,
@@ -145,18 +145,19 @@ lax build submission
 lax serve submission
 git commit && git push
 lax submit submission
-lax set-owners submission --new-list alice bob
+lax owners submission --new-list alice bob
 lax register submission
 lax delete submission
-lax update-db
+lax pull-db
 ```
 
 `lax create <title>` remains available when only issue allocation is wanted.
 `lax submit <issue|folder> --repository ... --commit ... --folder ...` is the
-explicit source-triple form of `lax submit [folder]`; there is no separate
-`lax update` command. That name meant CLI self-upgrade before the rework and
-is now `lax upgrade`, so it is retired with an error naming both replacements.
-Submit derives the issue from `manifest.yaml`, derives the source triple from
+explicit source-triple form of `lax submit [folder]`. Every issue-protocol verb
+is the CLI verb that posts it — `submit`, `owners`, `delete`, `register` — and
+each meaning has exactly one word, so `lax update` is once again only the CLI
+self-upgrade (`lax upgrade` remains as an alias) and the database refresh is
+`lax pull-db`. Submit derives the issue from `manifest.yaml`, derives the source triple from
 Git, rejects dirty work unless `--allow-dirty` is passed, and requires HEAD to
 be present on `origin`. Registration stays a separate `lax register` command;
 multi-folder submission is intentionally not supported yet. Before posting the
@@ -167,7 +168,7 @@ isolated worktree, so uncommitted files are never mistaken for the submitted
 source.
 
 `lax submit --resume` reattaches to an interrupted submit. The durable job
-record is the Actions run, correlated to the originating `/lax update` comment
+record is the Actions run, correlated to the originating `/lax submit` comment
 by hidden markers, so resume re-derives both from the issue's own comments —
 nothing is stored locally, which is what makes it work even when the CLI died
 before it learned whether its comment had posted. Any transport failure during
@@ -176,7 +177,7 @@ submit prints that exact recovery command.
 Commands that create an issue or post a `/lax` comment wait for the correlated
 workflow result. Once the workflow publishes its correlated run link, the CLI
 polls GitHub and displays the current Actions job and step on one loading line.
-For updates, the parsed source preview and workflow run are appended to the
+For submits, the parsed source preview and workflow run are appended to the
 originating command comment instead of creating a separate preview comment. A
 🚀 reaction marks validation and publication in progress; it becomes 👍 after
 full success, while the final workflow result comment remains in place.
@@ -219,11 +220,10 @@ once in a phase-grouped summary instead of as separate errors.
 `lax delete` accepts an issue reference or local submission folder, refreshes
 the local database to detect immutable/deleted records and stranded
 dependents, and asks for a typed confirmation; scripts must pass `--yes`.
-`lax update-db` also accepts the `pull-db` and `update-database` aliases and
-migrates older `~/.lax/db` or `~/.lax/database` checkouts to
+`lax pull-db` migrates older `~/.lax/db` or `~/.lax/database` checkouts to
 `~/.lax/lax-database`. `lax register` likewise requires typed confirmation
 unless `--yes` is passed. `lax doctor` checks the tailored issue-workflow
-toolchain, `lax spec` prints the bundled specification, and `lax upgrade`
+toolchain, `lax spec` prints the bundled specification, and `lax update`
 upgrades the npm CLI before refreshing the database. A best-effort background
 check reports newer CLI releases without delaying commands.
 
