@@ -2,7 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { formatProfile, Profiler, type Span } from "../../src/shared/profile.js";
+import {
+  formatBytes,
+  formatProfile,
+  notePeakMemory,
+  Profiler,
+  type Span,
+} from "../../src/shared/profile.js";
 import {
   appendProfileStepSummary,
   recordValidationProfile,
@@ -109,6 +115,66 @@ describe("pipeline profiler", () => {
     const text = formatProfile({ name: "total", ms: 5, children: [] });
     expect(text).not.toContain("containers:");
     expect(text).not.toContain("(other)");
+    expect(text).not.toContain("peak");
+  });
+
+  it("attributes peak-memory observations to the open span, keeping the maximum", async () => {
+    const profiler = new Profiler();
+    await profiler.span("replay proofs", async () => {
+      notePeakMemory(512);
+      await profiler.span("container replay-proofs", () => {
+        notePeakMemory(2048);
+        notePeakMemory(1024); // lower observation never shrinks the peak
+        notePeakMemory(Number.NaN); // and junk is dropped
+        notePeakMemory(-5);
+      }, { container: true });
+    });
+
+    const outer = child(profiler.snapshot(), "replay proofs");
+    expect(outer.peakMemoryBytes).toBe(512);
+    expect(child(outer, "container replay-proofs").peakMemoryBytes).toBe(2048);
+  });
+
+  it("drops peak-memory observations made outside every span", () => {
+    const profiler = new Profiler();
+    notePeakMemory(4096);
+    expect(profiler.snapshot().peakMemoryBytes).toBeUndefined();
+  });
+
+  it("formats bytes in human units", () => {
+    expect(formatBytes(512)).toBe("512B");
+    expect(formatBytes(10 * 1024)).toBe("10KiB");
+    expect(formatBytes(300 * 2 ** 20)).toBe("300MiB");
+    expect(formatBytes(10.78 * 2 ** 30)).toBe("10.78GiB");
+  });
+
+  it("renders per-span peaks and the heaviest-span summary line", () => {
+    const root: Span = {
+      name: "total",
+      ms: 100_000,
+      children: [
+        {
+          name: "replay proofs",
+          ms: 80_000,
+          children: [
+            {
+              name: "container replay-proofs",
+              ms: 79_500,
+              children: [],
+              container: true,
+              peakMemoryBytes: Math.round(10.78 * 2 ** 30),
+            },
+          ],
+        },
+        { name: "compile concepts", ms: 20_000, children: [], peakMemoryBytes: 300 * 2 ** 20 },
+      ],
+    };
+
+    const text = formatProfile(root);
+    expect(text).toContain("peak 10.78GiB");
+    expect(text).toContain("peak 300MiB");
+    expect(text).toContain("peak memory (heaviest span)");
+    expect(text).toContain("10.78GiB");
   });
 });
 

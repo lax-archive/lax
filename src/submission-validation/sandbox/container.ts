@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { RUNTIME_PATHS, type ValidationLimits } from "../config.js";
 import type { ValidationRuntimeIdentity } from "../contracts.js";
-import type { Profiler } from "../../shared/profile.js";
+import { notePeakMemory, type Profiler } from "../../shared/profile.js";
 import { ensureRuntimeLayout, type RuntimeLayout } from "./layout.js";
 import { assertWorkspaceWithinLimit } from "./workspace-limit.js";
 
@@ -172,19 +172,99 @@ export class ContainerRunner implements ValidationRunner {
       args.push("--env", `${key}=${value}`);
     }
     args.push(this.runtime.image, ...invocation.args);
-    const result = await this.timed(invocation.label, () => runProcess(
-      "docker",
-      args,
-      invocation.timeoutMs,
-      invocation.maxOutputBytes,
-      () => assertWorkspaceWithinLimit(this.workspaceRoot, this.limits),
-    ));
+    const result = await this.timed(invocation.label, async () => {
+      // Peak-memory profiling of the container's cgroup, attributed to the
+      // span `timed` just opened on this task. Started only when profiling
+      // at all; diagnostics, never part of the sandbox boundary.
+      const stopMemoryMonitor =
+        this.profiler === undefined ? undefined : startContainerMemoryMonitor(name);
+      try {
+        return await runProcess(
+          "docker",
+          args,
+          invocation.timeoutMs,
+          invocation.maxOutputBytes,
+          () => assertWorkspaceWithinLimit(this.workspaceRoot, this.limits),
+        );
+      } finally {
+        stopMemoryMonitor?.();
+      }
+    });
     if (result.timedOut || result.terminationError !== undefined) {
       await runProcess("docker", ["rm", "--force", name], 10_000, 64 * 1024).catch(() => undefined);
     }
     if (result.terminationError !== undefined) throw result.terminationError;
     return result;
   }
+}
+
+const MEMORY_POLL_INTERVAL_MS = 500;
+
+/**
+ * The host-side cgroup v2 file recording the container's peak memory use,
+ * derived from the container init's /proc/<pid>/cgroup ("0::<path>", the
+ * unified hierarchy). Works under both the systemd and cgroupfs drivers —
+ * the kernel reports the real path either way, even when the container has
+ * a private cgroup namespace, because the host reads it from the root
+ * namespace. A cgroup-v1-only host yields undefined and the profile simply
+ * carries no memory number.
+ */
+export function cgroupMemoryPeakPath(procCgroup: string): string | undefined {
+  for (const line of procCgroup.split("\n")) {
+    const match = /^0::(\/.*)$/u.exec(line.trim());
+    if (match !== null) return path.join("/sys/fs/cgroup", match[1]!, "memory.peak");
+  }
+  return undefined;
+}
+
+/**
+ * Best-effort peak-memory monitor for one container run: resolve the
+ * container's cgroup through its init pid (docker inspect), then poll the
+ * cgroup's kernel-maintained `memory.peak` — a monotonic high-water mark
+ * covering everything the `--memory` cap is enforced against, so the last
+ * successful read before the container exits is the run's peak (modulo the
+ * final poll interval). Every step may fail (container not started yet,
+ * already reaped by `--rm`, cgroup v1 host); each failure just means no
+ * number — profiling never fails a validation. Returns the stop function.
+ */
+function startContainerMemoryMonitor(containerName: string): () => void {
+  let peakFile: string | undefined;
+  let resolving = false;
+  const timer = setInterval(() => {
+    if (peakFile === undefined) {
+      if (resolving) return;
+      resolving = true;
+      void resolveCgroupPeakFile(containerName)
+        .then((file) => {
+          peakFile = file;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          resolving = false;
+        });
+      return;
+    }
+    try {
+      notePeakMemory(Number(fs.readFileSync(peakFile, "utf8").trim()));
+    } catch {
+      // The container is gone; whatever was read last stands as the peak.
+    }
+  }, MEMORY_POLL_INTERVAL_MS);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+async function resolveCgroupPeakFile(containerName: string): Promise<string | undefined> {
+  const inspected = await runProcess(
+    "docker",
+    ["inspect", "--format", "{{.State.Pid}}", containerName],
+    10_000,
+    16 * 1024,
+  );
+  if (inspected.code !== 0) return undefined;
+  const pid = Number(inspected.output.trim());
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  return cgroupMemoryPeakPath(fs.readFileSync(`/proc/${pid}/cgroup`, "utf8"));
 }
 
 interface ProcessResult extends ContainerResult {

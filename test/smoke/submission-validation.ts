@@ -27,6 +27,7 @@ import {
   validateSubmission,
   type ValidationOptions,
 } from "../../src/submission-validation/pipeline.js";
+import { formatProfile, Profiler } from "../../src/shared/profile.js";
 
 interface RuntimePins {
   leanToolchain: string;
@@ -98,14 +99,17 @@ try {
       },
       archiveSha: "0".repeat(40),
     };
+    const profiler = new Profiler();
     const options: ValidationOptions = {
       local: {
         fetched: { repositoryRoot: sourceRoot, submissionRoot: sourceRoot },
         archive: new ArchiveSnapshot(archiveRoot, request.archiveSha),
       },
+      profiler,
     };
     const started = performance.now();
     const report = await validateSubmission(request, jobRoot, options);
+    console.error(`\n[${fixture.name}]\n${formatProfile(profiler.snapshot())}`);
     fixture.check(report, jobRoot);
     completed.push({
       name: fixture.name,
