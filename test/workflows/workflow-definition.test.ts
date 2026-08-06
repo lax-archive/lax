@@ -1,9 +1,10 @@
-// Wiring, permission, and pin assertions over .github/workflows/submission.yml.
-// Everything here is structure that only exists in YAML: job graph shape,
-// per-job token grants, action pins, and step ordering that separates
-// credentials from untrusted input. All *logic* (routing, reporting, marker
-// text, idempotence, credential-free preflight) lives in TS entry points and
-// is tested behaviorally in submission-entry.test.ts and its siblings.
+// Wiring, permission, and pin assertions over .github/workflows/submission.yml
+// and .github/workflows/ci.yml. Everything here is structure that only exists
+// in YAML: job graph shape, per-job token grants, action pins, and step
+// ordering that separates credentials from untrusted input. All *logic*
+// (routing, reporting, marker text, idempotence, credential-free preflight)
+// lives in TS entry points and is tested behaviorally in
+// submission-entry.test.ts and its siblings.
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
@@ -19,6 +20,7 @@ const workflowFiles = fs
   .readdirSync(workflowsDirectory)
   .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"));
 const workflow = fs.readFileSync(new URL("../../.github/workflows/submission.yml", import.meta.url), "utf8");
+const ciWorkflow = fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 
 interface WorkflowJob {
   needs?: string | string[];
@@ -39,6 +41,16 @@ interface WorkflowJob {
 
 const parsed = YAML.parse(workflow) as { jobs: Record<string, WorkflowJob> };
 const jobs = parsed.jobs;
+const ciParsed = YAML.parse(ciWorkflow) as {
+  on: unknown;
+  jobs: Record<string, WorkflowJob & { "timeout-minutes"?: number }>;
+};
+const ciJobs = ciParsed.jobs;
+
+/** The one cache identity both the trusted validate job and the CI smoke use. */
+const HOST_CACHE_KEY =
+  "lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}";
+const HOST_CACHE_PATHS = ["~/.elan", "~/.lax/warm", "~/.lax/tools"];
 
 // ---------------------------------------------------------------------------
 // Pins: supply-chain lint that can only live at the YAML level.
@@ -163,12 +175,8 @@ describe("submission workflow wiring", () => {
     // The cache identity is the reviewed pins module plus a layout salt.
     for (const step of jobs.validate.steps) {
       if (step.uses?.startsWith("actions/cache/") !== true) continue;
-      expect(step.with?.key).toBe(
-        "lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}",
-      );
-      expect(step.with?.path).toContain("~/.elan");
-      expect(step.with?.path).toContain("~/.lax/warm");
-      expect(step.with?.path).toContain("~/.lax/tools");
+      expect(step.with?.key).toBe(HOST_CACHE_KEY);
+      for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
     }
   });
 
@@ -314,6 +322,66 @@ describe("submission workflow wiring", () => {
     expect(workflow.indexOf("  validate:")).toBeLessThan(workflow.indexOf("  publish:"));
     expect(workflow.indexOf("  publish-update:")).toBeLessThan(workflow.indexOf("  publish:"));
     expect(workflow.indexOf("  publish:")).toBeLessThan(workflow.indexOf("  website:"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CI: the docker smoke is the only gate that exercises the container-only
+// seam, so its wiring is load-bearing and lives here with the rest of the YAML
+// structure. The lesson is history/live-rehearsal.md: a container-only bug
+// (installOwnConceptCapture dropping the build/ir companions) survived
+// `npm run check` and only the smoke caught it.
+// ---------------------------------------------------------------------------
+describe("CI workflow wiring", () => {
+  it("runs the host suite and the real-container smoke on the same triggers", () => {
+    expect(Object.keys(ciJobs).sort()).toEqual(["check", "smoke"]);
+    // Workflow-level `on:`, so both jobs answer to the same events; a per-job
+    // trigger cannot exist in Actions, but a second workflow file could drift.
+    expect(ciParsed.on).toEqual({ push: null });
+    for (const [name, job] of Object.entries(ciJobs)) {
+      expect(job.permissions, name).toEqual({ contents: "read" });
+      const checkout = job.steps.find((step) => step.uses?.startsWith("actions/checkout"));
+      expect(checkout?.with, name).toMatchObject({ "persist-credentials": false });
+    }
+    expect(ciJobs.smoke.steps.at(-1)?.run).toBe("npm run smoke:submission-validation");
+    // A hung container must not burn the six-hour default budget.
+    expect(ciJobs.smoke["timeout-minutes"]).toBeGreaterThan(0);
+    expect(ciJobs.smoke["timeout-minutes"]).toBeLessThanOrEqual(60);
+  });
+
+  it("saves the warm-store cache before the smoke runs a container", () => {
+    // The smoke shares its cache key with the trusted validate job, so it owes
+    // the same discipline: only trusted provisioning may ever write the store.
+    // Sandboxed fixture builds happen in the final step, after the save.
+    const runs = ciJobs.smoke.steps.map((step) => step.run ?? step.uses ?? "");
+    const restore = runs.findIndex((run) => run.startsWith("actions/cache/restore"));
+    const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
+    const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
+    const smoke = runs.findIndex((run) => run === "npm run smoke:submission-validation");
+    expect(restore).toBeGreaterThanOrEqual(0);
+    expect(restore).toBeLessThan(setup);
+    expect(setup).toBeLessThan(save);
+    expect(save).toBeLessThan(smoke);
+    expect(ciJobs.smoke.steps[save]?.if).toBe("steps.lean-cache.outputs.cache-hit != 'true'");
+    // Same store identity as submission.yml: a divergent key would double the
+    // provisioning cost and let the two paths drift onto different pins.
+    let cacheSteps = 0;
+    for (const step of ciJobs.smoke.steps) {
+      if (step.uses?.startsWith("actions/cache/") !== true) continue;
+      cacheSteps += 1;
+      expect(step.with?.key).toBe(HOST_CACHE_KEY);
+      for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
+    }
+    expect(cacheSteps).toBe(2);
+  });
+
+  it("keeps the test seams out of the smoke job", () => {
+    // The smoke asserts the real pins (it refuses to start with LAX_MATHLIB_*
+    // set); a seam leaking into CI would turn the gate into a fake-mathlib
+    // rerun of what the host suite already covers.
+    expect(ciWorkflow).not.toContain("LAX_MATHLIB_");
+    expect(ciWorkflow).not.toContain("LAX_CAPTURE_REGISTRY_URL");
+    expect(ciWorkflow).not.toContain("LAX_GITHUB_API_URL");
   });
 });
 

@@ -13,6 +13,8 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -23,3 +25,69 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+
+  # `npm run check` cannot see the container-only seam: it builds on the host,
+  # in place, and never provisions a fresh workspace from a read-only capture.
+  # The 2026-08-06 live rehearsal (history/live-rehearsal.md) lost a production
+  # round trip to exactly that blind spot — installOwnConceptCapture omitted the
+  # `build/ir` companions, which the docker smoke reproduces and the unit+host
+  # suite does not. So the smoke is a gate, not a habit: it runs here on every
+  # push, in a real container, against the real pins.
+  smoke:
+    name: Container smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Rehearsal timings: cold provision ≈ 170 s of hosted-runner job time, the
+    # six fixtures ≈ 3.2 min locally. The ceiling is generous for a cold,
+    # cache-missing 2-core runner while still killing a hung container.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Same store, same identity, same rules as submission.yml's validate job:
+      # the pins module is the single home of everything the host setup installs,
+      # so its hash is the cache key, and no restore-keys — a store for other
+      # pins would restore gigabytes of dead weight next to the fresh build.
+      # Sharing the key with the trusted workflow is deliberate: both jobs write
+      # it only from trusted provisioning, before any sandbox runs (see below).
+      - name: Restore toolchain and warm mathlib workspace
+        id: lean-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.elan
+            ~/.lax/warm
+            ~/.lax/tools
+          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      # The smoke calls ensureValidationHost itself, but only after this step
+      # has already done the work — provisioning here keeps the expensive part
+      # on its own log line and, crucially, in front of the cache save.
+      - name: Provision the validation host
+        run: node dist/submission-validation/host/setup-vm.js
+      # Save before the smoke executes any fixture inside a container: the cache
+      # must only ever hold what trusted setup produced, and this key is shared
+      # with the trusted validate job. Saving in the action's post step would
+      # snapshot the VM after sandboxed builds ran on it. It also keeps the
+      # expensive first build cached when a fixture assertion fails.
+      - name: Save toolchain and warm mathlib workspace
+        if: steps.lean-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.elan
+            ~/.lax/warm
+            ~/.lax/tools
+          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      # Deliberately no env: no fake-mathlib seam (the smoke refuses to start
+      # with one set — it must assert the real pins) and no validation output
+      # directory; the fixtures get throwaway job roots under $TMPDIR.
+      - name: Run the real-container submission validation smoke
+        run: npm run smoke:submission-validation
