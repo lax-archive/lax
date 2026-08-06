@@ -201,6 +201,76 @@ end Lax2Proofs
     expect(snapshotTree(warm)).toEqual(storeBefore);
   });
 
+  it("never flags Lean-realized helpers for imported defs as namespace violations", async () => {
+    // Lean lazily realizes matcher/equation helpers into the *using* module's
+    // olean under the imported definition's namespace
+    // (`<fn>.match_1.splitter`, `<fn>.match_1.congr_eq_<n>`, `<fn>.eq_def`,
+    // …). The namespace rule must never see them — spec.md: realized lemmas
+    // for imported constants are internal details and drop out before the
+    // test. Each theorem below forces one realization trigger against a def
+    // imported from outside the proof package, so a toolchain pin bump that
+    // changes Lean's classification of these helpers fails here, not in an
+    // author's field report.
+    const root = makeHostSubmission("lax-25", {
+      "concepts/Lax25.lean": "import Lax25.Defs\n",
+      "concepts/Lax25/Defs.lean": `/-!
+---
+title: Definitions
+type: definition
+---
+Pattern-matching and recursive definitions for downstream realization.
+-/
+
+namespace Lax25.Defs
+
+/-- picks the value or zero -/
+def pick : Option Nat → Nat
+  | some x => x
+  | none => 0
+
+/-- a tiny recursive function -/
+def grow : Nat → Nat
+  | 0 => 1
+  | n + 1 => grow n + 2
+
+end Lax25.Defs
+`,
+      "proofs/Lax25Proofs.lean": "import Lax25Proofs.Basic\n",
+      "proofs/Lax25Proofs/Basic.lean": `import Lax25.Defs
+
+namespace Lax25Proofs
+
+-- split: realizes \`Lax25.Defs.pick.match_1.splitter\`
+theorem pick_pos (o : Option Nat) : Lax25.Defs.pick o + 1 > 0 := by
+  unfold Lax25.Defs.pick
+  split <;> omega
+
+-- split on a core def: realizes \`Option.getD.match_1.splitter\`
+theorem getD_pos (o : Option Nat) (d : Nat) : o.getD d + 1 > 0 := by
+  unfold Option.getD
+  split <;> omega
+
+-- fun_induction: realizes \`grow.induct\` and \`grow.match_1.congr_eq_<n>\`
+theorem grow_ge (n : Nat) : Lax25.Defs.grow n ≥ 1 := by
+  fun_induction Lax25.Defs.grow n <;> omega
+
+-- rw [eq_def]: realizes the eq-like family for \`grow\`
+theorem grow_zero : Lax25.Defs.grow 0 = 1 := by
+  rw [Lax25.Defs.grow.eq_def]
+
+-- simp [defn]: realizes the equation lemmas for \`grow\`
+theorem grow_succ (n : Nat) : Lax25.Defs.grow (n + 1) = Lax25.Defs.grow n + 2 := by
+  simp [Lax25.Defs.grow]
+
+end Lax25Proofs
+`,
+    });
+    const report = await buildOnHost(root, { id: "lax-25" });
+    expect(report.violations.filter((violation) => violation.rule === "namespace")).toEqual([]);
+    expect(report.violations).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+
   it("carries the full multi-line lake transcript into the compile violation", async () => {
     const root = makeHostSubmission("lax-3", {
       "concepts/Lax3.lean": "import Lax3.Broken\n",

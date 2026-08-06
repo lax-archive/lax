@@ -143,6 +143,18 @@ def kindOf : ConstantInfo → String
   | .ctorInfo _ => "ctor"
   | .recInfo _ => "rec"
 
+/-- The reserved-name shapes of `Lean.Meta.Match.MatchEqs` (`isMatchEqName?`,
+`isMatchCongrEqName?`), decided against an inspector-built matcher set
+instead of `Lean.Meta.isMatcherCore` — see `userLevelName?` for why the
+latter is unavailable here. -/
+def isMatcherRealization (matchers : NameSet) (n : Name) : Bool :=
+  match n with
+  | .str p s =>
+    (s == "splitter" || Meta.isEqnReservedNameSuffix s
+      || Meta.Match.isCongrEqnReservedNameSuffix s)
+    && (matchers.contains p || matchers.contains ((privateToUserName? p).getD p))
+  | _ => false
+
 /-- User-level names in the sense of the spec's primer: internal details are
 flagged, private names un-mangled.
 
@@ -154,12 +166,36 @@ name pattern: the elaborator refuses author declarations of reserved names
 (`Lean.Elab.checkNotAlreadyDeclared`), and the predicate set comes from this
 binary's own initialization — never from imported code, which stays disabled
 (`loadExts := false`). An authored `Foo.congr_simp` whose parent `Foo` does
-not exist is not reserved and stays visible to the namespace rule. -/
-def userLevelName? (env : Environment) (n : Name) : Option Name :=
-  let n := (privateToUserName? n).getD n
-  if n.isInternalDetail then none
-  else if isReservedName env n then none
-  else some n
+not exist is not reserved and stays visible to the namespace rule.
+
+Two gaps keep a bare `isReservedName` from matching what the elaborator
+refused, so the test here is wider:
+
+* Core predicates match the exact persisted form, private prefix included
+  (see the "including the private prefix" remark on the predicate in
+  `Lean.Meta.Eqns`). Cross-module realizations arrive both mangled
+  (`_private.<mod>.0.<fn>.match_<n>.splitter`) and un-mangled
+  (`<fn>.match_<n>.congr_eq_<idx>`), so reservedness is tested on the raw
+  name and on its un-mangled form.
+* The matcher-family predicates guard on `Lean.Meta.isMatcherCore`, which
+  reads the `Match.Extension` environment extension — empty under
+  `loadExts := false`. `matcherNamesOf` recovers the matcher set inertly
+  from the raw olean entries, and `isMatcherRealization` replays the
+  `Lean.Meta.Match.MatchEqs` predicates against it.
+
+The matcher entries read from a submission's own olean are untrusted data: a
+forged entry can at worst exempt names shaped like matcher internals
+(`<matcher>.splitter`, `<matcher>.congr_eq_<n>`, …) from the namespace rule.
+That is hygiene-only — axiom classification and the proof checks never
+consult this filter. -/
+def userLevelName? (env : Environment) (matchers : NameSet) (n : Name) : Option Name :=
+  if isReservedName env n then none
+  else
+    let u := (privateToUserName? n).getD n
+    if u.isInternalDetail then none
+    else if isReservedName env u then none
+    else if isMatcherRealization matchers n || isMatcherRealization matchers u then none
+    else some u
 
 def runCoreIO (env : Environment) (x : CoreM α) : IO α := do
   let coreCtx : Core.Context := { fileName := "<laxinspector>", fileMap := default }
@@ -287,6 +323,23 @@ unsafe def declarationRangesOf (data : ModuleData) : NameMap DeclarationRanges :
         out := out.insert name ranges
   return out
 
+/-- Matcher names, read from the raw `Match.Extension` olean entries of every
+loaded module — upstream and submission alike. Inspect keeps imported
+extension initialization disabled, so read only these inert olean entries,
+just as `moduleDocsOf` does; the entry type is
+`Lean.Meta.Match.Extension.Entry` (a matcher `name` and its `MatcherInfo`).
+Each name is kept in its persisted form and its un-mangled form. -/
+unsafe def matcherNamesOf (datas : Array ModuleData) : NameSet := Id.run do
+  let mut out : NameSet := {}
+  for data in datas do
+    for (extName, entries) in data.entries do
+      if (privateToUserName? extName).getD extName == `Lean.Meta.Match.Extension.extension then
+        for e in entries do
+          let entry := (unsafeCast e : Meta.Match.Extension.Entry)
+          out := out.insert entry.name
+          out := out.insert ((privateToUserName? entry.name).getD entry.name)
+  return out
+
 unsafe def main (args : List String) : IO UInt32 := do
   let (outPath, mods) ←
     match args with
@@ -301,6 +354,7 @@ unsafe def main (args : List String) : IO UInt32 := do
 
   let allNames := env.header.moduleNames
   let datas := env.header.moduleData
+  let matchers := matcherNamesOf datas
   let mut idxMap : Std.HashMap Name Nat := {}
   for i in [0:allNames.size] do
     idxMap := idxMap.insert allNames[i]! i
@@ -356,7 +410,7 @@ unsafe def main (args : List String) : IO UInt32 := do
          ("kind", Json.str (kindOf ci)),
          ("module", Json.str m.toString),
          ("axioms", Json.arr (axioms.map fun a => Json.str a.toString))]
-      if let some u := userLevelName? env declName then
+      if let some u := userLevelName? env matchers declName then
         fields := fields ++ [("userName", Json.str u.toString)]
       if let some ranges := declarationRanges.find? declName then
         fields := fields ++ [
