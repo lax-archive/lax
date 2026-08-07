@@ -153,12 +153,14 @@ initial batch verification over every record in dependency order.
 
 Carried and adapted: invite the second maintainer to the `lax-archive` org
 (decide role, consider org 2FA requirement); npm maintainer access (2FA —
-publish rights are the deploy gate); the secrets doctrine is now: App
-private keys live only in the two protected Actions environments
-(`lax-database-publish`, `lax-website-dispatch`), a maintainer's laptop
-holds nothing. Confirm all three GitHub App registrations (CLI, Database
-Publisher, Website Dispatcher) are org-owned, not personal. Sweep docs for
-"maintainer call" spots that assume one person.
+publish rights are the deploy gate); the secrets doctrine is now: both App
+private keys live only in the one protected Actions environment
+(`lax-database-publish`, which deploys only from `main`), a maintainer's
+laptop holds nothing — and a key that leaves that environment cannot be read
+back, only regenerated. All three App registrations (`lax-cli-publisher`,
+`lax-database-publisher`, `lax-website-dispatcher`) were confirmed org-owned
+on 2026-08-07. Sweep docs for "maintainer call" spots that assume one
+person.
 
 ## ORCID-authed comments (design pending)
 
