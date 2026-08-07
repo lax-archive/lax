@@ -24,18 +24,20 @@ permission the report download needs. Left:
 - **Delete the superseded `Lax Website Dispatcher` private key** in the App
   settings (UI only). It was replaced, not revoked, and the environment that
   held it is gone.
-- **The first live `/lax submit` under the new DAG is unrehearsed.** The
-  drill was deliberately skipped — the merge had already made the workflow
-  live — so watch the first real round trip: publication *and* the Website
-  dispatch now happen in one step of the publish job.
+- **Merge or keep `roundtrip-20260807` in lax-submissions** — see the
+  round-trip-sources item below. Seven records now name commits that exist
+  only on that branch.
 
 ## Go-live leftovers (context: history/go-live.md)
 
 - **Keep round-trip sources reachable in lax-submissions**: branch
-  `port/chain-requires` carries the only refs to lax-11/12 and lax-3/5/15
-  source commits, and branch `roundtrip-20260806` carries lax-14's current
-  commit `42a14ff9`. Merge them or keep the branches; deleting strands the
-  recorded sources.
+  `roundtrip-20260807` now carries the recorded source of all seven
+  chain submissions — lax-13/lax-14 at `d35ba57`, lax-11/lax-12 at
+  `becb578`, lax-3/lax-5/lax-15 at `4af91ea` — after the 2026-08-07
+  production sweep re-pinned the chain bottom-up. It supersedes
+  `roundtrip-20260806` (lax-14's old `42a14ff9`) and `port/chain-requires`,
+  whose commits no record names any more. Merge `roundtrip-20260807` into
+  `main` or keep the branch; deleting it strands every recorded source.
 - **Scratch-repo teardown**: delete `jan3er/lax-scratch-{control,database,
   submission}` and ghcr package `lax-scratch-captures`, and rotate the
   personal token that stood in for the App mints (Jan).

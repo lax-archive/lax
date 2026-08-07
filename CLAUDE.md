@@ -52,7 +52,10 @@ prefer them over inferring intent from the current code.
   executed rewrite stages, measurements, and spike verdicts), `go-live.md`
   (the database port, box stop, DNS/HTTPS cutover, first npm releases —
   with the trusted-publisher rebinding and tarball-packaging lessons —
-  and the production round trip).
+  and the production round trip), `pipeline-simplification-rollout.md`
+  (the 2026-08-07 rollout: why a secret cannot be moved between
+  environments, the vacuous protected-branches policy, and the
+  seven-record production sweep that replaced the skipped drill).
 
 ## Commands
 
