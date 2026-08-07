@@ -18,12 +18,17 @@ import {
 } from "../shared/validation.js";
 import type { GitHubIdentity } from "../shared/types.js";
 import { checkDeleteLocally, checkRegisterLocally } from "./archive-preflight.js";
-import { githubAppUserToken } from "./auth.js";
+import { AuthenticationError, ensureLoggedIn, githubAppUserToken } from "./auth.js";
 import { buildSubmission, hasCurrentLocalBuild } from "./build.js";
 import { confirmTyped } from "./confirm.js";
 import { databaseDirectory, tryRefreshDatabase } from "./database.js";
 import { installHint, toolVersion } from "./doctor.js";
-import { followCommand, followInitialization, WorkflowOutcomeError } from "./follow.js";
+import {
+  CommandFailedError,
+  followCommand,
+  followInitialization,
+  WorkflowOutcomeError,
+} from "./follow.js";
 import { deriveSubmittedSource, repositoryRoot } from "./git.js";
 import { issueNumberFromFolder } from "./manifest.js";
 import { recordSubmission } from "./registry.js";
@@ -76,7 +81,7 @@ async function allocateSubmission(titleInput: string): Promise<{
   });
   console.log(`Allocated lax-${issue.number}: ${issue.html_url}`);
   console.log("Waiting for initialization to commit the three stub files.");
-  await followInitialization(github, issue.number);
+  await followInitialization(github, issue.number, "lax init");
   return {
     issue: issue.number,
     id: `lax-${issue.number}`,
@@ -118,6 +123,7 @@ export async function submitExplicitSource(
     folder: validateFolder(folderInput),
   };
   const issue = resolveIssueReference(reference);
+  await announceIdentity("lax submit");
   console.log(
     `Submitting lax-${issue} from (${source.repository}, ${source.commit}, ${source.folder}).`,
   );
@@ -125,10 +131,26 @@ export async function submitExplicitSource(
     postCommand(issue, `/lax submit ${JSON.stringify(source)}`));
 }
 
+/**
+ * Verify the login before the command spends anything, and say whose it is:
+ * `lax submit` writes to the control issue as *someone*, and an author with two
+ * accounts should see which one before the run starts.
+ *
+ * Deliberately not on `--resume`: there a run may already be going, so a
+ * failure here must stay the resume hint rather than become a login error.
+ */
+async function announceIdentity(command: string): Promise<void> {
+  console.log(`${command}: authenticated as ${await ensureLoggedIn()}.`);
+}
+
 export async function submitFolder(folder: string, allowDirty = false): Promise<void> {
   const root = path.resolve(folder);
   const issue = issueNumberFromFolder(root);
   console.log(`lax submit: preparing lax-${issue} in ${root}.`);
+  // Ahead of the local build, which is minutes of Lean: without a usable login
+  // there is nothing to submit the result to, and the author should learn that
+  // now rather than after the build.
+  await announceIdentity("lax submit");
   const source = deriveSubmittedSource(root, allowDirty);
   await ensureBuiltForSubmit(root, source, allowDirty);
   console.log(
@@ -172,7 +194,7 @@ export async function resumeSubmit(target: string): Promise<void> {
       "Reattaching to " +
         `${githubOauthBase()}/${CONTROL_REPOSITORY}/issues/${issue}#issuecomment-${command.id}`,
     );
-    await followCommand(github, issue, command.id);
+    await followCommand(github, issue, command.id, { label: "lax submit" });
   });
 }
 
@@ -187,10 +209,12 @@ function resumeCommand(target: string): string {
 }
 
 /**
- * A GitHub HTTP status is an authoritative answer and a finished-workflow error
- * is final; anything else (transport failure, timeout) leaves the Actions run
- * going, so hand the author the exact recovery command — as old lax did with
- * its job ids.
+ * A GitHub HTTP status is an authoritative answer, a finished-workflow error is
+ * final, a reported command failure is the workflow's own verdict, and an
+ * authentication failure happens strictly before the command comment is posted
+ * — so none of them leaves a run behind. Anything else (transport failure,
+ * timeout) does leave the Actions run going, so hand the author the exact
+ * recovery command — as old lax did with its job ids.
  */
 async function withResumeHint<T>(target: string, operation: () => Promise<T>): Promise<T> {
   try {
@@ -199,7 +223,9 @@ async function withResumeHint<T>(target: string, operation: () => Promise<T>): P
     if (
       !(error instanceof GitHubError) &&
       !(error instanceof WorkflowOutcomeError) &&
-      !(error instanceof NothingToResumeError)
+      !(error instanceof CommandFailedError) &&
+      !(error instanceof NothingToResumeError) &&
+      !(error instanceof AuthenticationError)
     ) {
       console.error("lax submit: lost contact with GitHub; the workflow run may still be going");
       console.error(`lax submit: reattach with: ${resumeCommand(target)}`);
@@ -332,8 +358,17 @@ async function postCommand(reference: string | number, body: string): Promise<vo
     `${base}/issues/${issue}/comments`,
     { body },
   );
-  console.log(`Command submitted: ${comment.html_url}`);
-  await followCommand(github, issue, comment.id, body.startsWith("/lax owners "));
+  const action = /^\/lax ([a-z]+)/u.exec(body)?.[1] ?? "command";
+  const label = `lax ${action}`;
+  console.log(`${label}: command posted: ${comment.html_url}`);
+  await followCommand(github, issue, comment.id, {
+    label,
+    // Submit printed the exact triple it sent one line ago; the delete and
+    // register previews say something the CLI does not know (current state,
+    // stranded dependents), so those are worth repeating.
+    showPreview: action !== "submit",
+    acceptSuccessReaction: action === "owners",
+  });
 }
 
 /** Issue commands also accept a submission folder containing manifest.yaml. */

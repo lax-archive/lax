@@ -621,3 +621,31 @@ No filesystem scanning: only roots lax has touched are checked.
 
 Spec touchpoint: the CLI init/scaffold description (init is no longer a
 pure scaffold step) and the doctor command summary.
+
+## Result comments carry the diagnosis and a machine-readable outcome (2026-08-07)
+
+The control plane's result comment is now the author's whole report, not a
+summary of one. A failed validation renders each finding with its phase and
+rule, and any multi-line message — a `lake build` transcript, a kernel
+replay refusal, an inspector failure — keeps its lines inside a fenced code
+block (`src/shared/comment-format.ts`: control characters stripped, fences
+longer than any backtick run inside them, 12 k characters per finding and
+40 k per comment, over-long transcripts keeping their *tail*). The pipeline
+stopped flattening violation messages to one line for the same reason. This
+restores what the old archive server sent as `transcriptTail`.
+
+Every result comment also ends with `<!-- lax-outcome:success|failure -->`.
+Prose says what happened to the reader of the issue; the marker says it to
+the CLI, which previously exited 0 whether the workflow published the
+submission or refused it. `success` means the command did what it said;
+`failure` covers refusals, failed validation, and a lax-database commit
+whose Website dispatch or title synchronization did not complete.
+
+The CLI renders comments rather than echoing their markdown
+(`src/cli/render.ts`), announces the workflow run once, suppresses the
+submit preview (it repeats the triple the CLI just printed), and shows the
+run's *stage* — "validating: compile, kernel replay, inspection" — instead
+of GitHub Actions job and step names.
+
+Spec touchpoint: the control-plane comment protocol (the marker set) and
+the CLI's submit description.

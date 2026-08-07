@@ -12,11 +12,16 @@ export class LoadingLine {
 
   constructor(private readonly output: ProgressOutput) {}
 
-  update(message: string): void {
+  /**
+   * `detail` (an elapsed time, say) belongs to the live line only: a log
+   * without a cursor to rewrite would otherwise get a new line per tick, so
+   * there the message alone decides whether anything is printed.
+   */
+  update(message: string, detail?: string): void {
     if (this.output.isTTY === true) {
       const indicator = spinner[this.frame % spinner.length]!;
       this.frame += 1;
-      this.output.write(`\r\u001B[2K${indicator} ${message}`);
+      this.output.write(`\r\u001B[2K${indicator} ${message}${detail === undefined ? "" : ` · ${detail}`}`);
       this.active = true;
     } else if (message !== this.previous) {
       this.output.write(`${message}\n`);

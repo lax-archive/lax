@@ -9,10 +9,11 @@ import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import {
   parseWorkflowComment,
   readCommandContext,
-  visibleComment,
+  type CommandOutcome,
   type ParsedWorkflowComment,
 } from "../shared/workflow-comments.js";
 import { LoadingLine } from "./loading.js";
+import { labelled, renderComment } from "./render.js";
 
 interface IssueComment {
   id: number;
@@ -58,6 +59,21 @@ interface CommentMatch {
   result?: string;
   runId?: string;
   runUrl?: string;
+  outcome?: CommandOutcome;
+}
+
+export interface FollowOptions {
+  /** Command name for every line this prints, e.g. `lax submit`. */
+  label: string;
+  /**
+   * Print the control plane's echo of the request. `lax submit` already
+   * printed the exact triple it sent, so it suppresses the echo; `lax delete`
+   * and `lax register` do not — their previews carry the record's current
+   * state and its stranded dependents, which the CLI does not know.
+   */
+  showPreview?: boolean;
+  /** `lax owners` completes with a bot reaction rather than a comment. */
+  acceptSuccessReaction?: boolean;
 }
 
 /**
@@ -67,21 +83,49 @@ interface CommentMatch {
  */
 export class WorkflowOutcomeError extends Error {}
 
+/**
+ * The workflow answered, and the answer is no: a refused command, a failed
+ * validation, a publication that did not complete. The report is already on
+ * the author's screen, so this only carries the exit status.
+ */
+export class CommandFailedError extends Error {}
+
+/** Actions job names, as the author's stages rather than as CI internals. */
+const STAGES = new Map<string, string>([
+  ["precheck", "checking the command"],
+  ["route", "checking the command"],
+  ["validate", "validating: compile, kernel replay, inspection"],
+  ["validation result", "reporting the validation result"],
+  ["publish-submit", "publishing to lax-database"],
+  ["publish", "publishing to lax-database"],
+  ["website", "requesting the website rebuild"],
+  ["report-workflow-failure", "reporting the failure"],
+]);
+
 const base = repositoryPath(CONTROL_REPOSITORY);
 
-export async function followInitialization(client: GitHubClient, issueNumber: number): Promise<void> {
-  await follow(client, issueNumber, (parsed) => {
-    const preview = parsed.initializationPreviewIssue === issueNumber;
-    const result = parsed.initializationIssue === issueNumber;
-    return preview || result ? { preview, result } : undefined;
-  });
+export async function followInitialization(
+  client: GitHubClient,
+  issueNumber: number,
+  label = "lax init",
+): Promise<void> {
+  await follow(
+    client,
+    issueNumber,
+    (parsed) => {
+      const preview = parsed.initializationPreviewIssue === issueNumber;
+      const result = parsed.initializationIssue === issueNumber;
+      return preview || result ? { preview, result } : undefined;
+    },
+    { label },
+  );
 }
 
 export async function followCommand(
   client: GitHubClient,
   issueNumber: number,
   triggeringCommentId: number,
-  acceptSuccessReaction = false,
+  options: FollowOptions,
 ): Promise<void> {
   await follow(
     client,
@@ -92,35 +136,30 @@ export async function followCommand(
       const sourceRun = commentId === triggeringCommentId && parsed.runId !== undefined;
       return preview || result || sourceRun ? { preview, result } : undefined;
     },
+    options,
     triggeringCommentId,
-    acceptSuccessReaction ? triggeringCommentId : undefined,
+    options.acceptSuccessReaction === true ? triggeringCommentId : undefined,
   );
 }
 
-/** Select the most useful current job and step from the Actions response. */
+/**
+ * What the run is doing, in the author's terms. GitHub's own job and step
+ * names describe the CI machinery — "Restore toolchain and warm mathlib
+ * workspace", "Mint lax-database token" — which is noise to someone waiting
+ * on a submission, so only the job is consulted and only through STAGES.
+ */
 export function workflowProgress(run: WorkflowRun, jobs: WorkflowJob[]): WorkflowProgress {
   if (run.status === "completed") {
     const conclusion = run.conclusion ?? "completed";
-    return {
-      label: `GitHub Actions · ${terminalText(conclusion)}`,
-      completed: true,
-      conclusion,
-    };
+    return { label: `finished (${terminalText(conclusion)})`, completed: true, conclusion };
   }
-
   const job =
     jobs.find((candidate) => candidate.status === "in_progress") ??
     jobs.find((candidate) => candidate.status !== "completed");
-  if (job === undefined) {
-    return { label: `GitHub Actions · ${humanStatus(run.status)}`, completed: false };
-  }
-
-  const step = job.steps?.find((candidate) => candidate.status === "in_progress");
-  const detail = step?.name ?? (job.status === "in_progress" ? undefined : humanStatus(job.status));
+  if (job === undefined) return { label: humanStatus(run.status), completed: false };
+  const stage = STAGES.get(terminalText(job.name).toLowerCase());
   return {
-    label: ["GitHub Actions", terminalText(job.name), detail === undefined ? undefined : terminalText(detail)]
-      .filter((part): part is string => part !== undefined && part !== "")
-      .join(" · "),
+    label: stage ?? (job.status === "in_progress" ? "working" : humanStatus(job.status)),
     completed: false,
   };
 }
@@ -132,21 +171,26 @@ async function follow(
     parsed: ParsedWorkflowComment,
     commentId: number,
   ) => { preview: boolean; result: boolean } | undefined,
+  options: FollowOptions,
   sourceCommentId?: number,
   successReactionCommentId?: number,
 ): Promise<void> {
   const interval = positiveEnv("LAX_POLL_INTERVAL_MS", 3_000);
   const timeout = positiveEnv("LAX_WORKFLOW_TIMEOUT_MS", 6 * 60 * 60 * 1_000);
-  const deadline = Date.now() + timeout;
+  const started = Date.now();
+  const deadline = started + timeout;
   const loading = new LoadingLine(process.stderr);
+  const { label } = options;
   let announcedPreview = false;
   let announcedRun: string | undefined;
   let runId: string | undefined;
   let runUrl: string | undefined;
   let completedWithoutResult = 0;
   let actionsStatusAvailable = true;
+  let stage = "waiting for the workflow to start";
 
-  loading.update("GitHub Actions · waiting for workflow");
+  const show = (): void => loading.update(`${label} · ${stage}`, elapsed(Date.now() - started));
+  show();
   try {
     while (Date.now() <= deadline) {
       const [comments, successReaction] = await Promise.all([
@@ -163,28 +207,29 @@ async function follow(
 
       if (runId !== undefined && runUrl !== undefined && runId !== announcedRun) {
         loading.clear();
-        console.log(`Following workflow run #${runId}: ${runUrl}`);
+        console.log(`${label}: workflow run #${runId}: ${runUrl}`);
         announcedRun = runId;
       }
       if (matched.preview !== undefined && !announcedPreview) {
-        loading.clear();
-        console.log(visibleComment(matched.preview));
         announcedPreview = true;
+        if (options.showPreview === true) {
+          loading.clear();
+          console.log(labelled(label, renderComment(matched.preview)));
+        }
       }
       if (matched.result !== undefined) {
         loading.clear();
-        if (runId !== undefined && runUrl !== undefined) {
-          console.log(`Workflow run #${runId}: ${runUrl}`);
+        console.log(labelled(label, renderComment(matched.result)));
+        // A result comment without an outcome marker predates them; the
+        // author has the text either way, so only a stated failure fails.
+        if (matched.outcome === "failure") {
+          throw new CommandFailedError("FAILED — see the report above");
         }
-        console.log(visibleComment(matched.result));
         return;
       }
       if (successReaction) {
         loading.clear();
-        if (runId !== undefined && runUrl !== undefined) {
-          console.log(`Workflow run #${runId}: ${runUrl}`);
-        }
-        console.log("👍 Owner list updated.");
+        console.log(`${label}: owner list updated.`);
         return;
       }
 
@@ -195,13 +240,13 @@ async function follow(
         } catch (error) {
           if (error instanceof GitHubError && error.status === 403) {
             actionsStatusAvailable = false;
-            loading.update("GitHub Actions · status unavailable; waiting for result");
+            stage = "waiting for the result (GitHub is not reporting run status)";
           } else {
-            loading.update("GitHub Actions · status temporarily unavailable; waiting for result");
+            stage = "waiting for the result (run status is temporarily unavailable)";
           }
         }
         if (progress !== undefined) {
-          loading.update(progress.label);
+          stage = progress.label;
           completedWithoutResult = progress.completed ? completedWithoutResult + 1 : 0;
           if (completedWithoutResult >= 2) {
             const destination = runUrl === undefined ? "the GitHub Actions page" : runUrl;
@@ -213,6 +258,7 @@ async function follow(
         }
       }
 
+      show();
       await delay(interval);
     }
   } finally {
@@ -242,7 +288,10 @@ function matchComments(
     const kind = matches(parsed, comment.id);
     if (kind === undefined) continue;
     if (kind.preview) matched.preview = readCommandContext(comment.body, comment.id) ?? comment.body;
-    if (kind.result) matched.result = comment.body;
+    if (kind.result) {
+      matched.result = comment.body;
+      matched.outcome = parsed.outcome;
+    }
     matched.runId = parsed.runId ?? matched.runId;
     matched.runUrl = parsed.runUrl ?? matched.runUrl;
   }
@@ -273,6 +322,11 @@ async function readWorkflowProgress(client: GitHubClient, runId: string): Promis
   }
   if (!Array.isArray(response.jobs)) throw new Error("GitHub returned a malformed workflow job list");
   return workflowProgress(run, response.jobs);
+}
+
+function elapsed(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1_000);
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 
 function humanStatus(value: string): string {

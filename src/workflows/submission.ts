@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { ArchiveRepository } from "../shared/archive.js";
 import { GhcrCaptureStore } from "../shared/capture-store.js";
 import { CONTROL_REPOSITORY } from "../shared/constants.js";
+import { findingsMarkdown, safeInline } from "../shared/comment-format.js";
 import { ControlPlane } from "../shared/control-plane.js";
 import { GitHubClient, repositoryPath } from "../shared/github.js";
 import {
@@ -20,7 +21,11 @@ import {
   type SuccessfulValidationArtifacts,
 } from "../submission-validation/artifact-schema.js";
 import { configuredRuntime } from "../submission-validation/config.js";
-import type { ValidationReport, ValidationRequest } from "../submission-validation/contracts.js";
+import type {
+  ValidationFinding,
+  ValidationReport,
+  ValidationRequest,
+} from "../submission-validation/contracts.js";
 import { decodeUtf8, isObject, ValidationError } from "../shared/validation.js";
 import {
   appendWorkflowRun,
@@ -167,7 +172,10 @@ export async function reportValidation(): Promise<void> {
       : `Submission validation failed for **${context.id}**; lax-database was not changed.\n\n` +
         `${validationProblems(report)}\n\n${marker}`;
   await clearCommandProgress(control, context.commentId);
-  await control.postIssueComment(context.issueNumber, appendWorkflowRun(body, workflowRun()));
+  await control.postIssueComment(
+    context.issueNumber,
+    appendWorkflowRun(body, workflowRun(), "failure"),
+  );
 }
 
 export async function publish(): Promise<void> {
@@ -205,6 +213,7 @@ export async function publish(): Promise<void> {
         : `Publication failed; lax-database was not changed by this command.\n\n` +
           `${problems(error)}\n\n${marker}`,
       workflowRun(),
+      "failure",
     );
     await control.postIssueComment(request.issue.number, body);
     throw error;
@@ -282,7 +291,7 @@ export async function publishSubmit(): Promise<void> {
         { title: result.acceptedTitle },
       );
     } catch (error) {
-      const message = safeCommentText((error as Error).message, 300);
+      const message = safeInline((error as Error).message, 300);
       writeOutput("title_sync_error", message || "unknown title synchronization failure");
     }
   } catch (error) {
@@ -346,7 +355,10 @@ export async function reportFailure(): Promise<void> {
           ? "Validation or result reporting failed; no trustworthy validation result was produced. " +
             "lax-database was not changed."
           : "The workflow failed before publication completed; no lax-database commit was created by this run.";
-  await control.postIssueComment(number, appendWorkflowRun(`${summary}\n\n${marker}`, run));
+  await control.postIssueComment(
+    number,
+    appendWorkflowRun(`${summary}\n\n${marker}`, run, "failure"),
+  );
 }
 
 async function postPublicationFailure(
@@ -368,6 +380,7 @@ async function postPublicationFailure(
       : `Publication failed; lax-database was not changed by this command.\n\n` +
         `${problems(error)}\n\n${markerText}`,
     workflowRun(),
+    "failure",
   );
   try {
     await control.postIssueComment(request.issue.number, body);
@@ -399,6 +412,7 @@ async function postFailure(
   const body = appendWorkflowRun(
     `${label}; no lax-database commit was created.\n\n${problems(error)}\n\n${markerText}`,
     workflowRun(),
+    "failure",
   );
   try {
     await control.postIssueComment(number, body);
@@ -415,7 +429,7 @@ function problems(error: unknown): string {
   return message
     .split("\n")
     .filter((line) => line.trim() !== "")
-    .map((line) => `- ${safeCommentText(line.replace(/^-\s*/u, ""), 1_000)}`)
+    .map((line) => `- ${safeInline(line.replace(/^-\s*/u, ""), 1_000)}`)
     .join("\n")
     .slice(0, 8_000);
 }
@@ -566,34 +580,29 @@ function parseValidationContext(value: unknown): ValidationContext {
   return { id: value.id, issueNumber: value.issueNumber as number, commentId: value.commentId as number };
 }
 
+/**
+ * The author's whole diagnosis of a failed submit arrives here: whatever the
+ * pipeline recorded, verbatim enough to act on. Multi-line findings — a Lean
+ * compile transcript, a kernel replay refusal — stay multi-line inside fenced
+ * blocks (comment-format.ts owns the sanitizing and the budgets), because a
+ * one-line summary of a compile error is not a compile error.
+ */
 function validationProblems(report: ValidationReport): string {
-  const findings = Array.isArray(report.violations) ? report.violations.slice(0, 30) : [];
-  if (findings.length === 0) return "- Validation failed without a structured finding; inspect the workflow artifact.";
-  return findings.map((finding) => {
-    if (!isObject(finding)) return "- Malformed validation finding";
-    const phase = safeCommentText(String(finding.phase ?? "validation"), 40);
-    const message = safeCommentText(String(finding.message ?? "unspecified failure"), 600);
-    return `- **${phase}**: ${message}`;
-  }).join("\n");
+  const findings = (Array.isArray(report.violations) ? report.violations : [])
+    .filter((finding): finding is ValidationFinding => isObject(finding));
+  return findingsMarkdown(
+    findings,
+    "Validation failed without a structured finding; inspect the workflow run.",
+  );
 }
 
 function validationWarnings(report: ValidationReport): string {
   const findings = Array.isArray(report.warnings) ? report.warnings.slice(0, 10) : [];
   if (findings.length === 0) return "";
   const lines = findings.map((finding) =>
-    `- ${safeCommentText(isObject(finding) ? String(finding.message ?? "warning") : "warning", 400)}`,
+    `- ${safeInline(isObject(finding) ? String(finding.message ?? "warning") : "warning", 400)}`,
   );
   return `Warnings:\n\n${lines.join("\n")}\n\n`;
-}
-
-function safeCommentText(value: string, limit: number): string {
-  return value
-    .replace(/[\u0000-\u001f\u007f]/gu, " ")
-    .replace(/@/gu, "@\u200b")
-    .replace(/[<>]/gu, "")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, limit);
 }
 
 function issueNumber(event: unknown): number | undefined {

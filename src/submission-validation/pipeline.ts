@@ -27,6 +27,7 @@ import {
 import { replayPackage } from "./phases/replay.js";
 import { runResolution } from "./phases/resolution.js";
 import { runStaticValidation } from "./phases/static.js";
+import { safeTranscript } from "../shared/comment-format.js";
 import { Profiler } from "../shared/profile.js";
 import { ContainerRunner, type ValidationRunner } from "./sandbox/container.js";
 import { assertWorkspaceWithinLimit } from "./sandbox/workspace-limit.js";
@@ -392,7 +393,13 @@ function report(state: ReportState, ok: boolean): ValidationReport {
   };
 }
 
+/**
+ * Keep the shape of what failed. A compile, replay, or inspector failure
+ * *is* its transcript, so line structure survives into the report and from
+ * there into the issue comment and the author's terminal (comment-format.ts
+ * renders it); only control characters are dropped. Over-long transcripts
+ * keep their tail — the head of a `lake build` log is module names.
+ */
 function safeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/[\r\n]+/gu, " ").slice(0, 8_000);
+  return safeTranscript(error instanceof Error ? error.message : String(error), 8_000);
 }

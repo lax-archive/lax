@@ -263,6 +263,10 @@ export async function dispatchWebsiteAndReport(
         appendWorkflowRun(
           successComment(request, commit, dispatched, dispatchError, titleSyncError),
           run,
+          // lax-database did change, so this is not a refusal — but a missing
+          // Website rebuild or issue title is not the command the author asked
+          // for either, and `lax submit` must not exit 0 on it.
+          dispatched && titleSyncError === "" ? "success" : "failure",
         ),
       );
       if (request.action === "submit" && dispatched && titleSyncError === "") {

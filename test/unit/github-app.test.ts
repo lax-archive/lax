@@ -10,6 +10,7 @@ import {
   storeGitHubAppCredentials,
 } from "../../src/cli/auth.js";
 import {
+  AuthenticationError,
   credentialsFromTokenResponse,
   GITHUB_APP_CLIENT_ID,
   requestDeviceToken,
@@ -135,6 +136,37 @@ describe.sequential("GitHub App CLI authentication", () => {
     });
 
     await expect(githubAppUserToken()).rejects.toThrow("different GitHub App");
+  });
+
+  it("blames GitHub, not the login, when the token endpoint 5xxes", async () => {
+    storeGitHubAppCredentials({
+      version: 1,
+      kind: "github-app-user",
+      clientId: GITHUB_APP_CLIENT_ID,
+      accessToken: "ghu_expired-token",
+      expiresAt: 1,
+      refreshToken: "ghr_old-refresh",
+      refreshTokenExpiresAt: Date.now() + 120_000,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 500 }));
+
+    // The author saw only `GitHub App authorization failed with HTTP 500`: no
+    // hint that it was the stored login being renewed, nor which side failed.
+    await expect(githubAppUserToken()).rejects.toThrow(AuthenticationError);
+    await expect(githubAppUserToken()).rejects.toThrow(/refresh your stored GitHub login/u);
+    await expect(githubAppUserToken()).rejects.toThrow(/that is GitHub's side, not your login/u);
+    await expect(githubAppUserToken()).rejects.toThrow(/lax login/u);
+  });
+
+  it("reports a missing or foreign login as an authentication failure", async () => {
+    await expect(githubAppUserToken()).rejects.toThrow(AuthenticationError);
+    storeGitHubAppCredentials({
+      version: 1,
+      kind: "github-app-user",
+      clientId: "Iv-another-app",
+      accessToken: "ghu_other-app-token",
+    });
+    await expect(githubAppUserToken()).rejects.toThrow(AuthenticationError);
   });
 
   it("revokes the stored access and refresh tokens before logging out", async () => {

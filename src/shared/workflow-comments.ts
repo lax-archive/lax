@@ -23,6 +23,17 @@ export function workflowRunMarker(runId: string): string {
   return `<!-- lax-workflow-run-id:${runId} -->`;
 }
 
+/**
+ * Whether a result comment reports a completed command or a refused one.
+ * Prose says which in English; this says it to `lax submit`, which has to
+ * choose an exit status and cannot read English.
+ */
+export type CommandOutcome = "success" | "failure";
+
+export function outcomeMarker(outcome: CommandOutcome): string {
+  return `<!-- lax-outcome:${outcome} -->`;
+}
+
 function commandContextStart(commentId: number): string {
   return `<!-- lax-command-context:${commentId}:start -->`;
 }
@@ -31,8 +42,15 @@ function commandContextEnd(commentId: number): string {
   return `<!-- lax-command-context:${commentId}:end -->`;
 }
 
-export function appendWorkflowRun(body: string, run: WorkflowRunRef): string {
-  return `${body}\n\nWorkflow run: [#${run.id}](${run.url})\n${workflowRunMarker(run.id)}`;
+export function appendWorkflowRun(
+  body: string,
+  run: WorkflowRunRef,
+  outcome?: CommandOutcome,
+): string {
+  return (
+    `${body}\n\nWorkflow run: [#${run.id}](${run.url})\n${workflowRunMarker(run.id)}` +
+    (outcome === undefined ? "" : `\n${outcomeMarker(outcome)}`)
+  );
 }
 
 /** Append or replace the workflow-owned context on an originating command comment. */
@@ -67,6 +85,7 @@ export interface ParsedWorkflowComment {
   resultCommentId?: number;
   runId?: string;
   runUrl?: string;
+  outcome?: CommandOutcome;
 }
 
 /** Parse the stable, hidden correlation markers emitted by the control plane. */
@@ -77,7 +96,9 @@ export function parseWorkflowComment(body: string): ParsedWorkflowComment {
   const result = /<!-- lax-result-comment-id:([1-9][0-9]*) -->/u.exec(body);
   const run = /<!-- lax-workflow-run-id:([0-9]+) -->/u.exec(body);
   const runLink = /Workflow run:\s*\[#([0-9]+)\]\((https:\/\/[^\s)]+)\)/u.exec(body);
+  const outcome = /<!-- lax-outcome:(success|failure) -->/u.exec(body);
   return {
+    ...(outcome === null ? {} : { outcome: outcome[1] as CommandOutcome }),
     ...(initialization === null ? {} : { initializationIssue: Number(initialization[1]) }),
     ...(initializationPreview === null
       ? {}

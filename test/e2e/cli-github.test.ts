@@ -18,6 +18,7 @@ import {
 } from "../../src/shared/constants.js";
 import {
   appendWorkflowRun,
+  outcomeMarker,
   previewMarker,
   resultMarker,
   upsertCommandContext,
@@ -151,7 +152,9 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
         body:
           "Publication failed; lax-database was not changed by this command.\n\n" +
           "- lax-42 is registered and immutable\n\n" +
-          resultMarker(comment.id),
+          resultMarker(comment.id) +
+          "\n" +
+          outcomeMarker("failure"),
         user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
       });
     };
@@ -162,10 +165,11 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
         LAX_WORKFLOW_TIMEOUT_MS: "30000",
       });
 
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain("Command submitted:");
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("lax delete: command posted:");
       expect(result.stdout).toContain("Publication failed");
       expect(result.stdout).toContain("lax-42 is registered and immutable");
+      expect(result.stderr).toContain("lax delete: FAILED");
       // the hidden correlation marker never reaches the author's terminal
       expect(result.stdout).not.toContain("lax-result-comment-id");
       // and the command itself was posted as the logged-in author
@@ -233,10 +237,11 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       github.state.actionsRuns.set("777", { status: "completed", conclusion: "success", jobs: [] });
       github.state.issueComments.get(77)!.push({
         id: 5002,
-        body: appendWorkflowRun(`Published **lax-77**.\n\n${resultMarker(5001)}`, {
-          id: "777",
-          url: "https://github.com/lax-archive/lax/actions/runs/777",
-        }),
+        body: appendWorkflowRun(
+          `Published **lax-77**.\n\n${resultMarker(5001)}`,
+          { id: "777", url: "https://github.com/lax-archive/lax/actions/runs/777" },
+          "success",
+        ),
         user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
       });
     }, 20);
@@ -253,10 +258,12 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       expect(result.stdout).toContain("resuming lax-77");
       expect(result.stdout).toContain("#issuecomment-5001");
       expect(result.stdout).toContain(
-        "Following workflow run #777: https://github.com/lax-archive/lax/actions/runs/777",
+        "lax submit: workflow run #777: https://github.com/lax-archive/lax/actions/runs/777",
       );
-      expect(result.stdout).toContain("Parsed source preview for lax-77.");
-      expect(result.stdout).toContain("Published **lax-77**.");
+      // submit already printed the triple it sent; the echo is not repeated
+      expect(result.stdout).not.toContain("Parsed source preview for lax-77.");
+      // and the result reaches the author as text, not as markdown
+      expect(result.stdout).toContain("lax submit: Published lax-77.");
       expect(result.stdout).not.toContain("lax-result-comment-id");
       // resume polled the correlated run itself, and posted no new command
       expect(github.requests.map((r) => r.path)).toContain(
@@ -264,7 +271,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       );
       expect(github.state.issueComments.get(77)).toHaveLength(2);
       // and the live job/step line came from that run
-      expect(result.stderr).toContain("GitHub Actions · validate · Compile");
+      expect(result.stderr).toContain("lax submit · validating: compile, kernel replay, inspection");
     } finally {
       clearInterval(finish);
       fs.rmSync(folder, { recursive: true, force: true });

@@ -40,7 +40,9 @@ describe("lax doctor", () => {
     await pending;
     const all = log.mock.calls.map(([line]) => String(line));
     expect(all.length).toBeGreaterThan(immediate.length);
-    expect(all.some((line) => line.includes("github auth: no login found"))).toBe(true);
+    // The detail is the authentication failure itself, so a refresh GitHub
+    // answered with a 500 does not get reported as a missing login.
+    expect(all.some((line) => line.includes("github auth: no GitHub App login found"))).toBe(true);
     expect(all.some((line) => line.includes("      → run `lax login`"))).toBe(true);
     expect(all.some((line) => line.includes("database clone:"))).toBe(true);
   });

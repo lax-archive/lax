@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { followCommand, workflowProgress } from "../../src/cli/follow.js";
+import { CommandFailedError, followCommand, workflowProgress } from "../../src/cli/follow.js";
 import {
   appendWorkflowRun,
   previewMarker,
@@ -18,35 +18,47 @@ afterEach(() => {
 });
 
 describe("GitHub Actions workflow progress", () => {
-  it("shows the active job and step", () => {
+  it("names the stage the author is waiting on, not the CI step", () => {
     expect(
       workflowProgress(
         { status: "in_progress", conclusion: null },
         [
           {
-            name: "publish",
+            name: "Validate",
             status: "in_progress",
             conclusion: null,
             steps: [
               { name: "Set up job", status: "completed", conclusion: "success" },
-              { name: "Revalidate and publish", status: "in_progress", conclusion: null },
+              {
+                name: "Restore toolchain and warm mathlib workspace",
+                status: "in_progress",
+                conclusion: null,
+              },
             ],
           },
         ],
       ),
-    ).toEqual({
-      label: "GitHub Actions · publish · Revalidate and publish",
-      completed: false,
-    });
+    ).toEqual({ label: "validating: compile, kernel replay, inspection", completed: false });
+    expect(
+      workflowProgress({ status: "in_progress", conclusion: null }, [
+        { name: "publish-submit", status: "in_progress", conclusion: null },
+      ]).label,
+    ).toBe("publishing to lax-database");
+    // an unknown job says nothing rather than leaking whatever CI calls it
+    expect(
+      workflowProgress({ status: "in_progress", conclusion: null }, [
+        { name: "some-new-job", status: "in_progress", conclusion: null },
+      ]).label,
+    ).toBe("working");
   });
 
   it("reports queued and completed workflow states", () => {
     expect(workflowProgress({ status: "queued", conclusion: null }, [])).toEqual({
-      label: "GitHub Actions · queued",
+      label: "queued",
       completed: false,
     });
     expect(workflowProgress({ status: "completed", conclusion: "failure" }, [])).toEqual({
-      label: "GitHub Actions · failure",
+      label: "finished (failure)",
       completed: true,
       conclusion: "failure",
     });
@@ -62,6 +74,7 @@ describe("GitHub Actions workflow progress", () => {
     const result = appendWorkflowRun(
       `Registered **lax-42**.\n\n${resultMarker(9001)}`,
       { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
+      "success",
     );
     const paginate = vi.fn()
       .mockResolvedValueOnce([{ id: 1, body: preview, user: bot }])
@@ -86,7 +99,10 @@ describe("GitHub Actions workflow progress", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    await followCommand({ paginate, request } as unknown as GitHubClient, 42, 9001);
+    await followCommand({ paginate, request } as unknown as GitHubClient, 42, 9001, {
+      label: "lax register",
+      showPreview: true,
+    });
 
     expect(request).toHaveBeenCalledWith(
       "GET",
@@ -98,13 +114,40 @@ describe("GitHub Actions workflow progress", () => {
     );
     const messages = log.mock.calls.map(([message]) => String(message));
     expect(messages[0]).toBe(
-      "Following workflow run #123: https://github.com/lax-archive/lax/actions/runs/123",
+      "lax register: workflow run #123: https://github.com/lax-archive/lax/actions/runs/123",
     );
-    expect(messages[1]).toContain("Registration preview.");
-    expect(messages[2]).toBe(
-      "Workflow run #123: https://github.com/lax-archive/lax/actions/runs/123",
+    expect(messages[1]).toBe("lax register: Registration preview.");
+    // the run is announced once, and markdown emphasis does not reach the terminal
+    expect(messages[2]).toBe("lax register: Registered lax-42.");
+    expect(messages).toHaveLength(3);
+  });
+
+  it("fails the command when the result comment reports a failure", async () => {
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "100";
+    const result = appendWorkflowRun(
+      "Submission validation failed for **lax-42**; lax-database was not changed.\n\n" +
+        "**compile-proofs** (`build`)\n\n```text\nProofs/Main.lean:9:2: error: unsolved goals\n" +
+        "⊢ False\n```\n\n" +
+        resultMarker(9001),
+      { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
+      "failure",
     );
-    expect(messages[3]).toContain("Registered **lax-42**.");
+    const paginate = vi.fn().mockResolvedValue([{ id: 2, body: result, user: bot }]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await expect(
+      followCommand({ paginate } as unknown as GitHubClient, 42, 9001, { label: "lax submit" }),
+    ).rejects.toBeInstanceOf(CommandFailedError);
+
+    const printed = log.mock.calls.flat().join("\n");
+    expect(printed).toContain("lax submit: Submission validation failed for lax-42");
+    expect(printed).toContain("compile-proofs (build)");
+    // the compile transcript reaches the author with its lines intact
+    expect(printed).toContain("Proofs/Main.lean:9:2: error: unsolved goals");
+    expect(printed).toContain("⊢ False");
+    expect(printed).not.toContain("```");
   });
 
   it("fails quickly when a completed run never posts a result", async () => {
@@ -124,7 +167,9 @@ describe("GitHub Actions workflow progress", () => {
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     await expect(
-      followCommand({ paginate, request } as unknown as GitHubClient, 42, 9001),
+      followCommand({ paginate, request } as unknown as GitHubClient, 42, 9001, {
+        label: "lax delete",
+      }),
     ).rejects.toThrow("workflow #321 finished with failure without posting a result");
     expect(paginate).toHaveBeenCalledTimes(2);
   });
@@ -154,15 +199,18 @@ describe("GitHub Actions workflow progress", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    await followCommand({ paginate } as unknown as GitHubClient, 42, 9001, true);
+    await followCommand({ paginate } as unknown as GitHubClient, 42, 9001, {
+      label: "lax owners",
+      acceptSuccessReaction: true,
+    });
 
     expect(paginate).toHaveBeenCalledWith(
       "/repos/lax-archive/lax/issues/comments/9001/reactions",
     );
     expect(log.mock.calls.flat().join("\n")).toContain(
-      "Following workflow run #456: https://github.com/lax-archive/lax/actions/runs/456",
+      "lax owners: workflow run #456: https://github.com/lax-archive/lax/actions/runs/456",
     );
-    expect(log.mock.calls.flat().join("\n")).toContain("👍 Owner list updated.");
+    expect(log.mock.calls.flat().join("\n")).toContain("lax owners: owner list updated.");
   });
 
   it("times out when GitHub never emits a correlated comment", async () => {
@@ -172,7 +220,7 @@ describe("GitHub Actions workflow progress", () => {
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     await expect(
-      followCommand({ paginate } as unknown as GitHubClient, 42, 9001),
+      followCommand({ paginate } as unknown as GitHubClient, 42, 9001, { label: "lax submit" }),
     ).rejects.toThrow("timed out waiting for the workflow result on lax-42");
     expect(paginate).toHaveBeenCalled();
   });

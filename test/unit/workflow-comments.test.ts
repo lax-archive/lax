@@ -78,9 +78,12 @@ describe("workflow comment correlation", () => {
         { id: 2, body: result, user: bot },
       ]);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    await followCommand({ paginate } as unknown as GitHubClient, 42, 77);
+    await followCommand({ paginate } as unknown as GitHubClient, 42, 77, {
+      label: "lax register",
+      showPreview: true,
+    });
     expect(paginate).toHaveBeenCalledTimes(2);
-    expect(log.mock.calls.flat().join("\n")).toContain("Workflow run #123456789");
+    expect(log.mock.calls.flat().join("\n")).toContain("workflow run #123456789");
     expect(log.mock.calls.flat().join("\n")).toContain("Done.");
   });
 
@@ -91,7 +94,7 @@ describe("workflow comment correlation", () => {
     const paginate = vi.fn().mockResolvedValue([{ id: 1, body: result, user: bot }]);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await followInitialization({ paginate } as unknown as GitHubClient, 42);
-    expect(log.mock.calls.flat().join("\n")).toContain("Workflow run #123456789");
+    expect(log.mock.calls.flat().join("\n")).toContain("workflow run #123456789");
     expect(log.mock.calls.flat().join("\n")).toContain("Initialized.");
   });
 });

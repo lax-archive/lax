@@ -117,11 +117,14 @@ async function githubCheck(): Promise<Check> {
   let token: string;
   try {
     token = await githubAppUserToken();
-  } catch {
+  } catch (error) {
+    // Not every failure here is a missing login — a stored login whose refresh
+    // GitHub answers with a 500 also lands here, and "no login found" would
+    // send the author off to re-run `lax login` for an outage.
     return {
       name: "github auth",
       status: "fail",
-      detail: "no login found",
+      detail: error instanceof Error ? error.message : "no login found",
       fix: "run `lax login`",
     };
   }

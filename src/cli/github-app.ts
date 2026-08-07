@@ -2,6 +2,19 @@ import { githubApiBase, githubOauthBase } from "../shared/constants.js";
 
 export const GITHUB_APP_CLIENT_ID = "Iv23lil5NgwdGZfM911w";
 
+/**
+ * The CLI could not authenticate: no login, an unusable one, or GitHub's
+ * authorization endpoint refusing to answer. Its defining property for callers
+ * is *when* it happens — always before a command comment is posted — so a
+ * command that fails with one has sent nothing and started nothing.
+ */
+export class AuthenticationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthenticationError";
+  }
+}
+
 export interface DeviceCode {
   device_code: string;
   user_code: string;
@@ -38,7 +51,9 @@ export function validateGitHubAppUserToken(value: unknown): string {
     value.length > 512 ||
     !/^[\x21-\x7e]+$/u.test(value)
   ) {
-    throw new Error("GitHub credential is not a GitHub App user access token (expected ghu_ prefix)");
+    throw new AuthenticationError(
+      "GitHub credential is not a GitHub App user access token (expected ghu_ prefix)",
+    );
   }
   return value;
 }
@@ -119,17 +134,29 @@ export async function refreshGitHubAppCredentials(
   credentials: GitHubAppCredentials,
 ): Promise<GitHubAppCredentials> {
   if (credentials.refreshToken === undefined) {
-    throw new Error("GitHub App login has expired; run `lax login` again");
+    throw new AuthenticationError("GitHub App login has expired; run `lax login` again");
   }
-  const response = await formRequest<TokenResponse>(`${githubOauthBase()}/login/oauth/access_token`, {
-    client_id: credentials.clientId,
-    grant_type: "refresh_token",
-    refresh_token: credentials.refreshToken,
-  });
+  let response: TokenResponse;
+  try {
+    response = await formRequest<TokenResponse>(`${githubOauthBase()}/login/oauth/access_token`, {
+      client_id: credentials.clientId,
+      grant_type: "refresh_token",
+      refresh_token: credentials.refreshToken,
+    });
+  } catch (error) {
+    // A bare status here reads as a Lax bug. Name the thing that failed — the
+    // stored login being renewed — and the command that repairs it.
+    throw new AuthenticationError(
+      `could not refresh your stored GitHub login: ${(error as Error).message}; ` +
+        "run `lax login` if it keeps failing",
+    );
+  }
   try {
     return credentialsFromTokenResponse(response, credentials.clientId);
   } catch (error) {
-    throw new Error(`could not refresh the GitHub App login: ${(error as Error).message}`);
+    throw new AuthenticationError(
+      `could not refresh the GitHub App login: ${(error as Error).message}; run \`lax login\` again`,
+    );
   }
 }
 
@@ -180,12 +207,32 @@ function positiveInteger(value: unknown, label: string): number {
 }
 
 async function formRequest<T>(url: string, values: Record<string, string>): Promise<T> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(values),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`GitHub App authorization failed with HTTP ${response.status}`);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(values),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    throw new AuthenticationError(`could not reach GitHub to authorize: ${(error as Error).message}`);
+  }
+  if (!response.ok) throw new AuthenticationError(authorizationFailure(response.status));
   return (await response.json()) as T;
+}
+
+/**
+ * A 5xx from GitHub's authorization endpoint is GitHub's outage, not a bad
+ * login, and logging in again cannot fix it — so say which of the two it is
+ * rather than printing the bare status the author has to interpret.
+ */
+function authorizationFailure(status: number): string {
+  if (status >= 500) {
+    return `GitHub's authorization service is failing (HTTP ${status}) — that is GitHub's side, not your login; try again shortly`;
+  }
+  if (status === 429) {
+    return "GitHub rate-limited the authorization request (HTTP 429); try again shortly";
+  }
+  return `GitHub refused the authorization request (HTTP ${status})`;
 }
