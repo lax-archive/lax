@@ -45,6 +45,15 @@ export interface ValidationOptions {
   /** Local --build-from-source supplies the exact image it just built. */
   runtime?: ValidationRuntimeIdentity;
   /**
+   * Stop after dependency resolution: the trusted workflow's static gate,
+   * which runs the cheap host-side phases before the job pays for the cache
+   * restore, the host provisioning, and the image pull. The gate threads no
+   * state to the full run — that run re-executes fetch, static validation,
+   * and resolution from scratch (the fetch is by pinned commit, the phases
+   * are milliseconds).
+   */
+  stopAfter?: "resolution";
+  /**
    * How phase commands execute. Defaults to the hardened ContainerRunner over
    * the configured runtime image — the trusted workflow never sets this.
    * Tests inject in-process fakes here.
@@ -86,7 +95,6 @@ interface PreparedValidation extends ReportState {
 type CompiledValidation = PreparedValidation;
 
 type Preparation = { state: PreparedValidation } | { report: ValidationReport };
-type Compilation = { state: CompiledValidation } | { report: ValidationReport };
 
 /**
  * Run every phase — Compile, Replay, Inspect — sequentially in one process.
@@ -98,23 +106,24 @@ export async function validateSubmission(
   jobDir: string,
   options: ValidationOptions = {},
 ): Promise<ValidationReport> {
-  const compiled = await compileStage(request, jobDir, options);
-  if ("report" in compiled) return compiled.report;
+  const prepared = await prepareValidation(request, jobDir, options);
+  if ("report" in prepared) return prepared.report;
+  const state = prepared.state;
+  // The gate stops here: nothing has compiled, so a passing report carries
+  // only what fetch, static validation, and resolution collected.
+  if (options.stopAfter === "resolution") return report(state, true);
+  const compileFailure = await compileStage(state);
+  if (compileFailure !== undefined) return compileFailure;
   if (options.replay !== false) {
-    const replayFailure = await replayStage(compiled.state);
+    const replayFailure = await replayStage(state);
     if (replayFailure !== undefined) return replayFailure;
   }
-  return inspectStage(compiled.state);
+  return inspectStage(state);
 }
 
-async function compileStage(
-  request: ValidationRequest,
-  jobDir: string,
-  options: ValidationOptions,
-): Promise<Compilation> {
-  const prepared = await prepareValidation(request, jobDir, options);
-  if ("report" in prepared) return prepared;
-  const state = prepared.state;
+/** Undefined once every package of the scope is compiled and captured. */
+async function compileStage(state: PreparedValidation): Promise<ValidationReport | undefined> {
+  const request = state.request;
 
   try {
     await state.phase("dependency provisioning", () =>
@@ -125,7 +134,7 @@ async function compileStage(
         state.limits,
       ));
   } catch (error) {
-    return { report: fail(state, "provision", "dependency-capture", error) };
+    return fail(state, "provision", "dependency-capture", error);
   }
 
   fs.mkdirSync(state.captureRoot, { recursive: true, mode: 0o700 });
@@ -152,7 +161,7 @@ async function compileStage(
       state.captureRoot,
     ));
   } catch (error) {
-    return { report: fail(state, "compile-concepts", "compile", error) };
+    return fail(state, "compile-concepts", "compile", error);
   }
 
   if (state.scope !== "concepts") {
@@ -180,11 +189,11 @@ async function compileStage(
         state.captureRoot,
       ));
     } catch (error) {
-      return { report: fail(state, "compile-proofs", "compile", error) };
+      return fail(state, "compile-proofs", "compile", error);
     }
   }
 
-  return { state };
+  return undefined;
 }
 
 async function replayStage(state: CompiledValidation): Promise<ValidationReport | undefined> {
@@ -315,12 +324,6 @@ async function prepareValidation(
   };
   const base = (): ReportState => ({ request, runtime, dependencies, warnings, violations });
 
-  try {
-    await phase("validation runtime", () => runner.verifyRuntime());
-  } catch (error) {
-    return { report: fail(base(), "source", "runtime", error) };
-  }
-
   let fetched: FetchedSource;
   let archive: ArchiveSnapshot;
   try {
@@ -349,6 +352,18 @@ async function prepareValidation(
   violations.push(...resolution.findings.violations);
   dependencies = resolution.result.all;
   if (resolution.findings.failed) return { report: report(base(), false) };
+
+  // Last of the preparation, and skipped entirely by the gate: making the
+  // runtime available costs an image pull and a provisioned host, which
+  // spec.md's Static → Resolution → Provision order spends only on a
+  // submission that has already passed the millisecond-level phases.
+  if (options.stopAfter !== "resolution") {
+    try {
+      await phase("validation runtime", () => runner.verifyRuntime());
+    } catch (error) {
+      return { report: fail(base(), "provision", "runtime", error) };
+    }
+  }
 
   return {
     state: {

@@ -171,12 +171,17 @@ describe("submission workflow wiring", () => {
   it("saves the warm-store cache before untrusted submission code runs", () => {
     // The cache may only ever hold what trusted setup produced: a post-job
     // save would snapshot the tree after a potential sandbox escape and
-    // poison every later run (rewrite-plan.md stage 3 execution notes).
+    // poison every later run (rewrite-plan.md stage 3 execution notes). The
+    // static gate ahead of the restore only fetches and parses; it executes
+    // nothing, and it writes only into the job dir.
     const runs = jobs.validate.steps.map((step) => step.run ?? step.uses ?? "");
+    const gate = runs.findIndex((run) => run === "node dist/submission-validation/run.js --gate");
     const restore = runs.findIndex((run) => run.startsWith("actions/cache/restore"));
     const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
     const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
     const validate = runs.findIndex((run) => run === "node dist/submission-validation/run.js");
+    expect(gate).toBeGreaterThanOrEqual(0);
+    expect(gate).toBeLessThan(restore);
     expect(restore).toBeGreaterThanOrEqual(0);
     expect(restore).toBeLessThan(setup);
     expect(setup).toBeLessThan(save);
@@ -201,7 +206,9 @@ describe("submission workflow wiring", () => {
     );
     expect(upload?.if).toBe("always()");
     expect(upload?.with?.name).toBe("submission-validation-${{ github.event.issue.number }}");
-    expect(upload?.with?.["retention-days"]).toBe(30);
+    // The artifact is the only diagnosable record of a failed run, so it
+    // keeps the maximum retention.
+    expect(upload?.with?.["retention-days"]).toBe(90);
     for (const filename of [
       VALIDATION_REPORT_FILENAME,
       VALIDATION_PROFILE_FILENAME,

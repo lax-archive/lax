@@ -3,6 +3,12 @@
 // (rewrite-plan.md "Build pipeline"); there is no stage resume, so there is
 // no stage state. Exit codes: 0 validation passed, 2 violations, 1 anything
 // else. The host must already be provisioned (host/setup-vm.js).
+//
+// `--gate` runs the same pipeline stopped after dependency resolution, before
+// the job restores the toolchain cache and provisions the host: a manifest
+// typo then costs seconds instead of a warm-mathlib build. It is not a stage —
+// it threads no state to the full run, which re-executes fetch, static
+// validation, and resolution from scratch and overwrites every output.
 
 import { Buffer } from "node:buffer";
 import fs from "node:fs";
@@ -22,8 +28,9 @@ import {
 import { validateSubmission } from "./pipeline.js";
 import { removeValidationWorkspace } from "./workspace-cleanup.js";
 
-if (process.argv[2] !== undefined) {
-  throw new Error("usage: run.js (single-process validation; stage modes no longer exist)");
+const gate = process.argv[2] === "--gate";
+if (process.argv[2] !== undefined && !gate) {
+  throw new Error("usage: run.js [--gate] (single-process validation; stage modes no longer exist)");
 }
 
 const outputDir = validationOutputDirectory();
@@ -33,21 +40,30 @@ const profiler = new Profiler();
 let exitCode = 1;
 try {
   // Keep the profile: host/setup-vm.js recorded its provisioning spans there
-  // moments ago in this same job. The evidence files are always reset.
-  resetValidationOutputs(outputDir, { keepProfile: true });
+  // moments ago in this same job. The evidence files are always reset. The
+  // gate runs before that setup, so it has no profile to preserve.
+  resetValidationOutputs(outputDir, { keepProfile: !gate });
   removeValidationWorkspace(jobDir);
   fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
-  const report = await validateSubmission(readRequest(), jobDir, { profiler });
-  writeValidationOutputs(outputDir, report);
+  const report = await validateSubmission(readRequest(), jobDir, {
+    profiler,
+    ...(gate ? { stopAfter: "resolution" as const } : {}),
+  });
+  // A passing gate leaves nothing behind: its report is not evidence of a
+  // validation (nothing compiled), and the full run writes the real outputs.
+  if (!gate || !report.ok) writeValidationOutputs(outputDir, report);
   exitCode = report.ok ? 0 : 2;
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
 } finally {
   // Record the timings whatever the outcome: a slow failure is exactly the
-  // run whose profile is worth reading.
-  const snapshot = profiler.snapshot();
-  recordValidationProfile(outputDir, "validate", snapshot);
-  appendProfileStepSummary("validate", snapshot);
+  // run whose profile is worth reading. The gate's own spans would only be
+  // wiped by the host setup that follows it, so it records none.
+  if (!gate) {
+    const snapshot = profiler.snapshot();
+    recordValidationProfile(outputDir, "validate", snapshot);
+    appendProfileStepSummary("validate", snapshot);
+  }
   removeValidationWorkspace(jobDir);
 }
 process.exitCode = exitCode;

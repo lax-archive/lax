@@ -25,8 +25,9 @@ const profiler = new Profiler();
 
 let ok = false;
 try {
-  // This is the first step of a validation run: clear any stale outputs so
-  // the profile accumulates from here and run.js can keep it.
+  // This is the first provisioning step of a validation run — only the static
+  // gate ran before it, and a passing gate leaves nothing behind — so clear
+  // any stale outputs: the profile accumulates from here and run.js keeps it.
   if (outputDir !== undefined) resetValidationOutputs(outputDir);
   ok = await ensureValidationHost({ echo: true, profiler });
 } finally {
