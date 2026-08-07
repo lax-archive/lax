@@ -23,16 +23,19 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 | `/lax submit <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. |
 
 The Lean validation job has no App key, installation token, or Archive write
-credential. Its successful workflow artifact contains `validation-report.json`,
+credential. Artifacts are its only egress: `validation-report.json` alone,
+which the author's CLI downloads to print the findings, and beside it the
+publication artifact with `validation-report.json`,
 `generated-build-output.json`, and `capture.tar`. Inside the submission-scoped
 publication job, a credential-free preflight parses the exact schemas, verifies
 the capture digest, and re-reads authorization, lifecycle state, issue
 binding, stale-write inputs, and dependency captures. Only then may the
-trusted job mint the database token, push the digest-addressed capture to
-`ghcr.io/<owner>/lax-captures`, construct the
+trusted job mint the database and Website tokens, push the digest-addressed
+capture to `ghcr.io/<owner>/lax-captures`, construct the
 authoritative files, and commit exactly `record.json` and `build-output.json`.
 It preserves `owner-list.json`, synchronizes the issue title after the commit,
-and then dispatches the Website rebuild. Publishers for different submissions
+and dispatches the Website rebuild itself — the job that owns the commit is
+the job that requests the rebuild. Publishers for different submissions
 may run concurrently. Each advances the shared database branch without force
 and, on a concurrent advance, re-reads and revalidates the latest head before
 retrying.
@@ -44,9 +47,11 @@ public database snapshot, and never receives Archive credentials. Only the
 protected `lax-database-publish` jobs can mint short-lived Database Publisher
 installation tokens restricted to `lax-database`. They re-read the latest
 database head, repeat issue binding, numeric owner, state, schema, and
-stale-write checks, then advance the default branch without force. A separate
-post-publication job in the `lax-website-dispatch` environment can mint only a
-Website Dispatcher token restricted to `lax-website`.
+stale-write checks, then advance the default branch without force. The same
+jobs mint the Website Dispatcher token, restricted to `lax-website`, after the
+commit they own: both publisher keys live in `lax-database-publish`, and the
+invariant that governs them is that no job holding an App key ever checks out
+or executes submission code.
 
 Configure the workflow with:
 
@@ -56,7 +61,7 @@ Configure the workflow with:
   `LAX_DATABASE_APP_PRIVATE_KEY` for the Database Publisher App;
 - Database Publisher installation access only to `lax-database`, with
   repository `Contents: write`;
-- `lax-website-dispatch` environment variable `LAX_WEBSITE_APP_ID` and secret
+- `lax-database-publish` environment variable `LAX_WEBSITE_APP_ID` and secret
   `LAX_WEBSITE_APP_PRIVATE_KEY` for the Website Dispatcher App;
 - Website Dispatcher installation access only to `lax-website`, with
   repository `Contents: write`;
@@ -76,12 +81,19 @@ GitHub-hosted runner. The sandbox is a *stock* image pinned by digest in
 `src/submission-validation/pins.ts` — no custom image, no registry login; the
 runner installs the pinned elan/toolchain and warm mathlib workspace on the VM
 (`host/setup.ts`, the same code local `lax build` uses) and every container
-gets them bind-mounted read-only. Validation is one read-only `Validate` job:
-Compile, Replay, and Inspect run sequentially through one container runner,
-each phase in a fresh credential-free container, and the toolchain cache is
-saved *before* any untrusted code runs so a hostile submission can never
-poison it. A lightweight Validation result job gates publication on the
-validate job's success. No disk reclaim runs before the toolchain and
+gets them bind-mounted read-only. The success path is three jobs — `route`,
+`Validate`, `publish-submit` — with `report-validation-failure` and
+`report-workflow-failure` covering the failure cases; publication is gated on
+the validate job's own result, since it exits non-zero unless the report is
+ok. Validation is one read-only `Validate` job: source fetching, static
+validation, and dependency resolution run first as a gate, so a manifest typo
+fails in seconds instead of after a multi-GB cache restore, and Compile,
+Replay, and Inspect then run sequentially through one container runner, each
+phase in a fresh credential-free container. The toolchain cache is saved
+*before* any untrusted code runs so a hostile submission can never poison it;
+the gate only fetches and parses submission bytes, into the job directory,
+and execution begins only in the containers after the save. No disk reclaim
+runs before the toolchain and
 warm-store installation: a hosted runner reports ~88 GB free, which is ample.
 Kernel replay and inspection use two Lean workers inside their 16 GiB
 container limit so large module sets cannot exhaust the hosted runner while
@@ -95,10 +107,10 @@ branch ref for the Git Data API to read; seed it once, then apply the default
 branch protection before accepting submissions.
 
 Use three GitHub App registrations: the CLI App for user-authorized issue
-operations, the Database Publisher, and the Website Dispatcher. Protect both
-credential environments so only reviewed workflow code can access their one
-App private key, and protect the database default branch against force
-updates.
+operations, the Database Publisher, and the Website Dispatcher. Protect the
+`lax-database-publish` environment so only reviewed workflow code can access
+the two publisher private keys it holds, and protect the database default
+branch against force updates.
 
 The CLI bundles only the public client ID for the CLI App's user-authorization
 flow and narrows device authorization to `lax`. Users can run `lax login`
@@ -178,8 +190,16 @@ submit prints that exact recovery command.
 
 Commands that create an issue or post a `/lax` comment wait for the correlated
 workflow result. Once the workflow publishes its correlated run link, the CLI
-polls GitHub and displays the current Actions job and step on one loading line.
-For submits, the parsed source preview and workflow run are appended to the
+polls GitHub and displays the run's current stage on one loading line. For
+submits, it downloads that run's `validation-report.json` artifact as soon as
+the Validate job concludes and prints the findings with the same renderer
+`lax build` uses locally — a failed validation therefore ends the command in
+the terminal, with transcripts, before the workflow's record comment lands.
+Reading the artifact needs the `Actions: read` user-token permission; without
+it the CLI stops and asks for `lax login` rather than falling back to comment
+text. The issue comment on a failed validation is a short record: the outcome,
+the first finding's line, and the run link.
+The parsed source preview and workflow run are appended to the
 originating command comment instead of creating a separate preview comment. A
 🚀 reaction marks validation and publication in progress; it becomes 👍 after
 full success, while the final workflow result comment remains in place.

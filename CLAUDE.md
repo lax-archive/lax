@@ -74,10 +74,20 @@ record through the control plane, bottom-up in dependency order, is
 
 ## Architecture (current state; rewrite-plan.md governs upcoming changes)
 
-`.github/workflows/submission.yml` is the only issue-event entry point: it
-routes issue/comment events, runs validation (one read-only Validate job:
-Compile → Replay → Inspect sequential through one container runner), and
-publishes through trusted jobs.
+`.github/workflows/submission.yml` is the only issue-event entry point. Its
+success path is three jobs — route → validate → publish-submit — beside
+`publish` (the non-submit branch), `report-validation-failure`, and
+`report-workflow-failure`; every job shares `.github/actions/setup-lax`
+(checkout, node, exact-key `dist`+`node_modules` cache that only route
+saves). The read-only Validate job runs a fetch → static → resolution gate
+first, before the lean cache restore and host provisioning, then Compile →
+Replay → Inspect sequential through one container runner. Both publish jobs
+dispatch the Website rebuild themselves, so both App keys live in the
+`lax-database-publish` environment (trust rule 1 is the surviving invariant;
+see the 2026-08-07 spec-notes entry). The author's channel for validation
+detail is the report artifact, which `lax submit` downloads and renders
+(`src/cli/run-artifacts.ts`); issue comments are short outcome records with
+the hidden markers.
 The validation phases live in `src/submission-validation/` and are shared
 between the trusted workflow and local `lax build`; local mode may omit only
 server-only fetching, mandatory replay, and publishable artifact creation.
@@ -120,10 +130,13 @@ GitHub is faked two ways: in-process (`vi.stubGlobal("fetch")`, injected
 clients) for unit tests, and via `test/fake-github.ts` — a local HTTP server
 that CLI subprocesses reach through `LAX_GITHUB_API_URL`/`LAX_GITHUB_OAUTH_URL`
 (late-bound in `src/shared/constants.ts`). It serves the GitHub App device
-flow, `/user`, `/credentials/revoke`, and a seedable issues list; tokens are
+flow, `/user`, `/credentials/revoke`, a seedable issues list, workflow
+runs/jobs, and that run's artifacts — list plus a real zip download behind
+the redirect GitHub answers with (`artifactZip()`, and `artifactListStatus`
+to force the 403 the CLI must hard-error on); tokens are
 `ghu_tok-<handle>` from a `"alice:1,bob:2"` registry. `test/e2e/cli-github.test.ts`
 drives the real CLI against it (spawn asynchronously — a blocked event loop
-starves the fake); stage 5 grows it to issues/Actions/Releases for the full
+starves the fake); stage 5 grows it to issues/Releases for the full
 author journey. The container pipeline is tested via runners injected through
 `ValidationOptions.runner`; real-Lean coverage comes from
 `test/e2e/host-pipeline.test.ts`, which runs the host pipeline (and the CLI)

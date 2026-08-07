@@ -7,6 +7,33 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
+## Pipeline simplification: go-live checklist
+
+Implemented on branch `pipeline-simplification` (stages 1–4 of
+pipeline-simplification-plan.md), `npm run check`-green, **not merged**: the
+fail-early static gate, the route → validate → publish-submit DAG with the
+Website dispatch folded into the publish jobs, and the report artifact as the
+author's channel. What is left is rollout, roughly in this order.
+
+- **Repo settings (Jan)**: add `LAX_WEBSITE_APP_PRIVATE_KEY` as an
+  environment secret on `lax-database-publish` and make sure
+  `LAX_WEBSITE_APP_ID` resolves there; retire the now-unused
+  `lax-website-dispatch` environment; confirm that the protection rules on
+  `lax-database-publish` are the ones we want now that they also gate Website
+  dispatch.
+- **GitHub App (Jan)**: add the `Actions: read` user-token permission to the
+  CLI App. Existing author tokens lack it until re-auth; the CLI's 403 error
+  says to run `lax login`, so no flag day, but the error is the only signal.
+- **Live-rehearsal drill** before merging — workflows go live on push, so
+  this is the last gate. `scripts/rehearsal/` is already updated for the new
+  DAG (one `LAX_SCRATCH_TOKEN` environment now, not two; the expected job
+  lists dropped `website` and `validation result`).
+- **Merge, then release the CLI immediately.** The workflow and the CLI ship
+  together; a released CLI older than the merge still works (markers are
+  unchanged) but shows only the short comment instead of the findings.
+- **Then delete pipeline-simplification-plan.md**, or move whatever of it is
+  still open into this list.
+
 ## Go-live leftovers (context: history/go-live.md)
 
 - **Keep round-trip sources reachable in lax-submissions**: branch

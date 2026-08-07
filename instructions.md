@@ -76,14 +76,30 @@ Ctrl-C — nothing is lost: the workflow keeps running on GitHub, and
 command itself whenever it loses contact with GitHub.
 
 The request is authenticated, previewed, and run through the credential-free
-Lean validation pipeline. Successful validation uploads
-`validation-report.json`, `generated-build-output.json`, and `capture.tar`.
-The trusted publication job parses and cross-checks those files, repeats the
-current owner/state/issue/dependency checks, promotes the exact capture to an
-digest-addressed ghcr artifact, and commits only the authoritative
-`record.json` and `build-output.json`. It leaves `owner-list.json` untouched,
-synchronizes the issue title to the accepted manifest title, and dispatches a
-complete Website rebuild. A failed check creates no database commit.
+Lean validation pipeline. A manifest or dependency problem is caught in the
+first seconds, before the workflow provisions Lean at all; everything else is
+caught by the full build.
+
+Either way the verdict comes back to your terminal, not to the issue: the
+moment validation concludes, `lax submit` downloads that run's
+`validation-report.json` and prints the findings exactly as `lax build` prints
+them locally, transcripts and all, and a failed validation ends the command
+right there. The comment left on the issue is a short record for whoever reads
+the issue later — what happened, the first finding, and a link to the run. The
+full findings live in the run's artifacts and expire with them (90 days), so
+act on what your terminal shows rather than on the comment. Reading the
+artifact needs the Actions read permission on your login; if the CLI says it
+cannot read the report, run `lax login` again and reattach with
+`lax submit --resume`.
+
+Successful validation also uploads `generated-build-output.json` and
+`capture.tar`. The trusted publication job parses and cross-checks those files,
+repeats the current owner/state/issue/dependency checks, promotes the exact
+capture to an digest-addressed ghcr artifact, and commits only the
+authoritative `record.json` and `build-output.json`. It leaves
+`owner-list.json` untouched, synchronizes the issue title to the accepted
+manifest title, and dispatches a complete Website rebuild. A failed check
+creates no database commit.
 
 ### Depending on another submission: the chain workflow
 

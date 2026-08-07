@@ -6,6 +6,66 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## The run artifact carries the report; comments record the outcome (implemented, 2026-08-07)
+
+**Partially supersedes "Result comments carry the diagnosis and a
+machine-readable outcome" below**: the diagnosis moved out of the comment,
+the outcome marker stayed. The validation report now reaches the author as
+the Validate job's own artifact — `lax submit` downloads
+`submission-validation-report-<issue>` from the run it is already following
+and renders the findings with the formatter `lax build` uses locally
+(`src/cli/run-artifacts.ts`, one renderer for local and remote builds), so a
+failed submit ends in the terminal, with the transcripts intact, the moment
+the validate job concludes and before anything is written on the issue. The
+failure comment shrank to what a reader of the issue needs: one paragraph
+naming the outcome and the id, saying lax-database was not changed, quoting
+the first finding's `[phase/rule]` line, and linking the run. The hidden
+marker protocol is untouched, so released CLIs keep their exit codes and
+simply see less prose.
+
+The deviation from the full-report comment the spec implies is deliberate,
+and so is its price: **failed-build transcripts are no longer permanent.**
+Run artifacts expire (retention raised from 30 days to the 90-day maximum),
+and after that a failed validation is a dated outcome record with one finding
+line and a run link, not a diagnosis. Accepted by Jan: the durable record is
+the database, which never held failed builds anyway, and a diagnosis is worth
+most in the seconds after it is produced, in the terminal that asked for it.
+Reading the artifact needs the **Actions: read** user-token permission; there
+is no comment-parsing fallback, and the CLI hard-errors on 403/404 naming
+`lax login` and `lax submit --resume`.
+
+**Phase order restored, not deviated.** The validate job runs fetch → static
+validation → resolution as a gate (`run.js --gate`) *before* it restores the
+toolchain cache and provisions the host, and `prepareValidation` orders the
+same way, so both the trusted and the local pipeline now follow spec.md's
+Static → Resolution → Provision sequence that the previous implementation
+inverted by provisioning first. A manifest typo costs seconds instead of a
+multi-GB cache restore and a warm-mathlib build. The cache-poisoning stance
+is narrowed accordingly, and the workflow says so: the gate *fetches and
+parses* submission bytes on the host before the cache save (git plus
+in-process node, into the job dir, disjoint from the cached `~/.elan` and
+`~/.lax` paths), while execution still begins only in the containers, after
+the save.
+
+**Both publisher App keys now live in the publish jobs.** The separate
+Website dispatch job is gone: whichever job created the lax-database commit
+mints the dispatch token and sends the rebuild in the same process, so
+`lax-database-publish` becomes the one home of both keys and the
+`lax-website-dispatch` environment is retired. This narrows the
+credential-separation posture on purpose. The surviving invariant is trust
+rule 1 — no job holding an App key ever checks out or executes submission
+code — rather than mutual isolation of the two publisher keys, which bought
+little once both are reachable only from reviewed workflow code inside one
+protected environment, and cost a job hop plus the `archive_commit` /
+`title_sync_error` output plumbing that carried state between them.
+
+Spec touchpoints: "Validation artifacts and captures" and "Asynchronous
+results" (how the report reaches the author, and what a result comment
+contains), "Website dispatch" (no separate job and no `lax-website-dispatch`
+environment), and the Build Pipeline phase list (now honored by the
+workflow's step order — the text itself already says Static → Resolution →
+Provision and needs no change).
+
 ## `lax submit -f/--force` skips all local checks (implemented, 2026-08-07)
 
 spec.md ~1056 gives `-f`/`--force` to the dirty-worktree override. The
