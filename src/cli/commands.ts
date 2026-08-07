@@ -143,16 +143,29 @@ async function announceIdentity(command: string): Promise<void> {
   console.log(`${command}: authenticated as ${await ensureLoggedIn()}.`);
 }
 
-export async function submitFolder(folder: string, allowDirty = false): Promise<void> {
+export async function submitFolder(
+  folder: string,
+  options: { allowDirty?: boolean; force?: boolean } = {},
+): Promise<void> {
   const root = path.resolve(folder);
+  const force = options.force ?? false;
   const issue = issueNumberFromFolder(root);
   console.log(`lax submit: preparing lax-${issue} in ${root}.`);
   // Ahead of the local build, which is minutes of Lean: without a usable login
   // there is nothing to submit the result to, and the author should learn that
   // now rather than after the build.
   await announceIdentity("lax submit");
-  const source = deriveSubmittedSource(root, allowDirty);
-  await ensureBuiltForSubmit(root, source, allowDirty);
+  const source = deriveSubmittedSource(root, { allowDirty: options.allowDirty, force });
+  if (force) {
+    // Say it plainly rather than let a silent skip read as a passing check:
+    // everything this command usually verifies now happens in the workflow.
+    console.warn(
+      "lax submit: --force: skipping every local check — dirty worktree, pushed HEAD, and the\n" +
+        "            validation build. The trusted workflow is now the only verdict.",
+    );
+  } else {
+    await ensureBuiltForSubmit(root, source, options.allowDirty ?? false);
+  }
   console.log(
     `Submitting lax-${issue} from (${source.repository}, ${source.commit}, ${source.folder}).`,
   );

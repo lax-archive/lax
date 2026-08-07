@@ -57,16 +57,28 @@ export function deriveLocalSource(folder: string): SourceLocation {
   };
 }
 
-/** Derive the immutable source triple submitted to the issue workflow. */
-export function deriveSubmittedSource(folder: string, allowDirty = false): SourceLocation {
+/**
+ * Derive the immutable source triple submitted to the issue workflow.
+ *
+ * `force` drops every precondition this function checks — the author has said
+ * the trusted workflow is the verdict they want. The `origin` URL stays
+ * required even then: it is not a check but half of the triple, and there is no
+ * honest value to invent for it.
+ */
+export function deriveSubmittedSource(
+  folder: string,
+  options: { allowDirty?: boolean; force?: boolean } = {},
+): SourceLocation {
   const root = repositoryRoot(folder);
-  if (!allowDirty && git(root, ["status", "--porcelain"]) !== "") {
+  const force = options.force ?? false;
+  if (!force && options.allowDirty !== true && git(root, ["status", "--porcelain"]) !== "") {
     throw new Error(
       "the worktree is dirty — commit your changes, or pass --allow-dirty to submit the committed HEAD without them",
     );
   }
   const commit = validateCommit(git(root, ["rev-parse", "HEAD"]));
   const repository = originUrl(root);
+  if (force) return { repository, commit, folder: repositoryFolder(root, folder) };
   try {
     git(root, ["fetch", "--quiet", "origin"]);
   } catch {

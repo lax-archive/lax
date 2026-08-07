@@ -46,7 +46,10 @@ describe("CLI Git source derivation retained from main", () => {
     writeFile(root, "tracked.txt", "changed\n");
 
     expect(() => deriveSubmittedSource(root)).toThrow("worktree is dirty");
-    expect(() => deriveSubmittedSource(root, true)).toThrow("no usable GitHub `origin`");
+    expect(() => deriveSubmittedSource(root, { allowDirty: true })).toThrow(
+      "no usable GitHub `origin`",
+    );
+    expect(() => deriveSubmittedSource(root, { force: true })).toThrow("no usable GitHub `origin`");
   });
 
   it("requires HEAD to be present on origin and returns the immutable source triple", () => {
@@ -65,6 +68,12 @@ describe("CLI Git source derivation retained from main", () => {
     expect(() => deriveSubmittedSource(path.join(root, "submission"))).toThrow(
       "HEAD is not present on origin",
     );
+    // --force drops the pushed check too: the triple still describes HEAD.
+    expect(deriveSubmittedSource(path.join(root, "submission"), { force: true })).toEqual({
+      repository: "https://github.com/alice/formalization",
+      commit,
+      folder: "submission",
+    });
   });
 });
 

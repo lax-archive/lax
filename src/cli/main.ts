@@ -92,7 +92,8 @@ program
 program
   .command("submit")
   .argument("[folder]", "submission folder (with --repository: a lax-N id)", ".")
-  .option("-f, --allow-dirty", "submit committed HEAD while excluding local changes")
+  .option("-f, --force", "submit with no local checks at all — the workflow is the only verdict")
+  .option("--allow-dirty", "submit committed HEAD while excluding local changes")
   .option("--resume", "reattach to the submit already requested here")
   .option("--repository <url>", "public HTTPS GitHub repository URL of an explicit source")
   .option("--commit <sha>", "full commit SHA of an explicit source")
@@ -103,6 +104,7 @@ program
       folder: string,
       options: {
         allowDirty?: boolean;
+        force?: boolean;
         resume?: boolean;
         repository?: string;
         commit?: string;
@@ -111,7 +113,7 @@ program
     ) => {
       const explicit = options.repository !== undefined || options.commit !== undefined;
       if (options.resume === true) {
-        if (explicit || options.allowDirty === true) {
+        if (explicit || options.allowDirty === true || options.force === true) {
           throw new Error("--resume takes no other options: it reattaches to what was already sent");
         }
         return resumeSubmit(folder);
@@ -123,13 +125,19 @@ program
         if (options.allowDirty === true) {
           throw new Error("--allow-dirty applies to the Git-derived form, not an explicit triple");
         }
+        // The explicit triple already skips every local check, so --force there
+        // would be a word for the default: refuse it rather than imply it did
+        // something.
+        if (options.force === true) {
+          throw new Error("--force applies to the Git-derived form; an explicit triple never builds locally");
+        }
         return submitExplicitSource(folder, options.repository, options.commit, options.folder ?? ".");
       }
       if (options.folder !== undefined) {
         throw new Error("--folder belongs to the explicit triple; pass the folder as the argument");
       }
       preflight(["git"]);
-      return submitFolder(folder, options.allowDirty ?? false);
+      return submitFolder(folder, { allowDirty: options.allowDirty, force: options.force });
     },
     ),
   );

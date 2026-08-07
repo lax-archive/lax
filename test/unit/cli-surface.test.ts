@@ -41,6 +41,7 @@ describe("CLI compatibility surface", () => {
     expect(submit.output).toContain("--commit <sha>");
     expect(submit.output).toContain("--folder <path>");
     expect(submit.output).toContain("--allow-dirty");
+    expect(submit.output).toContain("-f, --force");
   });
 
   it("refuses combinations that cannot mean anything on `submit`", () => {
@@ -51,6 +52,22 @@ describe("CLI compatibility surface", () => {
     const resumePlus = cli(["submit", "--resume", "--allow-dirty"]);
     expect(resumePlus.code).toBe(1);
     expect(resumePlus.output).toContain("--resume takes no other options");
+
+    const resumeForced = cli(["submit", "--resume", "-f"]);
+    expect(resumeForced.code).toBe(1);
+    expect(resumeForced.output).toContain("--resume takes no other options");
+
+    const forcedTriple = cli([
+      "submit",
+      "lax-42",
+      "--force",
+      "--repository",
+      "https://github.com/a/b",
+      "--commit",
+      "0".repeat(40),
+    ]);
+    expect(forcedTriple.code).toBe(1);
+    expect(forcedTriple.output).toContain("--force applies to the Git-derived form");
 
     const strayFolder = cli(["submit", "--folder", "sub"]);
     expect(strayFolder.code).toBe(1);

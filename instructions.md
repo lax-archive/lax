@@ -62,6 +62,14 @@ Archive snapshot. When an explicit source triple is preferable, pass it to the
 same command: `lax submit <issue|folder> --repository <url> --commit <sha>
 --folder <path>`.
 
+`lax submit -f` (`--force`) skips every local check — the clean-worktree and
+pushed-`HEAD` checks and the validation build — and posts the issue command
+immediately. Use it when you want the trusted workflow's verdict rather than
+your machine's; nothing is weakened by it, since the workflow validates the
+submission from scratch either way. The cost is that a mistake you would have
+seen locally in seconds — an unpushed commit, a broken proof — now costs a
+full workflow run.
+
 If submit's polling is interrupted — a dropped connection, a closed laptop,
 Ctrl-C — nothing is lost: the workflow keeps running on GitHub, and
 `lax submit --resume` in the same folder reattaches to it. Submit prints that

@@ -164,7 +164,10 @@ issue command, submit reuses a full local build only when it matches the clean
 Git commit, folder, and current local Archive snapshot. Otherwise it runs
 `lax build`. With `--allow-dirty`, the CLI validates committed `HEAD` in an
 isolated worktree, so uncommitted files are never mistaken for the submitted
-source.
+source. `lax submit -f` / `--force` skips all of it — the dirty check, the
+pushed-`HEAD` check, and the validation build — and posts the issue command
+straight away; the trusted workflow is then the only thing that validates the
+submission, so an unpushed commit fails there instead of here.
 
 `lax submit --resume` reattaches to an interrupted submit. The durable job
 record is the Actions run, correlated to the originating `/lax submit` comment

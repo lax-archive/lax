@@ -6,6 +6,33 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## `lax submit -f/--force` skips all local checks (implemented, 2026-08-07)
+
+spec.md ~1056 gives `-f`/`--force` to the dirty-worktree override. The
+implementation had already renamed that override to `--allow-dirty` — the
+long name says what it does, and "force" claimed too broad a word for one
+narrow permission. `-f`/`--force` now means the broad thing instead:
+
+- **`--allow-dirty`** (long form only, no short flag) is unchanged: submit
+  the committed HEAD, validating it in an isolated worktree so uncommitted
+  files are never mistaken for the submitted source.
+- **`-f`/`--force`** skips *every* client-side check — the dirty-worktree
+  refusal, the HEAD-present-on-`origin` refusal, the `lax-database` refresh,
+  and the local validation build — and posts the `/lax submit` comment with
+  the triple derived from the current HEAD. Only the `origin` URL is still
+  required, because it is half of the triple rather than a check.
+
+This weakens nothing: the trusted workflow re-validates every submission
+from scratch and is the sole authority on admission, so the local build is a
+fast-feedback convenience, not a gate. What `--force` buys is skipping
+minutes of local Lean when the author wants the workflow's verdict directly;
+what it costs is that an unpushed commit or a broken proof now fails a
+workflow run instead of failing instantly. Submit prints a warning naming
+what it skipped, so a silent absence of checks cannot read as passing ones.
+`--force` is refused with `--resume` (which takes no other options) and with
+the explicit source triple (which never validates locally anyway, so the
+flag would be a second word for the default).
+
 ## Command naming: one word per meaning (implemented, 2026-08-06)
 
 Every issue-protocol verb is now exactly the CLI verb that posts it, and
