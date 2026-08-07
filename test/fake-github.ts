@@ -13,17 +13,21 @@
 // `lax doctor` lists), issue comments (`POST`/`GET`
 // /repos/:owner/:repo/issues/:n/comments, backed by `state.issueComments`;
 // `state.onComment` lets a test play the control-plane bot and answer a
-// posted command, e.g. with a refusal carrying the result marker), and
-// workflow runs (`GET /repos/:owner/:repo/actions/runs/:id[/jobs]`, backed by
+// posted command, e.g. with a refusal carrying the result marker), workflow
+// runs (`GET /repos/:owner/:repo/actions/runs/:id[/jobs]`, backed by
 // `state.actionsRuns`, which is what `follow`/`lax submit --resume` poll once
-// a comment's hidden marker names a run). Stage 5 (full author journey) grows
-// this via `state` and new routes in `handle()`: issue creation/lookup and
-// Releases.
+// a comment's hidden marker names a run), and that run's artifacts (`GET
+// .../actions/runs/:id/artifacts` plus `GET .../actions/artifacts/:id/zip`,
+// backed by `state.actionsArtifacts`; `artifactZip()` builds a real zip, and
+// the download answers a redirect to an unauthenticated blob path exactly as
+// GitHub does). Stage 5 (full author journey) grows this via `state` and new
+// routes in `handle()`: issue creation/lookup and Releases.
 //
 // Test-only infrastructure: never import this from src/.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer, type Server } from "node:http";
+import { zipSync } from "fflate";
 
 export interface FakeGitHubOptions {
   /** `authorization_pending` responses before the device flow succeeds. */
@@ -53,6 +57,26 @@ export interface FakeActionsRun {
   jobs: unknown[];
 }
 
+export interface FakeArtifact {
+  id: number;
+  name: string;
+  expired?: boolean;
+  /** Zip bytes served by the download route; see `artifactZip`. */
+  zip: Uint8Array;
+  /** HTTP status for the download instead of the bytes, e.g. 403. */
+  status?: number;
+}
+
+/** A real zip, as `actions/upload-artifact` would have produced it. */
+export function artifactZip(files: Record<string, string>): Uint8Array {
+  const encoder = new TextEncoder();
+  return zipSync(
+    Object.fromEntries(
+      Object.entries(files).map(([name, content]) => [name, encoder.encode(content)]),
+    ),
+  );
+}
+
 export interface FakeGitHubState {
   /** Issues served by `GET /repos/:owner/:repo/issues`; seed or grow in tests. */
   issues: unknown[];
@@ -62,6 +86,10 @@ export interface FakeGitHubState {
   issueComments: Map<number, FakeIssueComment[]>;
   /** Workflow runs by run id, for the run correlation `follow`/`--resume` poll. */
   actionsRuns: Map<string, FakeActionsRun>;
+  /** Artifacts by run id, for the validation report `lax submit` downloads. */
+  actionsArtifacts: Map<string, FakeArtifact[]>;
+  /** Status for the artifact *list*, e.g. 403 for a token without Actions read. */
+  artifactListStatus?: number;
   /** Called after a comment is stored — a test's chance to answer as the bot. */
   onComment?: (issue: number, comment: FakeIssueComment) => void;
 }
@@ -97,6 +125,7 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
     revoked: [],
     issueComments: new Map(),
     actionsRuns: new Map(),
+    actionsArtifacts: new Map(),
   };
   let nextCommentId = 1000;
 
@@ -109,7 +138,9 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
     token_type: "bearer",
   });
 
-  const handle = (request: RecordedRequest): { status: number; body?: unknown } => {
+  const handle = (
+    request: RecordedRequest,
+  ): { status: number; body?: unknown; bytes?: Uint8Array; location?: string } => {
     const route = `${request.method} ${new URL(request.path, "http://fake").pathname}`;
 
     if (route === "POST /login/device/code") {
@@ -184,6 +215,49 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
       };
     }
 
+    const artifacts = /^GET \/repos\/[^/]+\/[^/]+\/actions\/runs\/([0-9]+)\/artifacts$/u.exec(route);
+    if (artifacts !== null) {
+      if (state.artifactListStatus !== undefined && state.artifactListStatus !== 200) {
+        return { status: state.artifactListStatus, body: { message: "Forbidden" } };
+      }
+      const list = state.actionsArtifacts.get(artifacts[1]!) ?? [];
+      return {
+        status: 200,
+        body: {
+          total_count: list.length,
+          artifacts: list.map((entry) => ({
+            id: entry.id,
+            name: entry.name,
+            expired: entry.expired ?? false,
+          })),
+        },
+      };
+    }
+
+    // GitHub answers the zip endpoint with a redirect to a signed blob URL on
+    // another host, which carries no Authorization header; the fake keeps that
+    // shape so the CLI's redirect handling is exercised, not assumed.
+    const zip = /^GET \/repos\/[^/]+\/[^/]+\/actions\/artifacts\/([0-9]+)\/zip$/u.exec(route);
+    if (zip !== null) {
+      const found = [...state.actionsArtifacts.values()]
+        .flat()
+        .find((entry) => entry.id === Number(zip[1]));
+      if (found === undefined) return { status: 404, body: { message: "Not Found" } };
+      if (found.status !== undefined && found.status !== 200) {
+        return { status: found.status, body: { message: "Forbidden" } };
+      }
+      return { status: 302, location: `/artifact-blobs/${found.id}` };
+    }
+
+    const blob = /^GET \/artifact-blobs\/([0-9]+)$/u.exec(route);
+    if (blob !== null) {
+      const found = [...state.actionsArtifacts.values()]
+        .flat()
+        .find((entry) => entry.id === Number(blob[1]));
+      if (found === undefined) return { status: 404, body: { message: "Not Found" } };
+      return { status: 200, bytes: found.zip };
+    }
+
     const run = /^GET \/repos\/[^/]+\/[^/]+\/actions\/runs\/([0-9]+)(\/jobs)?$/u.exec(route);
     if (run !== null) {
       const record = state.actionsRuns.get(run[1]!);
@@ -209,8 +283,14 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
         ...parseBody(Buffer.concat(chunks).toString("utf8"), req.headers["content-type"]),
       };
       requests.push(recorded);
-      const { status, body } = handle(recorded);
-      if (body === undefined) {
+      const { status, body, bytes, location } = handle(recorded);
+      if (location !== undefined) {
+        res.writeHead(status, { location });
+        res.end();
+      } else if (bytes !== undefined) {
+        res.writeHead(status, { "content-type": "application/zip" });
+        res.end(Buffer.from(bytes));
+      } else if (body === undefined) {
         res.writeHead(status);
         res.end();
       } else {

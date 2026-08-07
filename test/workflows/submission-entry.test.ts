@@ -176,6 +176,48 @@ describe("report-validation entry point", () => {
     await reportValidation();
     expect(state.comments).toHaveLength(1);
   });
+
+  it("records a failed validation in one paragraph and leaves the detail in the artifact", async () => {
+    // The comment is the permanent record of the outcome, not of the build:
+    // the transcript belongs to the report artifact, which the author's CLI
+    // reads directly and which expires with the run.
+    const transcript =
+      "info: building Proofs.Main\nProofs/Main.lean:9:2: error: unsolved goals\n⊢ False";
+    const reportPath = path.join(workDirectory(), "validation-report.json");
+    fs.writeFileSync(reportPath, JSON.stringify({
+      reportVersion: 1,
+      ok: false,
+      request: { id: "lax-42" },
+      warnings: [{ phase: "static", rule: "abstract", message: "the abstract is short" }],
+      violations: [
+        { phase: "compile-proofs", rule: "build", message: transcript },
+        { phase: "inspect", rule: "unproved", message: "the conclusion is not proved" },
+      ],
+    }));
+    stubWorkflowEnv({
+      VALIDATION_CONTEXT: encode({ id: "lax-42", issueNumber, commentId }),
+      VALIDATION_REPORT_PATH: reportPath,
+    });
+    const state: IssueState = { comments: [], reactions: [] };
+    installIssueFetch(state);
+
+    await reportValidation();
+
+    const body = state.comments[0]!.body;
+    expect(body).toContain("Submission validation failed for **lax-42**; lax-database was not changed.");
+    expect(body).toContain(
+      "First finding `[compile-proofs/build]`: info: building Proofs.Main",
+    );
+    expect(body).toContain("The complete findings are in this run's artifacts");
+    // Only the first violation's first line, and no transcript, warnings, or
+    // second finding.
+    expect(body).not.toContain("unsolved goals");
+    expect(body).not.toContain("the conclusion is not proved");
+    expect(body).not.toContain("the abstract is short");
+    expect(body).not.toContain("```");
+    expect(body).toContain(resultMarker(commentId));
+    expect(parseWorkflowComment(body)).toMatchObject({ outcome: "failure", runId: "777" });
+  });
 });
 
 describe("prepare-submit entry point", () => {

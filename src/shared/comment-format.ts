@@ -1,28 +1,13 @@
-// How the control plane renders untrusted validation output into an issue
-// comment. A failing build's real diagnostic is a Lean transcript: multi-line,
-// full of the characters markdown reacts to, and worth thousands of bytes. The
-// old archive server handed the author that transcript's tail verbatim; these
-// helpers do the same through GitHub, so `lax submit` can print a compiler
-// error instead of a one-line summary of one.
+// How the control plane renders untrusted text into an issue comment. Issue
+// comments are short outcome records now — a failing build's transcript
+// travels to the author through the validation report artifact, not through
+// markdown — so what remains here is the sanitizing every remaining comment
+// still needs, plus the transcript shaping the pipeline uses for the findings
+// it writes into that report.
 //
-// Everything here treats its input as hostile: control characters are removed,
-// fenced blocks are opened with a fence longer than any backtick run inside
-// them (so nothing can escape into markdown), and inline text keeps the
-// mention-defusing zero-width space. Budgets are per finding and overall — a
-// GitHub comment holds 65,536 characters and the caller adds prose around us.
-
-import type { ValidationFinding } from "../submission-validation/contracts.js";
-
-/** Total characters the findings section of one comment may occupy. */
-const SECTION_BUDGET = 40_000;
-/** Characters one finding's message may occupy. */
-const MESSAGE_BUDGET = 12_000;
-/**
- * Findings listed before the rest are summarized as a count. Static
- * validation reports one per bad manifest field, so this is generous; the
- * character budget above is the real bound.
- */
-const MAX_FINDINGS = 50;
+// Everything here treats its input as hostile: control characters are removed
+// and inline text keeps the mention-defusing zero-width space, because a
+// finding's message is whatever the submission made Lean print.
 
 /** Control characters, keeping nothing: inline text is a single line. */
 const INLINE_CONTROL = /[\u0000-\u001f\u007f]/gu;
@@ -41,21 +26,6 @@ export function safeInline(value: string, limit: number): string {
     .replace(/\s+/gu, " ")
     .trim()
     .slice(0, limit);
-}
-
-/**
- * Untrusted multi-line text as a fenced block. Line structure and the
- * characters Lean prints are preserved — inside a fence GitHub renders text
- * literally and does not linkify mentions — but only because the fence itself
- * cannot be broken from within: it is always one backtick longer than the
- * longest run in the content.
- */
-export function codeBlock(value: string, limit: number): string {
-  const body = safeTranscript(value, limit);
-  let longest = 0;
-  for (const run of body.match(/`+/gu) ?? []) longest = Math.max(longest, run.length);
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  return `${fence}text\n${body}\n${fence}`;
 }
 
 /**
@@ -86,41 +56,4 @@ export function tail(value: string, limit: number): string {
   const newline = kept.indexOf("\n");
   const fromLineStart = newline === -1 ? kept : kept.slice(newline + 1);
   return `[…earlier output omitted…]\n${fromLineStart.length > 0 ? fromLineStart : kept}`;
-}
-
-/**
- * Render validation findings for an issue comment. Single-line findings stay
- * bullets; anything multi-line (compile transcripts, kernel replay output,
- * inspector failures) keeps its shape in a fenced block.
- */
-export function findingsMarkdown(findings: readonly ValidationFinding[], fallback: string): string {
-  if (findings.length === 0) return `- ${fallback}`;
-  const sections: string[] = [];
-  let budget = SECTION_BUDGET;
-  let rendered = 0;
-  for (const finding of findings.slice(0, MAX_FINDINGS)) {
-    const section = findingMarkdown(finding, Math.min(MESSAGE_BUDGET, budget));
-    if (section.length > budget && rendered > 0) break;
-    sections.push(section);
-    budget -= section.length;
-    rendered += 1;
-  }
-  const omitted = findings.length - rendered;
-  if (omitted > 0) {
-    sections.push(
-      `_${omitted} further finding${omitted === 1 ? "" : "s"} omitted; ` +
-        "the workflow run has the complete report._",
-    );
-  }
-  return sections.join("\n\n");
-}
-
-function findingMarkdown(finding: ValidationFinding, budget: number): string {
-  const phase = safeInline(String(finding.phase ?? "validation"), 40) || "validation";
-  const rule = safeInline(String(finding.rule ?? "unspecified"), 60) || "unspecified";
-  const raw = String(finding.message ?? "unspecified failure");
-  const heading = `**${phase}** (\`${rule}\`)`;
-  return /[\r\n]/u.test(raw.trim())
-    ? `${heading}\n\n${codeBlock(raw, budget)}`
-    : `- ${heading}: ${safeInline(raw, Math.min(budget, 1_000))}`;
 }

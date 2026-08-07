@@ -15,6 +15,22 @@ import { visibleComment } from "../shared/workflow-comments.js";
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/gu;
 /** Invisible or direction-changing characters: no text may hide behind them. */
 const INVISIBLE = /[\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/gu;
+/** The same as CONTROL, keeping LF: a compile transcript is its lines. */
+const BLOCK_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/gu;
+
+/**
+ * Untrusted multi-line text on its way to the terminal: no escape sequences,
+ * nothing invisible, line structure intact, bounded. The validation report the
+ * CLI downloads carries exactly the text the comment path used to carry, so it
+ * gets exactly the same treatment.
+ */
+export function sanitizeTerminalText(value: string, limit: number): string {
+  const text = value
+    .replace(/\r\n?/gu, "\n")
+    .replace(BLOCK_CONTROL, " ")
+    .replace(INVISIBLE, "");
+  return text.length <= limit ? text : `${text.slice(0, limit)}…`;
+}
 
 /**
  * Render one control-plane comment as terminal text: hidden markers and the

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatLocalFindings } from "../../src/cli/findings.js";
+import { formatFindings } from "../../src/cli/findings.js";
 
 describe("local validation reporting", () => {
   it("aggregates findings once and groups them by phase and severity", () => {
     const duplicate = { phase: "static" as const, rule: "manifest", message: "title is missing" };
     expect(
-      formatLocalFindings(
+      formatFindings(
         [{ phase: "dialect", rule: "gate", message: "local gate unavailable" }],
         [
           duplicate,
@@ -31,6 +31,6 @@ describe("local validation reporting", () => {
   });
 
   it("returns no output when validation has no findings", () => {
-    expect(formatLocalFindings([], [])).toBeUndefined();
+    expect(formatFindings([], [])).toBeUndefined();
   });
 });

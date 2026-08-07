@@ -25,10 +25,12 @@ import {
 } from "../../src/shared/workflow-comments.js";
 import { GITHUB_APP_CLIENT_ID } from "../../src/cli/github-app.js";
 import {
+  artifactZip,
   FAKE_USER_CODE,
   refreshTokenFor,
   startFakeGitHub,
   tokenFor,
+  type FakeActionsRun,
   type FakeGitHub,
   type RecordedRequest,
 } from "../fake-github.js";
@@ -277,6 +279,175 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       fs.rmSync(folder, { recursive: true, force: true });
     }
   });
+
+  it("prints the validate job's findings from the report artifact and stops there", async () => {
+    // The failing submit: the author never sees a record comment, because the
+    // verdict is the report the credential-free validate job uploaded, and it
+    // reaches the terminal in the same shape `lax build` prints locally.
+    const folder = seedSubmit(80, "800", {
+      status: "in_progress",
+      conclusion: null,
+      jobs: [{ name: "Validate", status: "completed", conclusion: "failure" }],
+    });
+    github.state.actionsArtifacts.set("800", [
+      {
+        id: 3080,
+        name: "submission-validation-report-80",
+        zip: artifactZip({
+          "validation-report.json": JSON.stringify({
+            reportVersion: 1,
+            ok: false,
+            warnings: [],
+            violations: [{
+              phase: "compile-proofs",
+              rule: "build",
+              message: "Proofs/Main.lean:9:2: error: unsolved goals\n⊢ False",
+            }],
+          }),
+        }),
+      },
+    ]);
+
+    try {
+      const result = await lax(["submit", "--resume", folder], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("lax submit: found 1 error during validation");
+      expect(result.stderr).toContain("      - [build] Proofs/Main.lean:9:2: error: unsolved goals");
+      expect(result.stderr).toContain("        ⊢ False");
+      expect(result.stderr).toContain("lax submit: validation failed; lax-database was not changed");
+      expect(result.stderr).toContain("lax submit: FAILED");
+      // No result comment was posted, and none was waited for.
+      expect(github.state.issueComments.get(80)).toHaveLength(1);
+      // The download took the redirect to the blob, and only the API leg
+      // carried the author's credential.
+      const blob = github.requests.find((request) => request.path === "/artifact-blobs/3080");
+      expect(blob?.authorization).toBeUndefined();
+      expect(
+        github.requests.find((r) => r.path === "/repos/lax-archive/lax/actions/artifacts/3080/zip")
+          ?.authorization,
+      ).toBe(`Bearer ${tokenFor("alice")}`);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("prints validation warnings and keeps following to the outcome comment", async () => {
+    // A passing validation is not the end of a submit: publication and the
+    // website dispatch can still fail, so the CLI prints what the report warns
+    // about and goes on waiting for the record comment.
+    const folder = seedSubmit(81, "801", {
+      status: "in_progress",
+      conclusion: null,
+      jobs: [{ name: "Validate", status: "completed", conclusion: "success" }],
+    });
+    github.state.actionsArtifacts.set("801", [
+      {
+        id: 3081,
+        name: "submission-validation-report-81",
+        zip: artifactZip({
+          "validation-report.json": JSON.stringify({
+            reportVersion: 1,
+            ok: true,
+            warnings: [{ phase: "inspect", rule: "abstract", message: "the abstract is very short" }],
+            violations: [],
+          }),
+        }),
+      },
+    ]);
+    // The record comment only appears once the report has been read, so the
+    // test proves the artifact was consulted rather than racing it.
+    const finish = setInterval(() => {
+      if (!github.requests.some((request) => request.path === "/artifact-blobs/3081")) return;
+      clearInterval(finish);
+      github.state.actionsRuns.set("801", { status: "completed", conclusion: "success", jobs: [] });
+      github.state.issueComments.get(81)!.push({
+        id: 5081,
+        body: appendWorkflowRun(
+          `Published **lax-81**.\n\n${resultMarker(5001)}`,
+          { id: "801", url: "https://github.com/lax-archive/lax/actions/runs/801" },
+          "success",
+        ),
+        user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
+      });
+    }, 20);
+
+    try {
+      const result = await lax(["submit", "--resume", folder], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("lax submit: found 1 warning during validation");
+      expect(result.stderr).toContain("      - [abstract] the abstract is very short");
+      expect(result.stdout).toContain("lax submit: Published lax-81.");
+    } finally {
+      clearInterval(finish);
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("names the missing Actions permission when the report cannot be read", async () => {
+    const folder = seedSubmit(82, "802", {
+      status: "in_progress",
+      conclusion: null,
+      jobs: [{ name: "Validate", status: "completed", conclusion: "failure" }],
+    });
+    // An author whose token predates the Actions-read grant.
+    github.state.artifactListStatus = 403;
+
+    try {
+      const result = await lax(["submit", "--resume", folder], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("could not read the validation report");
+      expect(result.stderr).toContain("Actions read permission");
+      expect(result.stderr).toContain("run `lax login`");
+      // An authoritative refusal, so no "lost contact with GitHub" guess.
+      expect(result.stderr).not.toContain("lost contact with GitHub");
+    } finally {
+      delete github.state.artifactListStatus;
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  /** An issue mid-submit: alice's command comment, its run, and a folder to
+   * name the submission — everything `lax submit --resume` re-derives from. */
+  function seedSubmit(issue: number, runId: string, run: FakeActionsRun): string {
+    const source = JSON.stringify({
+      repository: "https://github.com/alice/formalization",
+      commit: "0".repeat(40),
+      folder: ".",
+    });
+    github.state.issueComments.set(issue, [
+      {
+        id: 5001,
+        body: upsertCommandContext(
+          `/lax submit ${source}`,
+          5001,
+          appendWorkflowRun(`Parsed source preview for lax-${issue}.\n\n${previewMarker(5001)}`, {
+            id: runId,
+            url: `https://github.com/lax-archive/lax/actions/runs/${runId}`,
+          }),
+        ),
+        user: { id: 1, login: "alice", type: "User" },
+      },
+    ]);
+    github.state.actionsRuns.set(runId, run);
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
+    fs.writeFileSync(path.join(folder, "manifest.yaml"), `id: lax-${issue}\n`);
+    return folder;
+  }
 
   it("refuses to resume an issue that carries no submit of yours", async () => {
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));

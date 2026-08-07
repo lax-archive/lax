@@ -32,6 +32,7 @@ import {
 import { deriveSubmittedSource, repositoryRoot } from "./git.js";
 import { issueNumberFromFolder } from "./manifest.js";
 import { recordSubmission } from "./registry.js";
+import { ValidationReportUnavailableError } from "./run-artifacts.js";
 import { ensureEmptyFolder, provisionScaffold, scaffoldSubmission } from "./scaffold.js";
 
 const base = repositoryPath(CONTROL_REPOSITORY);
@@ -207,7 +208,10 @@ export async function resumeSubmit(target: string): Promise<void> {
       "Reattaching to " +
         `${githubOauthBase()}/${CONTROL_REPOSITORY}/issues/${issue}#issuecomment-${command.id}`,
     );
-    await followCommand(github, issue, command.id, { label: "lax submit" });
+    await followCommand(github, issue, command.id, {
+      label: "lax submit",
+      readValidationReport: true,
+    });
   });
 }
 
@@ -223,11 +227,12 @@ function resumeCommand(target: string): string {
 
 /**
  * A GitHub HTTP status is an authoritative answer, a finished-workflow error is
- * final, a reported command failure is the workflow's own verdict, and an
+ * final, a reported command failure is the workflow's own verdict, an
+ * unreadable validation report already names its own recovery, and an
  * authentication failure happens strictly before the command comment is posted
- * — so none of them leaves a run behind. Anything else (transport failure,
- * timeout) does leave the Actions run going, so hand the author the exact
- * recovery command — as old lax did with its job ids.
+ * — so none of them leaves a run behind unexplained. Anything else (transport
+ * failure, timeout) does leave the Actions run going, so hand the author the
+ * exact recovery command — as old lax did with its job ids.
  */
 async function withResumeHint<T>(target: string, operation: () => Promise<T>): Promise<T> {
   try {
@@ -238,6 +243,7 @@ async function withResumeHint<T>(target: string, operation: () => Promise<T>): P
       !(error instanceof WorkflowOutcomeError) &&
       !(error instanceof CommandFailedError) &&
       !(error instanceof NothingToResumeError) &&
+      !(error instanceof ValidationReportUnavailableError) &&
       !(error instanceof AuthenticationError)
     ) {
       console.error("lax submit: lost contact with GitHub; the workflow run may still be going");
@@ -381,6 +387,8 @@ async function postCommand(reference: string | number, body: string): Promise<vo
     // stranded dependents), so those are worth repeating.
     showPreview: action !== "submit",
     acceptSuccessReaction: action === "owners",
+    // Only a submit validates anything, so only a submit has a report to read.
+    readValidationReport: action === "submit",
   });
 }
 

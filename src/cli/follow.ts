@@ -12,8 +12,10 @@ import {
   type CommandOutcome,
   type ParsedWorkflowComment,
 } from "../shared/workflow-comments.js";
+import { formatFindings } from "./findings.js";
 import { LoadingLine } from "./loading.js";
 import { labelled, renderComment } from "./render.js";
+import { fetchValidationReport } from "./run-artifacts.js";
 
 interface IssueComment {
   id: number;
@@ -74,6 +76,12 @@ export interface FollowOptions {
   showPreview?: boolean;
   /** `lax owners` completes with a bot reaction rather than a comment. */
   acceptSuccessReaction?: boolean;
+  /**
+   * Submit only: read the Validate job's report artifact when that job
+   * concludes, and print its findings. The other commands never produce a
+   * validation report, so they keep the pure comment flow.
+   */
+  readValidationReport?: boolean;
 }
 
 /**
@@ -185,6 +193,7 @@ async function follow(
   let runUrl: string | undefined;
   let completedWithoutResult = 0;
   let actionsStatusAvailable = true;
+  let validationRead = false;
   let stage = "waiting for the workflow to start";
 
   const show = (): void => loading.update(`${label} · ${stage}`, elapsed(Date.now() - started));
@@ -233,8 +242,11 @@ async function follow(
 
       if (runId !== undefined && actionsStatusAvailable) {
         let progress: WorkflowProgress | undefined;
+        let jobs: WorkflowJob[] = [];
         try {
-          progress = await readWorkflowProgress(client, runId);
+          const status = await readWorkflowProgress(client, runId);
+          progress = status.progress;
+          jobs = status.jobs;
         } catch (error) {
           if (error instanceof GitHubError && error.status === 403) {
             actionsStatusAvailable = false;
@@ -242,6 +254,14 @@ async function follow(
           } else {
             stage = "waiting for the result (run status is temporarily unavailable)";
           }
+        }
+        // The verdict on a submission is the report, not the comment that
+        // announces it: as soon as the validate job is done its findings are
+        // downloadable, and a failed validation ends the command right here.
+        if (options.readValidationReport === true && !validationRead && concluded(jobs, "validate")) {
+          validationRead = true;
+          loading.clear();
+          await printValidationReport(client, issueNumber, runId, label);
         }
         if (progress !== undefined) {
           stage = progress.label;
@@ -307,7 +327,10 @@ async function hasSuccessReaction(client: GitHubClient, commentId: number): Prom
   );
 }
 
-async function readWorkflowProgress(client: GitHubClient, runId: string): Promise<WorkflowProgress> {
+async function readWorkflowProgress(
+  client: GitHubClient,
+  runId: string,
+): Promise<{ progress: WorkflowProgress; jobs: WorkflowJob[] }> {
   const [run, response] = await Promise.all([
     client.request<WorkflowRun>("GET", `${base}/actions/runs/${runId}`),
     client.request<WorkflowJobs>(
@@ -319,7 +342,46 @@ async function readWorkflowProgress(client: GitHubClient, runId: string): Promis
     throw new Error("GitHub returned a malformed workflow run");
   }
   if (!Array.isArray(response.jobs)) throw new Error("GitHub returned a malformed workflow job list");
-  return workflowProgress(run, response.jobs);
+  return { progress: workflowProgress(run, response.jobs), jobs: response.jobs };
+}
+
+/** Whether the named job has finished, under the author-facing job names. */
+function concluded(jobs: WorkflowJob[], name: string): boolean {
+  return jobs.some(
+    (job) => terminalText(job.name).toLowerCase() === name && job.status === "completed",
+  );
+}
+
+/**
+ * Print the validate job's own findings, in the format `lax build` prints
+ * locally. A failed validation ends the command here rather than at the
+ * record comment: the comment says the same thing with less in it, and the
+ * author is waiting on the diagnosis, not on the bookkeeping.
+ */
+async function printValidationReport(
+  client: GitHubClient,
+  issueNumber: number,
+  runId: string,
+  label: string,
+): Promise<void> {
+  const report = await fetchValidationReport(client, issueNumber, runId);
+  // No report at all: the validate job died before writing one, which only
+  // the workflow can describe. Its comment is still coming.
+  if (report === undefined) return;
+  const findings = formatFindings(report.warnings, report.violations, {
+    label,
+    activity: "validation",
+  });
+  if (report.ok) {
+    if (findings !== undefined) console.warn(findings);
+    return;
+  }
+  console.error(
+    [findings, `${label}: validation failed; lax-database was not changed`]
+      .filter((line): line is string => line !== undefined)
+      .join("\n"),
+  );
+  throw new CommandFailedError("FAILED — see the report above");
 }
 
 function elapsed(milliseconds: number): string {

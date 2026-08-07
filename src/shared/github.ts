@@ -71,6 +71,57 @@ export class GitHubClient {
     return parsed as T;
   }
 
+  /**
+   * A bounded binary GET. GitHub answers artifact downloads with a redirect to
+   * a signed blob URL on a different host, so the hop is taken by hand with
+   * `redirect: "manual"`: the credential is attached to the API request only,
+   * and the signed URL — which carries its own authorization — is fetched
+   * without it. (Standard fetch drops the header cross-origin anyway; doing it
+   * explicitly makes the boundary visible and independent of that behaviour.)
+   */
+  async requestBinary(
+    path: string,
+    options: { timeoutMs?: number; maxBytes: number },
+  ): Promise<Uint8Array> {
+    const headers: Record<string, string> = {
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "lax-control-plane",
+    };
+    if (this.token !== undefined && this.token !== "") headers.authorization = `Bearer ${this.token}`;
+    const signal = AbortSignal.timeout(options.timeoutMs ?? 60_000);
+    let response: Response;
+    try {
+      response = await fetch(`${this.apiBase}${path}`, { method: "GET", headers, redirect: "manual", signal });
+      const location = response.headers.get("location");
+      if (response.status >= 300 && response.status < 400 && location !== null) {
+        const target = new URL(location, `${this.apiBase}${path}`);
+        if (target.protocol !== "https:" && target.protocol !== "http:") {
+          throw new Error("download redirect is not an HTTP(S) URL");
+        }
+        response = await fetch(target, {
+          method: "GET",
+          headers: { "user-agent": "lax-control-plane" },
+          redirect: "follow",
+          signal,
+        });
+      }
+    } catch (error) {
+      throw new Error(`GitHub request failed: ${(error as Error).message}`);
+    }
+    if (!response.ok) {
+      throw new GitHubError(
+        `GitHub API ${response.status}: ${response.statusText}`,
+        response.status,
+      );
+    }
+    const declared = Number(response.headers.get("content-length"));
+    if (Number.isSafeInteger(declared) && declared > options.maxBytes) {
+      throw new Error(`download exceeds ${options.maxBytes} bytes`);
+    }
+    return readBounded(response, options.maxBytes);
+  }
+
   async uploadReleaseAsset<T>(
     uploadUrl: string,
     filename: string,
@@ -133,6 +184,34 @@ export class GitHubClient {
     }
     return items.slice(0, limit);
   }
+}
+
+/** Read a response body, refusing it as soon as it passes the cap rather than
+ * after buffering whatever the server chose to send. */
+async function readBounded(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const body = response.body;
+  if (body === null) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) throw new Error(`download exceeds ${maxBytes} bytes`);
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export function repositoryPath(repository: string): string {

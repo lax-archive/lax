@@ -9,7 +9,7 @@ import { hostValidationRuntime } from "../submission-validation/pins.js";
 import { removeValidationWorkspace } from "../submission-validation/workspace-cleanup.js";
 import { formatProfile, Profiler } from "../shared/profile.js";
 import { databaseDirectory } from "./database.js";
-import { formatLocalFindings } from "./findings.js";
+import { formatFindings } from "./findings.js";
 import { deriveLocalSource, repositoryRoot } from "./git.js";
 import { LoadingLine } from "./loading.js";
 import { submissionIdFromFolder } from "./manifest.js";
@@ -76,7 +76,7 @@ export async function buildSubmission(
       },
     });
     progress.clear();
-    const findings = formatLocalFindings(report.warnings, report.violations);
+    const findings = formatFindings(report.warnings, report.violations);
     if (!report.ok || (scope === "both" && report.buildOutput === undefined)) {
       console.error(
         [findings, "lax build: validation failed; build-output.json was not changed"]

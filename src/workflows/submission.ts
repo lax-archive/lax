@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { ArchiveRepository } from "../shared/archive.js";
 import { GhcrCaptureStore } from "../shared/capture-store.js";
 import { CONTROL_REPOSITORY } from "../shared/constants.js";
-import { findingsMarkdown, safeInline } from "../shared/comment-format.js";
+import { safeInline } from "../shared/comment-format.js";
 import { ControlPlane } from "../shared/control-plane.js";
 import { GitHubClient, repositoryPath } from "../shared/github.js";
 import {
@@ -166,10 +166,11 @@ export async function reportValidation(): Promise<void> {
       `lax-database was not changed.\n\n${marker}`
     : report.ok
       ? `Submission validation passed for **${context.id}**, but the validation job failed before trusted ` +
-        `publication could start. lax-database was not changed.\n\n` +
-        `${validationWarnings(report)}${marker}`
-      : `Submission validation failed for **${context.id}**; lax-database was not changed.\n\n` +
-        `${validationProblems(report)}\n\n${marker}`;
+        `publication could start. lax-database was not changed.\n\n${marker}`
+      : `Submission validation failed for **${context.id}**; lax-database was not changed.\n` +
+        `${firstViolation(report)}\n` +
+        `The complete findings are in this run's artifacts, where \`lax submit\` reads them.` +
+        `\n\n${marker}`;
   await clearCommandProgress(control, context.commentId);
   await control.postIssueComment(
     context.issueNumber,
@@ -584,28 +585,19 @@ function parseValidationContext(value: unknown): ValidationContext {
 }
 
 /**
- * The author's whole diagnosis of a failed submit arrives here: whatever the
- * pipeline recorded, verbatim enough to act on. Multi-line findings — a Lean
- * compile transcript, a kernel replay refusal — stay multi-line inside fenced
- * blocks (comment-format.ts owns the sanitizing and the budgets), because a
- * one-line summary of a compile error is not a compile error.
+ * One line, to say what broke without becoming the record of it: the report
+ * artifact carries every finding with its transcript intact, and `lax submit`
+ * renders that directly. A comment that also carried the transcripts would be
+ * a second, worse copy — permanent, markdown-escaped, and truncated.
  */
-function validationProblems(report: ValidationReport): string {
-  const findings = (Array.isArray(report.violations) ? report.violations : [])
-    .filter((finding): finding is ValidationFinding => isObject(finding));
-  return findingsMarkdown(
-    findings,
-    "Validation failed without a structured finding; inspect the workflow run.",
-  );
-}
-
-function validationWarnings(report: ValidationReport): string {
-  const findings = Array.isArray(report.warnings) ? report.warnings.slice(0, 10) : [];
-  if (findings.length === 0) return "";
-  const lines = findings.map((finding) =>
-    `- ${safeInline(isObject(finding) ? String(finding.message ?? "warning") : "warning", 400)}`,
-  );
-  return `Warnings:\n\n${lines.join("\n")}\n\n`;
+function firstViolation(report: ValidationReport): string {
+  const finding = (Array.isArray(report.violations) ? report.violations : [])
+    .find((value): value is ValidationFinding => isObject(value));
+  if (finding === undefined) return "Validation failed without a structured finding.";
+  const phase = safeInline(String(finding.phase ?? "validation"), 40) || "validation";
+  const rule = safeInline(String(finding.rule ?? "unspecified"), 60) || "unspecified";
+  const message = String(finding.message ?? "").split("\n")[0] ?? "";
+  return `First finding \`[${phase}/${rule}]\`: ${safeInline(message, 400) || "unspecified failure"}`;
 }
 
 function issueNumber(event: unknown): number | undefined {

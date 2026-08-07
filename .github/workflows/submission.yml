@@ -127,6 +127,20 @@ jobs:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
         run: node dist/submission-validation/run.js
+      # The report alone, uploaded first and separately: it is the channel the
+      # author's CLI reads (src/cli/run-artifacts.ts) and the only file the
+      # failure reporter needs. Bundling it with the capture would make every
+      # `lax submit` download the submission's whole build output to print a
+      # finding. Same bytes, no second source of truth — the publisher still
+      # revalidates the full artifact below.
+      - name: Preserve the report for the CLI and the failure reporter
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: submission-validation-report-${{ github.event.issue.number }}
+          path: .build/submission-validation/validation-report.json
+          if-no-files-found: warn
+          retention-days: 90
       - name: Preserve the report, generated build output, capture, and profile
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -301,7 +315,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
-          name: submission-validation-${{ github.event.issue.number }}
+          name: submission-validation-report-${{ github.event.issue.number }}
           path: .build/submission-validation
       - name: Report the validation result
         env:

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { zipSync } from "fflate";
 import { CommandFailedError, followCommand, workflowProgress } from "../../src/cli/follow.js";
 import {
   appendWorkflowRun,
@@ -148,6 +149,87 @@ describe("GitHub Actions workflow progress", () => {
     expect(printed).toContain("Proofs/Main.lean:9:2: error: unsolved goals");
     expect(printed).toContain("⊢ False");
     expect(printed).not.toContain("```");
+  });
+
+  it("ends a submit on the validate job's own report, before the record comment", async () => {
+    // The author is waiting for a diagnosis, and the report artifact carries
+    // it: as soon as the validate job concludes the findings are printed in
+    // the same shape `lax build` prints locally, and the command is over.
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "100";
+    const preview = appendWorkflowRun(
+      `Parsed source preview.\n\n${previewMarker(9001)}`,
+      { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
+    );
+    const paginate = vi.fn().mockResolvedValue([{ id: 1, body: preview, user: bot }]);
+    const request = vi.fn(async (_method: string, path: string): Promise<unknown> => {
+      if (path.includes("/artifacts")) {
+        return { artifacts: [{ id: 5, name: "submission-validation-report-42" }] };
+      }
+      if (path.endsWith("/jobs?filter=latest&per_page=100")) {
+        return { jobs: [{ name: "Validate", status: "completed", conclusion: "failure" }] };
+      }
+      return { status: "in_progress", conclusion: null };
+    });
+    const requestBinary = vi.fn(async () =>
+      zipSync({
+        "validation-report.json": new TextEncoder().encode(JSON.stringify({
+          reportVersion: 1,
+          ok: false,
+          warnings: [{ phase: "static", rule: "abstract", message: "the abstract is short" }],
+          violations: [{
+            phase: "compile-proofs",
+            rule: "build",
+            message: "Proofs/Main.lean:9:2: error: unsolved goals\n⊢ False",
+          }],
+        })),
+      }),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await expect(
+      followCommand({ paginate, request, requestBinary } as unknown as GitHubClient, 42, 9001, {
+        label: "lax submit",
+        readValidationReport: true,
+      }),
+    ).rejects.toBeInstanceOf(CommandFailedError);
+
+    const printed = error.mock.calls.flat().join("\n");
+    expect(printed).toContain("lax submit: found 1 error and 1 warning during validation");
+    expect(printed).toContain("      - [build] Proofs/Main.lean:9:2: error: unsolved goals");
+    // a transcript keeps its lines, indented under the finding
+    expect(printed).toContain("        ⊢ False");
+    expect(printed).toContain("lax submit: validation failed; lax-database was not changed");
+    expect(request).toHaveBeenCalledWith(
+      "GET",
+      "/repos/lax-archive/lax/actions/runs/123/artifacts?per_page=100",
+    );
+  });
+
+  it("reads no report for the commands that never validate anything", async () => {
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "20";
+    const preview = appendWorkflowRun(
+      `Delete preview.\n\n${previewMarker(9001)}`,
+      { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
+    );
+    const paginate = vi.fn().mockResolvedValue([{ id: 1, body: preview, user: bot }]);
+    const request = vi.fn(async (_method: string, path: string): Promise<unknown> =>
+      path.endsWith("/jobs?filter=latest&per_page=100")
+        ? { jobs: [{ name: "Validate", status: "completed", conclusion: "failure" }] }
+        : { status: "in_progress", conclusion: null },
+    );
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await expect(
+      followCommand({ paginate, request } as unknown as GitHubClient, 42, 9001, {
+        label: "lax delete",
+      }),
+    ).rejects.toThrow("timed out");
+    expect(request.mock.calls.map(([, path]) => path).some((path) => path.includes("/artifacts")))
+      .toBe(false);
   });
 
   it("fails quickly when a completed run never posts a result", async () => {

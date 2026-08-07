@@ -247,31 +247,44 @@ describe("submission workflow wiring", () => {
   // -------------------------------------------------------------------------
   // Artifact handoff: one upload, names aligned with the TS output module.
   // -------------------------------------------------------------------------
-  it("hands the validation output to trusted jobs through one aligned artifact", () => {
-    // The artifact is the only channel between the untrusted validate job and
-    // the trusted publisher; its file names must match outputs.ts exactly or
-    // the publisher's re-validation reads nothing.
-    const upload = jobs.validate.steps.find((step) =>
+  it("hands the validation output to trusted jobs through two aligned artifacts", () => {
+    // The artifacts are the only channel out of the untrusted validate job.
+    // The full one is the publisher's evidence: its file names must match
+    // outputs.ts exactly or the re-validation reads nothing. The report-only
+    // one is the reader's copy — the author's CLI and the failure reporter —
+    // so neither has to pull the capture to learn what went wrong.
+    const uploads = jobs.validate.steps.filter((step) =>
       step.uses?.startsWith("actions/upload-artifact"),
     );
-    expect(upload?.if).toBe("always()");
-    expect(upload?.with?.name).toBe("submission-validation-${{ github.event.issue.number }}");
-    // The artifact is the only diagnosable record of a failed run, so it
-    // keeps the maximum retention.
-    expect(upload?.with?.["retention-days"]).toBe(90);
+    expect(uploads).toHaveLength(2);
+    expect(workflow.match(/upload-artifact/gu)).toHaveLength(2);
+    const [report, full] = uploads as [WorkflowJob["steps"][number], WorkflowJob["steps"][number]];
+    for (const upload of uploads) {
+      expect(upload.if).toBe("always()");
+      // The artifacts are the only diagnosable record of a failed run, so they
+      // keep the maximum retention.
+      expect(upload.with?.["retention-days"]).toBe(90);
+    }
+    // The report is uploaded first: it is what the waiting author reads.
+    expect(report.with?.name).toBe("submission-validation-report-${{ github.event.issue.number }}");
+    expect(report.with?.path).toBe(`.build/submission-validation/${VALIDATION_REPORT_FILENAME}`);
+    expect(full.with?.name).toBe("submission-validation-${{ github.event.issue.number }}");
     for (const filename of [
       VALIDATION_REPORT_FILENAME,
       VALIDATION_PROFILE_FILENAME,
       GENERATED_BUILD_OUTPUT_FILENAME,
       CAPTURE_FILENAME,
     ]) {
-      expect(upload?.with?.path).toContain(`.build/submission-validation/${filename}`);
+      expect(full.with?.path).toContain(`.build/submission-validation/${filename}`);
     }
-    expect(workflow.match(/upload-artifact/gu)).toHaveLength(1);
-    // Every download must name the same artifact the validate job uploaded.
-    for (const name of ["report-validation-failure", "publish-submit"]) {
+    // Each download names the artifact holding what that job reads.
+    const downloads = {
+      "report-validation-failure": "submission-validation-report-${{ github.event.issue.number }}",
+      "publish-submit": "submission-validation-${{ github.event.issue.number }}",
+    };
+    for (const [name, artifact] of Object.entries(downloads)) {
       const download = jobs[name].steps.find((step) => step.uses?.startsWith("actions/download-artifact"));
-      expect(download?.with?.name, name).toBe("submission-validation-${{ github.event.issue.number }}");
+      expect(download?.with?.name, name).toBe(artifact);
       expect(download?.with?.path, name).toBe(".build/submission-validation");
     }
   });
