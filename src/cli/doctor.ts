@@ -293,10 +293,34 @@ function submissionCheck(root: string): Check {
       try {
         const parsed = JSON.parse(overrides) as { packages: Array<{ name: string; dir: string }> };
         overrideNames = parsed.packages.map((pkgEntry) => pkgEntry.name);
-        const dead = parsed.packages.find((pkgEntry) => !fs.existsSync(pkgEntry.dir));
-        if (dead !== undefined) {
-          problems.push(`${kind}/ package overrides point at a missing mathlib store (${path.dirname(path.dirname(path.dirname(dead.dir)))})`);
+        // Lake resolves a relative override dir against the package root, so
+        // probe it the same way: our own entries are absolute, but an author
+        // may add a relative one (it then survives the package being copied),
+        // and probing that against the process cwd invents dead entries.
+        const dead = parsed.packages
+          .map((pkgEntry) => ({ ...pkgEntry, dir: path.resolve(pkg, pkgEntry.dir) }))
+          .filter((pkgEntry) => !fs.existsSync(pkgEntry.dir));
+        // A warm store is `<warm root>/<pins>/.lake/packages/<name>`, so the
+        // store of a dead entry is three levels up. Only entries below the
+        // warm root are ours to blame on a pin bump or a deleted store.
+        const warmRoot = path.dirname(warmDir());
+        const stores = new Set(
+          dead
+            .filter((pkgEntry) => pkgEntry.dir.startsWith(warmRoot + path.sep))
+            .map((pkgEntry) => path.dirname(path.dirname(path.dirname(pkgEntry.dir)))),
+        );
+        if (stores.size > 0) {
+          problems.push(`${kind}/ package overrides point at a missing mathlib store (${[...stores].join(", ")})`);
           fixes.add("run `lax build`");
+        }
+        const strays = dead.filter((pkgEntry) => !pkgEntry.dir.startsWith(warmRoot + path.sep));
+        if (strays.length > 0) {
+          // Not a `lax build` problem — that regenerates the file from the
+          // pins alone and would silently drop the entry instead of fixing it.
+          problems.push(
+            `${kind}/ package overrides point at missing folders (${strays.map((pkgEntry) => `${pkgEntry.name} → ${pkgEntry.dir}`).join(", ")})`,
+          );
+          fixes.add("point each listed override at an existing folder, or delete the entry");
         }
       } catch {
         problems.push(`${kind}/ package overrides are not valid JSON`);
