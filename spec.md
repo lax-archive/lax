@@ -63,7 +63,7 @@ the build.
 We fix the following **archive environment**:
 
 - ``specVersion: "1"``
-- pinned Lean toolchain: ``leanprover/lean4:v4.30.0`` (the verbatim content
+- pinned Lean toolchain: ``leanprover/lean4:v4.30.0`` (the trimmed content
   of every ``lean-toolchain`` file; it also fixes the Lake version)
 - trusted background imports
     - mathlib, pinned to revision ``c5ea00351c28e24afc9f0f84379aa41082b1188f``,
@@ -75,6 +75,10 @@ We fix the following **archive environment**:
     - ``autoImplicit`` off
 - proof build options
     - ``autoImplicit`` off
+- trusted validation sandbox
+    - stock image ``node:22-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066``
+      with the pinned host toolchain and warm mathlib workspace mounted
+      read-only
 - allowed background axioms
     - ``propext``
     - ``Classical.choice``
@@ -83,7 +87,7 @@ We fix the following **archive environment**:
 
 ## File Structure
 
-A submission rooted at folder ``mysubmission`` with id ``Lax261`` **must**
+A submission rooted at folder ``mysubmission`` with id ``lax-261`` **must**
 have the following layout.
 
     mysubmission/
@@ -105,29 +109,41 @@ Additional Rules:
 
 - **License.** The file ``LICENSE`` in the submission root folder must contain
   an accepted license, matched against the canonical text after whitespace
-  normalization. An optional copyright line at the end of the file is
-  ignored. For the MVP we accept exactly one license: the **Apache License
-  2.0**, the license of Lean and mathlib.
+  normalization. One optional final line is ignored and is intended for a
+  copyright notice. For the MVP we accept exactly one license: the **Apache
+  License 2.0**, the license of Lean and mathlib.
 
-- **Abstract.** ``abstract.md`` must be non-empty. It is rendered as markdown
-  and shown prominently on the website.
+- **Abstract.** ``abstract.md`` must be non-empty. It is rendered as markdown,
+  with inline math delimited by ``$...$`` or ``\(...\)``, and shown prominently
+  on the website.
 
-- **Files.** ``build-output.json`` and ``lake-manifest.json`` must not be
-  checked in. A local build leaving the files behind is fine. Files beyond the
-  pictured layout (a README, etc) are allowed and ignored by the archive.
+- **Files.** ``build-output.json``, ``lake-manifest.json``, ``.lake/``, and
+  Lake package-overrides files must not be checked in. Generated files left by
+  a local build are fine. Extra root-level documentation is allowed and is not
+  submission content; additional files inside either package are included in
+  the immutable source capture.
+
+- **Limits.** A repository may contain at most 100,000 regular files totalling
+  2 GiB and no symlinks or special files. ``manifest.yaml``, ``LICENSE``, and
+  each lakefile are limited to 256 KiB, ``abstract.md`` to 1 MiB, and
+  ``lean-toolchain`` to 1 KiB. Titles have at most 200 Unicode characters and
+  512 UTF-8 bytes; manifests have at most 100 authors and 1,000 bibliography
+  strings of 16 KiB each; each package has at most 200 requirements. Displayed
+  concept source files are limited to 4 MiB.
 
 ## manifest.yaml
 
-The file ``manifest.yaml`` must contain the following keys and adhere to the following rules.
+The file ``manifest.yaml`` must contain the following keys and adhere to the
+following rules.
 
 - ``specVersion``: version of the spec this submission adheres to
 - ``mathlibVersion``: version the submission was built against
 - ``leanVersion``: version the submission was built against
 
-- ``id``: The archive-assigned unique id. It must be of the form ``LaxN`` for
-  a positive natural number N written without leading zeros. Ids are
-  deliberately opaque; this prevents the squatting of nice names like
-  ``RamseyTheory``.
+- ``id``: The archive-assigned unique id. Its canonical form is ``lax-N`` for
+  a positive natural number N written without leading zeros; the legacy
+  spelling ``LaxN`` is accepted and normalized. Ids are deliberately opaque;
+  this prevents the squatting of nice names like ``RamseyTheory``.
 
 - ``title``: A non-unique title, like the title of the paper the submission formalizes.
 
@@ -135,20 +151,23 @@ The file ``manifest.yaml`` must contain the following keys and adhere to the fol
   tuple with a required ``name`` (display name) and optional ``orcid`` and
   ``github`` identifiers. Used for credit only, not rights-management.
 
-- ``bibEntries``: a possibly empty list of strings, each a single BibTeX
-  entry verbatim, as it would appear in a ``.bib`` file.
+- ``bibEntries``: a possibly empty list of strings containing BibTeX text as
+  it would appear in a ``.bib`` file. Entries are size-checked, but their
+  BibTeX structure is not parsed by validation.
 
 Additional Rules:
 - ``specVersion``, ``leanVersion``, ``mathlibVersion``: must match the
   archive environment for now. ``leanVersion`` holds the version tag
   (``v4.30.0``); the full toolchain name (``leanprover/lean4:v4.30.0``)
   appears only in the ``lean-toolchain`` files.
+- Scalar version, id, and title values are normalized to strings before these
+  checks; author and bibliography fields must be actual strings.
 - No keys beyond the ones listed here are allowed.
 
 Example:
 
     specVersion: "1"
-    id: Lax261             
+    id: lax-261
     leanVersion: "v4.30.0"
     mathlibVersion: "c5ea00351c28e24afc9f0f84379aa41082b1188f"
     title: My Submission
@@ -164,7 +183,7 @@ Example:
 
 ## Packages
 
-Each submission ``Lax261`` contains two Lake packages: a **concept
+Each submission ``lax-261`` contains two Lake packages: a **concept
 package** ``Lax261`` containing its concepts and a **proof
 package** ``Lax261Proofs`` containing its proofs.
 
@@ -186,11 +205,13 @@ following rules:
 - **Dependencies.** Besides mathlib, concept packages may require only
   concept packages; proof packages may require both concept and proof
   packages. We issue a warning whenever a proof package is required.
-  Note that a proof package is not required to depend on its own concept package! It might proof some conjectures of some other unrelated submission only.
+  A proof package need not depend on its own concept package; it may prove
+  only conjectures from unrelated submissions.
   Each package **must** require mathlib — under the name ``mathlib``
   from its canonical URL, pinned to the archive-wide revision.
   Concept and proof packages of other submissions are added by pinning the
-  full commit hash and subfolder of the submission's repository. Every such
+  full lowercase 40-character commit SHA and subfolder of the submission's
+  repository. Every such
   require resolves by name: by the fixed-names rule the require name is the
   required submission's package name and thereby names a record in the
   database (which keeps two submissions at different folders of one commit
@@ -199,9 +220,11 @@ following rules:
   ``concepts`` or ``proofs`` — verbatim: write the canonical ``repository``
   spelling (see ``lax submit``), not an ssh alias of it. A draft dependency
   is admitted with a warning; registration admits only registered
-  dependencies (see Lifecycle). Only
-  exception: the proof package may require its own concept package via the
-  relative path ``../concepts``.
+  dependencies (see Lifecycle). Cross-submission path requirements are not
+  supported: multi-submission work is committed and submitted bottom-up, with
+  each dependent pinning the preceding submission's exact Git commit. The
+  only path exception is the proof package's own concept package via
+  ``../concepts``. The transitive Archive dependency graph must be acyclic.
 
 - **Imports.** A module may import only modules of its own package, of Lean
   core (``Init``, ``Std``, ``Lean``), of mathlib, and of the packages its
@@ -222,25 +245,24 @@ following rules:
   contents rather than content — in particular, not a concept. Write it as
   the scaffold does and as mathlib writes ``Mathlib.lean``: one ``import``
   line per module, nothing else. Residue the environment cannot see (a
-  comment, a stray ``#check``) is tolerated, like the concept dialect:
-  unreadable, not unsound. One caveat on "exactly": a Lean module without
-  imports implicitly imports ``Init``, so the root module of an empty
+  comment, a stray ``#check``) is tolerated. One caveat on "exactly": a Lean
+  module without imports implicitly imports ``Init``, so the root module of an empty
   package records that single import, which the check ignores.
 
 - **Empty submission.** A submission may contain no concepts and no proofs.
 
-- **Pinned toolchain.** ``lean-toolchain`` must contain the archive-wide
-  toolchain verbatim.
+- **Pinned toolchain.** The trimmed content of ``lean-toolchain`` must equal
+  the archive-wide toolchain.
 
 - **Builds.** Both packages must build: ``lake build`` succeeds in
   ``concepts/`` and in ``proofs/``. Lean warnings do not fail a submission.
 
 - **The manifest is derived.** ``lake-manifest.json`` is a lax-generated
-  file, like ``build-output.json``: ``lax init`` and ``lax build`` write it
-  from the lakefile's requires plus the archive pins (see Build Pipeline,
-  Provision), it is never authored, and it must not be checked in. Authors
-  never run ``lake update`` — with a complete manifest in place, plain
-  ``lake build`` resolves nothing and needs none.
+  file, like ``build-output.json``. ``lax init`` seeds both packages from the
+  pinned warm mathlib workspace, and ``lax build`` refreshes the manifests
+  from the validated dependency closure (see Build Pipeline, Provision). They
+  are never authored or committed. Authors do not run ``lake update``; plain
+  ``lake build`` follows the generated manifest.
 
 Example ``lakefile.toml`` of a concept package:
 
@@ -275,6 +297,11 @@ Example ``lakefile.toml`` of the corresponding proof package:
 
     [leanOptions]
     autoImplicit = false
+
+    [[require]]
+    name = "mathlib"
+    git = "https://github.com/leanprover-community/mathlib4"
+    rev = "c5ea00351c28e24afc9f0f84379aa41082b1188f"
 
     [[require]]
     name = "Lax261"
@@ -327,9 +354,10 @@ Additional Rules:
 A **proof** is a declaration of the proof package whose docstring carries
 yaml frontmatter (see Annotations); every other declaration is a helper,
 which the archive ignores. Frontmatter is the opt-in: helpers may carry
-ordinary docstrings, and any mistake in a frontmatter — an unrecognized key,
-a missing ``conclusion``, a declaration of the wrong kind beneath it — is a
-loud build error, never a silently ignored proof.
+ordinary docstrings. Recognized frontmatter is validated strictly — an
+unrecognized key, missing ``conclusion``, or declaration of the wrong kind is
+a build error — and a docstring containing an unrecognized ``---`` attempt
+produces a warning.
 
 The frontmatter's ``conclusion`` key names the proof's **conclusion**, the
 statement it discharges. Its **assumptions** are the statements in its axiom
@@ -370,33 +398,33 @@ proven once the statements in C are taken as proven.
 
 ## Annotations
 
-We annotate concepts and proofs. A concept is annotated by its module docstring
-``/-! … -/``, of which we allow at most one per module. A proof is annotated by
-the usual docstring ``/-- … -/``.
+We annotate concepts and proofs. A concept is annotated by exactly one module
+docstring ``/-! … -/``. A proof is annotated by the usual docstring
+``/-- … -/``.
 
 Each annotation is a docstring that we parse as markdown with yaml frontmatter
-(a common pattern from static site generators). When later parsing this
-docstring into key-value pairs, the markdown after the frontmatter is placed
-into the ``description`` key. The frontmatter grammar is a fixed minimal
-subset of yaml — scalar ``key: value`` lines, plus a plain list of names for
-``assumptions`` — because it is parsed by the inspector in core-only Lean
-(see Inspection Scaffolding); anything beyond the subset is a build error,
-never a guess. The recognized keys (the list may later be
-extended):
+(a common pattern from static site generators). The markdown after the
+frontmatter is the description. Top-level ``#`` headings split out named
+sections; a section titled ``Description`` supplies the description when
+present. Inline math may use ``$...$`` or ``\(...\)`` delimiters. The frontmatter
+grammar is a fixed minimal subset of yaml — scalar ``key: value`` lines, plus
+a plain list of names for ``assumptions`` — because it is parsed by the
+inspector in core-only Lean (see Inspection Scaffolding); anything beyond the
+subset is a build error, never a guess. The recognized keys are:
 
 Concept
     - ``title`` (required): natural-language name of the mathematical object,
       like "Ramsey's Theorem"
-    - ``description`` (required): the natural-language description of that
-      object. The whole validity of the archive rests on the assumption that
-      the Lean side of the concept faithfully represents this description.
+    - ``type`` (required): a free-form label such as "theorem" or "definition"
 
 Proof
     - ``conclusion`` (required)
     - ``assumptions`` (optional): a yaml list of fully qualified statement
       names, see Proofs
-    - ``description`` (optional): additional information, like attribution or
-      the high-level idea.
+
+The Markdown body is required for concepts and optional for proofs. The whole
+validity of the archive rests on the assumption that the Lean side of a
+concept faithfully represents this natural-language description.
 
 Frontmatter with an unrecognized key leads to build errors.
 
@@ -408,6 +436,7 @@ An example concept module ``concepts/Lax261/Myconcept.lean``:
     /-!
     ---
     title: Title of the concept
+    type: theorem
     ---
     description of the concept
     -/
@@ -441,24 +470,18 @@ An example module within the proof package:
 
 # Archive Database
 
-The archive stores one folder per allocated id. ``LaxN/record.json`` holds the
-mutable lifecycle data: state, owner set, timestamps, the current (repository,
-commit, folder) triple. ``LaxN/build-output.json`` holds the build output:
-absent in the init state, overwritten on every draft submit (drafts are shown
-on the website), frozen on registration. 
+The archive stores one folder per allocated id. Every ``lax-N/`` folder
+contains exactly three files: ``record.json``, ``build-output.json``, and
+``owner-list.json``. They separate lifecycle and source state, validated
+content, and authorization so each action changes only the files it owns.
 
 Example ``record.json``
 
     {
       "specVersion": "1",
-      "id": "Lax261",
+      "id": "lax-261",
       "state": "registered",
       "createdAt": "2026-07-01T12:00:00Z",
-      "registeredAt": "2026-07-19T09:30:00Z",
-      "owners": [
-        { "githubId": 583231, "handle": "alice" },
-        { "githubId": 913874, "handle": "bob" }
-      ],
       "source": {
         "repository": "https://github.com/alice/mysubmission",
         "commit": "0123456789abcdef0123456789abcdef01234567",
@@ -466,34 +489,69 @@ Example ``record.json``
       }
     }
 
-- ``owners``: GitHub accounts, non-empty, immutable after registration.
-  Stored as numeric account id (handles are renameable) plus the handle for
-  display.
-- ``createdAt``, ``registeredAt``: UTC timestamps of init and registration;
-  ``registeredAt`` is absent before registration.
-- ``source``: the (repository, commit, folder) triple; absent in the init
-  state, frozen on registration.
+- ``record.json`` always carries ``specVersion``, ``id``, ``state``, and the
+  immutable UTC ``createdAt`` timestamp. A draft carries its current
+  ``source`` triple. Registration changes only the state and retains the
+  source when one exists; registering an empty init record is allowed. A
+  deleted record instead carries ``deletedAt`` and no source.
 
-
-
-Example of ``build-output.json``
+Example ``owner-list.json``
 
     {
       "specVersion": "1",
-      "id": "Lax261",
-      "manifest": { ... },
-      "abstract": "...",
+      "owners": [
+        { "githubId": 583231, "handle": "alice" },
+        { "githubId": 913874, "handle": "bob" }
+      ]
+    }
+
+The owner list contains between 1 and 50 unique human GitHub accounts and is
+sorted by numeric account id. Handles are retained for display, while numeric
+ids govern authorization. Owners may be replaced while the record is init or
+draft and become immutable on registration.
+
+Example content-bearing ``build-output.json``
+
+    {
+      "specVersion": "1",
+      "id": "lax-261",
+      "issue": {
+        "repositoryId": 1320232165,
+        "number": 261
+      },
+      "inputs": {
+        "manifest": { ... },
+        "abstract": "..."
+      },
       "requiredByConcepts": ["Lax42"],
       "requiredByProofs": ["Lax42", "Lax42Proofs"],
       "concepts": [ ... ],
-      "proofs": [ ... ]
+      "proofs": [ ... ],
+      "capture": {
+        "formatVersion": 1,
+        "digest": "...",
+        "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
+        "leanToolchain": "leanprover/lean4:v4.30.0",
+        "mathlibCommit": "c5ea00351c28e24afc9f0f84379aa41082b1188f",
+        "files": [ ... ],
+        "registryBlob": "ghcr.io/lax-archive/lax-captures@sha256:..."
+      }
     }
 
-- ``manifest``: the parsed content of ``manifest.yaml``.
-- ``abstract``: the verbatim content of ``abstract.md``, so the website
-  renders it without repository access.
-- ``requiredByConcepts`` lists all packages required by the concept package,
-  and ``requiredByProofs`` lists the packages required by the proofs package.
+- ``issue`` binds the database folder to its one authoritative issue by
+  immutable repository id and issue number. Init and deleted records retain a
+  stub ``build-output.json`` containing only ``specVersion``, ``id``, and this
+  binding.
+- ``inputs.manifest`` is the parsed ``manifest.yaml`` and
+  ``inputs.abstract`` is its UTF-8 text with line endings normalized to LF, so
+  the website needs no repository access.
+- ``requiredByConcepts`` lists Archive packages directly required by the
+  concept package, and ``requiredByProofs`` lists those directly required by
+  proofs. Pinned mathlib and the proof package's own concept path are omitted.
+- ``capture`` authenticates the package sources, generated manifests, and
+  Lake build artifacts produced by trusted validation. Consumers fetch its
+  OCI blob from GHCR by the recorded digest and verify the archive digest and
+  per-file hashes; mutable tags are only for discoverability.
 
 Each entry of ``concepts``:
 
@@ -501,8 +559,11 @@ Each entry of ``concepts``:
       "id": "Lax261.Myconcept",
       "path": "concepts/Lax261/Myconcept.lean",
       "title": "...",
+      "type": "theorem",
       "description": "...",
+      "sections": [{ "title": "Review notes", "markdown": "..." }],
       "imports": ["Lax42.Colorings"],
+      "mathlibImports": ["Mathlib.Combinatorics.SimpleGraph.Basic"],
       "sourceText": "...",
       "statements": [
         {
@@ -512,12 +573,12 @@ Each entry of ``concepts``:
       ]
     }
 
-``title`` and ``description`` come from the concept annotation, where both are
-required. ``imports`` lists imported concept modules only — mathlib imports are
-dropped. ``sourceText`` is the verbatim file content, so the website can
-display concept code without access to the repository. ``statements`` lists the
-concept's axioms with their pretty-printed types; the website marks each proven
-or unproven.
+``title``, ``type``, ``description``, and optional ``sections`` come from the
+concept annotation. ``imports`` lists directly imported archive modules and
+``mathlibImports`` lists directly imported mathlib modules. ``sourceText`` is
+the UTF-8 file content with line endings normalized to LF. ``statements`` lists any
+number of concept axioms with their pretty-printed types and, where available,
+source ranges and docstrings; the website marks each proven or unproven.
 
 Each entry of ``proofs``:
 
@@ -526,15 +587,18 @@ Each entry of ``proofs``:
       "path": "proofs/Lax261Proofs/Basic.lean",
       "conclusion": "Lax261.Myconcept.X",
       "assumptions": ["Lax42.Colorings.Somestatement"],
-      "description": "..."
+      "description": "...",
+      "sections": [{ "title": "Strategy", "markdown": "..." }]
     }
 
 ``assumptions`` is always the pipeline-computed set, regardless of whether the
 author supplied the redundant ``assumptions`` key. Proof entries carry no
 ``sourceText``: the website lists proofs, it does not display their code.
 
-The file is deterministic: every list is sorted lexicographically, concepts,
-statements and proofs by ``id`` and the rest by value.
+The content-bearing file is deterministic: concepts, statements, and proofs
+are sorted by ``id``; package names, imports, assumptions, capture files, and
+other set-like lists are sorted lexicographically. Annotation sections retain
+authorial order.
 
 
 # The Archival Layer
@@ -543,15 +607,19 @@ An **owner** is a GitHub account listed in a submission's owner set, and is
 thereby allowed to act on the submission (e.g., submitting and editing).
 Owners act on the archival layer.
 
-The archive does not host submissions, it references them: a submission is a
-folder together with a commit hash in a public git repository. Work thus stays
-in the authors' repositories and attribution is clear. (To guard against link
-rot, we may later keep backup copies, e.g. via
-https://archive.softwareheritage.org/save/.)
+Submitted source is identified by a folder and commit hash in the authors'
+public git repository. After validation, the archive also publishes an
+immutable, content-addressed capture containing the exact package sources,
+generated manifests, and artifacts that the workflow checked.
+
+The source repository is a canonical public
+``https://github.com/<owner>/<repository>`` URL, the commit is a full lowercase
+40-character SHA, and the folder is ``.`` or a relative POSIX path of at most
+32 segments and 512 UTF-8 bytes without empty, ``.``, or ``..`` segments.
 
 ## Lifecycle
 
-Submissions can be in three possible states within our database.
+Submissions can be in four states within the database.
 
 **init:** an id and owner set have been allocated for this submission, but
 nothing has been uploaded yet.
@@ -563,41 +631,52 @@ triple, so downstream drafts fail resolution until they update their pin.
 
 **registered:** immutable, citable, reviewable. The normal published state.
 
+**deleted:** a permanent tombstone. The id, issue binding, owner list, and
+timestamps remain, while source and validated content are removed. Deleted ids
+are never reused.
+
 The only state transitions are:
 
-- ``-> init``,
-- ``init -> draft``
-- ``init -> registered``
-- ``draft -> draft``
-- ``draft -> registered``
+- ``-> init``
+- ``init or draft -> draft``
+- ``init or draft -> registered``
+- ``init or draft -> deleted``
+
+Registered and deleted records are immutable.
 
 ## Actions
 
-Every archive action happens via our CLI tool. It has three write actions:
-``init`` allocates an id, ``submit`` uploads or registers content, and
-``set-owners`` edits the owner set.
+Every archive action is initiated through the CLI, which creates the
+authoritative GitHub issue or posts a fixed ``/lax`` command to it. GitHub
+Actions validates and publishes the resulting database change.
 
-**Init.** ``lax init`` takes an empty local folder. The archive reserves the
-next free id ``LaxN`` and creates a record in the init state whose
-owner set contains exactly the authenticated GitHub account. The CLI then
-scaffolds the complete submission layout for that id (see CLI).
+**Init.** ``lax init`` takes an empty local folder and opens an ordinary issue
+in ``lax-archive/lax``. Its issue number allocates ``lax-N`` and the workflow
+creates the three init stubs whose owner list contains the authenticated issue
+author. The CLI then scaffolds the complete submission layout (see CLI).
 
-**Set-owners.** ``lax set-owners`` replaces the owner set of a submission in
-the init or draft state. The authenticated GitHub account must be in the
-current owner set and may not remove itself. The owner set becomes immutable on
-registration.
+**Owners.** ``lax owners`` posts ``/lax owners <JSON>`` to replace the owner
+list of an init or draft submission. The actor must be a current owner and
+must remain in the replacement list. Numeric GitHub account ids are resolved
+again before publication.
 
-**Submit.** ``lax submit`` hands the archive a (repository, commit, folder)
+**Submit.** ``lax submit`` posts a (repository, commit, folder)
 triple. The folder must contain a complete valid manifest whose ``id`` equals
 the id of the record being submitted to. That record must be in the init or
 draft state, and the authenticated GitHub account must occur in its stored
 owner set.
 
-- Without ``--register``, a successful submit puts the submission in the
-  draft state and replaces its previous (repository, commit, folder) triple
-  and mutable manifest metadata.
-- With ``--register``, a successful submit registers the submission and
-  freezes its triple, manifest, concepts, and proofs.
+- A successful submit puts the submission in the draft state and replaces its
+  source triple and validated content. Trusted validation always rebuilds the
+  immutable commit; it never trusts the author's local ``build-output.json``.
+
+**Register.** ``lax register`` posts ``/lax register`` and freezes an init or
+draft record without rebuilding it. Every Archive dependency recorded in its
+current build output must already be registered.
+
+**Delete.** ``lax delete`` posts ``/lax delete`` and permanently replaces an
+init or draft record with a tombstone. Registration and deletion are separate,
+irreversible actions and require explicit confirmation in the CLI.
 
 
 
@@ -614,13 +693,13 @@ owner set.
 
 - The **CLI** ``lax`` is the only thing authors and agents ever touch.
 
-- The **archive server** is the archive's single piece of infrastructure. It
-  serves a small HTTPS API to the CLI, runs build pipeline and site generator
-  centrally, and is the sole writer of the database repository.
+- The **GitHub Actions control plane** routes issue commands, runs trusted
+  validation, publishes immutable captures and database changes, and
+  dispatches the website rebuild.
 
 ## The Built Environment: A Primer
 
-The target audience for this spec are graph theory reserachers with no deep
+The target audience for this spec is graph theory researchers with no deep
 familiarity with Lean. This section therefore sets up necessary background:
 what the environment is, and why the inspector reads it instead of the source.
 
@@ -650,7 +729,7 @@ longer knows whether a definition was written as ``def``, ``abbrev``, or
 ``instance``. This is why every unit the archive cares about is defined as
 an environment notion — a statement is an axiom, theorem-ness is the
 kernel's kind, docstrings are persisted data — and why rules that only the
-surface syntax could decide were dropped (see Decisions). The generated
+surface syntax could decide were dropped. The generated
 declarations are harmless throughout: they carry no docstrings (so they are
 never proofs), their axiom sets are empty or background, and their names
 extend the parent declaration's name.
@@ -668,18 +747,21 @@ this sense.
 
 ## Build Pipeline
 
-The pipeline operates directly on the submission folder. There are no shadow
-workspaces and no third lakefile: the two packages are the only workspaces.
+The trusted pipeline fetches the submitted public GitHub commit and a pinned
+Archive snapshot into an ephemeral GitHub-hosted runner. It copies that
+checkout into fresh workspaces for compilation and derives all dependency
+inputs from the validated lakefiles and Archive records. The local authoring
+pipeline instead builds in place so ``.lake`` persists across runs.
 
 It runs multiple phases. Violations are collected, not failed fast, so the final
 report lists every violated rule. A phase with violations aborts the
 subsequent phases.
 
-- **Static validation** (milliseconds, no network): folder layout, license,
+- **Static validation** (milliseconds): folder layout, file limits, license,
   ``abstract.md``, manifest schema, ``lean-toolchain``, the lakefile whitelist
-  of the Packages section, and that no generated file is tracked by
-  git — when the folder is not inside a git repository, this check is skipped
-  with a warning. This phase also derives each package's **module
+  of the Packages section, and that no generated file is tracked by Git. The
+  submission must be inside a Git repository; inability to inspect its tracked
+  tree is a violation. This phase also derives each package's **module
   inventory**: the root module plus one module per ``.lean`` file under
   the package's module folder, read off the file paths via Lake's
   canonical mapping (``Lax261/Foo/Bar.lean`` is ``Lax261.Foo.Bar``). The
@@ -691,97 +773,66 @@ subsequent phases.
   imports are taken from the built environment and judged at Inspect, so
   the pipeline never parses source.
 
-- **Resolution** (milliseconds, no network): Check that every require
-  resolves by name to a draft or registered submission whose current source
-  triple matches (see Packages, Dependencies) — via ``~/.lax/db`` locally,
-  via local checkout on server; under a registering submit, draft
-  dependencies are rejected. A local miss may just mean a stale database, so
-  the CLI suggests ``lax pull-db`` and a retry before reporting the
-  violation.
+- **Resolution** (milliseconds): check every direct and transitive Archive
+  dependency against one exact database snapshot. Each direct git require
+  must match a draft or registered record's canonical source triple and every
+  dependency must provide a capture built against the archive pins. Draft
+  dependencies are admitted with a warning; the separate Register action
+  requires them to be registered. A local miss may mean the checkout at
+  ``~/.lax/lax-database`` is stale, so the finding suggests ``lax pull-db``
+  and a retry.
 
-- **Provision:** share the **warm mathlib environment** into the two
-  workspaces. The warm workspace — a lax-owned Lake workspace requiring
-  mathlib at the pin, with prebuilt artifacts materialized at canonical
-  paths — is built once per machine (locally under ``~/.lax/warm``, keyed by
-  toolchain and mathlib revision; on the server by ``lax-server warm`` into
-  the trusted store). Locally its ``.lake/packages`` tree is shared into each
-  package as a **hardlink farm**: directories are recreated per project, only
-  file inodes are shared, and the shared files carry no write permission —
-  so a build can create its own files freely, while any in-place write to
-  shared content fails loudly instead of corrupting the store. (On the
-  server the packages are symlinked instead, which is safe only under the
-  sandbox's read-only mount; see Archive Server.) Provision also (re)writes
-  each package's ``lake-manifest.json`` from its validated requires plus the
-  warm workspace's locked manifest, so lake performs no dependency
-  resolution of its own. ``lax init`` runs the same provisioning on the
-  fresh scaffold: the very first ``lake build`` after init — with or without
-  lax — clones and downloads nothing.
+- **Provision:** ensure the pin-keyed **warm mathlib environment** exists and
+  generate each package's complete ``lake-manifest.json`` and
+  ``.lake/package-overrides.json``. In trusted validation, dependency captures
+  are downloaded from GHCR by digest, verified, extracted read-only, and
+  mounted with the VM-installed toolchain and warm workspace into fresh build
+  workspaces. Local builds instead use exact git dependencies in the generated
+  manifests and build them from source inside the package workspace. ``lax
+  init`` performs the same local seeding for a fresh scaffold.
 
-- **Compile:** ``lake build`` in ``concepts/`` first, then in ``proofs/``. When
-  the concepts build fails, the proofs build is skipped. Thanks to
-  Provision, lake resolves nothing and compiles only the submission's own
-  modules; the only remaining network uses are fetching the (small) pinned
-  submission dependencies lake finds missing from the manifest, and, on a
-  fresh machine, the toolchain download via ``elan`` and the one-time warm
-  build. A failing build is a violation of the Packages section's build
-  rule; the build transcript is reprinted to stdout so the user can act on
-  it.
+- **Compile:** run ``lake build`` for concepts first and proofs second. Trusted
+  validation runs each package in a fresh, networkless, hardened container;
+  the repository mount is read-only and only its isolated ``.lake`` build
+  directories are writable. Local builds run through the pinned host
+  toolchain in the submission's own packages and stream their transcript.
+  When concepts fail, proofs are skipped.
 
-- **Replay:** re-check every declaration of the submission's two packages
-  with ``leanchecker``, the kernel checker that ships inside the pinned
-  toolchain — shelled out to, not reimplemented. Leanchecker treats a target
-  as a module-name prefix, discovers every matching olean, deduplicates the
-  result, and replays the modules concurrently. It therefore runs once per
-  package on Static validation's root module. ``leanchecker`` is invoked
-  directly, with a search path the pipeline composes itself — locally over
-  the workspace lax provisioned (the two packages, the dependency clones,
-  the warm mathlib environment), on the server over the trusted store (see
-  Archive Server). ``lake env`` is never used: it would derive the search
-  path from workspace files Compile wrote.
-  Static validation guarantees every inventory module lies
-  beneath that prefix; the target never comes from the root's recorded imports
-  or anything else Compile wrote. The checker's default mode checks each
-  discovered module against its imported environment; the imports themselves
-  are not replayed (that would be ``--fresh``, which we do not use). A module
-  of the inventory with no artifact in the workspace is a violation (usually
-  the trace of a root module that fails to import it). Trusting the imports is
-  sound only by provenance: mathlib and core are the pinned, trusted background, and
-  the packages of other submissions were replayed at their own
-  registration — provided the oleans in the workspace are really those.
-  The local authoring pipeline skips Replay by default for fast iteration;
-  ``lax build --replay`` opts into the same kernel check.
-  The server always runs Replay. On the server, whose run alone gates
-  registration, Replay and Inspect never read a dependency
-  artifact Compile produced but only artifacts provisioned from the
-  trusted store (see Archive Server). Replay exists because Compile ran
-  arbitrary submission code, which can persist declarations the kernel
-  never checked (``set_option debug.skipKernelTC``, unchecked environment
-  APIs); replay closes exactly that hole. What no replay mode can do is
-  authenticate imports: an axiom is kernel-valid whatever its type, so
-  even ``--fresh`` cannot tell a forged upstream statement from the
-  registered one (see Decisions) — hence provisioning.
+- **Replay:** re-check every declaration of both packages with
+  ``leanchecker`` from the pinned toolchain. The pipeline invokes it directly
+  over a search path composed from the just-captured submission artifacts,
+  verified dependency captures, and the warm mathlib workspace; it never uses
+  ``lake env`` or dependency artifacts written during Compile. Trusted
+  validation always replays. Local authoring skips Replay by default and
+  enables it with ``lax build --replay``. Replay closes the hole left by
+  unchecked elaboration APIs; dependency authenticity comes from their
+  digest-addressed captures rather than from replay itself.
 
 - **Inspect:** extract environment facts with the ``Lax.Inspector``
-  executable, then judge every remaining rule in the CLI — including the
-  import rule and root-module exactness — see below.
+  executable, then judge every remaining rule in the TypeScript pipeline —
+  including the import rule and root-module exactness — see below.
 
-- **Emit:** write ``build-output.json`` into the root of the submission.
+- **Emit:** after a successful full build, derive deterministic
+  ``build-output.json`` and a capture manifest. The local CLI writes the file
+  atomically into the submission root; trusted validation instead uploads the
+  generated payload and sealed ``capture.tar`` for credential-free publication
+  preflight. Partial builds emit neither.
 
-In the authoritative server pipeline, Compile, Replay, and Inspect form a
+In the authoritative GitHub Actions pipeline, Compile, Replay, and Inspect form a
 trust chain. Compile is where untrusted code runs; nothing it outputs is
 trustworthy on its own, because the submission's own elaboration wrote it.
 Replay authenticates the oleans'
 kernel-level content relative to their imports — every declaration
 type-checks against the imported environment — and no more; Inspect
-reports what the oleans say; the CLI decides whether that is admissible.
+reports what the oleans say; the TypeScript validator decides whether that is admissible.
 The imports themselves the chain cannot authenticate, only inherit: on the
-server they are provisioned from the trusted artifact store (see Archive
-Server), so the background Replay checks against is the one registration
-once checked.
+runner they are provisioned from verified, immutable dependency captures, so
+the background Replay checks against is exactly what an earlier trusted submit
+published.
 
 The inspector's facts accordingly carry two grades of trust.
 **Kernel-grade:** kinds, types, values, and everything recomputed from them
-— axiom sets, defeq — which server Replay makes impossible to forge within
+— axiom sets, defeq — which trusted Replay makes impossible to forge within
 the submission's own packages; for imported packages the same facts are
 authentic by provisioning, not by replay.
 **Metadata-grade:** import lists, constant-list membership, docstrings —
@@ -791,10 +842,16 @@ docstrings are authored content anyway, a forged import list can hide at
 worst an editorial violation, and every cross-package claim is checked
 against the database, never against the workspace (see Inspection
 Internals). Source-structural facts — layout, lakefiles, manifest — never
-pass through the oleans at all; the CLI reads the files directly. The chain
+pass through the oleans at all; the pipeline reads the files directly. The chain
 bottoms out where the archive's trust always bottoms out: Lean's kernel,
-the pinned mathlib revision, and the server's custody of the artifacts
-beneath the submission.
+the pinned toolchain and mathlib revision, digest-addressed dependency
+captures, and the protected publication workflow.
+
+Author-code execution and artifact processing use isolated containers from a
+stock image pinned by digest. Each container is read-only and capability-free,
+inherits only explicit mounts and environment values, and is limited to 16
+GiB memory, four CPUs, 1,024 processes, bounded output and workspace size, and
+phase timeouts. Replay and Inspect use two Lean workers.
 
 
 ### Inspection Scaffolding
@@ -804,34 +861,34 @@ package providing one executable: pinned to the archive toolchain,
 importing only Lean core, never mathlib. (Replay needs no counterpart —
 ``leanchecker`` ships inside the toolchain itself.) The inspector's source
 ships with the CLI; the first ``lax build`` on a machine compiles it into
-``~/.lax/tools/<cli-version>/`` and every later run of that CLI version
-reuses it — the version in the path is what makes an upgraded CLI recompile
-instead of running a stale binary.
+``~/.lax/tools/<cli-version>-<source-hash>/`` and every later run of those
+exact sources reuses it. Trusted runner setup builds the same pinned inspector
+before submission code runs.
 
 An executable, never an elaborated command: the inspector loads the
 package's oleans directly and executes no code originating outside its own
 binary and Lean core. Importing a module must not run its ``initialize``
 blocks — arbitrary interpreted IO — and nothing imported may be evaluated,
 because once untrusted code runs in the inspecting process, nothing that
-process writes is authentic (see Decisions). What remains is enough:
+process writes is authentic. What remains is enough:
 docstrings, module docs, and constant lists are persisted data readable
 through core's built-in machinery, axiom walks are pure traversals, and
 defeq is kernel reduction, not interpretation.
 
-The boundary between inspector and CLI is drawn by capability: the inspector computes
-exactly the facts the CLI cannot — everything whose evaluation needs the
-loaded environment or the kernel — and the CLI, which alone holds the
+The boundary between inspector and TypeScript validator is drawn by capability:
+the inspector computes exactly the facts the validator cannot — everything
+whose evaluation needs the loaded environment or the kernel — and the validator, which alone holds the
 archive context (the verified ``[[require]]`` set, the manifest, the
 database), judges every rule. The inspector decides nothing about validity:
 a failed defeq or a malformed frontmatter appears in the report as a fact
-and becomes a violation only in the CLI, the sole emitter of violations.
+and becomes a violation only in the validator, the sole emitter of violations.
 
 One placement follows from this and deserves its reason spelled out:
-frontmatter is parsed by the inspector, not the CLI. The kernel facts about
+frontmatter is parsed by the inspector, not the validator. The kernel facts about
 a proof — does its ``conclusion`` resolve, does defeq hold — are indexed by
 a name that sits inside its docstring's frontmatter, so whoever parses the
 frontmatter determines the number of passes over the environment: parsing
-in the CLI would force a second inspector run to feed the names back in.
+in the validator would force a second inspector run to feed the names back in.
 Parsing in the
 inspector keeps inspection single-pass, and the report carries structured
 annotations rather than raw docstrings, so the frontmatter grammar (see
@@ -848,7 +905,7 @@ fails to import is still inspected — and convicts the root — instead of
 silently dropping out of the environment. Statement
 signatures are pretty-printed with core notation only: delaborators and
 unexpanders are imported code, and running mathlib's would mean running the
-submission's too (the recorded upgrade path is in Decisions). The report
+submission's too. The report
 contains:
 
 - per module of the package: its direct imports as recorded in the
@@ -877,7 +934,7 @@ workspace always yields the same report.
 ### Inspection Internals
 
 The primer supplies every notion the pipeline needs; this subsection spells
-out how each check reduces to a CLI-side judgment over the reported facts.
+out how each check reduces to a validator-side judgment over the reported facts.
 
 **One enumeration.** The inspector considers exactly the declarations whose
 module of origin lies in the package under inspection, taken from the
@@ -892,7 +949,7 @@ primer explains, so uniform treatment costs nothing.
 ``#print axioms`` because that is the familiar name; the inspector calls the
 API behind the command (``Lean.collectAxioms``, the walk from the primer)
 and reports the resulting set per declaration. Every axiom rule is then, in
-the CLI, one comparison against an allowed set — the only question is what
+the validator, one comparison against an allowed set — the only question is what
 is allowed.
 
 - In the concept run, the allowed set is the background axioms plus the
@@ -906,7 +963,7 @@ is allowed.
   prefix test of the module name against the package names whose
   ``[[require]]`` entries Resolution has just verified. Leaning on the
   fixed-names rule here is sound because every verified entry points at a
-  draft or registered submission, and its submit's server pipeline enforced
+  draft or registered submission, and its trusted submit pipeline enforced
   that rule on it. One
   cross-check guards the metadata: the axiom's name must also appear among
   the ``statements`` in that submission's ``build-output.json`` in the
@@ -915,8 +972,8 @@ is allowed.
   package's name classifies as nothing. The name comparison alone would not
   survive a forgery that keeps the registered names and changes the types
   beneath them; it is sound because the upstream oleans themselves are
-  authentic where the verdict counts — provisioned from the trusted store
-  on the server (see Archive Server, Decisions).
+  authentic where the verdict counts — provisioned from their verified
+  digest-addressed captures (see GitHub Actions).
 
 Anything outside the allowed set is a violation. In the proof run this is
 what catches a stray ``axiom`` in the proof package, an unexpected axiom
@@ -933,7 +990,7 @@ via ``_root_.`` fails, which is the point of the rule.
 
 **The import rule and the root module.** The reported per-module imports
 replace any reading of import lines from source. The import rule is a
-prefix test in the CLI: an import's first component identifies its package
+prefix test in the validator: an import's first component identifies its package
 (the fixed-names rule), and the allowed set follows from the verified
 ``[[require]]`` entries. Root-module exactness is three facts from the same
 report: the root module imports exactly the other modules of the inventory
@@ -945,7 +1002,7 @@ still replayed and inspected, and a root import naming a module outside
 the inventory fails exactness directly.
 
 **The proof checks.** A candidate proof arrives in the report with its
-parsed frontmatter and its kernel facts, and the CLI adds the context: the
+parsed frontmatter and its kernel facts, and the validator adds the context: the
 conclusion must name an axiom whose module lies in a required concept
 package (the same prefix test as above) and be reachable through the proof
 module's transitive imports, defeq must hold, the declaration must be of
@@ -961,70 +1018,77 @@ annotations are persisted docstrings (``getModuleDoc?`` for modules,
 ``findDocString?`` for declarations). So proof-hood is data too: the
 inspector spots frontmatter in a docstring by string inspection, not by
 parsing Lean. No component of the pipeline reads source as Lean at all;
-Emit copies files verbatim into ``sourceText``, which is a copy, not a
-parse.
+Emit copies files into ``sourceText`` with line endings normalized to LF,
+which is a copy, not a parse.
 
 
 ## Site Generator
 
-The site generator is a static site builder: it reads the ``record.json`` and
-``build-output.json`` of the database and emits pages. One per submission
-(abstract, authors, bib entry, and its concepts with title, description, Lean
-source, and statement signatures), one per concept, and index pages listing
-submissions and browsing the concept DAG and the proof network, marking each
-statement proven or unproven.
+The site generator is maintained in the separate ``lax-website`` repository.
+It reads all three files in each database folder and emits deterministic
+submission, concept, and proof pages, a searchable archive index, citations,
+and concept, submission, and proof-network views. It renders Markdown, math,
+annotation sections, Lean source, and proven or unproven statement status.
+Records without content-bearing build output, including init reservations and
+deleted tombstones, produce no submission pages. The CLI bundles the
+page-builder from a pinned Website revision for ``lax serve``.
 
 
 ## Database Repository
 
 The folder tree of the Archive Database section is the canonical state of the
-archive; everything else (website, indexes) is derived. The database is a
-single public git repository with a single writer — the archive server — and
-every user holds a read-only clone of it at ``~/.lax/db``. The path is
-deliberately visible, so AI agents can use it to survey existing submissions
-and find prior work to build upon. Installing the CLI clones the repository.
+archive; everything else is derived. ``lax-archive/lax-database`` is a public
+Git repository. Only protected GitHub Actions publication jobs may mint the
+short-lived GitHub App token that advances its default branch, and they do so
+without force after revalidating the current head. ``lax pull-db`` clones or
+fast-forwards a read-only checkout at ``~/.lax/lax-database``. The path is
+deliberately visible so authors and agents can survey existing work.
 
 
 ## CLI
 
-The acting GitHub account authenticates via GitHub OAuth: ``lax login`` runs
-the device flow and stores the resulting token. ``lax`` has the following
-commands:
+The acting GitHub account authenticates through the Lax GitHub App: ``lax
+login`` runs its device flow and stores the resulting user and refresh tokens.
+The CLI creates issues and exact command comments; it never writes the database
+directly. ``lax`` has the following commands:
 
 **lax init [folder]** (default ``.``) starts a submission, see Actions. The
 folder must be empty or not yet exist; otherwise init refuses. The folder is
-checked before the archive is contacted, so a refused init burns no id. The scaffold
-comprises ``manifest.yaml`` (with ``id: LaxN`` and the environment pins),
+checked before the issue is created, so a refused init burns no id. The scaffold
+comprises ``manifest.yaml`` (with ``id: lax-N`` and the environment pins),
 package folders, lakefiles (with the mandatory mathlib require), ``lean-toolchain``,
 root modules, ``abstract.md``, ``LICENSE``, and a ``.gitignore`` covering
-``build-output.json``, ``lake-manifest.json``, and ``.lake/``. Init then
-provisions both packages from the warm mathlib environment (see Build
-Pipeline, Provision), building it first on a machine that has none — the
-one download of gigabytes, shared by every submission on the machine. Init
-warns when the folder is not inside a git repository. The result passes
-``lax build`` as an empty submission, and plain ``lake build`` works
-immediately.
+``build-output.json``, ``lake-manifest.json``, and ``.lake/``. Init then builds
+or reuses the shared warm mathlib environment and seeds both generated
+manifests and package overrides, so plain ``lake build`` works immediately.
+It may scaffold outside Git with a warning, but the folder must enter a Git
+repository before ``lax build`` or ``lax submit``.
 
-**lax set-owners [folder] --new-list <handle>...** (default ``.``) replaces
-the owner set with the given GitHub handles (resolved to numeric account ids,
-see Archive Database), see Actions. The submission is identified by the ``id``
-in the folder's ``manifest.yaml``.
+**lax owners <target> --new-list <handle>...** replaces the owner set with the
+given GitHub handles, resolved to numeric account ids (see Archive Database).
+The target is a ``lax-N`` id or a submission folder.
 
-**lax build [folder]** runs the local authoring pipeline and on success writes
-``build-output.json``. It skips kernel Replay by default for fast iteration;
-``--replay`` enables it. Any violation in the phases that run fails with a
-nonzero exit and a report listing every violated rule. Registration never
-trusts this local result: the server reruns the pipeline with Replay mandatory.
+**lax build [folder]** runs the local authoring pipeline through host
+``elan``/``lake`` and writes ``build-output.json`` after a successful full
+build. It skips kernel Replay by default; ``--replay`` enables it,
+``--profile`` prints phase timings, and ``--build-from-source`` builds mathlib
+locally when its prebuilt artifact cache cannot be fetched. ``--only
+concepts`` and ``--only proofs`` provide partial iteration builds without
+replacing ``build-output.json``; proofs-only still builds concepts as its
+prerequisite but skips concept Replay. Registration never trusts local output:
+the GitHub Actions workflow rebuilds a submitted commit with Replay mandatory.
 
 **lax serve [folder]** runs the **site generator** and serves the result
 locally. It is a long-running process that does not daemonize by default. It
-watches both the local database and the submission folder for changes: the
-submission's ``build-output.json``, and the ``record.json`` of registered
-submissions. Every change triggers a website rebuild. The local folder is
+starts at ``http://localhost:8123/`` with a loading page, then watches both the
+complete local database and the submission's ``build-output.json``. Every
+change triggers a website rebuild. The local folder is
 rendered from its own ``build-output.json`` against a synthetic draft record,
 so ``lax serve`` works before ``lax init`` has allocated an id. If
 ``build-output.json`` is missing, the website shows a placeholder stating that
-the output has not been generated yet; ``lax serve`` does not build.
+the output has not been generated yet; ``lax serve`` does not build. It warns
+when the database is missing, stale, invalid, or unreachable.
+``--database-only`` omits the local folder and ``--port`` selects another port.
 
 **Continuous preview while authoring.** Keep ``lax serve`` running in one
 terminal and open the URL it prints. After each successfully completed proof
@@ -1032,7 +1096,7 @@ or meaningful milestone, authors and automated proof-building agents should
 run a full build of the submission in another terminal:
 
 ```sh
-# Terminal 1: keep the preview server running.
+# Terminal 1: keep the local preview running.
 lax serve path/to/submission
 
 # Terminal 2: run after each completed proof or meaningful milestone.
@@ -1048,146 +1112,111 @@ the regenerated checkpoint.
 
 **lax submit [folder]** derives the (repository, commit, folder) triple from
 the folder's git state — the remote URL, the HEAD commit, the folder's path
-within the repository — and hands it to the archive. The remote URL is first
-normalized to the archive's canonical spelling: ``git@host:owner/repo`` and
-``ssh://git@host/…`` become ``https://host/…``, and http(s) URLs drop a
-trailing slash and a trailing ``.git``; other schemes pass through
-untouched. A registered ``repository`` is therefore always in canonical
-form. It refuses if HEAD is not present on the remote. It also refuses a dirty
-worktree unless ``-f`` or ``--force`` is given; this permits submission but
-does not include local changes, because the source triple still identifies the
-committed HEAD. Without
-``--register`` it requests the draft state, with it registration; on success
-the archive updates the record as described in Lifecycle. Once the server has
-accepted a job, a polling connection failure prints the job id and
-``lax submit --resume <job-id>`` reattaches to that job so its eventual build
-report can still be retrieved.
+within the repository — and normalizes GitHub SCP or SSH spellings to the
+canonical public ``https://github.com/<owner>/<repository>`` URL. By default
+it requires a clean worktree and a HEAD present on ``origin``. Before posting
+the command it reuses a matching full local build or runs ``lax build``.
+``--allow-dirty`` still submits committed HEAD, excluding local changes, and
+validates it in an isolated worktree. ``-f``/``--force`` skips the dirty,
+pushed-HEAD, and local-build checks entirely, leaving the trusted workflow as
+the only verdict. Submit always produces a replaceable draft.
 
-**lax pull-db** refreshes the local database checkout at ``~/.lax/db``, see
-Database Repository. It is read-only with respect to the archive and needs no authentication.
+The explicit form ``lax submit <lax-N> --repository <url> --commit <sha>
+[--folder <path>]`` posts a validated source triple without local Git or build
+checks. ``lax submit --resume [folder]`` re-derives the originating command and
+durable Actions run from issue comments after a transport failure; no local job
+id is required.
+
+**lax register <target>** makes an init or draft record immutable, and **lax
+delete <target>** permanently replaces it with a tombstone. Both refresh and
+preflight the local database and require the user to type ``lax-N`` unless
+``--yes`` is supplied.
+
+**lax pull-db** refreshes the local database checkout at
+``~/.lax/lax-database``, see Database Repository. It is read-only with respect
+to the archive and needs no authentication.
 
 **lax update** upgrades the CLI itself to the latest release and then refreshes
-the local database, see Distribution. Likewise needs no authentication.
+the local database; ``lax upgrade`` is an alias. Likewise needs no
+authentication. **lax doctor** checks the issue-workflow toolchain, login,
+local database, host Lean setup, and bundled Website renderer and reports
+concrete fixes.
 
-**lax login** authorizes the CLI with the acting GitHub account through the
-OAuth device flow: it prints a code and a github.com URL, and on authorization
-stores the token under ``LAX_HOME``. The flow requests **no scopes** — the
-archive learns the account's identity and nothing more, and can never reach
-the user's repositories. **lax logout** forgets the stored token.
+**lax login** uses the GitHub App device flow and accepts only the resulting
+``ghu_`` user access token. Expiring credentials are refreshed with the
+rotating ``ghr_`` refresh token stored under ``LAX_HOME``; generic OAuth and
+personal access tokens are rejected. The user token may create issues and
+comments in the control repository but has no database or Website installation
+authority. **lax logout** revokes both stored tokens with GitHub before removing
+them locally.
 
-**lax spec** prints this specification. The text is embedded in the binary at
-build time, so the printed spec is exactly the one that binary enforces.
+**lax spec** prints this specification. The text is bundled with the CLI, so
+the printed spec is exactly the one shipped in that release.
 Useful for agents authoring submissions.
 
 
-## Archive Server
+## GitHub Actions
 
-One server does everything the archive does centrally: it answers the CLI's
-write requests, owns the database repository, and puts the website online.
+The archive has no long-running application server. The public
+``lax-archive/lax`` repository, its issues, and its GitHub Actions workflows
+form the write control plane; the public database remains the read surface.
 
-- **Authentication.** The CLI sends the user's GitHub OAuth token (from
-  ``lax login``) with every write request. The server verifies the
-  token against GitHub and resolves it to the numeric account id that all
-  ownership checks run against.
+- **Authentication and commands.** The GitHub App user token lets the CLI open
+  the authoritative issue or post exact ``/lax owners``, ``/lax submit``,
+  ``/lax register``, and ``/lax delete`` comments. Edits do not execute. GitHub
+  authenticates the actor before emitting the event; the router binds the
+  issue number to ``lax-N`` and authorizes the actor by numeric account id. It
+  has only the repository-scoped workflow token and no Archive write
+  credential.
 
-- **Endpoints.** One per write action: ``POST /init``, ``POST /set-owners``,
-  ``POST /submit`` (with a ``register`` flag), plus ``GET /jobs/<id>`` for
-  polling a submit (see Async submit). These three write commands are the only
-  ones that leave the user's machine. Reading *archive content* needs no server
-  at all — it goes through the public database repository (``lax pull-db``);
-  the server answers no content queries.
+- **Validation isolation.** Submit validation runs as one credential-free job
+  on an ephemeral GitHub-hosted runner. Source fetching, static checks, and
+  resolution happen before author code runs. Compile, Replay, Inspect, capture
+  download/extraction, and sealing use fresh containers from a stock image
+  pinned by digest. The pinned toolchain, warm mathlib workspace, inspector,
+  and helper tools are installed on the VM and mounted read-only. Compile gets
+  a copy of committed source plus isolated writable build directories; Replay
+  and Inspect read only the captured submission artifacts and verified
+  dependency captures. The runner's reusable cache is saved before any
+  untrusted code executes.
 
-- **Build Pipeline.** Compile executes untrusted code (elaboration,
-  import-time initializers) — not only the submission's own, but that of
-  every upstream submission it imports. Replay and Inspect execute no
-  untrusted code but consume attacker-shaped oleans, whose loading is
-  unsafe deserialization. The server runs all three sandboxed, and the
-  sandbox is **mandatory**: the server refuses to start without it, and the
-  pipeline refuses to run. Compile moreover runs on a **copy** of the cloned
-  checkout: afterwards only the two packages' own inventory oleans are
-  extracted (still inside the sandbox) and placed at their canonical paths
-  in the pristine checkout, which Replay, Inspect, and Emit then use. This
-  keeps the ``sourceText`` Emit records the committed source — without the
-  copy, a submission's build could rewrite its own files after elaboration,
-  and the website would display source that differs from what the kernel
-  checked, breaking exactly the faithful-display property endorsers rely
-  on. This is not only host protection — the job
-  workspaces are seeded with symlinks into the trusted store, which is
-  sound only because the sandbox mounts the store read-only. The sandbox
-  protects the host and the store, not the report: authenticity comes from
-  the trust chain of the Build Pipeline section together with the trusted
-  artifact store below, and a malformed olean is a crash and a failed
-  build, not a compromise.
+- **Validation artifacts and captures.** A successful validation uploads the
+  validation report, phase profile, generated build output, and ``capture.tar``
+  as workflow artifacts. Before any publication credential exists, a separate
+  preflight parses their exact schemas and verifies the source commit, runtime
+  identity, capture digest, per-file hashes, issue binding, lifecycle state,
+  owners, stale-write inputs, and dependency captures. The protected publisher
+  then pushes the capture as a digest-addressed OCI blob to
+  ``ghcr.io/lax-archive/lax-captures`` and records that digest reference in
+  ``build-output.json``. If the database update later loses a race, an orphaned
+  blob is harmless; no uncommitted capture becomes authoritative.
 
-- **Sandbox.** The profile is allowlist-only in both directions: bubblewrap
-  starts from an empty root and mounts the system base plus each phase's
-  declared inputs read-only — the toolchain, the store, the warm workspace,
-  and for Replay and Inspect the pristine checkout and the inspector. Only
-  the per-job scratch is writable, all namespaces are unshared, and network
-  is enabled only for the two phases that reach it — the initial clone of the
-  author-supplied repository and Compile's pinned dependency fetch — so
-  anything not declared, the database and other jobs included, is invisible to
-  untrusted code. The clone runs sandboxed too, because the repository URL is
-  author-controlled: it gets the tightest profile of all — only the job
-  scratch mounted, no store — and ``git`` is confined to the https and file
-  transports, so an ``ext::`` URL cannot execute a command and an
-  ``ssh://``/``http://`` URL cannot forge a request. A local ``file://`` or
-  path source (self-hosted archives) is mounted read-only so the sandboxed
-  ``git`` can reach it; a production https source needs no mount. The
-  toolchain is pre-installed at server start (elan's home is read-only inside
-  the sandbox). This makes the server Linux-only; the CLI never sandboxes.
+- **Database publication.** Only jobs in the protected
+  ``lax-database-publish`` environment can mint a short-lived Database
+  Publisher installation token, restricted to ``lax-database``. After the
+  credential-free preflight, the publisher re-reads the latest database head
+  and repeats issue binding, authorization, lifecycle, exact-schema,
+  precondition, and dependency checks. It advances the default branch without
+  force and changes only the files owned by the action. Publishers may run
+  concurrently; a non-fast-forward causes the job to re-read, revalidate, and
+  retry rather than overwrite another update.
 
-- **Trusted artifact store.** Everything Compile writes is suspect,
-  including the dependency artifacts it fetched or built: code running
-  inside the build can overwrite an upstream olean in place, and no replay
-  can detect that (see Decisions). The server therefore never lets Replay
-  or Inspect read a dependency artifact that Compile produced. It maintains
-  a store of trusted artifacts with exactly two write paths: mathlib and
-  core artifacts, fetched or built by the server itself against the archive
-  pins; and the two packages of every submission, captured when its submit
-  commits — draft or registration — right after its own Replay passed,
-  which is precisely the moment those oleans are authenticated. The capture
-  is exactly the inventory modules' oleans — the files Replay checked, so a
-  forged extra module can never enter the store — copied, never linked,
-  staged per job, promoted under the write lock; a re-draft overwrites it. Compile sees the
-  store only through the seeded, read-only workspace (provisioned inputs,
-  untrusted outputs); whatever it writes stays in the job scratch and is
-  discarded when the job ends. Replay and Inspect then run with an
-  explicitly composed search path whose dependency entries all point into
-  the store, and whose only Compile-produced artifacts are the submission's
-  own two packages — exactly the ones Replay checks. Concretely, the
-  composed ``LEAN_PATH`` holds the submission's two lib dirs, the store
-  dirs of the transitive, database-computed required submissions, and the
-  warm workspace's mathlib dirs; core resolves through the toolchain
-  sysroot. The store is complete
-  by construction: Resolution admits only dependencies whose current triple
-  the database confirms, and the submit that set that triple captured the
-  artifacts. A downstream draft may race a re-draft of its dependency —
-  harmless, drafts guarantee nothing; registration admits only immutable
-  dependencies.
+- **Asynchronous results.** Issue comments carry stable hidden correlation
+  markers. The CLI follows the corresponding durable Actions run, shows its
+  current job and step, and waits for a bot-authored result. Owners and submit
+  commands carry a 🚀 reaction while running and a 👍 on complete success;
+  owners use that reaction as their only success result. Initialization,
+  submit, register, and delete retain result comments with machine-readable
+  success or failure markers. A CLI disconnect can therefore resume from issue
+  history instead of an in-memory job id.
 
-- **Processing.** The server is the single writer, so a global lock over
-  database writes suffices. Writes are short: validate the request
-  (ownership, state), commit the updated ``record.json`` (and
-  ``build-output.json``), push. The expensive part of a submit — cloning the
-  triple (itself sandboxed, since the repository URL is author-controlled) and
-  running the full sandboxed build pipeline — happens *outside*
-  the lock, so one submit does not stall unrelated requests. The ownership
-  and state checks are therefore re-run after acquiring the lock: the record
-  may have moved while the build ran, and a build against a stale record must
-  not be committed.
-
-- **Async submit.** The pipeline takes minutes, so ``POST /submit`` returns
-  a job id which the CLI polls until it receives success or the violation
-  report. Job ids are ephemeral: jobs live in server memory, a restart
-  forgets them, and finished jobs are pruned after a retention window
-  (currently one hour). Polling an unknown job yields 404, which the CLI
-  surfaces as "resubmit" — a lost job never loses archive state, since the
-  database commit is a submit's only durable effect.
-
-- **Website.** After each push, the server runs the site generator and serves
-  the result. Because the server is the writer, it never has to poll for
-  changes: it knows exactly when the database moved.
+- **Website dispatch.** After a successful database commit, a separate job in
+  the protected ``lax-website-dispatch`` environment can mint only a Website
+  Dispatcher token restricted to ``lax-website``. It sends the rebuild event
+  and reports whether dispatch was accepted; the Website repository owns the
+  actual build and GitHub Pages deployment. A dispatch or issue-title sync
+  failure is reported as an operation failure even when the canonical database
+  commit already succeeded, and never rolls that commit back.
 
 ## Distribution and Deployment
 
@@ -1195,20 +1224,19 @@ The CLI is the one component users install. We distribute via npm (package
 ``lax-archive``), making installs and updates one-liners; ``lax update``
 runs ``npm install -g lax-archive@latest`` and then refreshes the database.
 
-The CLI is not self-contained: it shells out to ``elan``/``lake`` (Compile;
-building the inspector — Replay and Inspect invoke the pinned toolchain's
-binaries directly), to
-``git`` (the tracked-files check, ``lax submit``, and the database clone),
-and to ``npm`` (``lax update``). The OAuth device flow is spoken directly to
-github.com over HTTPS, so no GitHub CLI is required. It
-checks for the tools a command needs on startup and names the missing one
-rather than failing inside a subprocess. Installation clones the database (see Database Repository), which is
-also the first ``lax pull-db``.
+Local builds shell out to ``elan``/``lake`` for the pinned host toolchain and
+to ``git`` for source checks and the database clone; ``lax update`` also needs
+``npm``. Docker is required only by trusted validation, not by CLI authoring.
+The CLI speaks the GitHub App flow and API directly, so no GitHub CLI is
+required, and names missing command dependencies during preflight.
 
-The CLI and the archive server are built from the same repository and share
-the same pipeline phases; the server additionally makes Replay mandatory and
-supplies trusted dependency artifacts. They likewise share the site generator
-that ``lax serve`` runs and the one behind the website.
+The npm CLI and ``submission.yml`` share the TypeScript validators and
+inspection judgments; the workflow adds isolated execution, mandatory Replay,
+capture sealing, and publication. The Website renderer is built in the
+separate ``lax-website`` repository and bundled from the revision pinned in
+this repository. ``release.yml`` runs checks, verifies that renderer bundle,
+and publishes through npm trusted publishing on version tags; ordinary CI runs
+on every push.
 
 ### Environment variables
 
@@ -1218,35 +1246,46 @@ normal use.
 CLI:
 
 - ``LAX_HOME`` (default ``~/.lax``): the CLI's machine state — the database
-  clone (``db/``), the warm mathlib workspace (``warm/``), and the compiled
-  inspector cache (``tools/``).
-- ``LAX_GITHUB_TOKEN``: GitHub token used instead of the ``lax login``
-  token (CI, agents).
-- ``LAX_SERVER_URL``, ``LAX_DB_URL``: override the baked-in archive API
-  endpoint and database repository URL (defaults finalized at launch).
+  clone (``lax-database/``), credentials, warm mathlib workspace (``warm/``),
+  compiled tools, and update-check state.
+- ``LAX_GITHUB_APP_USER_TOKEN``: an existing ``ghu_`` GitHub App user token
+  used instead of stored ``lax login`` credentials (CI and agents).
+- ``LAX_DATABASE_URL``: override the public database clone URL;
+  ``LAX_DB_URL`` remains a legacy alias.
+- ``LAX_POLL_INTERVAL_MS`` and ``LAX_WORKFLOW_TIMEOUT_MS``: override the
+  workflow polling interval and overall wait limit.
+- ``LAX_DATABASE_POLL_INTERVAL_MS``: override how often ``lax serve`` checks
+  database freshness.
+- ``LAX_DISABLE_UPDATE_CHECK=1``: disable the best-effort background release
+  check.
 
-Server:
+GitHub Actions deployment:
 
-- ``LAX_SERVER_HOME`` (default ``~/.lax-server``): the server's state — the
-  bare authoritative database repository, its working clone, the trusted
-  store, and job scratch.
-- ``LAX_SERVER_PORT`` (default 8080).
-- ``LAX_SERVER_DB_URL``: the clone URL the server advertises for its
-  database — in a deployment the public mirror (see DEPLOYMENT.md,
-  "Database mirror"); defaults to the local bare repository.
+- Repository variable ``LAX_REPOSITORY_ID`` fixes the immutable numeric id of
+  ``lax-archive/lax``.
+- The protected ``lax-database-publish`` environment provides
+  ``LAX_DATABASE_APP_ID`` and ``LAX_DATABASE_APP_PRIVATE_KEY`` for an App
+  installed only on ``lax-database`` with Contents write.
+- The protected ``lax-website-dispatch`` environment provides
+  ``LAX_WEBSITE_APP_ID`` and ``LAX_WEBSITE_APP_PRIVATE_KEY`` for a different
+  App installed only on ``lax-website`` with Contents write.
+- Repository policy requires every external action to be pinned to a full
+  commit SHA. App tokens are minted only inside their protected jobs and are
+  never CLI configuration or validation-job input.
 
-Test seams, never set in production: ``LAX_MATHLIB_URL`` /
-``LAX_MATHLIB_REV`` substitute a small fake mathlib so fast tests exercise
-the real warm-store machinery; ``LAX_FAKE_GITHUB`` /
-``LAX_FAKE_GITHUB_USERS`` substitute the GitHub token verifier. The
-standard ``ELAN_HOME`` is respected wherever elan's home is consulted.
+Test and development seams, never set in production, may substitute the
+mathlib URL and revision, immutable validation image, GitHub endpoints,
+repository names, or capture registry. The standard ``ELAN_HOME`` is respected.
 
 
 ## Tests
 
-A bunch of fast tests that should check all corner cases without mathlib,
-
-and a single real e2e tests that does the full program!
+Unit, integration, workflow, and end-to-end tests use bounded fake GitHub and
+GHCR services, temporary Git repositories, and a small fake mathlib while
+exercising the real validators, control-plane protocol, publisher, and local
+CLI. A separate submission-validation smoke command runs the real pinned
+toolchain path. CI builds and tests every push; the release workflow repeats
+those checks before npm publication.
 
 
 # The Social Layer (future work)
