@@ -70,6 +70,25 @@ test does:
 - The report artifact carried findings to the author on every run
   (`proof-dependency`, `draft-dependency` warnings).
 
-Not covered, and still not: a *failing* validation. Nothing in the sweep
-produced one, so `report-validation-failure` and the failure rendering of the
-report artifact remain unexercised in production.
+## The failure path, on purpose
+
+The sweep produced no failing validation, so one was staged: lax-14's
+headline proof `Lax14Proofs.Ramsey.exists_clique_or_indepSet` with its body
+replaced by `sorry`, submitted from a throwaway branch. A `sorry` compiles
+and replays, so the break had to travel the whole pipeline to be judged,
+which is exactly the path worth testing. Inspect produced two findings —
+`[axiom-hygiene] depends on inadmissible axiom sorryAx` and `[proof]
+declared assumptions do not match the inspected assumption set` (the sorry
+also dropped the recorded assumption edge) — and everything downstream did
+what it should:
+
+- `Validate` failed; `publish-submit` and `publish` were skipped.
+- `report-validation-failure` posted the short comment: the *first* finding,
+  the correlation markers, the outcome marker, and a pointer to the run's
+  artifacts. That is the whole comment — the complete findings live in the
+  artifact, which is the change 0.1.21 shipped.
+- `lax submit` rendered both findings in full from the artifact and exited
+  nonzero with `validation failed; lax-database was not changed`.
+- **lax-14's record never moved** — still `d35ba57`, its content untouched.
+
+The probe branch was deleted afterwards; no record ever named its commit.

@@ -7,7 +7,14 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
-## Pipeline simplification: rolled out 2026-08-07, two things left
+## Pipeline simplification: rolled out and closed, 2026-08-07
+
+Nothing left here — the record is `history/pipeline-simplification-rollout.md`,
+including the production sweep (seven records resubmitted bottom-up) and the
+deliberate failure probe that closed the last untested path. The superseded
+Website App private key was deleted and `roundtrip-20260807` was merged into
+lax-submissions `main`, so every recorded source is reachable from the
+default branch.
 
 Merged and released as 0.1.21: the fail-early static gate, the
 route → validate → publish-submit DAG with the Website dispatch folded into
@@ -19,25 +26,16 @@ instead of the "protected branches" policy that constrained nothing (the
 repo has no branch protection rule and no ruleset), the
 `lax-website-dispatch` environment is deleted, and the CLI App
 (`lax-cli-publisher`, org-owned like the other two) has the `Actions: read`
-permission the report download needs. Left:
-
-- **Delete the superseded `Lax Website Dispatcher` private key** in the App
-  settings (UI only). It was replaced, not revoked, and the environment that
-  held it is gone.
-- **Merge or keep `roundtrip-20260807` in lax-submissions** — see the
-  round-trip-sources item below. Seven records now name commits that exist
-  only on that branch.
+permission the report download needs.
 
 ## Go-live leftovers (context: history/go-live.md)
 
-- **Keep round-trip sources reachable in lax-submissions**: branch
-  `roundtrip-20260807` now carries the recorded source of all seven
-  chain submissions — lax-13/lax-14 at `d35ba57`, lax-11/lax-12 at
-  `becb578`, lax-3/lax-5/lax-15 at `4af91ea` — after the 2026-08-07
-  production sweep re-pinned the chain bottom-up. It supersedes
-  `roundtrip-20260806` (lax-14's old `42a14ff9`) and `port/chain-requires`,
-  whose commits no record names any more. Merge `roundtrip-20260807` into
-  `main` or keep the branch; deleting it strands every recorded source.
+- **Round-trip sources: settled.** lax-submissions `main` is now `4af91ea`,
+  which carries the recorded source of all seven chain submissions —
+  lax-13/lax-14 at `d35ba57`, lax-11/lax-12 at `becb578`, lax-3/lax-5/lax-15
+  at `4af91ea`. The old `roundtrip-20260806` and `port/chain-requires`
+  branches name commits no record points at any more, so they are free to
+  delete.
 - **Scratch-repo teardown**: delete `jan3er/lax-scratch-{control,database,
   submission}` and ghcr package `lax-scratch-captures`, and rotate the
   personal token that stood in for the App mints (Jan).
