@@ -22,32 +22,12 @@ permissions:
 # carries hidden correlation markers and readers match on those, not on order.
 
 jobs:
-  # Reject unrelated issue comments before checkout or dependency installation.
-  precheck:
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.command.outputs.should_run }}
-    steps:
-      - name: Check event kind and command prefix
-        id: command
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          node --input-type=module <<'NODE'
-          import fs from "node:fs";
-          import { TextDecoder } from "node:util";
-
-          const bytes = fs.readFileSync(process.env.GITHUB_EVENT_PATH);
-          const event = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-          const shouldRun = process.env.EVENT_NAME === "issues" ||
-            (process.env.EVENT_NAME === "issue_comment" &&
-              typeof event.comment?.body === "string" && event.comment.body.slice(0, 4) === "/lax");
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `should_run=${shouldRun}\n`, "utf8");
-          NODE
-
+  # Unrelated issue comments never allocate a runner: the condition below is
+  # the whole gate. It is data-only expression evaluation — no comment text
+  # reaches a `run:` script — and for `issues` events the missing comment
+  # object makes the prefix test false while the first disjunct admits them.
   route:
-    needs: precheck
-    if: needs.precheck.outputs.should_run == 'true'
+    if: github.event_name == 'issues' || startsWith(github.event.comment.body, '/lax')
     runs-on: ubuntu-latest
     outputs:
       operation: ${{ steps.route.outputs.operation }}
@@ -59,12 +39,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      # Every job needs this one, so it is the only job that writes the shared
+      # node_modules+dist cache; see the action for why the key is exact.
+      - uses: ./.github/actions/setup-lax
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+          save: "true"
       - name: Validate and route the event
         id: route
         env:
@@ -93,12 +72,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+      - uses: ./.github/actions/setup-lax
       # Fetch, static validation, and dependency resolution only — seconds,
       # and no toolchain needed. A manifest typo or an unresolvable dependency
       # fails the job here instead of after a multi-GB cache restore and a
@@ -166,64 +140,26 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
-  # Keep success and failure handling on one visible DAG path. On failure this
-  # job reports the validation result; on success it unlocks publication. It
-  # never checks out or executes submission code — it only reads the artifact.
-  validation-result:
-    name: Validation result
-    needs: [route, validate]
-    if: always() && needs.route.outputs.operation == 'validate'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-    outputs:
-      should_publish: ${{ steps.outcome.outputs.should_publish }}
-    steps:
-      # run.js exits 0 only when the full report is ok, so the job result is
-      # the validation verdict; the publisher still re-parses the report.
-      - name: Record validation outcome
-        id: outcome
-        run: >-
-          echo "should_publish=${{ needs.validate.result == 'success' }}" >> "$GITHUB_OUTPUT"
-      - if: steps.outcome.outputs.should_publish != 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - if: steps.outcome.outputs.should_publish != 'true'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - if: steps.outcome.outputs.should_publish != 'true'
-        run: npm ci
-      - if: steps.outcome.outputs.should_publish != 'true'
-        run: npm run build
-      - name: Restore validation report
-        if: steps.outcome.outputs.should_publish != 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        continue-on-error: true
-        with:
-          name: submission-validation-${{ github.event.issue.number }}
-          path: .build/submission-validation
-      - name: Report the validation result
-        if: steps.outcome.outputs.should_publish != 'true'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
-          VALIDATION_CONTEXT: ${{ needs.route.outputs.context }}
-          VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
-        run: node dist/workflows/submission.js report-validation
-
-  # The first step has only the lax workflow token. It parses and hashes the
+  # The first step holds only the lax workflow token. It parses and hashes the
   # downloaded files and repeats all authorization, issue, state, stale-write,
-  # and dependency checks before the protected App key is used.
+  # and dependency checks before either App key is minted.
+  #
+  # Both publisher keys live in this job (deliberate, Jan 2026-08-07): the
+  # Website rebuild is dispatched by whichever job owns the resulting commit,
+  # so the dispatch key sits next to the database key. The invariant that
+  # governs them is trust rule 1 — no job holding an App key ever checks out
+  # or executes submission code. This job checks out only trusted lax source
+  # and reads the validate job's artifact as data.
+  #
+  # Repo settings: the `lax-database-publish` environment is the one home of
+  # both publisher keys, so the lax-website App id and private key must be
+  # reachable from it.
   publish-submit:
-    needs: [route, validation-result]
+    needs: [route, validate]
     if: >-
       ${{
         needs.route.outputs.operation == 'validate' &&
-        needs.validation-result.outputs.should_publish == 'true'
+        needs.validate.result == 'success'
       }}
     runs-on: ubuntu-latest
     environment: lax-database-publish
@@ -234,19 +170,11 @@ jobs:
       # before the database commit references it; the App-minted database
       # token never touches the registry.
       packages: write
-    outputs:
-      archive_commit: ${{ steps.publish-submit.outputs.archive_commit }}
-      title_sync_error: ${{ steps.publish-submit.outputs.title_sync_error }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+      - uses: ./.github/actions/setup-lax
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: submission-validation-${{ github.event.issue.number }}
@@ -272,12 +200,26 @@ jobs:
           repositories: lax-database
           permission-administration: read
           permission-contents: write
-      - name: Promote capture and publish trusted submit
+      # Minting the dispatch token here, before publication, is what lets one
+      # step publish and dispatch in one process: token actions are `actions/`
+      # steps, so they cannot run inside the handler. The token can only
+      # request a rebuild of lax-website from whatever lax-database holds.
+      - name: Mint lax-website dispatch token
         if: steps.prepare-submit.outputs.should_publish == 'true'
-        id: publish-submit
+        id: website-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.LAX_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.LAX_WEBSITE_APP_PRIVATE_KEY }}
+          owner: lax-archive
+          repositories: lax-website
+          permission-contents: write
+      - name: Promote capture, publish trusted submit, and dispatch Website
+        if: steps.prepare-submit.outputs.should_publish == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
+          LAX_WEBSITE_TOKEN: ${{ steps.website-token.outputs.token }}
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
           PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
           VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
@@ -288,8 +230,8 @@ jobs:
   # Keep the shorter publish branch after the validation branch in declaration
   # order so GitHub's automatic DAG layout prefers it as the lower row.
   # This job checks out and executes only trusted lax source. It never checks
-  # out a submission. The database publication environment owns only the
-  # lax-database Publisher App key.
+  # out a submission, and it holds the same two publisher keys as
+  # publish-submit, for the same reason.
   publish:
     needs: route
     if: needs.route.outputs.operation == 'publish'
@@ -298,18 +240,11 @@ jobs:
     permissions:
       contents: read
       issues: write
-    outputs:
-      archive_commit: ${{ steps.publish.outputs.archive_commit }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+      - uses: ./.github/actions/setup-lax
 
       - name: Mint lax-database token
         id: database-token
@@ -322,40 +257,6 @@ jobs:
           permission-administration: read
           permission-contents: write
 
-      - name: Revalidate and publish lax-database
-        id: publish
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
-          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
-          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
-        run: node dist/workflows/submission.js publish
-
-  # Website credentials do not exist until lax-database has advanced. This job
-  # receives no Archive token and can only dispatch the complete rebuild.
-  website:
-    needs: [route, publish, publish-submit]
-    if: >-
-      ${{
-        always() &&
-        ((needs.publish.result == 'success' && needs.publish.outputs.archive_commit != '') ||
-         (needs.publish-submit.result == 'success' && needs.publish-submit.outputs.archive_commit != ''))
-      }}
-    runs-on: ubuntu-latest
-    environment: lax-website-dispatch
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
       - name: Mint lax-website dispatch token
         id: website-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
@@ -365,40 +266,27 @@ jobs:
           owner: lax-archive
           repositories: lax-website
           permission-contents: write
-      - name: Dispatch Website and report the final result
+
+      - name: Revalidate, publish lax-database, and dispatch Website
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
           LAX_WEBSITE_TOKEN: ${{ steps.website-token.outputs.token }}
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
           PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
-          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-submit.outputs.archive_commit) }}
-          TITLE_SYNC_ERROR: ${{ needs.publish-submit.outputs.title_sync_error }}
-        run: node dist/workflows/submission.js website
+        run: node dist/workflows/submission.js publish
 
-  # TypeScript reports structured routing/publication failures. This final
-  # fallback also covers failures before the handlers can run: checkout,
-  # dependency installation, compilation, and App-token actions. It is a thin
-  # dispatcher into the same typed, tested TS as every other job — no inline
-  # JS (rewrite-plan.md "Write runner and concurrency"). Accepted tradeoff,
-  # per the plan's explicit decision: a breakage in checkout/npm ci/build also
-  # breaks this fallback report, in exchange for zero untyped logic in YAML.
-  report-workflow-failure:
-    needs:
-      - precheck
-      - route
-      - publish
-      - publish-submit
-      - website
-      - validation-result
+  # The validate job's own result is the verdict: run.js exits 0 only when the
+  # full report is ok. This job reports a failed one. It never checks out or
+  # executes submission code — it reads the report artifact as data, and the
+  # artifact may be absent when validate died before writing it.
+  report-validation-failure:
+    needs: [route, validate]
     if: >-
       ${{
         always() &&
-        (needs.precheck.result == 'failure' ||
-         needs.route.result == 'failure' ||
-         needs.publish.result == 'failure' ||
-         needs.publish-submit.result == 'failure' ||
-         needs.website.result == 'failure' ||
-         needs.validation-result.result == 'failure')
+        needs.route.outputs.operation == 'validate' &&
+        needs.validate.result == 'failure'
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -408,18 +296,61 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: ./.github/actions/setup-lax
+      - name: Restore validation report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+          name: submission-validation-${{ github.event.issue.number }}
+          path: .build/submission-validation
+      - name: Report the validation result
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          VALIDATION_CONTEXT: ${{ needs.route.outputs.context }}
+          VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
+        run: node dist/workflows/submission.js report-validation
+
+  # TypeScript reports structured routing/publication failures. This final
+  # fallback also covers failures before the handlers can run: checkout,
+  # dependency installation, compilation, and App-token actions. It is a thin
+  # dispatcher into the same typed, tested TS as every other job — no inline
+  # JS (rewrite-plan.md "Write runner and concurrency"). Accepted tradeoff,
+  # per the plan's explicit decision: a breakage in checkout/npm ci/build also
+  # breaks this fallback report, in exchange for zero untyped logic in YAML.
+  # A failed validate job is report-validation-failure's case, so validate is
+  # not a dependency here and no double report can be posted for it.
+  report-workflow-failure:
+    needs:
+      - route
+      - publish
+      - publish-submit
+      - report-validation-failure
+    if: >-
+      ${{
+        always() &&
+        (needs.route.result == 'failure' ||
+         needs.publish.result == 'failure' ||
+         needs.publish-submit.result == 'failure' ||
+         needs.report-validation-failure.result == 'failure')
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-lax
       - name: Post a correlated operational failure
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
-          ARCHIVE_COMMIT: ${{ format('{0}{1}', needs.publish.outputs.archive_commit, needs.publish-submit.outputs.archive_commit) }}
           ACTION: ${{ needs.route.outputs.action }}
           OPERATION: ${{ needs.route.outputs.operation }}
-          VALIDATION_RESULT: ${{ needs.validation-result.outputs.should_publish }}
+          # Only these two jobs can create a lax-database commit, and a job
+          # that died mid-publication cannot report whether it did, so the
+          # wording has to stay open about it.
+          PUBLICATION_FAILED: ${{ needs.publish.result == 'failure' || needs.publish-submit.result == 'failure' }}
         run: node dist/workflows/submission.js report-failure

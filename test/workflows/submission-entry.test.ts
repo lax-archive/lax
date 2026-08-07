@@ -20,7 +20,6 @@ import {
   publish,
   reportFailure,
   reportValidation,
-  website,
 } from "../../src/workflows/submission.js";
 import { successfulArtifacts, TEST_RUNTIME, TEST_SOURCE } from "../support/validation-artifacts.js";
 
@@ -70,7 +69,7 @@ describe("report-failure entry point", () => {
   });
 
   it("posts one correlated failure, clears the rocket, and stays idempotent on re-runs", async () => {
-    stubWorkflowEnv({ ACTION: "submit", OPERATION: "validate", VALIDATION_RESULT: "true" });
+    stubWorkflowEnv({ ACTION: "submit", OPERATION: "validate", PUBLICATION_FAILED: "true" });
     writeEvent({ issue: { number: issueNumber }, comment: { id: commentId } });
     const state: IssueState = {
       comments: [],
@@ -83,7 +82,8 @@ describe("report-failure entry point", () => {
     expect(state.comments).toHaveLength(1);
     const body = state.comments[0]!.body;
     expect(body).toContain(
-      "Validation succeeded, but trusted submit publication did not complete; no lax-database commit was created.",
+      "Publication did not complete. Inspect this run before retrying: if it created a " +
+        "lax-database commit, that commit must not be replayed.",
     );
     expect(body).toContain(resultMarker(commentId));
     // The CLI's follow loop must keep correlating the comment to its run.
@@ -130,15 +130,17 @@ describe("report-failure entry point", () => {
     expect(state.reactions).toHaveLength(1);
   });
 
-  it("warns about a committed database change when a later job failed", async () => {
-    const commit = "e".repeat(40);
-    stubWorkflowEnv({ ARCHIVE_COMMIT: commit, ACTION: "register", OPERATION: "publish" });
+  it("says validation reporting failed when no publishing job ran at all", async () => {
+    // The publishing jobs are the only ones that can write lax-database, so
+    // without one the report may state plainly that nothing was changed.
+    stubWorkflowEnv({ ACTION: "submit", OPERATION: "validate" });
     writeEvent({ issue: { number: issueNumber }, comment: { id: commentId } });
     const state: IssueState = { comments: [], reactions: [] };
     installIssueFetch(state);
     await reportFailure();
     expect(state.comments[0]!.body).toContain(
-      `lax-database changed at commit \`${commit}\`, but Website dispatch or final reporting did not complete.`,
+      "Validation or result reporting failed; no trustworthy validation result was produced. " +
+        "lax-database was not changed.",
     );
   });
 
@@ -214,47 +216,20 @@ describe("prepare-submit entry point", () => {
   });
 });
 
-describe("publish and website entry points", () => {
-  it("publishes with exactly the two env-provided tokens and mints nothing", async () => {
+describe("publish entry point", () => {
+  it("publishes and dispatches the rebuild in one process, with the env-provided tokens", async () => {
+    // The Website dispatch is the tail of the same handler: the commit never
+    // leaves memory, so there is no job output for anything to forge, and each
+    // repository is still reached with exactly its own token.
     const texts = initialFiles("lax-42", { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z");
-    const directory = workDirectory();
-    const outputFile = path.join(directory, "github-output");
     stubWorkflowEnv({
-      GITHUB_OUTPUT: outputFile,
       LAX_DATABASE_TOKEN: "database-token",
+      LAX_WEBSITE_TOKEN: "website-token",
       PUBLISH_REQUEST: encode(registerRequest(fileDigests(texts))),
     });
     const requests = installIssueFetch({ comments: [], reactions: [] }, texts, { allowWrites: true });
 
     await publish();
-
-    expect(fs.readFileSync(outputFile, "utf8")).toContain("archive_commit");
-    for (const request of requests) {
-      // Control-repository reads/writes use the workflow token; every
-      // lax-database request uses the App token the environment provided.
-      const expected = request.url.includes("/repos/lax-archive/lax-database")
-        ? "Bearer database-token"
-        : "Bearer workflow-token";
-      expect(request.authorization, `${request.method} ${request.url}`).toBe(expected);
-      // The TS never mints tokens: that is exclusively the pinned
-      // create-github-app-token action's job in YAML.
-      expect(request.url).not.toMatch(/\/app\/|access_tokens|installation/u);
-    }
-    const writes = requests.filter((request) => request.method !== "GET");
-    expect(writes.length).toBeGreaterThan(0);
-    expect(writes.every((request) => request.url.includes("/repos/lax-archive/lax-database"))).toBe(true);
-  });
-
-  it("dispatches the website rebuild with only the given dispatch token", async () => {
-    const texts = initialFiles("lax-42", { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z");
-    stubWorkflowEnv({
-      LAX_WEBSITE_TOKEN: "website-token",
-      PUBLISH_REQUEST: encode(registerRequest(fileDigests(texts))),
-      ARCHIVE_COMMIT: "c".repeat(40),
-    });
-    const requests = installIssueFetch({ comments: [], reactions: [] }, texts, { allowWrites: true });
-
-    await website();
 
     const dispatches = requests.filter((request) => request.url.includes("/repos/lax-archive/lax-website/dispatches"));
     expect(dispatches).toHaveLength(1);
@@ -265,12 +240,25 @@ describe("publish and website entry points", () => {
       client_payload: { archiveCommit: "c".repeat(40), submissionId: "lax-42", action: "register" },
     });
     for (const request of requests) {
-      if (request.url.includes("lax-website")) continue;
-      // The dispatch token never touches the control repository, and the TS
-      // mints nothing itself.
-      expect(request.authorization, `${request.method} ${request.url}`).toBe("Bearer workflow-token");
+      // Control-repository reads/writes use the workflow token; every
+      // lax-database request uses the App token the environment provided, and
+      // the dispatch token touches nothing but lax-website.
+      const expected = request.url.includes("/repos/lax-archive/lax-database")
+        ? "Bearer database-token"
+        : request.url.includes("/repos/lax-archive/lax-website")
+          ? "Bearer website-token"
+          : "Bearer workflow-token";
+      expect(request.authorization, `${request.method} ${request.url}`).toBe(expected);
+      // The TS never mints tokens: that is exclusively the pinned
+      // create-github-app-token action's job in YAML.
       expect(request.url).not.toMatch(/\/app\/|access_tokens|installation/u);
     }
+    const writes = requests.filter((request) => request.method !== "GET");
+    expect(writes.length).toBeGreaterThan(0);
+    // The final result comment is posted by this job too.
+    expect(
+      writes.some((request) => request.url.endsWith(`/issues/${issueNumber}/comments`)),
+    ).toBe(true);
   });
 });
 
@@ -287,9 +275,7 @@ function stubWorkflowEnv(extra: Record<string, string>): void {
     GITHUB_REPOSITORY: "lax-archive/lax",
     ACTION: "",
     OPERATION: "",
-    VALIDATION_RESULT: "",
-    ARCHIVE_COMMIT: "",
-    TITLE_SYNC_ERROR: "",
+    PUBLICATION_FAILED: "",
   };
   for (const [name, value] of Object.entries({ ...base, ...extra })) vi.stubEnv(name, value);
 }

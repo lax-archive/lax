@@ -1,0 +1,52 @@
+name: Set up lax
+description: >-
+  Node, dependencies, and a compiled dist/, shared across the jobs of one
+  workflow run through a per-commit cache.
+
+# Checkout deliberately stays in the calling workflow: a local action is only
+# resolvable once the repository is on disk, so every job runs its own
+# actions/checkout (persist-credentials: false) before this action.
+#
+# Exact keys only, and deliberately no restore-keys: a prefix fallback could
+# match an entry saved from the validate VM — the runner's cache token is
+# reachable from a process that escaped the sandbox — and a privileged job
+# would then run those bytes. With an exact per-commit key the route job saves
+# the entry before validate starts, and GitHub cache entries are immutable
+# once saved, so privileged jobs can only ever restore route's bytes. On a
+# miss a job simply builds the tree it checked out.
+
+inputs:
+  save:
+    description: >-
+      Save the built tree under this run's key. Only the route job sets this:
+      it precedes every other job, so nothing else can claim the key first.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: 22
+        cache: npm
+    - name: Restore dependencies and the compiled tree
+      id: dist-cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          node_modules
+          dist
+        key: lax-dist-${{ github.sha }}
+    - name: Install and build
+      if: steps.dist-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci && npm run build
+    - name: Save dependencies and the compiled tree
+      if: inputs.save == 'true' && steps.dist-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          node_modules
+          dist
+        key: lax-dist-${{ github.sha }}

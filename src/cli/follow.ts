@@ -92,13 +92,11 @@ export class CommandFailedError extends Error {}
 
 /** Actions job names, as the author's stages rather than as CI internals. */
 const STAGES = new Map<string, string>([
-  ["precheck", "checking the command"],
   ["route", "checking the command"],
   ["validate", "validating: compile, kernel replay, inspection"],
-  ["validation result", "reporting the validation result"],
   ["publish-submit", "publishing to lax-database"],
   ["publish", "publishing to lax-database"],
-  ["website", "requesting the website rebuild"],
+  ["report-validation-failure", "reporting the validation result"],
   ["report-workflow-failure", "reporting the failure"],
 ]);
 

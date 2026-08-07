@@ -47,11 +47,10 @@ if (isMainModule) {
     else if (mode === "publish") await publish();
     else if (mode === "prepare-submit") await prepareSubmit();
     else if (mode === "publish-submit") await publishSubmit();
-    else if (mode === "website") await website();
     else if (mode === "report-validation") await reportValidation();
     else if (mode === "report-failure") await reportFailure();
     else throw new Error(
-      "usage: submission.js route|publish|prepare-submit|publish-submit|website|report-validation|report-failure",
+      "usage: submission.js route|publish|prepare-submit|publish-submit|report-validation|report-failure",
     );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -192,10 +191,7 @@ export async function publish(): Promise<void> {
   let archiveCommit: string | undefined;
   try {
     const result = await publisher.publish(request, workflowRun());
-    if (result.kind === "committed") {
-      archiveCommit = result.archiveCommit;
-      writeOutput("archive_commit", archiveCommit);
-    }
+    if (result.kind === "committed") archiveCommit = result.archiveCommit;
   } catch (error) {
     if (request.action === "owners" && request.commentId !== undefined) {
       await clearCommandProgress(control, request.commentId);
@@ -218,6 +214,33 @@ export async function publish(): Promise<void> {
     await control.postIssueComment(request.issue.number, body);
     throw error;
   }
+  if (archiveCommit === undefined) return;
+  await dispatchWebsite(control, request, authoritativeRepositoryId, archiveCommit);
+}
+
+/**
+ * Website dispatch and the final result comment, on the commit this process
+ * just created. dispatchWebsiteAndReport owns its own reporting — including
+ * the comment for a failed dispatch — so its errors must not be routed
+ * through the publication-failure reporters, which would post a second
+ * comment for the same event.
+ */
+async function dispatchWebsite(
+  control: ControlPlane,
+  request: PublishRequest,
+  authoritativeRepositoryId: number,
+  archiveCommit: string,
+  titleSyncError = "",
+): Promise<void> {
+  await dispatchWebsiteAndReport(
+    control,
+    new GitHubClient(requiredEnv("LAX_WEBSITE_TOKEN")),
+    request,
+    authoritativeRepositoryId,
+    archiveCommit,
+    workflowRun(),
+    titleSyncError,
+  );
 }
 
 async function clearCommandProgress(control: ControlPlane, commentId: number): Promise<void> {
@@ -263,6 +286,7 @@ export async function publishSubmit(): Promise<void> {
     authoritativeRepositoryId,
   );
   let archiveCommit: string | undefined;
+  let titleSyncError = "";
   try {
     const artifacts = readSuccessfulArtifacts(request);
     const archiveClient = new GitHubClient(requiredEnv("LAX_DATABASE_TOKEN"));
@@ -283,7 +307,6 @@ export async function publishSubmit(): Promise<void> {
     );
     if (result.kind === "no-op") return;
     archiveCommit = result.archiveCommit;
-    writeOutput("archive_commit", result.archiveCommit);
     try {
       await controlClient.request(
         "PATCH",
@@ -292,32 +315,13 @@ export async function publishSubmit(): Promise<void> {
       );
     } catch (error) {
       const message = safeInline((error as Error).message, 300);
-      writeOutput("title_sync_error", message || "unknown title synchronization failure");
+      titleSyncError = message || "unknown title synchronization failure";
     }
   } catch (error) {
     await postPublicationFailure(control, request, error, archiveCommit);
     throw error;
   }
-}
-
-export async function website(): Promise<void> {
-  const authoritativeRepositoryId = repositoryId();
-  const request = readPublishRequest(authoritativeRepositoryId);
-  const controlClient = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
-  const control = new ControlPlane(
-    controlClient,
-    new ArchiveRepository(controlClient),
-    authoritativeRepositoryId,
-  );
-  await dispatchWebsiteAndReport(
-    control,
-    new GitHubClient(requiredEnv("LAX_WEBSITE_TOKEN")),
-    request,
-    authoritativeRepositoryId,
-    requiredEnv("ARCHIVE_COMMIT"),
-    workflowRun(),
-    process.env.TITLE_SYNC_ERROR ?? "",
-  );
+  await dispatchWebsite(control, request, authoritativeRepositoryId, archiveCommit, titleSyncError);
 }
 
 /**
@@ -343,18 +347,17 @@ export async function reportFailure(): Promise<void> {
   }
   const run = workflowRun();
   if (await control.failureReportExists(number, marker, run.id)) return;
-  const commit = process.env.ARCHIVE_COMMIT ?? "";
+  // A publishing job that died before its own reporter ran cannot say whether
+  // it committed; only it could have. Every other failure is upstream of any
+  // lax-database write, so those messages stay definite.
   const summary =
-    commit !== ""
-      ? `lax-database changed at commit \`${commit}\`, but Website dispatch or final reporting ` +
-        `did not complete. Inspect this run before retrying.`
-      : process.env.OPERATION === "validate" && process.env.VALIDATION_RESULT === "true"
-        ? "Validation succeeded, but trusted submit publication did not complete; " +
-          "no lax-database commit was created."
-        : process.env.OPERATION === "validate"
-          ? "Validation or result reporting failed; no trustworthy validation result was produced. " +
-            "lax-database was not changed."
-          : "The workflow failed before publication completed; no lax-database commit was created by this run.";
+    process.env.PUBLICATION_FAILED === "true"
+      ? "Publication did not complete. Inspect this run before retrying: if it created a " +
+        "lax-database commit, that commit must not be replayed."
+      : process.env.OPERATION === "validate"
+        ? "Validation or result reporting failed; no trustworthy validation result was produced. " +
+          "lax-database was not changed."
+        : "The workflow failed before publication completed; no lax-database commit was created by this run.";
   await control.postIssueComment(
     number,
     appendWorkflowRun(`${summary}\n\n${marker}`, run, "failure"),

@@ -9,10 +9,10 @@
 // The three deviations (documented in the emitted workflow's own header):
 //   a. a workflow-level `env:` block pointing the repository constants from
 //      src/shared/constants.ts at the scratch repositories,
-//   b. the three `actions/create-github-app-token` mint steps deleted and
+//   b. every `actions/create-github-app-token` mint step deleted and each of
 //      their consumers switched to `${{ secrets.LAX_SCRATCH_TOKEN }}`, an
 //      environment-scoped personal token that mirrors the production posture
-//      (present only inside the two protected environments),
+//      (present only inside the protected publish environment),
 //   c. ci.yml / release.yml dropped from the pushed tree (done by
 //      setup.sh, not here — this script only rewrites submission.yml).
 //
@@ -28,7 +28,8 @@ import YAML from "yaml";
 
 const MINT_ACTION = "actions/create-github-app-token";
 const SECRET_EXPRESSION = "${{ secrets.LAX_SCRATCH_TOKEN }}";
-const ENVIRONMENTS = ["lax-database-publish", "lax-website-dispatch"];
+const MINT_STEPS = 4;
+const ENVIRONMENTS = ["lax-database-publish"];
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "..", "..");
@@ -73,8 +74,8 @@ export function patchWorkflow(source, owner, prefix) {
 
   let text = lines.join("\n");
   let consumers = 0;
-  // Two jobs happen to use the same step id; each consumer sits in the job
-  // whose mint step it named, so the textual replacement stays exact.
+  // Both publishing jobs use the same two step ids; each consumer sits in the
+  // job whose mint step it named, so the textual replacement stays exact.
   for (const id of new Set(ids)) {
     const expression = `\${{ steps.${id}.outputs.token }}`;
     const occurrences = text.split(expression).length - 1;
@@ -136,7 +137,10 @@ function removeMintSteps(lines) {
       result.splice(start, 1);
     }
   }
-  assume(ids.length === 3, `expected 3 ${MINT_ACTION} steps, found ${ids.length}`);
+  assume(
+    ids.length === MINT_STEPS,
+    `expected ${MINT_STEPS} ${MINT_ACTION} steps, found ${ids.length}`,
+  );
   return { lines: result, ids };
 }
 
@@ -151,10 +155,10 @@ function header(repositories) {
     `#      constants at ${repositories.control}, ${repositories.database},`,
     `#      ${repositories.website} (standing in for lax-website), and`,
     `#      ${repositories.captures}.`,
-    "#   b. the three actions/create-github-app-token mint steps are deleted;",
+    `#   b. the ${MINT_STEPS} actions/create-github-app-token mint steps are deleted;`,
     "#      their consumers now read the environment-scoped personal token",
-    "#      secrets.LAX_SCRATCH_TOKEN, which exists only inside the two",
-    `#      protected environments (${ENVIRONMENTS.join(", ")}).`,
+    "#      secrets.LAX_SCRATCH_TOKEN, which exists only inside the protected",
+    `#      environment(s) ${ENVIRONMENTS.join(", ")}.`,
     "#   c. ci.yml and release.yml are absent from the pushed tree.",
     "#",
     "# Everything else is byte-identical to the tree this was derived from.",
@@ -195,14 +199,15 @@ function verify(text, body, repositories, mintCount) {
     "the env: block did not survive parsing",
   );
   const jobs = parsed.jobs ?? {};
+  // One env value per removed mint step; a merged job reads two of them.
   const consumers = Object.values(jobs).flatMap((job) =>
-    (job.steps ?? []).filter((step) =>
-      Object.values(step.env ?? {}).includes(SECRET_EXPRESSION),
+    (job.steps ?? []).flatMap((step) =>
+      Object.values(step.env ?? {}).filter((value) => value === SECRET_EXPRESSION),
     ),
   );
   assume(
     consumers.length === mintCount,
-    `expected ${mintCount} steps to read the scratch token, found ${consumers.length}`,
+    `expected ${mintCount} token references, found ${consumers.length}`,
   );
   // The protected environments still gate every job that touches the token.
   for (const environment of ENVIRONMENTS) {

@@ -39,7 +39,7 @@ describe("the rehearsal workflow patch", () => {
     // would fail the run, and a surviving key reference would be a live
     // production credential name in a disposable public repository.
     expect(source).toContain("actions/create-github-app-token");
-    expect(source.match(/actions\/create-github-app-token/gu)).toHaveLength(3);
+    expect(source.match(/actions\/create-github-app-token/gu)).toHaveLength(4);
     // The header prose names the removed action; the workflow body must not.
     const body = patched.slice(patched.indexOf("name: submission control plane"));
     expect(body).not.toContain("actions/create-github-app-token");
@@ -53,18 +53,42 @@ describe("the rehearsal workflow patch", () => {
     }
   });
 
-  it("switches exactly the three consuming steps to the scratch token", () => {
-    // One consumer per removed mint step, each still behind its protected
+  it("switches every consuming env value to the scratch token", () => {
+    // One env value per removed mint step — the merged publishing jobs read
+    // two each — and every one of them still sits behind the protected
     // environment: the token placement mirrors the production posture.
     const consumers = Object.entries(parsed.jobs).flatMap(([job, definition]) =>
-      (definition.steps ?? [])
-        .filter((step) => Object.values(step.env ?? {}).includes("${{ secrets.LAX_SCRATCH_TOKEN }}"))
-        .map((step) => [job, step.name, definition.environment] as const),
+      (definition.steps ?? []).flatMap((step) =>
+        Object.entries(step.env ?? {})
+          .filter(([, value]) => value === "${{ secrets.LAX_SCRATCH_TOKEN }}")
+          .map(([name]) => [job, step.name, name, definition.environment] as const),
+      ),
     );
     expect(consumers).toEqual([
-      ["publish-submit", "Promote capture and publish trusted submit", "lax-database-publish"],
-      ["publish", "Revalidate and publish lax-database", "lax-database-publish"],
-      ["website", "Dispatch Website and report the final result", "lax-website-dispatch"],
+      [
+        "publish-submit",
+        "Promote capture, publish trusted submit, and dispatch Website",
+        "LAX_DATABASE_TOKEN",
+        "lax-database-publish",
+      ],
+      [
+        "publish-submit",
+        "Promote capture, publish trusted submit, and dispatch Website",
+        "LAX_WEBSITE_TOKEN",
+        "lax-database-publish",
+      ],
+      [
+        "publish",
+        "Revalidate, publish lax-database, and dispatch Website",
+        "LAX_DATABASE_TOKEN",
+        "lax-database-publish",
+      ],
+      [
+        "publish",
+        "Revalidate, publish lax-database, and dispatch Website",
+        "LAX_WEBSITE_TOKEN",
+        "lax-database-publish",
+      ],
     ]);
     // No step id survives pointing at a mint step that no longer exists.
     expect(patched).not.toContain("steps.database-token.outputs.token");
@@ -106,6 +130,6 @@ describe("the rehearsal workflow patch", () => {
     } catch (error) {
       message = `${(error as { stderr?: string }).stderr ?? ""}${(error as Error).message}`;
     }
-    expect(message).toMatch(/drifted: expected 3 .* steps, found 2/u);
+    expect(message).toMatch(/drifted: expected 4 .* steps, found 3/u);
   });
 });

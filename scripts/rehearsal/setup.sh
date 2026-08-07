@@ -109,9 +109,9 @@ REPOSITORY_ID="$(gh api "repos/$CONTROL" --jq .id)"
 gh variable set LAX_REPOSITORY_ID --repo "$CONTROL" --body "$REPOSITORY_ID" >/dev/null
 echo "LAX_REPOSITORY_ID=$REPOSITORY_ID"
 
-# The two protected environments the workflow jobs declare. LAX_SCRATCH_TOKEN
-# lives only inside them, mirroring the production credential posture.
-for environment in lax-database-publish lax-website-dispatch; do
+# The protected environment the publishing jobs declare. LAX_SCRATCH_TOKEN
+# lives only inside it, mirroring the production credential posture.
+for environment in lax-database-publish; do
   gh api --method PUT "repos/$CONTROL/environments/$environment" --silent
   echo "environment $environment created"
 done
@@ -240,12 +240,11 @@ cat <<EOF
 Create a short-lived personal access token that can write contents to
 $DATABASE and send it a repository dispatch (a classic token with the "repo"
 scope, or a fine-grained token limited to $DATABASE with Contents write).
-Then put it in BOTH environments, and nowhere else:
+Then put it in the publishing environment, and nowhere else:
 
   gh secret set LAX_SCRATCH_TOKEN --repo $CONTROL --env lax-database-publish
-  gh secret set LAX_SCRATCH_TOKEN --repo $CONTROL --env lax-website-dispatch
 
-(each command prompts for the value; do not pass it on the command line)
+(the command prompts for the value; do not pass it on the command line)
 
 == Round trips
 

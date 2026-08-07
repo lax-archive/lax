@@ -53,9 +53,9 @@ There is no checked-in fork of `submission.yml`. `setup.sh` calls
 - **(a)** a workflow-level `env:` block pointing `LAX_CONTROL_REPOSITORY`,
   `LAX_DATABASE_REPOSITORY`, `LAX_WEBSITE_REPOSITORY`, and
   `LAX_CAPTURES_REPOSITORY` at the scratch repositories;
-- **(b)** the three `actions/create-github-app-token` mint steps deleted, and
-  each consuming step's token env switched to
-  `${{ secrets.LAX_SCRATCH_TOKEN }}`;
+- **(b)** every `actions/create-github-app-token` mint step deleted, and each
+  consuming token env switched to `${{ secrets.LAX_SCRATCH_TOKEN }}` (the
+  merged publishing jobs read two of them each);
 - **(c)** `ci.yml` and `release.yml` dropped from the pushed tree.
 
 Everything else is byte-identical, and the generated file carries a header
@@ -69,19 +69,17 @@ build rather than the drill.
 
 ## The credential step
 
-`setup.sh` never places a token. It prints the two commands and stops:
+`setup.sh` never places a token. It prints the command and stops:
 
 ```sh
 gh secret set LAX_SCRATCH_TOKEN --repo <owner>/<prefix>-control --env lax-database-publish
-gh secret set LAX_SCRATCH_TOKEN --repo <owner>/<prefix>-control --env lax-website-dispatch
 ```
 
 Use a short-lived personal token that can write contents to, and dispatch to,
-the scratch database repository — nothing more. It belongs in those two
-environment scopes and nowhere else: that placement is what mirrors the
-production posture, where the App keys exist only inside
-`lax-database-publish` and `lax-website-dispatch`. Rotate it at teardown; a
-deleted environment does not revoke a token.
+the scratch database repository — nothing more. It belongs in that environment
+scope and nowhere else: that placement is what mirrors the production posture,
+where both App keys exist only inside `lax-database-publish`. Rotate it at
+teardown; a deleted environment does not revoke a token.
 
 ## Expected evidence
 
@@ -90,21 +88,22 @@ miss. The narrative evidence — comment markers, database contents, wall times
 — is in `history/live-rehearsal.md` "What ran"; check it by eye on the run
 pages the script prints.
 
-1. **Issue opened → stub publication.** `route`, `publish`, `website` succeed.
-   Three stub files appear in the database repo by compare-and-swap, the
-   staging ref is cleaned up, the preview and result comments carry their
-   correlation markers, and the dispatch reaches the receiver. ≈ 1 min.
-2. **`/lax submit` → validation and publication.** `route`, `Validate`,
-   `Validation result`, `publish-submit`, `website` succeed. The trusted
-   publisher re-validates the artifacts credential-free, pushes the capture to
-   ghcr, advances the database, and synchronizes the issue title. ≈ 5 min
+1. **Issue opened → stub publication.** `route` and `publish` succeed. Three
+   stub files appear in the database repo by compare-and-swap, the staging ref
+   is cleaned up, the preview and result comments carry their correlation
+   markers, and the dispatch — sent by the `publish` job itself — reaches the
+   receiver. ≈ 1 min.
+2. **`/lax submit` → validation and publication.** `route`, `Validate`, and
+   `publish-submit` succeed. The trusted publisher re-validates the artifacts
+   credential-free, pushes the capture to ghcr, advances the database,
+   synchronizes the issue title, and dispatches the rebuild. ≈ 5 min
    author-visible; the cold run also provisions elan, the toolchain, and
    mathlib, and saves the Actions cache before untrusted code runs.
-3. **`/lax register`.** `route`, `publish`, `website` succeed; the record
-   flips to `registered`.
+3. **`/lax register`.** `route` and `publish` succeed; the record flips to
+   `registered`.
 4. **Negative probe.** A second `/lax submit` after registration must be
-   rejected: the `route` job fails, no `Validate`/`publish`/`publish-submit`/
-   `website` job succeeds, no database commit is made, and a comment saying
+   rejected: the `route` job fails, no `Validate`/`publish`/`publish-submit`
+   job succeeds, no database commit is made, and a comment saying
    `lax-1 is registered and cannot be changed` appears on the issue.
 
 Two things worth confirming by eye at go-live, from the rehearsal's lessons:

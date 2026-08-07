@@ -21,6 +21,8 @@ const workflowFiles = fs
   .readdirSync(workflowsDirectory)
   .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"));
 const workflow = fs.readFileSync(new URL("../../.github/workflows/submission.yml", import.meta.url), "utf8");
+const setupActionPath = new URL("../../.github/actions/setup-lax/action.yml", import.meta.url);
+const setupAction = fs.readFileSync(setupActionPath, "utf8");
 const ciWorkflow = fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 const releaseWorkflow = fs.readFileSync(
   new URL("../../.github/workflows/release.yml", import.meta.url),
@@ -66,15 +68,19 @@ const HOST_CACHE_PATHS = ["~/.elan", "~/.lax/warm", "~/.lax/tools"];
 // ---------------------------------------------------------------------------
 describe("GitHub Actions dependency pins", () => {
   // A mutable tag would let a compromised action publish into trusted jobs.
-  it.each(workflowFiles)("pins every external action in %s to a full commit SHA", (file) => {
-    const definition = fs.readFileSync(new URL(file, workflowsDirectory), "utf8");
+  // The local composite action is linted with the workflows: it runs inside
+  // every job, including the privileged ones.
+  const pinned = [...workflowFiles.map((file) => [file, String(new URL(file, workflowsDirectory))] as const),
+    ["actions/setup-lax/action.yml", String(setupActionPath)] as const];
+  it.each(pinned)("pins every external action in %s to a full commit SHA", (_label, path) => {
+    const definition = fs.readFileSync(new URL(path), "utf8");
     const references = [...definition.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/gmu)].map(
       (match) => match[1],
     );
 
     for (const reference of references) {
       if (reference.startsWith("./")) continue;
-      expect(reference, `${file}: ${reference}`).toMatch(/^[^@\s]+@[0-9a-f]{40}$/u);
+      expect(reference, `${path}: ${reference}`).toMatch(/^[^@\s]+@[0-9a-f]{40}$/u);
     }
   });
 });
@@ -115,16 +121,15 @@ describe("submission workflow wiring", () => {
 
   it("collapses validation into exactly one job", () => {
     // The single-job pipeline is the reviewed architecture; a new job name
-    // appearing here must be a conscious decision, not drift.
+    // appearing here must be a conscious decision, not drift. The success path
+    // is three hops: route → validate → publish-submit.
     expect(Object.keys(jobs).sort()).toEqual([
-      "precheck",
       "publish",
       "publish-submit",
+      "report-validation-failure",
       "report-workflow-failure",
       "route",
       "validate",
-      "validation-result",
-      "website",
     ]);
     expect(jobs.validate.needs).toBe("route");
     expect(jobs.validate.if).toBe("needs.route.outputs.operation == 'validate'");
@@ -142,16 +147,61 @@ describe("submission workflow wiring", () => {
   // -------------------------------------------------------------------------
   // Untrusted-input gate before any checkout.
   // -------------------------------------------------------------------------
-  it("gates unrelated comments before checkout or dependency installation", () => {
-    // The precheck must stay checkout-free: it runs on every issue comment on
-    // the repository, so nothing may be installed or executed from the tree.
-    // Its four-character prefix test is inline by necessity — there is no
-    // built tree to dispatch into before the first checkout.
-    const precheck = workflow.slice(workflow.indexOf("  precheck:"), workflow.indexOf("  route:"));
-    expect(precheck).not.toContain("actions/checkout");
-    expect(precheck).toContain('event.comment.body.slice(0, 4) === "/lax"');
-    expect(jobs.route.needs).toBe("precheck");
-    expect(jobs.route.if).toBe("needs.precheck.outputs.should_run == 'true'");
+  it("gates unrelated comments before a runner is allocated", () => {
+    // The gate is a job-level condition, not a job: an unrelated comment on
+    // this repository must not start a runner at all. It is evaluated as data
+    // — no comment text is ever interpolated into a `run:` script — and for
+    // `issues` events the absent comment body makes the prefix test false.
+    expect(jobs.route.needs).toBeUndefined();
+    expect(jobs.route.if).toBe(
+      "github.event_name == 'issues' || startsWith(github.event.comment.body, '/lax')",
+    );
+    expect(workflow).not.toContain("precheck");
+    expect(workflow).not.toContain("should_run");
+  });
+
+  // -------------------------------------------------------------------------
+  // Shared setup: one composite action, one per-commit cache, one writer.
+  // -------------------------------------------------------------------------
+  it("checks out and then sets up through the local composite action in every job", () => {
+    // A local action is only resolvable after the repository is on disk, so
+    // checkout cannot move into it; everything after it can.
+    for (const [name, job] of Object.entries(jobs)) {
+      const checkout = job.steps.findIndex((step) => step.uses?.startsWith("actions/checkout"));
+      const setup = job.steps.findIndex((step) => step.uses === "./.github/actions/setup-lax");
+      expect(checkout, name).toBe(0);
+      expect(job.steps[checkout]?.with, name).toMatchObject({ "persist-credentials": false });
+      expect(setup, name).toBe(1);
+      // The boilerplate the action replaced must not creep back in.
+      expect(job.steps.some((step) => step.run === "npm ci"), name).toBe(false);
+      expect(job.steps.some((step) => step.run === "npm run build"), name).toBe(false);
+    }
+    // Exactly one job saves the shared entry: route, which precedes every
+    // other job, so nothing else can claim the key first.
+    const savers = Object.entries(jobs).filter(
+      ([, job]) => job.steps[1]?.with?.save === "true",
+    );
+    expect(savers.map(([name]) => name)).toEqual(["route"]);
+  });
+
+  it("keys the shared dist cache on the commit, with no prefix fallback", () => {
+    // Trust: a restore-keys prefix could match an entry saved from the
+    // validate VM (its cache token is reachable from an escaped process) and
+    // a privileged job would then execute those bytes. Exact per-commit keys
+    // plus immutable cache entries mean route's bytes are the only ones a
+    // publish job can ever restore.
+    const action = YAML.parse(setupAction) as {
+      runs: { steps: Array<{ uses?: string; if?: string; with?: Record<string, unknown> }> };
+    };
+    const cacheSteps = action.runs.steps.filter((step) => step.uses?.startsWith("actions/cache/"));
+    expect(cacheSteps).toHaveLength(2);
+    for (const step of cacheSteps) {
+      expect(step.with?.key).toBe("lax-dist-${{ github.sha }}");
+      expect(step.with?.["restore-keys"]).toBeUndefined();
+      for (const cached of ["node_modules", "dist"]) expect(step.with?.path).toContain(cached);
+    }
+    expect(setupAction).not.toMatch(/^\s*restore-keys:/mu);
+    expect(cacheSteps.at(-1)?.if).toContain("inputs.save == 'true'");
   });
 
   // -------------------------------------------------------------------------
@@ -219,7 +269,7 @@ describe("submission workflow wiring", () => {
     }
     expect(workflow.match(/upload-artifact/gu)).toHaveLength(1);
     // Every download must name the same artifact the validate job uploaded.
-    for (const name of ["validation-result", "publish-submit"]) {
+    for (const name of ["report-validation-failure", "publish-submit"]) {
       const download = jobs[name].steps.find((step) => step.uses?.startsWith("actions/download-artifact"));
       expect(download?.with?.name, name).toBe("submission-validation-${{ github.event.issue.number }}");
       expect(download?.with?.path, name).toBe(".build/submission-validation");
@@ -229,38 +279,48 @@ describe("submission workflow wiring", () => {
   // -------------------------------------------------------------------------
   // Join semantics: success and failure stay on one visible DAG path.
   // -------------------------------------------------------------------------
-  it("joins the validation result before reporting or publishing", () => {
-    // validation-result is the single join between the untrusted validate job
-    // and everything privileged; publish-submit must run only behind it.
-    expect(jobs["validation-result"].needs).toEqual(["route", "validate"]);
-    expect(jobs["validation-result"].if).toBe(
-      "always() && needs.route.outputs.operation == 'validate'",
-    );
-    expect(jobs["validation-result"].permissions).toEqual({ contents: "read", issues: "write" });
-    const download = jobs["validation-result"].steps.find((step) =>
+  it("takes the validation verdict from the validate job's own result", () => {
+    // run.js exits 0 only when the full report is ok, so the job result is the
+    // verdict; success unlocks publication and failure goes to the reporter,
+    // with no bridging job and no output to forge in between. The publisher
+    // still re-parses the report before it mints anything.
+    expect(jobs["publish-submit"].needs).toEqual(["route", "validate"]);
+    expect(jobs["publish-submit"].if).toContain("needs.route.outputs.operation == 'validate'");
+    expect(jobs["publish-submit"].if).toContain("needs.validate.result == 'success'");
+    expect(workflow).not.toContain("should_publish=");
+    expect(workflow).not.toContain("validation-result");
+
+    const reporter = jobs["report-validation-failure"];
+    expect(reporter.needs).toEqual(["route", "validate"]);
+    // always(), so a failed validate still reports; the failure test keeps it
+    // off skipped and cancelled runs.
+    expect(reporter.if).toContain("always()");
+    expect(reporter.if).toContain("needs.route.outputs.operation == 'validate'");
+    expect(reporter.if).toContain("needs.validate.result == 'failure'");
+    expect(reporter.permissions).toEqual({ contents: "read", issues: "write" });
+    const download = reporter.steps.find((step) =>
       step.uses?.startsWith("actions/download-artifact"),
     );
     // A failed validate job may have uploaded nothing; reporting still runs.
     expect(download?.["continue-on-error"]).toBe(true);
-    expect(jobs["publish-submit"].needs).toEqual(["route", "validation-result"]);
-    expect(jobs["publish-submit"].if).toContain(
-      "needs.validation-result.outputs.should_publish == 'true'",
-    );
+    expect(reporter.steps.at(-1)?.run).toBe("node dist/workflows/submission.js report-validation");
   });
 
   // -------------------------------------------------------------------------
   // Credential separation: each App key scoped to its own environment/job.
   // -------------------------------------------------------------------------
-  it("checks submit artifacts and fresh state before minting the database token", () => {
+  it("checks submit artifacts and fresh state before minting any token", () => {
     // Trust rule 2: the credential-free preflight step must complete before
-    // the App key is touched, so a forged artifact can never reach a token.
+    // either App key is touched, so a forged artifact can never reach a token.
     const submit = workflow.slice(workflow.indexOf("  publish-submit:"), workflow.indexOf("  publish:"));
     const prepare = submit.indexOf("Parse artifacts and revalidate current state");
     const mint = submit.indexOf("Mint lax-database token");
-    const publish = submit.indexOf("Promote capture and publish trusted submit");
+    const website = submit.indexOf("Mint lax-website dispatch token");
+    const publish = submit.indexOf("Promote capture, publish trusted submit, and dispatch Website");
     expect(prepare).toBeGreaterThan(0);
     expect(prepare).toBeLessThan(mint);
-    expect(mint).toBeLessThan(publish);
+    expect(mint).toBeLessThan(website);
+    expect(website).toBeLessThan(publish);
     expect(submit).toContain("steps.prepare-submit.outputs.should_publish == 'true'");
     expect(submit).toContain("environment: lax-database-publish");
     // Only the trusted submit publisher pushes captures to ghcr, with the
@@ -273,25 +333,38 @@ describe("submission workflow wiring", () => {
     expect(jobs.publish.permissions).toEqual({ contents: "read", issues: "write" });
   });
 
-  it("separates database publication from Website credential creation", () => {
-    // Each job mints only its own App token inside its own protected
-    // environment; a cross-reference would collapse the two trust domains.
-    const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  # Website"));
-    const website = workflow.slice(workflow.indexOf("  website:"), workflow.indexOf("  # TypeScript reports"));
-    expect(publish).toContain("environment: lax-database-publish");
-    expect(publish).toContain("vars.LAX_DATABASE_APP_ID");
-    expect(publish).toContain("secrets.LAX_DATABASE_APP_PRIVATE_KEY");
-    expect(publish).toContain("permission-administration: read");
-    expect(publish).not.toContain("Mint lax-website dispatch token");
-    expect(publish).not.toContain("LAX_WEBSITE_TOKEN");
-    expect(website).toContain("environment: lax-website-dispatch");
-    expect(website).toContain("vars.LAX_WEBSITE_APP_ID");
-    expect(website).toContain("secrets.LAX_WEBSITE_APP_PRIVATE_KEY");
-    expect(website).not.toContain("LAX_DATABASE_APP_PRIVATE_KEY");
-    // Website credentials exist only after lax-database advanced.
-    expect(jobs.website.needs).toEqual(["route", "publish", "publish-submit"]);
-    expect(jobs.website.if).toContain("needs.publish.outputs.archive_commit != ''");
-    expect(jobs.website.if).toContain("needs.publish-submit.outputs.archive_commit != ''");
+  it("keeps both publisher keys in the publishing jobs and out of every other one", () => {
+    // The two App keys deliberately coexist (Jan, 2026-08-07): the Website
+    // rebuild is dispatched by the job that owns the commit, in the same
+    // process, so no archive_commit ever crosses a job boundary. The invariant
+    // that survives is trust rule 1 — no job holding an App key checks out or
+    // executes submission code.
+    for (const name of ["publish", "publish-submit"]) {
+      const job = jobs[name]!;
+      const steps = job.steps.filter((step) =>
+        step.uses?.startsWith("actions/create-github-app-token"),
+      );
+      expect(steps.map((step) => step.with?.repositories), name).toEqual([
+        "lax-database",
+        "lax-website",
+      ]);
+      expect(steps[0]?.with?.["private-key"], name).toContain("LAX_DATABASE_APP_PRIVATE_KEY");
+      expect(steps[0]?.with?.["permission-administration"], name).toBe("read");
+      expect(steps[1]?.with?.["private-key"], name).toContain("LAX_WEBSITE_APP_PRIVATE_KEY");
+      // One environment now owns both keys; the old website environment is gone.
+      expect(job.environment, name).toBe("lax-database-publish");
+      const handler = job.steps.at(-1);
+      expect(Object.keys(handler?.env ?? {}), name).toContain("LAX_DATABASE_TOKEN");
+      expect(Object.keys(handler?.env ?? {}), name).toContain("LAX_WEBSITE_TOKEN");
+    }
+    expect(workflow).not.toContain("lax-website-dispatch");
+    expect(workflow).not.toContain("archive_commit");
+    expect(workflow).not.toContain("title_sync_error");
+    // No unprivileged job may reference either key.
+    for (const [name, job] of Object.entries(jobs)) {
+      if (name === "publish" || name === "publish-submit") continue;
+      expect(JSON.stringify(job), name).not.toContain("secrets.");
+    }
     // The one-key-per-workflow-secret rule: no legacy combined App secrets.
     expect(workflow).not.toContain("secrets.LAX_APP_ID");
     expect(workflow).not.toContain("secrets.LAX_APP_PRIVATE_KEY");
@@ -305,39 +378,50 @@ describe("submission workflow wiring", () => {
     // submission-entry.test.ts); YAML only wires the job in after every
     // failure-capable branch and hands it the outputs the summary needs.
     const fallback = jobs["report-workflow-failure"];
+    // validate is deliberately absent: a failed validate job is
+    // report-validation-failure's case, and a second dependency here would
+    // double-post on it.
     expect(fallback.needs).toEqual([
-      "precheck",
       "route",
       "publish",
       "publish-submit",
-      "website",
-      "validation-result",
+      "report-validation-failure",
     ]);
     expect(fallback.if).toContain("always()");
     for (const dependency of fallback.needs as string[]) {
       expect(fallback.if).toContain(`needs.${dependency}.result == 'failure'`);
     }
+    expect(fallback.if).not.toContain("needs.validate.result");
     expect(fallback.permissions).toEqual({ contents: "read", issues: "write" });
     const report = fallback.steps.at(-1);
     expect(report?.run).toBe("node dist/workflows/submission.js report-failure");
+    // Only the two publishing jobs can leave a lax-database commit behind, and
+    // the commit itself is no longer a job output for the reporter to read.
     expect(Object.keys(report?.env ?? {}).sort()).toEqual([
       "ACTION",
-      "ARCHIVE_COMMIT",
       "GITHUB_TOKEN",
       "LAX_REPOSITORY_ID",
       "OPERATION",
-      "VALIDATION_RESULT",
+      "PUBLICATION_FAILED",
     ]);
+    expect(report?.env?.PUBLICATION_FAILED).toContain("needs.publish.result == 'failure'");
+    expect(report?.env?.PUBLICATION_FAILED).toContain("needs.publish-submit.result == 'failure'");
     // No inline JS anywhere: github-script was the last untyped logic host.
     expect(workflow).not.toContain("actions/github-script");
   });
 
   it("declares the validation branch before the shorter publish branch", () => {
     // Declaration order drives GitHub's automatic DAG layout; keep the long
-    // validation row on top so run pages stay readable.
-    expect(workflow.indexOf("  validate:")).toBeLessThan(workflow.indexOf("  publish:"));
+    // validation row on top and the failure reporters last so run pages stay
+    // readable.
+    expect(workflow.indexOf("  validate:")).toBeLessThan(workflow.indexOf("  publish-submit:"));
     expect(workflow.indexOf("  publish-submit:")).toBeLessThan(workflow.indexOf("  publish:"));
-    expect(workflow.indexOf("  publish:")).toBeLessThan(workflow.indexOf("  website:"));
+    expect(workflow.indexOf("  publish:")).toBeLessThan(
+      workflow.indexOf("  report-validation-failure:"),
+    );
+    expect(workflow.indexOf("  report-validation-failure:")).toBeLessThan(
+      workflow.indexOf("  report-workflow-failure:"),
+    );
   });
 });
 
