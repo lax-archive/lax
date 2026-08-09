@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { doctor } from "../../src/cli/doctor.js";
 import { recordSubmission } from "../../src/cli/registry.js";
@@ -12,6 +13,8 @@ import {
   warmReady,
 } from "../../src/submission-validation/host/warmstore.js";
 import { removeTree } from "../support/tmp.js";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** The pin as doctor's rows name it: `v4.30.0`, not the full toolchain id. */
 const TOOLCHAIN_VERSION = LEAN_TOOLCHAIN.slice(LEAN_TOOLCHAIN.indexOf(":") + 1);
@@ -53,6 +56,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
   removeTree(home);
   for (const root of seeded.splice(0)) removeTree(root);
+  if (planted !== undefined) {
+    fs.rmSync(planted, { recursive: true, force: true });
+    planted = undefined;
+  }
   if (previous.home === undefined) delete process.env.LAX_HOME;
   else process.env.LAX_HOME = previous.home;
   if (previous.database === undefined) delete process.env.LAX_DATABASE_URL;
@@ -114,6 +121,28 @@ function provision(): void {
     { mode: 0o755 },
   );
   fs.mkdirSync(path.join(home, "lax-database", ".git"), { recursive: true });
+}
+
+/**
+ * The Website renderer bundle doctor looks for.
+ *
+ * A fresh checkout does not have one — `npm run page-builder:fetch` puts it
+ * here, and CI deliberately runs that only *after* `npm test`, because
+ * `npm run build` would wipe it. The two tests below are about how a healthy
+ * group collapses, not about the bundle, so they seed a stand-in when the
+ * machine has none and take away exactly what they made.
+ */
+let planted: string | undefined;
+function seedPageBuilder(): void {
+  const entry = path.join(
+    repoRoot, ".build", "page-builder", "source", "dist", "sitegen", "generate.js",
+  );
+  if (fs.existsSync(entry)) return;
+  let outermost = path.dirname(entry);
+  while (!fs.existsSync(path.dirname(outermost))) outermost = path.dirname(outermost);
+  planted = outermost;
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  fs.writeFileSync(entry, "");
 }
 
 /** A warm store doctor reads as ready, for the tests that are about some
@@ -186,7 +215,10 @@ describe("lax doctor", () => {
     await doctor();
 
     const lines = printed(log);
-    const first = lines.findIndex((line) => /^ {2}✓ Lax /u.test(line));
+    // Any settled row: which ones this machine produces depends on what it has
+    // installed, and the claim here is only that the first arrives long before
+    // the last.
+    const first = lines.findIndex((line) => /^ {2}[✓!✗] /u.test(line));
     expect(first).toBeGreaterThanOrEqual(0);
     expect(at.at(-1)! - at[first]!).toBeGreaterThan(500);
   });
@@ -214,6 +246,7 @@ describe("lax doctor", () => {
     // platform, node, npm and the page renderer are one question from the
     // author's side — is the install healthy — so while they all pass they cost
     // one row, and it carries the version a bug report needs.
+    seedPageBuilder();
     const { log } = quiet();
 
     await doctor();
@@ -390,6 +423,7 @@ describe("lax doctor", () => {
     // The only report with no rows to do anything about, and the only one that
     // exits 0: eight ✓ and one line.
     provision();
+    seedPageBuilder();
     const warm = warmDir();
     fs.mkdirSync(path.join(warm, ".lake", "packages"), { recursive: true });
     fs.writeFileSync(path.join(warm, "lake-manifest.json"), "{}\n");
