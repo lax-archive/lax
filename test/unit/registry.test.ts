@@ -12,24 +12,40 @@ import { recordSubmission, registeredSubmissions, registryFile } from "../../src
 import { provisionScaffold, scaffoldSubmission } from "../../src/cli/scaffold.js";
 import { markWarmReady, warmDir } from "../../src/submission-validation/host/warmstore.js";
 import { MATHLIB_REV, MATHLIB_URL } from "../../src/submission-validation/pins.js";
+import { removeTree } from "../support/tmp.js";
 
-const previous = { home: process.env.LAX_HOME, token: process.env.LAX_GITHUB_APP_USER_TOKEN };
+const previous = {
+  home: process.env.LAX_HOME,
+  token: process.env.LAX_GITHUB_APP_USER_TOKEN,
+  elan: process.env.ELAN_HOME,
+};
 let home: string;
 
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "lax-registry-"));
   process.env.LAX_HOME = home;
+  // These tests are about a submission's local health, not about provisioning,
+  // but `lax doctor` provisions: it installs elan, has elan install the pinned
+  // toolchain, and then builds the warm store with it. Left alone it would do
+  // all three here — fetching a real elan into this temp home, and rebuilding
+  // the deleted-store fixture below out from under its own assertion, sealed
+  // read-only so only root could clean it up. An empty ELAN_HOME plus an
+  // offline fetch stops the chain at its first link, which is also what makes
+  // these unit tests offline.
+  process.env.ELAN_HOME = path.join(home, "elan");
+  vi.stubGlobal("fetch", () => Promise.reject(new Error("offline")));
   delete process.env.LAX_GITHUB_APP_USER_TOKEN;
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
-  // markWarmReady seals the warm fixture root read-only; reopen for cleanup
-  const warm = warmDir();
-  if (fs.existsSync(warm)) fs.chmodSync(warm, 0o755);
-  fs.rmSync(home, { recursive: true, force: true });
+  vi.unstubAllGlobals();
+  // the warm fixture is sealed read-only, root and children alike
+  removeTree(home);
   if (previous.home === undefined) delete process.env.LAX_HOME;
   else process.env.LAX_HOME = previous.home;
+  if (previous.elan === undefined) delete process.env.ELAN_HOME;
+  else process.env.ELAN_HOME = previous.elan;
   if (previous.token !== undefined) process.env.LAX_GITHUB_APP_USER_TOKEN = previous.token;
 });
 
@@ -178,5 +194,10 @@ describe("lax doctor submission checks", () => {
     const report = await doctorReport();
     expect(report).toMatch(/! lax-42\s/u);
     expect(report).toContain("point at a missing mathlib store");
+    // The fixture has to survive the report that reads it: doctor provisions a
+    // missing store, and with a toolchain in reach it would rebuild this one
+    // mid-test — leaving the override valid, the assertion above false, and a
+    // sealed tree in the temp home that only root can delete.
+    expect(fs.existsSync(warm)).toBe(false);
   });
 });

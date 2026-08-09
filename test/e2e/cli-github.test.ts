@@ -24,6 +24,8 @@ import {
   upsertCommandContext,
 } from "../../src/shared/workflow-comments.js";
 import { GITHUB_APP_CLIENT_ID } from "../../src/cli/github-app.js";
+import { linkSharedDirs } from "../support/host.js";
+import { removeTree } from "../support/tmp.js";
 import {
   artifactZip,
   FAKE_USER_CODE,
@@ -78,7 +80,11 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
 
   beforeAll(async () => {
     github = await startFakeGitHub({ pendingPolls: 1, users: "alice:1" });
-    home = fs.mkdtempSync(path.join(os.tmpdir(), "lax-cli-github-"));
+    // Linked to the shared warm store, not bare: `lax doctor` runs in this
+    // home and now builds the store when it finds none, which would rebuild
+    // the whole workspace per run and seal it read-only inside the temp home
+    // (unremovable afterwards as any user but root).
+    home = linkSharedDirs(fs.mkdtempSync(path.join(os.tmpdir(), "lax-cli-github-")));
     // `lax doctor` brings the database checkout up to date, and the fake
     // GitHub does not speak git: without a remote of our own it would clone
     // the real lax-database over the network into this shared home, which the
@@ -93,7 +99,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
 
   afterAll(async () => {
     await github.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    removeTree(home);
   });
 
   it("completes the device-flow login and stores mode-restricted App credentials", async () => {
@@ -151,6 +157,10 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     expect(result.stdout).toMatch(/Account\s+alice/u);
     expect(result.stdout).toContain(GITHUB_APP_CLIENT_ID);
     expect(result.stdout).toContain(path.join(home, "credentials.json"));
+    // The shared store satisfies the check outright; a home that made doctor
+    // build its own would say "built just now" and leave a sealed tree behind.
+    expect(result.stdout).toMatch(/✓ Mathlib\s+ready/u);
+    expect(result.stdout).not.toContain("built just now");
 
     const during = github.requests.slice(before);
     expect(during.find((r) => r.path === "/user")?.authorization).toBe(

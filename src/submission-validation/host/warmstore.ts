@@ -41,6 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { laxHome } from "../../shared/lax-home.js";
 import { LEAN_TOOLCHAIN, LEAN_VERSION, MATHLIB_REV, MATHLIB_URL } from "../pins.js";
+import { toolchainBinDir } from "./leanenv.js";
 import { run } from "./proc.js";
 
 /** The local warm workspace for the current archive pins, keyed by toolchain
@@ -77,6 +78,34 @@ export function markWarmReady(ws: string): void {
   fs.renameSync(staged, path.join(ws, READY_MARKER));
   fs.chmodSync(ws, 0o555);
 }
+
+/**
+ * The lake this build runs: the pinned toolchain's own binary when it is
+ * installed where lax puts it, and a PATH lookup only otherwise.
+ *
+ * elan is installed with `--no-modify-path` (setup.ts, doctor), so on a
+ * machine lax provisioned nothing lax needs is on the user's PATH — a bare
+ * `lake` there is either absent (the warm build then died with ENOENT, having
+ * passed a preflight that probed the installed binary) or some other elan's
+ * shim, which resolves `elan default` and would build the store against a
+ * toolchain no lax build ever uses. Same reasoning as doctor's `toolBinary()`;
+ * the fallback keeps a developer's own toolchain working. `ensureValidationHost`
+ * still prepends the toolchain to PATH for its own sake — the inspector build
+ * runs lake too — so this only ever agrees with it.
+ */
+function lakeBinary(): string {
+  const owned = path.join(toolchainBinDir(), "lake");
+  return fs.existsSync(owned) ? owned : "lake";
+}
+
+/**
+ * Coarse progress of a warm-store provision, for a caller that renders its
+ * own progress UI. `lax build` streams the store's transcript and wants the
+ * prose notices below; `lax doctor` draws a spinner row per check, where a
+ * console notice from underneath would scribble over the live block, so it
+ * takes these stages and relabels the row instead.
+ */
+export type WarmStage = "building" | "sealing";
 
 /**
  * Build a warm workspace at `ws`: scaffold the LaxWarm package requiring
@@ -117,11 +146,24 @@ name = "LaxWarm"
   // dependency lakefile's own `enableArtifactCache` would override this env
   // var; no lakefile in the pinned closure sets it, but a PIN BUMP MUST
   // RE-CHECK that before trusting the store.
-  const lakeEnv = { LAKE_ARTIFACT_CACHE: "false" };
+  const lakeEnv = {
+    LAKE_ARTIFACT_CACHE: "false",
+    // The pinned toolchain's bin dir first, for the tools lake's children look
+    // up by name rather than in the sysroot: mathlib's `cache` executable
+    // needs `leantar`, and without it on PATH `lake exe cache get` dies with
+    // "leantar not found in Lean sysroot" — a failure this reports as a
+    // network problem, sending the author off to debug the wrong thing.
+    // ensureValidationHost prepends the same dir to its own process
+    // environment (it also builds the inspector), but `lax build` and `lax
+    // doctor` do not, and on a machine lax provisioned nothing is on PATH:
+    // elan is installed with --no-modify-path.
+    PATH: `${toolchainBinDir()}${path.delimiter}${process.env.PATH ?? ""}`,
+  };
+  const lake = lakeBinary();
 
   // the fake mathlib of the test seam ships no `cache` executable
   if (!process.env.LAX_MATHLIB_URL) {
-    const cache = await run("lake", ["exe", "cache", "get"], ws, { echo, env: lakeEnv });
+    const cache = await run(lake, ["exe", "cache", "get"], ws, { echo, env: lakeEnv });
     if (cache.code !== 0) {
       if (!opts.fromSource) {
         console.error(
@@ -134,7 +176,7 @@ name = "LaxWarm"
       console.warn("warning: `lake exe cache get` failed; building mathlib from source (slow)");
     }
   }
-  const build = await run("lake", ["build"], ws, { echo, env: lakeEnv });
+  const build = await run(lake, ["build"], ws, { echo, env: lakeEnv });
   return build.code === 0;
 }
 
@@ -170,26 +212,33 @@ function makeWritable(dir: string): void {
  * the build failed — the caller reports and the next run retries.
  */
 export async function ensureLocalWarm(
-  opts: { fromSource?: boolean; echo?: boolean } = {},
+  opts: { fromSource?: boolean; echo?: boolean; onStage?: (stage: WarmStage) => void } = {},
 ): Promise<string | undefined> {
   const ws = warmDir();
+  // A caller that renders its own progress takes the stage and prints nothing
+  // of ours; everyone else gets the prose (see WarmStage).
+  const announce = (stage: WarmStage, prose: string): void => {
+    if (opts.onStage === undefined) console.log(prose);
+    else opts.onStage(stage);
+  };
   if (warmReady(ws)) {
     // stores sealed before directories joined the read-only pass (the
     // hardlink-farm era) are upgraded in place, once
     if ((fs.statSync(ws).mode & 0o200) !== 0) {
-      console.log("lax: making the shared store fully read-only (a few quiet minutes, once)");
+      announce("sealing", "lax: making the shared store fully read-only (a few quiet minutes, once)");
       makeStoreReadOnly(ws);
     }
     return ws;
   }
-  console.log(
+  announce(
+    "building",
     "lax: building the shared mathlib environment at " +
       `${ws}\n     (downloads gigabytes — once per machine, every submission shares it;\n` +
       "     expect roughly 10–30 minutes, including some long quiet stretches)",
   );
   if (!(await buildWarmWorkspace(ws, { echo: opts.echo ?? true, fromSource: opts.fromSource })))
     return undefined;
-  console.log("lax: making the shared store read-only (a few quiet minutes)");
+  announce("sealing", "lax: making the shared store read-only (a few quiet minutes)");
   makeStoreReadOnly(ws);
   markWarmReady(ws);
   return ws;

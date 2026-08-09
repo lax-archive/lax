@@ -262,14 +262,16 @@ dependents, and asks for a typed confirmation; scripts must pass `--yes`.
 `~/.lax/lax-database`. `lax register` likewise requires typed confirmation
 unless `--yes` is passed. `lax doctor` checks the tailored issue-workflow
 toolchain, running every check concurrently and spinning on a line per check
-until it answers; it also provisions what it safely can, installing elan and
+until it answers; it also provisions what it can, installing elan and
 the pinned Lean toolchain when they are missing and bringing the local
 `lax-database` checkout up to date rather than only reporting that they are
 stale. On a bare machine `npm i -g lax-archive && lax doctor` is therefore the
 whole setup: elan (the pinned bootstrap installer, into `~/.elan`, without
-touching your shell profile), the pinned toolchain under it, and the database
-clone. The one thing it still only reports is the warm mathlib workspace —
-gigabytes that the first `lax build` downloads once. `lax doctor --dry` is the
+touching your shell profile), the pinned toolchain under it, the warm mathlib
+workspace under `~/.lax/warm`, and the database clone. The store is the one
+check that can run for tens of minutes and download gigabytes, so it comes
+last, behind the toolchain that builds it, and says on its own line whether it
+is building or sealing. `lax doctor --dry` is the
 same report with none of that: it installs nothing, refreshes neither the
 database clone nor the login, writes nothing at all, and names each gap it
 declined to close. It still exits 1 on a ✗, so it works as a check in a script. `lax print spec`

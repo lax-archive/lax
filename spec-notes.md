@@ -94,6 +94,57 @@ Two renames and one addition, all Jan's calls in the draft's open questions:
 
 Spec touchpoints: the command list (~1135 for the database refresh, ~1153 for
 `lax spec`), and anywhere the spec describes CLI output shape.
+## `lax doctor` builds the warm mathlib store too (implemented, 2026-08-09)
+
+**Supersedes the "stays a `warn`, not an install" paragraph of the entry
+below**, which is the same day's work one step short. `lax doctor` now builds
+the warm mathlib workspace when the machine has none, so `npm i -g lax-archive
+&& lax doctor` provisions everything a build needs rather than everything but
+the largest piece. The gap it closes is a setup script that exits 0 on a
+machine that cannot build anything: the store was a `warn` with "the first
+`lax build` builds it once" as its fix, and a cloud environment's setup script
+has no first `lax build` in it.
+
+The store is the one check that costs tens of minutes and gigabytes, so:
+
+- It runs **last in the Lean chain**, behind the toolchain that builds it, and
+  reports `building` / `sealing` on its spinner row (`ensureLocalWarm` grew an
+  `onStage` callback: `lax build` still wants the prose notices, but a console
+  write from underneath scribbles over doctor's live block).
+- With no pinned toolchain installed it names that dependency and stops,
+  rather than spending the download on a `lake` that is missing — the lake row
+  above already carries the fix.
+- Under `--dry` it is a ✗ with "run `lax doctor` without --dry", like the elan
+  and toolchain rows. A missing store is now a gap doctor would close, so it
+  fails the script check instead of passing as a note.
+
+**A doctor that provisions changes what a test home is.** Any suite that runs
+`lax doctor` against a temp `LAX_HOME` now has a store built and **sealed
+read-only** inside it, which `fs.rmSync` cannot remove — the seal strips write
+permission from directories, and rm needs it back to unlink their contents.
+Root ignores permission bits, so this passes locally in a root container and
+fails on an unprivileged CI runner with `EACCES ... rmdir .../warm/.../.lake`.
+Test homes therefore either link the machine-shared warm store
+(`linkSharedDirs`) or keep doctor from provisioning at all (an empty
+`ELAN_HOME` plus an offline `fetch` stub, which stops the chain at its first
+link — an empty `ELAN_HOME` alone does not, because doctor installs elan into
+it). Cleanup goes through `removeTree` (`test/support/tmp.ts`) either way.
+Verify anything touching the seal as a non-root user.
+
+**A latent bug surfaced on the way** and is fixed in `buildWarmWorkspace`
+rather than in doctor, because it was never doctor's alone: the warm build ran
+a **bare `lake`** and inherited whatever PATH the caller had. Since elan is
+installed with `--no-modify-path`, on a machine lax provisioned that is either
+nothing (ENOENT, after a preflight that probed the *installed* binary and
+passed) or another elan's shim resolving `elan default`. The build now runs
+`toolchainBinDir()/lake` explicitly and composes the child's PATH with the
+toolchain's bin dir first. The PATH half is load-bearing on its own: mathlib's
+`cache` executable resolves **`leantar`** through it, and without it `lake exe
+cache get` fails with "leantar not found in Lean sysroot" — which
+`buildWarmWorkspace` reports as a network problem, sending the author off to
+debug the wrong thing. `ensureValidationHost` had been masking this for the
+trusted VM and the smoke by mutating `process.env.PATH` (setup.ts); `lax
+build` never did, so it shared the bug.
 
 ## `lax doctor` installs elan, not just the toolchain (implemented, 2026-08-09)
 
@@ -122,15 +173,17 @@ Two consequences worth recording:
   installs there when it is missing, even on a machine that has some other
   elan.
 
-The warm mathlib workspace stays a `warn`, not an install: it is gigabytes,
-and `lax build` builds it once with progress. So "full environment" here
-means elan + toolchain + database clone, and a first build still downloads.
+The warm mathlib workspace stayed a `warn`, not an install: it is gigabytes,
+and `lax build` built it once with progress. So "full environment" here meant
+elan + toolchain + database clone, and a first build still downloaded.
+**Superseded the same day** — see the entry above.
 
 **`lax doctor --dry`** is the same report with every change suppressed — the
 spec's original reading of the command, kept as a flag now that the default
-provisions. Four things it declines: the elan install, the toolchain install,
-the database clone/update (freshness is a question only a fetch answers, and a
-fetch writes), and the credentials refresh behind `github auth` (renewing
+provisions. Five things it declines: the elan install, the toolchain install,
+the warm-store build, the database clone/update (freshness is a question only a
+fetch answers, and a fetch writes), and the credentials refresh behind `github
+auth` (renewing
 rotates the stored `ghr_` and invalidates the old one *on GitHub*, so it is a
 change on both sides — `githubAppUserToken` grew a `refresh` option for it).
 The background release probe in main.ts is skipped too: its cache file under
