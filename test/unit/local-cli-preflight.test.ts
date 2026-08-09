@@ -6,7 +6,7 @@ import { checkDeleteLocally, checkRegisterLocally } from "../../src/cli/archive-
 import { hasCurrentLocalBuild } from "../../src/cli/build.js";
 import {
   databaseDirectory,
-  databaseFreshness,
+  databaseFreshnessAsync,
   pullDatabase,
 } from "../../src/cli/database.js";
 import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
@@ -50,7 +50,7 @@ describe("local command preflights", () => {
     expect(fs.existsSync(path.join(home, "lax-database", ".git"))).toBe(true);
   });
 
-  it("distinguishes a current database checkout from one behind its remote", () => {
+  it("distinguishes a current database checkout from one behind its remote", async () => {
     const home = temporary("lax-home-");
     const seed = temporary("lax-database-seed-");
     const remote = path.join(temporary("lax-database-remote-"), "database.git");
@@ -66,13 +66,13 @@ describe("local command preflights", () => {
     process.env.LAX_DATABASE_URL = remote;
     git(home, ["clone", "--quiet", remote, databaseDirectory()]);
 
-    expect(databaseFreshness()).toMatchObject({ status: "current" });
+    await expect(databaseFreshnessAsync()).resolves.toMatchObject({ status: "current" });
 
     fs.writeFileSync(path.join(seed, "record"), "two\n");
     git(seed, ["add", "."]);
     git(seed, ["-c", "user.name=Lax Test", "-c", "user.email=lax@example.test", "commit", "--quiet", "-m", "advance"]);
     git(seed, ["push", "--quiet", "origin", "main"]);
-    expect(databaseFreshness()).toMatchObject({ status: "stale" });
+    await expect(databaseFreshnessAsync()).resolves.toMatchObject({ status: "stale" });
   });
 
   it("refuses a registered delete before creating an issue command", () => {

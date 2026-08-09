@@ -79,7 +79,16 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
   beforeAll(async () => {
     github = await startFakeGitHub({ pendingPolls: 1, users: "alice:1" });
     home = fs.mkdtempSync(path.join(os.tmpdir(), "lax-cli-github-"));
-    env = { LAX_HOME: home, ...github.env() };
+    // `lax doctor` brings the database checkout up to date, and the fake
+    // GitHub does not speak git: without a remote of our own it would clone
+    // the real lax-database over the network into this shared home, which the
+    // later `lax delete` preflight would then read as authoritative. A remote
+    // that does not exist keeps every command in this file offline.
+    env = {
+      LAX_HOME: home,
+      LAX_DATABASE_URL: path.join(home, "no-such-remote.git"),
+      ...github.env(),
+    };
   });
 
   afterAll(async () => {

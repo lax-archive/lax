@@ -245,7 +245,11 @@ dependents, and asks for a typed confirmation; scripts must pass `--yes`.
 `lax pull-db` migrates older `~/.lax/db` or `~/.lax/database` checkouts to
 `~/.lax/lax-database`. `lax register` likewise requires typed confirmation
 unless `--yes` is passed. `lax doctor` checks the tailored issue-workflow
-toolchain, `lax spec` prints the bundled specification, and `lax update`
+toolchain, running every check concurrently and spinning on a line per check
+until it answers; it also provisions what it safely can, installing the pinned
+Lean toolchain when it is missing and bringing the local `lax-database`
+checkout up to date rather than only reporting that they are stale. `lax spec`
+prints the bundled specification, and `lax update`
 upgrades the npm CLI before refreshing the database. A best-effort background
 check reports newer CLI releases without delaying commands.
 

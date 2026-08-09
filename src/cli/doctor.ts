@@ -1,17 +1,22 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { CONTROL_REPOSITORY } from "../shared/constants.js";
 import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
-import { toolchainBinDir } from "../submission-validation/host/leanenv.js";
+import { elanHome, toolchainBinDir } from "../submission-validation/host/leanenv.js";
+import { run } from "../submission-validation/host/proc.js";
 import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../submission-validation/pins.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
-import { databaseDirectory, databaseFreshness } from "./database.js";
+import { databaseDirectory, updateDatabaseQuietly } from "./database.js";
+import { LoadingBlock } from "./loading.js";
 import { issueNumberFromFolder } from "./manifest.js";
 import { registeredSubmissions } from "./registry.js";
+
+const execFileAsync = promisify(execFile);
 
 interface Check {
   name: string;
@@ -20,6 +25,9 @@ interface Check {
   fix?: string;
 }
 
+/** The blocking probe, kept for the callers that only want a yes/no before
+ * running a command (`lax build`'s preflight, the missing-tool hint in
+ * main.ts). The report uses `toolVersionAsync`. */
 export function toolVersion(tool: string): string | undefined {
   try {
     return execFileSync(tool, ["--version"], {
@@ -31,33 +39,148 @@ export function toolVersion(tool: string): string | undefined {
   }
 }
 
+async function toolVersionAsync(tool: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync(tool, ["--version"], { encoding: "utf8" });
+    return stdout.split("\n")[0]!.trim();
+  } catch {
+    return undefined;
+  }
+}
+
 const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;
 
 /**
- * Every check is its own thunk and its line is printed the moment that check
- * returns: the probes behind them (docker, two GitHub calls, `git ls-remote`,
- * statfs) add up to a minute in the worst case, and buffering the report until
- * the end made the whole minute look like a hang.
+ * The lake that `lax build` actually runs, plus the install that provisions it.
+ *
+ * A bare `lake --version` goes through elan's shim, which has to resolve *some*
+ * toolchain: with no `lean-toolchain` file in scope it takes `elan default`
+ * (`stable`) and downloads that — a toolchain no lax build ever touches, while
+ * the pinned one stays missing. The real pipeline never goes near the shims; it
+ * puts the pinned toolchain's bin first on PATH (leanenv.ts) and runs those
+ * binaries directly, so that is the lake worth reporting, and the pinned
+ * toolchain is the one worth installing.
+ */
+async function lakeCheck(block: LoadingBlock, key: string): Promise<Check> {
+  const elanBin = path.join(elanHome(), "bin", "elan");
+  if (!fs.existsSync(elanBin)) {
+    return { name: "lake", status: "fail", detail: "no elan to provide it", fix: installHint("elan") };
+  }
+  if (!fs.existsSync(path.join(toolchainBinDir(), "lean"))) {
+    block.relabel(key, `lake — installing ${LEAN_TOOLCHAIN}, which takes minutes the first time`);
+    block.begin(key);
+    const install = await run(elanBin, ["toolchain", "install", LEAN_TOOLCHAIN], os.homedir(), {
+      echo: false,
+    });
+    block.relabel(key, "lake");
+    if (install.code !== 0) {
+      return {
+        name: "lake",
+        status: "fail",
+        detail: `could not install ${LEAN_TOOLCHAIN} (exit ${install.code})`,
+        fix: `run \`elan toolchain install ${LEAN_TOOLCHAIN}\` to see the full transcript`,
+      };
+    }
+  }
+  const version = await toolVersionAt(path.join(toolchainBinDir(), "lake"));
+  return version === undefined
+    ? {
+        name: "lake",
+        status: "fail",
+        detail: `${LEAN_TOOLCHAIN} has no working lake`,
+        fix: `reinstall it: \`elan toolchain uninstall ${LEAN_TOOLCHAIN}\` then \`lax doctor\``,
+      }
+    : { name: "lake", status: "ok", detail: version };
+}
+
+async function toolVersionAt(bin: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync(bin, ["--version"], { encoding: "utf8" });
+    return stdout.split("\n")[0]!.trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Every check runs concurrently and spins on its own line until it answers.
+ * The probes behind them (two GitHub calls, `git ls-remote`, statfs, a
+ * `git ls-files` per submission, and a `lake --version` that can have elan
+ * install a whole toolchain) add up to minutes in the worst case; running them
+ * in sequence made that the sum rather than the maximum, and a report that
+ * only printed on completion made the wait look like a hang.
+ *
+ * The one ordering that has to survive the concurrency is the Lean chain:
+ * `lake --version` is what triggers the elan install, so the two checks that
+ * read the installed state run after it, and elan is not probed twice at once.
  */
 export async function doctor(): Promise<number> {
   const checks: Check[] = [];
-  const emit = (check: Check | undefined): void => {
-    if (check === undefined) return;
-    checks.push(check);
-    console.log(`  ${MARK[check.status]} ${check.name}: ${check.detail}`);
-    if (check.fix !== undefined && check.status !== "ok") console.log(`      → ${check.fix}`);
+  const block = new LoadingBlock(process.stdout, { indent: "  " });
+  const settle = (key: string, ...found: Array<Check | undefined>): void => {
+    const lines: string[] = [];
+    for (const check of found) {
+      if (check === undefined) continue;
+      checks.push(check);
+      lines.push(`  ${MARK[check.status]} ${check.name}: ${check.detail}`);
+      if (check.fix !== undefined && check.status !== "ok") lines.push(`      → ${check.fix}`);
+    }
+    block.settle(key, lines);
   };
 
-  emit(platformCheck());
-  emit(nodeCheck());
-  for (const tool of ["git", "npm", "elan", "lake"] as const) emit(toolCheck(tool));
-  emit(await githubCheck());
-  emit(databaseCheck());
-  emit(toolchainCheck());
-  emit(warmStoreCheck());
-  emit(pageBuilderCheck());
-  emit(diskCheck());
-  for (const root of registeredSubmissions()) emit(submissionCheck(root));
+  const submissions = registeredSubmissions();
+  // Declared in report order; they settle in whatever order they finish.
+  const keys = [
+    "platform", "node", "git", "npm", "elan", "lake", "github auth",
+    "database clone", "lean toolchain", "mathlib store", "website renderer", "disk",
+  ];
+  for (const key of keys) block.add(key, key);
+  if (submissions.length > 0) {
+    block.add("submissions", submissions.length === 1 ? "1 submission" : `${submissions.length} submissions`);
+  }
+  // The Lean chain is the one part that cannot fan out, so say what each of
+  // its rows is queued behind rather than spinning as if it were working.
+  block.waiting("lake", "waiting for elan");
+  block.waiting("lean toolchain", "waiting for lake");
+  block.waiting("mathlib store", "waiting for lake");
+
+  const ticker = setInterval(() => { block.render(); }, 100);
+  try {
+    settle("platform", platformCheck());
+    settle("node", nodeCheck());
+    settle("website renderer", pageBuilderCheck());
+    await Promise.all([
+      (async () => { settle("git", await toolCheck("git")); })(),
+      (async () => { settle("npm", await toolCheck("npm")); })(),
+      (async () => {
+        settle("elan", await toolCheck("elan"));
+        block.begin("lake");
+        settle("lake", await lakeCheck(block, "lake"));
+        // Only now do these two read a settled state: while the toolchain was
+        // installing they would have reported the half-built directory elan is
+        // in the middle of creating.
+        settle("lean toolchain", toolchainCheck());
+        settle("mathlib store", warmStoreCheck());
+      })(),
+      (async () => { settle("github auth", await githubCheck()); })(),
+      (async () => { settle("database clone", await databaseCheck(block, "database clone")); })(),
+      (async () => { settle("disk", await diskCheck()); })(),
+      (async () => {
+        if (submissions.length === 0) return;
+        let done = 0;
+        const found = await pooled(submissions, 4, async (root) => {
+          const check = await submissionCheck(root);
+          done += 1;
+          block.progress("submissions", `${done}/${submissions.length}`);
+          return check;
+        });
+        settle("submissions", ...found);
+      })(),
+    ]);
+  } finally {
+    clearInterval(ticker);
+    block.finish();
+  }
 
   const failures = checks.filter((check) => check.status === "fail").length;
   if (failures > 0) {
@@ -89,18 +212,39 @@ function nodeCheck(): Check {
   };
 }
 
-function toolCheck(tool: string): Check {
-  const version = toolVersion(tool);
+async function toolCheck(tool: string): Promise<Check> {
+  const version = await toolVersionAsync(tool);
   return version === undefined
     ? { name: tool, status: "fail", detail: "not found", fix: installHint(tool) }
     : { name: tool, status: "ok", detail: version };
 }
 
+/** Run `limit` of `items` at a time — a long registry should not put a
+ * `git ls-files` per submission on the machine at once. */
+async function pooled<T, R>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const index = next;
+        next += 1;
+        results[index] = await run(items[index]!);
+      }
+    }),
+  );
+  return results;
+}
+
 /** Filesystem capacity is best-effort: an unreadable mount reports nothing. */
-function diskCheck(): Check | undefined {
+async function diskCheck(): Promise<Check | undefined> {
   try {
     const target = fs.existsSync(laxHome()) ? laxHome() : os.homedir();
-    const stats = fs.statfsSync(target);
+    const stats = await fs.promises.statfs(target);
     const free = (stats.bavail * stats.bsize) / 2 ** 30;
     return {
       name: "disk",
@@ -179,33 +323,36 @@ async function githubCheck(): Promise<Check> {
   }
 }
 
-function databaseCheck(): Check {
+/** Doctor does not just report the clone's age, it brings it up to date — a
+ * stale database is a problem doctor can simply end, and every local build and
+ * `lax serve` reads it. Only a checkout it must not touch, or an unreachable
+ * remote, comes back as a note. */
+async function databaseCheck(block: LoadingBlock, key: string): Promise<Check> {
   const directory = databaseDirectory();
-  const freshness = databaseFreshness();
-  if (freshness.status === "missing") return {
-    name: "database clone",
-    status: "warn",
-    detail: `none at ${directory}`,
-    fix: "run `lax pull-db` before building or serving",
-  };
-  if (freshness.status === "invalid") return {
+  const cloning = !fs.existsSync(path.join(directory, ".git"));
+  block.relabel(key, cloning ? "database clone — cloning lax-database" : "database clone — updating");
+  const update = await updateDatabaseQuietly();
+  block.relabel(key, "database clone");
+  if (update.status === "invalid") return {
     name: "database clone",
     status: "warn",
     detail: `${directory} is not a usable git clone`,
     fix: "move it aside and run `lax pull-db`",
   };
-  if (freshness.status === "stale") return {
+  if (update.status === "failed") return {
     name: "database clone",
     status: "warn",
-    detail: `${directory} is behind lax-database`,
-    fix: "run `lax pull-db`",
+    detail: cloning
+      ? `none at ${directory}; lax-database could not be cloned`
+      : `${directory} (left as it is — lax-database could not be reached)`,
+    ...(cloning ? { fix: "run `lax pull-db` once you are online" } : {}),
   };
-  if (freshness.status === "unreachable") return {
-    name: "database clone",
-    status: "warn",
-    detail: `${directory} (freshness not verified — GitHub unreachable)`,
+  const detail: Record<typeof update.status, string> = {
+    cloned: "cloned just now",
+    updated: "updated just now",
+    current: "up to date",
   };
-  return { name: "database clone", status: "ok", detail: `${directory} (up to date)` };
+  return { name: "database clone", status: "ok", detail: `${directory} (${detail[update.status]})` };
 }
 
 function toolchainCheck(): Check {
@@ -257,7 +404,7 @@ function pageBuilderCheck(): Check {
  * leftovers, and git hygiene. Deliberately no network and no subprocess
  * beyond a local `git ls-files`, so a long registry cannot stall the report.
  */
-function submissionCheck(root: string): Check {
+async function submissionCheck(root: string): Promise<Check> {
   const name = `submission ${path.basename(root)}`;
   const problems: string[] = [];
   const fixes = new Set<string>();
@@ -338,7 +485,7 @@ function submissionCheck(root: string): Check {
       fixes.add("delete the listed clones — the overrides make them dead weight");
     }
   }
-  for (const tracked of trackedGeneratedFiles(root)) {
+  for (const tracked of await trackedGeneratedFiles(root)) {
     problems.push(`${tracked} is tracked in git but must stay generated`);
     fixes.add("`git rm --cached` it and add it to .gitignore");
   }
@@ -362,14 +509,13 @@ function tryRead(filename: string): string | undefined {
 /** Generated Lake files git-tracked under the submission — static validation
  * rejects them at submission time, so doctor flags them early. Best-effort:
  * outside a git repository there is nothing to check. */
-function trackedGeneratedFiles(root: string): string[] {
+async function trackedGeneratedFiles(root: string): Promise<string[]> {
   try {
-    const listing = execFileSync("git", ["ls-files"], {
+    const { stdout } = await execFileAsync("git", ["ls-files"], {
       cwd: root,
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
     });
-    return listing
+    return stdout
       .split("\n")
       .filter((line) =>
         /(^|\/)(lake-manifest\.json|package-overrides\.json|build-output\.json)$/.test(line) ||

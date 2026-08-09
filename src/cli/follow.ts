@@ -13,7 +13,7 @@ import {
   type ParsedWorkflowComment,
 } from "../shared/workflow-comments.js";
 import { formatFindings } from "./findings.js";
-import { LoadingLine } from "./loading.js";
+import { elapsed, LoadingLine } from "./loading.js";
 import { labelled, renderComment } from "./render.js";
 import { fetchValidationReport } from "./run-artifacts.js";
 
@@ -382,11 +382,6 @@ async function printValidationReport(
       .join("\n"),
   );
   throw new CommandFailedError("FAILED — see the report above");
-}
-
-function elapsed(milliseconds: number): string {
-  const seconds = Math.floor(milliseconds / 1_000);
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 
 function humanStatus(value: string): string {

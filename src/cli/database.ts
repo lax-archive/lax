@@ -1,6 +1,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { DATABASE_REPOSITORY } from "../shared/constants.js";
 import { laxHome } from "./auth.js";
 
@@ -45,6 +46,48 @@ export function pullDatabase(): void {
   console.log(`lax-database is current at ${target}`);
 }
 
+export type DatabaseUpdate =
+  | { status: "cloned" | "updated" | "current" }
+  | { status: "invalid" }
+  | { status: "failed"; detail: string };
+
+/**
+ * Bring the local checkout in line with the public repository.
+ *
+ * Unlike `pullDatabase` this inherits no stdio and prints nothing: `lax doctor`
+ * runs it underneath a live spinner, and a git transcript written straight to
+ * the terminal would tear the redrawn region apart. Failure is reported rather
+ * than thrown — an offline author still wants the rest of the report.
+ */
+export async function updateDatabaseQuietly(): Promise<DatabaseUpdate> {
+  const target = databaseDirectory();
+  const url = databaseRepositoryUrl();
+  try {
+    fs.mkdirSync(laxHome(), { recursive: true });
+    migrateLegacyDatabase(target);
+    if (!fs.existsSync(path.join(target, ".git"))) {
+      if (fs.existsSync(target)) return { status: "invalid" };
+      await gitAsync(["clone", "--filter=blob:none", "--quiet", url, target]);
+      return { status: "cloned" };
+    }
+    const before = await gitAsync(["-C", target, "rev-parse", "HEAD"]);
+    await gitAsync(["-C", target, "remote", "set-url", "origin", url]);
+    await gitAsync(["-C", target, "pull", "--ff-only", "--quiet"]);
+    const after = await gitAsync(["-C", target, "rev-parse", "HEAD"]);
+    return { status: before === after ? "current" : "updated" };
+  } catch (error) {
+    return { status: "failed", detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function gitAsync(args: string[]): Promise<string> {
+  const { stdout } = await promisify(execFile)("git", args, {
+    encoding: "utf8",
+    timeout: 120_000,
+  });
+  return stdout.trim();
+}
+
 /** Quiet best-effort refresh used before local safety decisions. */
 export function tryRefreshDatabase(): DatabaseRefreshResult {
   const target = databaseDirectory();
@@ -60,25 +103,9 @@ export function tryRefreshDatabase(): DatabaseRefreshResult {
   }
 }
 
-/** Compare the checkout with the public repository without changing it. */
-export function databaseFreshness(): DatabaseFreshness {
-  const target = databaseDirectory();
-  if (!fs.existsSync(path.join(target, ".git"))) return { status: "missing" };
-  let local: string;
-  try {
-    local = git(["-C", target, "rev-parse", "HEAD"]);
-  } catch {
-    return { status: "invalid" };
-  }
-  try {
-    const remote = git(["ls-remote", databaseRepositoryUrl(), "HEAD"]).split("\t")[0]!;
-    if (!/^[0-9a-f]{40}$/u.test(remote)) return { status: "unreachable", local };
-    return { status: remote === local ? "current" : "stale", local, remote };
-  } catch {
-    return { status: "unreachable", local };
-  }
-}
-
+/** Compare the checkout with the public repository without changing it. The
+ * `git ls-remote` in here is one of the slow probes `lax doctor` runs, so it
+ * must not block the event loop the spinner turns on. */
 export async function databaseFreshnessAsync(): Promise<DatabaseFreshness> {
   const target = databaseDirectory();
   if (!fs.existsSync(path.join(target, ".git"))) return { status: "missing" };
