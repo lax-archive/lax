@@ -30,6 +30,19 @@ The store is the one check that costs tens of minutes and gigabytes, so:
   and toolchain rows. A missing store is now a gap doctor would close, so it
   fails the script check instead of passing as a note.
 
+**A doctor that provisions changes what a test home is.** Any suite that runs
+`lax doctor` against a temp `LAX_HOME` now has a store built and **sealed
+read-only** inside it, which `fs.rmSync` cannot remove — the seal strips write
+permission from directories, and rm needs it back to unlink their contents.
+Root ignores permission bits, so this passes locally in a root container and
+fails on an unprivileged CI runner with `EACCES ... rmdir .../warm/.../.lake`.
+Test homes therefore either link the machine-shared warm store
+(`linkSharedDirs`) or keep doctor from provisioning at all (an empty
+`ELAN_HOME` plus an offline `fetch` stub, which stops the chain at its first
+link — an empty `ELAN_HOME` alone does not, because doctor installs elan into
+it). Cleanup goes through `removeTree` (`test/support/tmp.ts`) either way.
+Verify anything touching the seal as a non-root user.
+
 **A latent bug surfaced on the way** and is fixed in `buildWarmWorkspace`
 rather than in doctor, because it was never doctor's alone: the warm build ran
 a **bare `lake`** and inherited whatever PATH the caller had. Since elan is
