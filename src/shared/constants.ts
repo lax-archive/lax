@@ -7,6 +7,16 @@ export const DATABASE_REPOSITORY =
   process.env.LAX_DATABASE_REPOSITORY ?? "lax-archive/lax-database";
 export const WEBSITE_REPOSITORY =
   process.env.LAX_WEBSITE_REPOSITORY ?? "lax-archive/lax-website";
+// The public site. The CLI hands the author exactly one link — their own page —
+// so it needs the base URL the Website is served from, not just its repository.
+export const WEBSITE_BASE_URL = (
+  process.env.LAX_WEBSITE_URL ?? "https://laxarchive.org"
+).replace(/\/+$/, "");
+
+/** The author's own page for a submission: the one link worth clicking. */
+export function submissionUrl(id: string): string {
+  return `${WEBSITE_BASE_URL}/${id}/`;
+}
 // Dependency captures are stored as digest-addressed OCI artifacts in this
 // ghcr repository under the control repository's owner. Env-derivable like
 // the repository constants above; ghcr repository paths are lowercase.

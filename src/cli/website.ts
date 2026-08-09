@@ -11,19 +11,43 @@ import {
   databaseFreshnessAsync,
   type DatabaseFreshness,
 } from "./database.js";
+import * as ui from "./ui.js";
 
 interface WebsiteSubmission {
   record: Record<string, unknown> & { id: string; state: string };
   output?: Record<string, unknown>;
 }
 
-interface PageBuilder {
+export interface PageBuilder {
   generateSite(submissions: WebsiteSubmission[], outDir: string): Promise<void>;
   mimeTypes: Record<string, string>;
 }
 
+/** How many ports above the requested one a preview tries before giving up. */
+const PORT_ATTEMPTS = 20;
+
 export interface ServeWebsiteOptions {
   databaseOnly?: boolean;
+  /**
+   * Handed the preview as soon as it is listening. The CLI ignores it — an
+   * author stops a preview with Ctrl-C, which ends the process — but a test has
+   * to be able to put the server, the watchers, and the freshness poll down
+   * again, and the return value cannot carry them: `serveWebsite` resolves only
+   * once the first render has produced its counts.
+   */
+  onListening?: (preview: WebsitePreview) => void;
+  /**
+   * The renderer to draw the pages with. The CLI never passes one — it loads the
+   * pinned lax-website bundle, which only a release carries — so this is how a
+   * test previews anything at all.
+   */
+  renderer?: PageBuilder;
+}
+
+/** A live preview: the port it actually bound, and the way to stop it. */
+export interface WebsitePreview {
+  port: number;
+  close: () => Promise<void>;
 }
 
 /**
@@ -77,19 +101,28 @@ export async function serveWebsite(
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("port must be an integer between 1 and 65535");
   }
-  console.log("lax serve: loading the pinned lax-website renderer.");
   const archive = databaseDirectory();
   const localFolder = options.databaseOnly ? undefined : path.resolve(folder);
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "lax-site-"));
-  let warning = fs.existsSync(path.join(archive, ".git"))
+  let advice = fs.existsSync(path.join(archive, ".git"))
     ? undefined
-    : `The local lax-database checkout is missing. Run \`lax pull-db\` at ${archive}.`;
-  writePlaceholder(outDir, warning);
+    : databaseAdvice({ status: "missing" }, archive);
+  writePlaceholder(outDir, bannerText(advice));
   let timer: NodeJS.Timeout | undefined;
   let building = false;
   let buildAgain = false;
   let archiveWatcher: fs.FSWatcher | undefined;
-  const pageBuilder = loadPageBuilder();
+  let localWatcher: fs.FSWatcher | undefined;
+  let freshnessPoll: NodeJS.Timeout | undefined;
+  // Until the Preview block is on the screen a finished render is not news: it
+  // is the render that block is waiting for the counts of. And once the caller
+  // has closed the preview, nothing still in flight gets to speak.
+  let opened = false;
+  let stopped = false;
+  let counts: PreviewCounts | undefined;
+  const pageBuilder = options.renderer === undefined
+    ? loadPageBuilder()
+    : Promise.resolve(options.renderer);
 
   const rebuild = async (): Promise<void> => {
     if (building) {
@@ -101,10 +134,16 @@ export async function serveWebsite(
       const submissions = loadWebsiteSubmissions(archive, localFolder);
       const builder = await pageBuilder;
       await builder.generateSite(submissions, outDir);
-      applyWebsiteWarning(outDir, warning);
-      console.log(`site rebuilt from ${submissions.length} Archive records`);
+      applyWebsiteWarning(outDir, bannerText(advice));
+      counts = previewCounts(submissions, localFolder);
+      if (opened && !stopped) ui.faint(`↻ ${clock()}  rebuilt`);
     } catch (error) {
-      console.error(`site rebuild failed: ${(error as Error).message}`);
+      // A failed rebuild stays visible: the pages the author is looking at are
+      // now older than the folder they came from, and only the author can fix
+      // why. The preview keeps serving the last good render.
+      if (!stopped) {
+        ui.failure(`${clock()}  the preview could not be rebuilt\n${(error as Error).message}`);
+      }
     } finally {
       building = false;
       if (buildAgain) {
@@ -123,12 +162,16 @@ export async function serveWebsite(
     try {
       archiveWatcher = fs.watch(archive, { recursive: true }, schedule);
     } catch (error) {
-      console.warn(`lax serve: database changes cannot be watched: ${(error as Error).message}`);
+      // Machinery, not a note: this watch only catches records arriving from
+      // `lax sync`, and the promise the Preview block makes — a rebuild when a
+      // build writes a new result — is kept by the author's own folder watch,
+      // which is a separate handle.
+      ui.verbose(`the archive cannot be watched for changes: ${(error as Error).message}`);
     }
   };
   ensureArchiveWatcher();
   if (localFolder !== undefined && fs.existsSync(localFolder)) {
-    fs.watch(localFolder, (_event, filename) => {
+    localWatcher = fs.watch(localFolder, (_event, filename) => {
       if (filename === "build-output.json") schedule();
     });
   }
@@ -170,54 +213,194 @@ export async function serveWebsite(
       awaitPageBuilderMimeTypes.set(extension, mime);
     }
   }).catch(() => undefined);
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, () => {
-      server.off("error", reject);
-      console.log(`lax serve: http://localhost:${port}/ (Ctrl-C to stop)`);
-      resolve();
-    });
+  const bound = await listenNearby(server, port);
+  options.onListening?.({
+    port: bound,
+    close: async (): Promise<void> => {
+      stopped = true;
+      clearTimeout(timer);
+      if (freshnessPoll !== undefined) clearInterval(freshnessPoll);
+      archiveWatcher?.close();
+      localWatcher?.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => { resolve(); }));
+    },
   });
-  void rebuild();
 
-  let announcedWarning: string | undefined;
+  ui.title("Preview");
+  ui.link(`http://localhost:${bound}`);
+  // The first render is the one that knows how many submissions there are, so
+  // the counts wait for it rather than being guessed at. The link does not
+  // wait: loading the renderer takes a moment, and the URL is the line the
+  // author opened this command for.
+  await rebuild();
+  opened = true;
+  ui.blank();
+  if (counts !== undefined) ui.line(submissionsLine(counts));
+  ui.line(`Rebuilds when ${ui.cmd("lax build")} writes a new result. Ctrl-C to stop.`);
+
+  const notes = new ui.Notes();
+  if (bound !== port) notes.add(`Port ${port} was busy, so this preview is on ${bound}.`);
+  if (advice !== undefined) notes.add(advice.headline, ...noteFix(advice));
+  notes.print();
+  ui.blank();
+
+  let announced = bannerText(advice);
   const refreshFreshness = async (): Promise<void> => {
-    const next = websiteDatabaseWarning(await databaseFreshnessAsync(), archive);
+    const next = databaseAdvice(await databaseFreshnessAsync(), archive);
+    const banner = bannerText(next);
     ensureArchiveWatcher();
-    if (next !== warning) {
-      warning = next;
+    if (banner !== bannerText(advice)) {
+      advice = next;
       schedule();
     }
-    if (next !== undefined && next !== announcedWarning) {
-      console.warn(`lax serve: warning: ${next}`);
-      announcedWarning = next;
+    if (next !== undefined && banner !== announced && !stopped) {
+      const note = new ui.Notes();
+      note.add(next.headline, ...noteFix(next));
+      note.print();
+      announced = banner;
     } else if (next === undefined) {
-      announcedWarning = undefined;
+      announced = undefined;
     }
   };
   void refreshFreshness();
-  const freshnessInterval = setInterval(
+  freshnessPoll = setInterval(
     () => void refreshFreshness(),
     positiveInterval("LAX_DATABASE_POLL_INTERVAL_MS", 60_000),
   );
-  freshnessInterval.unref();
+  freshnessPoll.unref();
+}
+
+/**
+ * Bind the requested port, or the next free one above it. Two previews at once
+ * is an ordinary thing to want, and the second one starting is a better answer
+ * than `EADDRINUSE` and an exit. Only a taken port is walked past: every other
+ * listen error — a privileged port, an address that cannot be bound — would
+ * repeat identically on the next one.
+ */
+async function listenNearby(server: http.Server, first: number): Promise<number> {
+  const last = Math.min(first + PORT_ATTEMPTS - 1, 65_535);
+  for (let candidate = first; candidate <= last; candidate += 1) {
+    try {
+      await listenOnce(server, candidate);
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+    }
+  }
+  throw new Error(
+    `ports ${first}-${last} are all in use; stop one of those previews or pass --port`,
+  );
+}
+
+function listenOnce(server: http.Server, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const listening = (): void => {
+      server.off("error", failed);
+      resolve();
+    };
+    const failed = (error: Error): void => {
+      server.off("listening", listening);
+      reject(error);
+    };
+    server.once("listening", listening);
+    server.once("error", failed);
+    server.listen(port);
+  });
+}
+
+interface PreviewCounts {
+  /** The id of the folder being previewed, once a build has given it one. */
+  localId?: string;
+  published: number;
+}
+
+/**
+ * Split what was rendered into the author's own folder and the archive's
+ * records: `loadWebsiteSubmissions` appends the local submission last, and calls
+ * it `local` until a build has written an id into build-output.json.
+ */
+function previewCounts(
+  submissions: readonly WebsiteSubmission[],
+  localFolder: string | undefined,
+): PreviewCounts {
+  if (localFolder === undefined) return { published: submissions.length };
+  const id = submissions.at(-1)?.record.id;
+  return {
+    ...(id === undefined || id === "local" ? {} : { localId: id }),
+    published: submissions.length - 1,
+  };
+}
+
+/** `lax-50 and 1,204 published submissions.` — what the preview is showing. */
+function submissionsLine(counts: PreviewCounts): string {
+  const published = counts.published === 0
+    ? "no published submissions yet"
+    : `${ui.count(counts.published)} published ${counts.published === 1 ? "submission" : "submissions"}`;
+  if (counts.localId === undefined) {
+    return `${published.charAt(0).toUpperCase()}${published.slice(1)}.`;
+  }
+  return `${counts.localId} and ${published}.`;
+}
+
+/** `14:22:07` — the author's own wall clock, all a rebuild line has to say. */
+function clock(at = new Date()): string {
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
+}
+
+/**
+ * What to say about a copy of the archive that is not current, in the two halves
+ * both surfaces need: the fact, and the one thing to do about it. The in-page
+ * banner joins them into a sentence; the terminal note prints the fix on its own
+ * line with the command in bold, which is why the command stays behind a
+ * markup function rather than being spelled into the prose — HTML must carry no
+ * escape codes.
+ */
+interface DatabaseAdvice {
+  headline: string;
+  fix?: (emphasise: (command: string) => string) => string;
+}
+
+function databaseAdvice(
+  freshness: DatabaseFreshness,
+  directory: string,
+): DatabaseAdvice | undefined {
+  const sync = (emphasise: (command: string) => string): string => `Run ${emphasise("lax sync")}.`;
+  if (freshness.status === "current") return undefined;
+  if (freshness.status === "stale") {
+    return { headline: "Your copy of the archive is out of date.", fix: sync };
+  }
+  if (freshness.status === "missing") {
+    return { headline: "Your copy of the archive is missing.", fix: sync };
+  }
+  if (freshness.status === "invalid") {
+    return {
+      headline: `Your copy of the archive at ${ui.tilde(directory)} is not a usable clone.`,
+      fix: (emphasise) => `Move it aside and run ${emphasise("lax sync")}.`,
+    };
+  }
+  return { headline: "Your copy of the archive could not be checked: GitHub is unreachable." };
+}
+
+/** The advice as one plain sentence, for the banner drawn into every page. */
+function bannerText(advice: DatabaseAdvice | undefined): string | undefined {
+  if (advice === undefined) return undefined;
+  const fix = advice.fix?.((command) => command);
+  return fix === undefined ? advice.headline : `${advice.headline} ${fix}`;
+}
+
+/** The advice's fix as the note's second line, with the command in bold. */
+function noteFix(advice: DatabaseAdvice): string[] {
+  const fix = advice.fix?.(ui.cmd);
+  return fix === undefined ? [] : [fix];
 }
 
 export function websiteDatabaseWarning(
   freshness: DatabaseFreshness,
   directory = databaseDirectory(),
 ): string | undefined {
-  if (freshness.status === "current") return undefined;
-  if (freshness.status === "stale") {
-    return "The local lax-database is out of date. Run `lax pull-db` and reload this preview.";
-  }
-  if (freshness.status === "missing") {
-    return `The local lax-database checkout is missing. Run \`lax pull-db\` at ${directory}.`;
-  }
-  if (freshness.status === "invalid") {
-    return `The local lax-database checkout at ${directory} is invalid. Move it aside and run \`lax pull-db\`.`;
-  }
-  return "The local lax-database freshness could not be verified because its remote is unreachable.";
+  return bannerText(databaseAdvice(freshness, directory));
 }
 
 export function applyWebsiteWarning(outDir: string, warning?: string): void {

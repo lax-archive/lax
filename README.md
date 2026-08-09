@@ -160,15 +160,29 @@ lax submit submission
 lax owners submission --new-list alice bob
 lax register submission
 lax delete submission
-lax pull-db
+lax sync
 ```
+
+Everything a command prints is one report, not a log. A slow command opens with
+a title, spins a declared step row per stage, and closes with a bold one-line
+verdict; a fast one prints only the verdict. Notes come last, in one block, each
+with its fix on the line under it. Run ids, comment URLs, archive commits,
+dispatch outcomes, `build-output.json`, the words *lax-database* and *control
+plane* — none of it reaches the happy path, and all of it is one `-v` /
+`--verbose` away, because that is exactly what a bug report needs. Colour is one
+accent and one dim (`✓` green, `!` yellow, `✗` red), suppressed by `NO_COLOR`,
+`--no-color`, or a pipe. Without a TTY the spinner is gone and each settled row
+prints once — same words, still complete, which is what agents driving the CLI
+read. Elapsed time appears on anything over three seconds, so four silent
+minutes read as work rather than as a hang.
 
 `lax submit <issue|folder> --repository ... --commit ... --folder ...` is the
 explicit source-triple form of `lax submit [folder]`. Every issue-protocol verb
 is the CLI verb that posts it — `submit`, `owners`, `delete`, `register` — and
 each meaning has exactly one word, so `lax update` is once again only the CLI
 self-upgrade (`lax upgrade` remains as an alias) and the database refresh is
-`lax pull-db`. Submit derives the issue from `manifest.yaml`, derives the source triple from
+`lax sync` — the last command named after the machinery rather than after the
+thing. Submit derives the issue from `manifest.yaml`, derives the source triple from
 Git, rejects dirty work unless `--allow-dirty` is passed, and requires HEAD to
 be present on `origin`. Registration stays a separate `lax register` command;
 multi-folder submission is intentionally not supported yet. Before posting the
@@ -190,7 +204,8 @@ submit prints that exact recovery command.
 
 Commands that create an issue or post a `/lax` comment wait for the correlated
 workflow result. Once the workflow publishes its correlated run link, the CLI
-polls GitHub and displays the run's current stage on one loading line. For
+polls GitHub and shows the run's current stage as the detail on its own step
+row (the run id and its URL are `--verbose` internals). For
 submits, it downloads that run's `validation-report.json` artifact as soon as
 the Validate job concludes and prints the findings with the same renderer
 `lax build` uses locally — a failed validation therefore ends the command in
@@ -243,7 +258,7 @@ once in a phase-grouped summary instead of as separate errors.
 `lax delete` accepts an issue reference or local submission folder, refreshes
 the local database to detect immutable/deleted records and stranded
 dependents, and asks for a typed confirmation; scripts must pass `--yes`.
-`lax pull-db` migrates older `~/.lax/db` or `~/.lax/database` checkouts to
+`lax sync` migrates older `~/.lax/db` or `~/.lax/database` checkouts to
 `~/.lax/lax-database`. `lax register` likewise requires typed confirmation
 unless `--yes` is passed. `lax doctor` checks the tailored issue-workflow
 toolchain, running every check concurrently and spinning on a line per check
@@ -257,8 +272,10 @@ clone. The one thing it still only reports is the warm mathlib workspace —
 gigabytes that the first `lax build` downloads once. `lax doctor --dry` is the
 same report with none of that: it installs nothing, refreshes neither the
 database clone nor the login, writes nothing at all, and names each gap it
-declined to close. It still exits 1 on a ✗, so it works as a check in a script. `lax spec`
-prints the bundled specification, and `lax update`
+declined to close. It still exits 1 on a ✗, so it works as a check in a script. `lax print spec`
+prints the bundled specification and `lax print instructions` the guide an
+author hands to a coding agent — both verbatim, because their reader is an agent
+rather than a terminal. `lax update`
 upgrades the npm CLI before refreshing the database. A best-effort background
 check reports newer CLI releases without delaying commands.
 

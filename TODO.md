@@ -71,14 +71,18 @@ history/go-live.md). Still owed:
 
 ## CLI
 
-- **`lax update` silently no-ops right after a release**: it shells out to
-  `npm install --global lax-archive@latest`, and npm serves the packument
-  from its cache for the registry's `max-age` (~5 min), so an update run in
-  that window reinstalls the version already present and reports success.
-  Seen 2026-08-07 minutes after 0.1.22 published; the same command with
-  `--prefer-online` installed 0.1.22 immediately. Pass `--prefer-online`
-  and verify the installed version afterwards instead of trusting npm's
-  exit code.
+- **The CLI cannot renew a login, so `lax login` is due every 8 hours**
+  (Jan, GitHub App settings). The App issues expiring user tokens, and
+  GitHub renews one only for a client that presents the App's *client
+  secret* — which a published CLI has nowhere to keep. The renewal request
+  therefore always comes back `incorrect_client_credentials` (verified
+  against github.com, 2026-08-09), and re-logging in is the only path.
+  The messages no longer blame a GitHub outage for it, but the fix is a
+  setting, not code: turn **Expire user authorization tokens** off in the
+  `lax-cli-publisher` App. New logins then store no `expiresAt`, the
+  renewal path is never entered, and the login lasts until it is revoked.
+  Decide against the security trade-off (a leaked `ghu_` stops expiring on
+  its own; `lax logout` and GitHub's revocation page still kill it).
 - **`lax doctor` blames the wrong era for cross-submission clones**: the
   `.lake/packages` check intersects override *names* with materialized
   clones, so a hand-added relative override for a `LaxN` git require makes
@@ -96,7 +100,7 @@ history/go-live.md). Still owed:
 - Auth model: GitHub App user tokens replaced the OAuth device flow the spec
   era assumed (spec-notes, 2026-08-05).
 - Submission deletion (carried from old repo): Lifecycle still lists three
-  states / five transitions; `lax spec` contradicts the implemented
+  states / five transitions; `lax print spec` contradicts the implemented
   tombstone flow.
 - Sibling path requires were *removed* (spec still needs the old feature
   folded in or the prohibition recorded instead), and multiple statements
@@ -137,7 +141,7 @@ initial batch verification over every record in dependency order.
   inherits GitHub's issue/Actions limits — revisit whether that suffices.)
 - **Scaffold-as-tutorial pass**: the `lax init` scaffold is the de-facto
   tutorial; give it a small worked example using the annotation vocabulary
-  and a README pointing at `lax spec` and the site.
+  and a README pointing at `lax print spec` and the site.
 - **Violation-message audit**: each violation should cite the spec section
   and show the offending line. (The rewrite's 25 distinct violation kinds
   are a good base to build on.)

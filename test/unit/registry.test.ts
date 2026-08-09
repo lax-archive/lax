@@ -96,7 +96,7 @@ describe("init provisioning", () => {
   it("seeds overrides and manifests for both packages against the warm store", async () => {
     const warm = makeWarmStore();
     const root = makeSubmission("seeded", 42);
-    expect(await provisionScaffold(root, 42)).toBe(true);
+    expect(await provisionScaffold(root, 42)).toEqual({ ok: true });
     for (const kind of ["concepts", "proofs"]) {
       const overrides = JSON.parse(
         fs.readFileSync(path.join(root, kind, ".lake", "package-overrides.json"), "utf8"),
@@ -119,10 +119,11 @@ describe("init provisioning", () => {
     // build fail deterministically without invoking lake
     fs.writeFileSync(path.join(home, "warm"), "");
     const root = makeSubmission("unprovisioned", 43);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    expect(await provisionScaffold(root, 43)).toBe(false);
+    // The reason is returned rather than printed: the caller owns the screen,
+    // and this is one row of its report.
+    const provisioned = await provisionScaffold(root, 43);
+    expect(provisioned.ok).toBe(false);
+    expect(provisioned).toHaveProperty("reason");
     expect(fs.existsSync(path.join(root, "concepts", ".lake", "package-overrides.json"))).toBe(
       false,
     );
@@ -131,20 +132,24 @@ describe("init provisioning", () => {
 });
 
 describe("lax doctor submission checks", () => {
-  async function doctorLines(): Promise<string[]> {
+  /** The report as one block: a submission's row now leads with its first
+   * problem and lists the rest under it, so the assertions are about the block
+   * rather than about one line. */
+  async function doctorReport(): Promise<string> {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     await doctor();
-    return log.mock.calls.map(([line]) => String(line));
+    return log.mock.calls.map(([line]) => String(line)).join("\n");
   }
 
-  it("reports a provisioned submission as healthy", async () => {
+  it("reports a provisioned submission as its id and its folder", async () => {
     makeWarmStore();
     const root = makeSubmission("healthy", 42);
     await provisionScaffold(root, 42);
     recordSubmission(root);
-    const lines = await doctorLines();
-    expect(lines.some((line) => line.includes("✓ submission healthy:"))).toBe(true);
+    const report = await doctorReport();
+    // the author's noun for the folder is the id it was reserved under
+    expect(report).toMatch(new RegExp(`✓ lax-42\\s+${root.replace(/[.*+?^$()|[\]\\]/gu, "\\$&")}`, "u"));
   });
 
   it("flags missing overrides, stale clones, and pin drift", async () => {
@@ -156,13 +161,11 @@ describe("lax doctor submission checks", () => {
       recursive: true,
     });
     fs.writeFileSync(path.join(root, "proofs", "lean-toolchain"), "leanprover/lean4:v0.0.1\n");
-    const lines = await doctorLines();
-    const line = lines.find((entry) => entry.includes("submission stale:"));
-    expect(line).toBeDefined();
-    expect(line).toContain("! submission stale:");
-    expect(line).toContain("has no package overrides");
-    expect(line).toContain("pre-overrides era");
-    expect(line).toContain("lean-toolchain is leanprover/lean4:v0.0.1");
+    const report = await doctorReport();
+    expect(report).toMatch(/! lax-42\s/u);
+    expect(report).toContain("has no package overrides");
+    expect(report).toContain("pre-overrides era");
+    expect(report).toContain("lean-toolchain is leanprover/lean4:v0.0.1");
   });
 
   it("flags overrides that point at a deleted warm store", async () => {
@@ -172,8 +175,8 @@ describe("lax doctor submission checks", () => {
     recordSubmission(root);
     fs.chmodSync(warm, 0o755);
     fs.rmSync(warm, { recursive: true, force: true });
-    const lines = await doctorLines();
-    const line = lines.find((entry) => entry.includes("submission orphaned:"));
-    expect(line).toContain("point at a missing mathlib store");
+    const report = await doctorReport();
+    expect(report).toMatch(/! lax-42\s/u);
+    expect(report).toContain("point at a missing mathlib store");
   });
 });

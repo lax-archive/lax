@@ -10,6 +10,7 @@ import {
   seedOverrides,
 } from "../submission-validation/host/warmstore.js";
 import { hostValidationRuntime } from "../submission-validation/pins.js";
+import * as ui from "./ui.js";
 
 const runtime = hostValidationRuntime();
 
@@ -61,19 +62,27 @@ export function scaffoldSubmission(
   fs.mkdirSync(path.join(root, "proofs", proofs), { recursive: true });
 }
 
+/** Whether the shared mathlib environment is ready, and why not if it is not. */
+export type ProvisionResult = { ok: true } | { ok: false; reason?: string };
+
 /**
  * Seed the freshly scaffolded packages with the generated Lake files a build
  * would write — package overrides pointing the mathlib closure at the shared
  * warm store plus a complete locked manifest — so an immediate bare
  * `lake build` replays the store in place instead of cloning gigabytes of
  * mathlib. Builds the warm store first when this machine has none yet.
- * Returns false when the store could not be built; the scaffold stays valid
- * and `lax build` retries.
+ *
+ * A failure is reported rather than printed: the caller owns the screen, and
+ * this is one row of its report. The scaffold stays valid either way and
+ * `lax build` retries.
  */
-export async function provisionScaffold(root: string, issueNumber: number): Promise<boolean> {
+export async function provisionScaffold(
+  root: string,
+  issueNumber: number,
+): Promise<ProvisionResult> {
   try {
-    const warm = await ensureLocalWarm();
-    if (warm === undefined) return false;
+    const warm = await ensureLocalWarm({ echo: ui.isVerbose() });
+    if (warm === undefined) return { ok: false };
     const concepts = `Lax${issueNumber}`;
     for (const kind of ["concepts", "proofs"] as const) {
       const pkgDir = path.join(root, kind);
@@ -84,14 +93,9 @@ export async function provisionScaffold(root: string, issueNumber: number): Prom
         kind === "proofs" ? [{ name: concepts, dir: "../concepts" }] : [],
       );
     }
-    return true;
+    return { ok: true };
   } catch (error) {
-    console.error(
-      `lax: could not provision mathlib for the new submission: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return false;
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 

@@ -6,6 +6,95 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## The CLI prints one report, not a log (implemented, 2026-08-09)
+
+spec.md's command list (~1135–1155) says what each command *does*; it says
+nothing about what each one *prints*, and the CLI had drifted into narrating
+its own internals — issue numbers, workflow run ids, archive commit SHAs, "the
+three stub files", "the Website rebuild event was accepted", the words
+*lax-database* and *control plane* — interleaved with the two or three facts
+that are the author's business. `lax init` said "initialized" three times in
+nine lines and buried its one actionable line ("not inside a git repository")
+in lowercase log voice in the middle. The redesign (`cli-output-draft.md`, Jan's
+brief in `jans_list.md`) is now implemented.
+
+The rules, enforced in one place (`src/cli/ui.ts`) so no command has to
+remember them:
+
+- **No command-name prefixes.** `lax init:` on every line is a log format, not
+  a UI. Gone everywhere, errors included — a failure is `✗ <message>`.
+- **One title, one verdict.** A slow command opens with a title line, spins a
+  declared row per stage, and closes with a bold one-line verdict. A fast
+  command prints only the verdict (`lax owners`, `lax sync`, `lax logout`).
+- **Step lists only where there is real waiting**, and nothing is said twice.
+- **Internals are a `--verbose` concern.** `-v`/`--verbose` is on every
+  command; so is `--no-color` (and `NO_COLOR`, and not-a-TTY). Run ids, comment
+  URLs, archive commits, dispatch outcomes, `build-output.json`, credential
+  paths and App client ids reach the screen only there. They stay reachable
+  because they are exactly what a bug report needs.
+- **One link, and it is the author's own page** — hence the new
+  `WEBSITE_BASE_URL` / `submissionUrl()` in `src/shared/constants.ts`; the CLI
+  had no website base URL before, only `WEBSITE_REPOSITORY`.
+- **Notes last, in one block, each with its fix.** `!` yellow, the fix on the
+  line below.
+- **Elapsed time on anything over three seconds**, so four silent minutes read
+  as work rather than as a hang.
+- **Piped output is the same words**: no spinner, one line per settled row,
+  still complete. Agents drive this CLI and read what it prints.
+- **The author's nouns**: *your machine* and *the archive*, not *local
+  validation* and *the trusted workflow*; *mathlib*, not *warm store*; *your
+  copy of the archive*, not *the local lax-database checkout*.
+
+What that changed behind the surface:
+
+- `follow.ts` is a progress source: it returns an outcome and reports stages
+  through `onStage`/`onPreview`/`onValidationReport` instead of printing. The
+  caller composes the screen, so a submit's five rows and a register's one row
+  come out of the same machinery. `renderComment()` survives for the one case
+  that still needs the workflow's own words: a refusal.
+- `lax build`'s nineteen internal phases map to six rows, and Lean's transcript
+  moved behind `--verbose` — with `echo` off a failing `lake build` folds its
+  whole output into the violation, so nothing is lost. The host pipeline gained
+  an `onDetail` hook so a row can settle with the answer next to it
+  (`Resolved dependencies   mathlib, lax-12`).
+- `lax doctor`'s twelve machine-named rows became eight author-facing ones:
+  platform/node/npm/renderer collapse into `Lax` and elan/lake/toolchain into
+  `Lean` while they pass, and split back out — first broken link only — the
+  moment one does not. Paths leave the happy path; each registered submission
+  is a row under the id the author calls it by.
+- `lax serve` picks a free port when the requested one is busy (Jan's call),
+  and says so once.
+- `lax update` always reports `before → after`, both ends, even when the two
+  are the same version: it is the one question the command exists to answer,
+  and "up to date" without a number sends the author to `lax --version` to find
+  out what they are running. Both halves of that had to become true first.
+  The install now always asks the network what `latest` is, under three flags
+  rather than one: `--prefer-online` (off by default, and what makes `@latest`
+  mean the registry's latest — without it npm resolves the tag from its cached
+  packument and only revalidates past the registry's max-age, so an update in
+  the minutes after a release reinstalls what is already there and exits 0),
+  plus `--no-prefer-offline` and `--no-offline` to override the same two
+  settings turned on in the author's `~/.npmrc`. Command-line flags beat npmrc,
+  so there is no configuration of npm under which `lax update` installs a
+  cached version. And the `after` is read back with `npm ls -g` rather than
+  taken from the registry, so it describes what npm did rather than what it was
+  asked to do. (This closes the 2026-08-07 TODO item.)
+
+Two renames and one addition, all Jan's calls in the draft's open questions:
+
+- **`lax pull-db` → `lax sync`.** It was the last command named after the
+  machinery rather than after the thing. No alias: this repo's rule is that
+  every meaning has exactly one word.
+- **`lax spec` → `lax print spec`**, plus a new **`lax print instructions`**
+  printing `assets/instructions.md` — the guide an author hands to a coding
+  agent. Both print verbatim and deliberately bypass `ui`: their reader is an
+  agent, not a terminal.
+- **A registered submission prints its citation key.** "Registered" and
+  "citable" are the same sentence, and the citation is the payoff.
+
+Spec touchpoints: the command list (~1135 for the database refresh, ~1153 for
+`lax spec`), and anywhere the spec describes CLI output shape.
+
 ## `lax doctor` installs elan, not just the toolchain (implemented, 2026-08-09)
 
 spec.md (~1141) has `lax doctor` "check ... and report concrete fixes"; it

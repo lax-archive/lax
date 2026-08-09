@@ -3,17 +3,21 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ArchiveSnapshot } from "../submission-validation/archive/snapshot.js";
-import type { ValidationRequest, ValidationScope } from "../submission-validation/contracts.js";
+import type {
+  ValidationFinding,
+  ValidationScope,
+} from "../submission-validation/contracts.js";
 import { validateSubmissionOnHost } from "../submission-validation/host/pipeline.js";
+import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { hostValidationRuntime } from "../submission-validation/pins.js";
 import { removeValidationWorkspace } from "../submission-validation/workspace-cleanup.js";
 import { formatProfile, Profiler } from "../shared/profile.js";
 import { databaseDirectory } from "./database.js";
-import { formatFindings } from "./findings.js";
+import { groupFindings } from "./findings.js";
 import { deriveLocalSource, repositoryRoot } from "./git.js";
-import { LoadingLine } from "./loading.js";
 import { submissionIdFromFolder } from "./manifest.js";
 import { recordSubmission } from "./registry.js";
+import * as ui from "./ui.js";
 import type { SourceLocation } from "../shared/types.js";
 
 export interface LocalBuildOptions {
@@ -21,29 +25,103 @@ export interface LocalBuildOptions {
   scope?: ValidationScope;
   profile?: boolean;
   buildFromSource?: boolean;
+  /**
+   * Run inside another command's step list rather than owning the screen.
+   * `lax submit` needs the local build as one row of its own report, showing
+   * the build's current stage as that row's detail instead of nesting a second
+   * list; when this is set the build prints nothing at all and the caller
+   * renders the outcome it returns.
+   */
+  embed?: (stage: string) => void;
 }
 
-/** Phases that stream their own transcript; the spinner stays out of the way. */
-const STREAMING_PHASES = new Set(["warm store", "compile concepts", "compile proofs", "inspector binary"]);
+export interface LocalBuildOutcome {
+  ok: boolean;
+  warnings: ValidationFinding[];
+  violations: ValidationFinding[];
+  /** Statement counts, once there is a build output to count them in. */
+  concepts?: number;
+  proofs?: number;
+}
 
-/** Run the shared validation pipeline on the host toolchain, in place, against
- * the working tree and local Archive clone. */
+/**
+ * The author's six rows, and which of the pipeline's phases belong to each.
+ *
+ * The pipeline reports nineteen internal phases; an author waiting on a build
+ * wants to know which of six things is happening. The mapping is monotonic —
+ * every phase of a row runs before every phase of the next — which is what lets
+ * a row settle the moment a phase of the following one starts. A package's
+ * provisioning, olean materialization, and capture belong to that package's
+ * compile row rather than to the shared resolution row for exactly that reason:
+ * they run per package, interleaved with the builds.
+ */
+const ROW_OF_PHASE = new Map<string, string>([
+  ["static validation", "layout"],
+  ["dependency resolution", "dependencies"],
+  ["warm store", "mathlib"],
+  ["provision concepts", "concepts"],
+  ["compile concepts", "concepts"],
+  ["materialize oleans (concepts)", "concepts"],
+  ["capture concepts", "concepts"],
+  ["provision proofs", "proofs"],
+  ["compile proofs", "proofs"],
+  ["materialize oleans (proofs)", "proofs"],
+  ["capture proofs", "proofs"],
+  ["replay concepts", "replay"],
+  ["replay proofs", "replay"],
+  ["inspector binary", "statements"],
+  ["inspect concepts", "statements"],
+  ["inspect proofs", "statements"],
+  ["judge inspection", "statements"],
+  ["emit", "statements"],
+]);
+
+const ROW_LABEL = new Map<string, string>([
+  ["layout", "Checked the layout"],
+  ["dependencies", "Resolved dependencies"],
+  ["mathlib", "Prepared mathlib"],
+  ["concepts", "Compiled concepts"],
+  ["proofs", "Compiled proofs"],
+  ["replay", "Replayed the kernel proofs"],
+  ["statements", "Inspected the statements"],
+]);
+
+/** What each row says while it is still running. */
+const ROW_RUNNING = new Map<string, string>([
+  ["layout", "Checking the layout"],
+  ["dependencies", "Resolving dependencies"],
+  ["mathlib", "Preparing mathlib"],
+  ["concepts", "Compiling concepts"],
+  ["proofs", "Compiling proofs"],
+  ["replay", "Replaying the kernel proofs"],
+  ["statements", "Inspecting the statements"],
+]);
+
+/**
+ * Run the shared validation pipeline on the host toolchain, in place, against
+ * the working tree and local database clone.
+ *
+ * Lean's own transcript is a `--verbose` concern: with `echo` off a failing
+ * `lake build` folds its whole output into the violation instead, so nothing is
+ * lost and the happy path stays six lines.
+ */
 export async function buildSubmission(
   folder: string,
   options: LocalBuildOptions = {},
-): Promise<number> {
+): Promise<LocalBuildOutcome> {
   const submissionRoot = fs.realpathSync(path.resolve(folder));
   const repository = fs.realpathSync(repositoryRoot(submissionRoot));
   const database = databaseDirectory();
   if (!fs.existsSync(path.join(database, ".git"))) {
     throw new Error(
-      `local lax-database checkout is missing at ${database}; run \`lax pull-db\``,
+      `there is no local copy of the archive at ${ui.tilde(database)} yet — run ${ui.cmd("lax sync")}`,
     );
   }
   const archiveSha = git(database, ["rev-parse", "HEAD"]);
-  const request: ValidationRequest = {
-    requestVersion: 1,
-    id: submissionIdFromFolder(submissionRoot),
+  const id = submissionIdFromFolder(submissionRoot);
+  const request = {
+    requestVersion: 1 as const,
+    id,
     source: deriveLocalSource(submissionRoot),
     archiveSha,
   };
@@ -53,12 +131,44 @@ export async function buildSubmission(
   const jobDir = path.join(temporary, "work");
   fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
   const scope = options.scope ?? "both";
-  const progress = new LoadingLine(process.stderr);
   const profiler = new Profiler();
-  console.log(
-    `lax build: validating ${request.id}${scope === "both" ? "" : ` (${scope} only)`}` +
-      `${options.replay === true ? " with kernel replay" : ""}`,
-  );
+  const embedded = options.embed !== undefined;
+
+  // A row per stage this run will actually have. mathlib only earns one when
+  // this machine has no warm store yet: otherwise the phase is a lookup, and a
+  // row that flashes past says nothing.
+  const rows = ["layout", "dependencies"];
+  if (!warmReady(warmDir())) rows.push("mathlib");
+  rows.push("concepts");
+  if (scope !== "concepts") rows.push("proofs");
+  if (options.replay === true) rows.push("replay");
+  rows.push("statements");
+
+  const steps = embedded ? undefined : new ui.Steps();
+  if (steps !== undefined) {
+    ui.title(`Building ${id}`);
+    for (const row of rows) steps.add(row, ROW_RUNNING.get(row) ?? row);
+  }
+  const details = new Map<string, string>();
+  let current: string | undefined;
+  /** Settle every row up to and including `row`, and open the next one. */
+  const enter = (row: string): void => {
+    if (row === current) return;
+    if (current !== undefined) settle(current, "ok");
+    current = row;
+    options.embed?.(ROW_RUNNING.get(row)?.toLowerCase() ?? row);
+  };
+  const settle = (row: string, status: "ok" | "fail"): void => {
+    const detail = details.get(row);
+    steps?.settle(row, {
+      status,
+      // A failed row keeps the label it was spinning under: "✗ Compiled proofs"
+      // would say the one thing that did not happen.
+      ...(status === "ok" ? { label: ROW_LABEL.get(row) ?? row } : {}),
+      ...(detail === undefined ? {} : { detail }),
+    });
+  };
+
   try {
     const report = await validateSubmissionOnHost(request, jobDir, {
       local: {
@@ -69,50 +179,90 @@ export async function buildSubmission(
       scope,
       fromSource: options.buildFromSource ?? false,
       profiler,
+      echo: ui.isVerbose(),
+      onDetail: (phase, detail) => {
+        const row = ROW_OF_PHASE.get(phase);
+        if (row === undefined) return;
+        // On the row now — a phase that says what it is doing is saying it to
+        // someone who is waiting — and kept as the row's detail when it
+        // settles, unless something later has more to report by then.
+        details.set(row, detail);
+        steps?.detail(row, detail);
+      },
       onPhase: (event) => {
         if (event.state !== "start") return;
-        if (STREAMING_PHASES.has(event.name)) progress.clear();
-        else progress.update(`lax build · ${event.name}`);
+        const row = ROW_OF_PHASE.get(event.name);
+        if (row !== undefined && rows.includes(row)) enter(row);
       },
     });
-    progress.clear();
-    const findings = formatFindings(report.warnings, report.violations);
-    if (!report.ok || (scope === "both" && report.buildOutput === undefined)) {
-      console.error(
-        [findings, "lax build: validation failed; build-output.json was not changed"]
-          .filter((line): line is string => line !== undefined)
-          .join("\n"),
-      );
-      if (options.profile === true) console.log(`\n${formatProfile(profiler.snapshot())}`);
-      return 1;
-    }
-    if (findings !== undefined) console.warn(findings);
-    if (scope !== "both") {
-      console.log(`lax build: OK (${scope} only) — partial build; build-output.json was not changed`);
-      if (options.profile === true) console.log(`\n${formatProfile(profiler.snapshot())}`);
-      return 0;
-    }
-    const output = {
-      specVersion: "1",
-      id: request.id,
-      ...report.buildOutput!,
-      localValidation: {
-        version: 1,
-        source: request.source,
-        archiveSha,
-        runtimeImageDigest: runtime.imageDigest,
-        replay: options.replay === true,
-      },
+    const outcome: LocalBuildOutcome = {
+      ok: report.ok && (scope !== "both" || report.buildOutput !== undefined),
+      warnings: report.warnings,
+      violations: report.violations,
     };
-    const filename = path.join(submissionRoot, "build-output.json");
-    const staging = `${filename}.${process.pid}.tmp`;
-    fs.writeFileSync(staging, `${JSON.stringify(output, null, 2)}\n`);
-    fs.renameSync(staging, filename);
-    console.log(`lax build: OK — ${filename} written`);
-    if (options.profile === true) console.log(`\n${formatProfile(profiler.snapshot())}`);
-    return 0;
+    if (report.buildOutput !== undefined) {
+      outcome.concepts = report.buildOutput.concepts.length;
+      outcome.proofs = report.buildOutput.proofs.length;
+      // The last row's answer is the inventory it just inspected.
+      details.set(
+        "statements",
+        [
+          ui.plural(outcome.concepts, "concept"),
+          ...(scope === "concepts" ? [] : [ui.plural(outcome.proofs ?? 0, "proof")]),
+        ].join(" · "),
+      );
+    }
+    if (current !== undefined) settle(current, outcome.ok ? "ok" : "fail");
+    // Rows the run never reached: hide them rather than leave them spinning.
+    for (const row of rows.slice(current === undefined ? 0 : rows.indexOf(current) + 1)) {
+      steps?.settle(row, { hidden: true });
+    }
+    if (!outcome.ok) {
+      steps?.finish();
+      if (steps !== undefined) {
+        showFindings(outcome);
+        ui.verdict(`${id} did not build`);
+        ui.done();
+      }
+      if (options.profile === true) showProfile(profiler);
+      return outcome;
+    }
+    if (scope === "both") {
+      const output = {
+        specVersion: "1",
+        id,
+        ...report.buildOutput!,
+        localValidation: {
+          version: 1,
+          source: request.source,
+          archiveSha,
+          runtimeImageDigest: runtime.imageDigest,
+          replay: options.replay === true,
+        },
+      };
+      // `build-output.json` never reaches the report: the author does not open
+      // it, and .gitignore already hides it.
+      const filename = path.join(submissionRoot, "build-output.json");
+      const staging = `${filename}.${process.pid}.tmp`;
+      fs.writeFileSync(staging, `${JSON.stringify(output, null, 2)}\n`);
+      fs.renameSync(staging, filename);
+      ui.verbose(`wrote ${filename}`);
+    }
+    if (steps !== undefined) {
+      const total = steps.total();
+      steps.finish();
+      ui.verdict(
+        scope === "both"
+          ? `Built ${id} in ${total}`
+          : `Compiled the ${scope} of ${id} in ${total} · partial build, nothing saved`,
+      );
+      showFindings(outcome);
+      ui.done();
+    }
+    if (options.profile === true) showProfile(profiler);
+    return outcome;
   } finally {
-    progress.clear();
+    steps?.finish();
     try {
       // parts of the job dir may be read-only (e.g. sealed capture files);
       // removeValidationWorkspace restores directory write bits before rm so
@@ -120,11 +270,35 @@ export async function buildSubmission(
       removeValidationWorkspace(temporary);
     } catch (error) {
       // never mask the build result with a cleanup failure
-      console.warn(
-        `lax build: could not remove the temporary workspace ${temporary}: ` +
+      ui.verbose(
+        `could not remove the temporary workspace ${temporary}: ` +
           `${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+}
+
+/**
+ * Phase timings, for `--profile`. Not a `--verbose` internal: the author asked
+ * for exactly this and nothing else.
+ */
+function showProfile(profiler: Profiler): void {
+  ui.blank();
+  for (const text of formatProfile(profiler.snapshot()).split("\n")) ui.line(text);
+}
+
+/** Errors first, then warnings: both in the notes shape, after the verdict. */
+export function showFindings(outcome: {
+  warnings: readonly ValidationFinding[];
+  violations: readonly ValidationFinding[];
+}): void {
+  const errors = groupFindings(outcome.violations, "error");
+  if (errors !== undefined) ui.problem(errors.headline, errors.body);
+  const warnings = groupFindings(outcome.warnings, "warning");
+  if (warnings !== undefined) {
+    const notes = new ui.Notes();
+    notes.add(warnings.headline, ...warnings.body);
+    notes.print();
   }
 }
 

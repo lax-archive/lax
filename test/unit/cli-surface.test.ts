@@ -15,19 +15,30 @@ describe("CLI compatibility surface", () => {
     expect(cli(["--version"])).toEqual({ code: 0, output: `${version}\n` });
   });
 
-
-  it("keeps the local workflow commands and build iteration options discoverable", () => {
+  it("opens with the commands in the order an author meets them", () => {
+    // `lax --help` is a curated overview, not commander's alphabetical dump of
+    // every flag: the options live behind `lax <command> --help`.
     const help = cli(["--help"]);
     expect(help.code).toBe(0);
-    expect(help.output).toContain("owners");
-    expect(help.output).toContain("pull-db");
-    expect(help.output).toContain("serve [options]");
-    expect(help.output).toContain("update|upgrade");
+    const lines = help.output.split("\n");
+    const order = ["lax doctor", "lax login", "lax init", "lax build", "lax serve", "lax submit", "lax register"];
+    const positions = order.map((command) =>
+      lines.findIndex((line) => line.trimStart().startsWith(`${command} `) || line.trim() === command),
+    );
+    expect(positions.every((index) => index >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    // and the rest are named without being explained twice
+    expect(help.output).toContain("lax owners · lax delete · lax sync · lax update · lax logout");
+    expect(help.output).toContain("lax print spec · lax print instructions");
+    expect(help.output).toContain("lax <command> --help for options");
+  });
 
+  it("keeps the build iteration options discoverable", () => {
     const build = cli(["build", "--help"]);
     expect(build.output).toContain("--profile");
     expect(build.output).toContain("--only <part>");
     expect(build.output).toContain("--build-from-source");
+    expect(build.output).toContain("--verbose");
 
     const register = cli(["register", "--help"]);
     expect(register.output).toContain("--yes");
@@ -75,38 +86,46 @@ describe("CLI compatibility surface", () => {
   });
 
   it("gives every meaning exactly one word", () => {
-    // `lax update` is the CLI self-upgrade again (spec.md's original meaning);
-    // the source triple lives on `submit`, the database refresh on `pull-db`.
+    // `lax update` is the CLI self-upgrade (spec.md's original meaning); the
+    // source triple lives on `submit`, the archive refresh on `sync`.
     const update = cli(["update", "--help"]);
     expect(update.code).toBe(0);
-    expect(update.output).toContain("upgrade the CLI to the latest release");
+    expect(update.output).toContain("upgrade lax to the latest release");
 
-    const pull = cli(["pull-db", "--help"]);
-    expect(pull.code).toBe(0);
-    expect(pull.output).toContain("~/.lax/lax-database");
+    const sync = cli(["sync", "--help"]);
+    expect(sync.code).toBe(0);
+    expect(sync.output).toContain("refresh your local copy of the archive");
 
-    // The retired second names are gone rather than kept as aliases.
-    for (const retired of ["set-owners", "update-db", "update-database"]) {
+    // The retired second names are gone rather than kept as aliases —
+    // `pull-db` was the last command named after the machinery.
+    for (const retired of ["set-owners", "update-db", "update-database", "pull-db", "spec"]) {
       const result = cli([retired]);
       expect(result.code, retired).not.toBe(0);
       expect(result.output, retired).toContain(`unknown command '${retired}'`);
     }
   });
 
-  it("prints the continuous proof-preview workflow in the bundled specification", () => {
-    const spec = cli(["spec"]);
+  it("prints the bundled documents verbatim, for an agent to read", () => {
+    const spec = cli(["print", "spec"]);
     expect(spec.code).toBe(0);
     expect(spec.output).toContain("After each successfully completed proof");
     expect(spec.output).toContain("lax serve path/to/submission");
     expect(spec.output).toContain("lax build path/to/submission");
     expect(spec.output).toContain("successfully validated milestone");
+
+    const instructions = cli(["print", "instructions"]);
+    expect(instructions.code).toBe(0);
+    expect(instructions.output).toContain("lax print spec");
+    expect(instructions.output).toContain("lax build");
   });
 
-  it("uses command-specific errors", () => {
+  it("reports an error as an error, with no command-name prefix", () => {
     const result = cli(["build", "--only", "everything"]);
     expect(result.code).toBe(1);
-    expect(result.output).toContain("lax build: --only takes");
-    expect(result.output).not.toContain("lax: --only takes");
+    expect(result.output).toContain("✗ --only takes");
+    expect(result.output).toContain("got `everything`");
+    // rule 1: the author knows what they typed
+    expect(result.output).not.toContain("lax build:");
   });
 
   it("requires explicit confirmation before non-interactive registration", () => {
@@ -115,9 +134,10 @@ describe("CLI compatibility surface", () => {
     try {
       const result = cli(["register", "lax-42"], { LAX_HOME: home });
       expect(result.code).toBe(1);
-      expect(result.output).toContain("no local lax-database checkout");
-      expect(result.output).toContain("registering lax-42 is permanent");
-      expect(result.output).toContain("rerun with --yes");
+      expect(result.output).toContain("Registering is permanent");
+      expect(result.output).toContain("There is no local copy of the archive");
+      expect(result.output).toContain("registering lax-42 needs a confirmation");
+      expect(result.output).toContain("Rerun with --yes");
       expect(result.output).not.toContain("no GitHub App login found");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -131,7 +151,7 @@ describe("CLI compatibility surface", () => {
     // PATH). An ELAN_HOME that does not exist is what "no toolchain" means now.
     const result = cli(["build"], { PATH: "/nonexistent", ELAN_HOME: "/nonexistent/elan" });
     expect(result.code).toBe(1);
-    expect(result.output).toContain("missing required tools");
+    expect(result.output).toContain("lax needs tools it cannot find");
     expect(result.output).toContain("git:");
     expect(result.output).toContain("elan:");
     expect(result.output).toContain("lake:");
@@ -153,6 +173,8 @@ function cli(
       env: {
         ...process.env,
         LAX_DISABLE_UPDATE_CHECK: "1",
+        // Assertions are about words, not about escape codes.
+        NO_COLOR: "1",
         ...extraEnvironment,
       },
     },

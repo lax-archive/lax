@@ -1,36 +1,43 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { CONTROL_REPOSITORY_ID } from "../shared/constants.js";
+import { CONTROL_REPOSITORY, CONTROL_REPOSITORY_ID } from "../shared/constants.js";
 import { GitHubClient } from "../shared/github.js";
 import { storeGitHubAppCredentials } from "./auth.js";
-import { LoadingLine } from "./loading.js";
 import {
   credentialsFromTokenResponse,
   GITHUB_APP_CLIENT_ID,
   requestDeviceCode,
   requestDeviceToken,
 } from "./github-app.js";
+import * as ui from "./ui.js";
 
-export const GITHUB_LOGIN_ACCESS_NOTICE = `Lax requests GitHub authorization to:
-  - read your public GitHub profile to verify your identity; and
-  - read and write issues and issue comments in lax-archive/lax.
-This token cannot write repository contents or access lax-database or lax-website.`;
+/**
+ * What the author is about to authorize, in their own terms. Printed *above*
+ * the code: it is a thing to read before authorizing, not after.
+ */
+export const GITHUB_LOGIN_ACCESS_NOTICE = [
+  `Lax will be able to read your public GitHub profile and post issues and`,
+  `comments to ${CONTROL_REPOSITORY} as you. It cannot write repository contents,`,
+  `and it has no access to lax-database or lax-website.`,
+];
 
 export async function login(): Promise<void> {
-  console.log(GITHUB_LOGIN_ACCESS_NOTICE);
+  ui.title("Sign in to GitHub");
+  for (const text of GITHUB_LOGIN_ACCESS_NOTICE) ui.line(text);
   const device = await requestDeviceCode(GITHUB_APP_CLIENT_ID);
-  console.log(`Open ${device.verification_uri} and enter code ${device.user_code}`);
+  ui.blank();
+  // Keep the URL free of trailing punctuation: terminals linkify up to the next
+  // whitespace, so a comma or paren right after it breaks the link.
+  ui.aside("Open      ", device.verification_uri);
+  ui.aside("Enter code", ui.bold(device.user_code));
+
   const deadline = Date.now() + device.expires_in * 1_000;
   let interval = Math.max(device.interval, 5);
-  // The device flow is minutes of polling; a heartbeat on stdout keeps the
-  // wait visible (spinning on a TTY, printed once when redirected) instead of
-  // leaving the terminal silent between polls.
-  const waiting = new LoadingLine(process.stdout);
-  // Keep the URL free of trailing punctuation: terminals linkify up to the
-  // next whitespace, so a comma or paren right after it breaks the link.
-  const heartbeat = `waiting for authorization — enter code ${device.user_code} at ${device.verification_uri}`;
+  // The device flow is minutes of polling, so the wait is a row of its own
+  // rather than a silent terminal between polls.
+  const steps = new ui.Steps();
+  steps.add("authorize", "Waiting for you to authorize");
   try {
     while (Date.now() < deadline) {
-      waiting.update(heartbeat);
       await delay(interval * 1_000);
       const response = await requestDeviceToken(
         GITHUB_APP_CLIENT_ID,
@@ -43,8 +50,9 @@ export async function login(): Promise<void> {
           login: string;
         }>("GET", "/user");
         storeGitHubAppCredentials(credentials);
-        waiting.clear();
-        console.log(`Logged in as ${user.login} through the Lax GitHub App.`);
+        steps.settle("authorize", { label: `Signed in as ${user.login}`, time: false });
+        steps.finish();
+        ui.done();
         return;
       }
       if (response.error === "authorization_pending") continue;
@@ -61,7 +69,7 @@ export async function login(): Promise<void> {
       );
     }
   } finally {
-    waiting.clear();
+    steps.finish();
   }
-  throw new Error("GitHub device code expired; run `lax login` again");
+  throw new Error("the GitHub device code expired; run `lax login` again");
 }

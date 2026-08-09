@@ -2,8 +2,9 @@ import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { DATABASE_REPOSITORY } from "../shared/constants.js";
+import { DATABASE_REPOSITORY, SUBMISSION_ID_PATTERN } from "../shared/constants.js";
 import { laxHome } from "./auth.js";
+import * as ui from "./ui.js";
 
 export function databaseDirectory(): string {
   return path.join(laxHome(), "lax-database");
@@ -26,24 +27,110 @@ export function databaseRepositoryUrl(): string {
   );
 }
 
-export function pullDatabase(): void {
+/**
+ * Bring this machine's copy of the archive up to date and report it as one
+ * settled row.
+ *
+ * A refresh is one fact, so it gets one line rather than a step list, and the
+ * line says the two things an author can act on: whether the copy is current
+ * and how much of the archive is in it. The commit that moved, the remote it
+ * came from, and git's own transcript are internals and stay verbose — which is
+ * also why the work runs through `updateDatabaseQuietly`: a clone's progress
+ * bar written straight to the terminal would tear the redrawn row apart.
+ */
+export async function syncDatabase(): Promise<void> {
   const target = databaseDirectory();
-  const url = databaseRepositoryUrl();
-  console.log(`Refreshing ${target} from ${url}.`);
-  fs.mkdirSync(laxHome(), { recursive: true });
-  migrateLegacyDatabase(target);
-  if (!fs.existsSync(path.join(target, ".git"))) {
-    if (fs.existsSync(target)) {
-      throw new Error(`${target} exists but is not a git clone; move it aside and retry`);
+  const cloning = !fs.existsSync(path.join(target, ".git"));
+  // Counted before the update, so the delta is the update's own doing. A first
+  // clone has nothing to compare against, which is why this is undefined rather
+  // than zero: everything it downloads is the copy, not an increment to it.
+  const before = cloning ? undefined : countDatabaseRecords();
+  ui.verbose(`refreshing ${target} from ${databaseRepositoryUrl()}`);
+  const steps = new ui.Steps();
+  steps.add("archive", cloning ? "Cloning the archive" : "Archive");
+  // Git's transcript and the failure the command dies of are both held until the
+  // live region is gone: written into a redraw they would be eaten by it, and
+  // the row is the thing the author reads first anyway.
+  let transcript: string | undefined;
+  let failure: Error | undefined;
+  try {
+    const update = await updateDatabaseQuietly();
+    if (update.status === "failed") transcript = update.detail;
+    switch (update.status) {
+      case "invalid":
+        steps.settle("archive", {
+          status: "fail",
+          label: "Archive",
+          detail: `${ui.tilde(target)} is not a git clone`,
+          under: [`Move it aside, then run ${ui.cmd("lax sync")} again.`],
+        });
+        failure = new Error(`${target} exists but is not a git clone; move it aside and retry`);
+        break;
+      case "failed":
+        // With nothing on disk there is no archive to work with, so this is the
+        // command failing. An existing copy is still what every local build,
+        // preview and preflight reads, so there the only news is that it did
+        // not move.
+        steps.settle("archive", {
+          status: before === undefined ? "fail" : "warn",
+          label: before === undefined ? "Archive" : "Archive not updated",
+          detail: "could not be reached",
+          under: [
+            ...(before === undefined ? [] : [`Your copy is unchanged — ${submissions(before)}.`]),
+            `Check your connection, then run ${ui.cmd("lax sync")}.`,
+          ],
+        });
+        if (before === undefined) {
+          failure = new Error(`the archive could not be downloaded: ${update.detail}`);
+        }
+        break;
+      // The three states that leave a usable copy behind: cloned, updated,
+      // already current.
+      default: {
+        const after = countDatabaseRecords();
+        const added = before === undefined ? 0 : after - before;
+        steps.settle("archive", {
+          label:
+            update.status === "cloned"
+              ? "Archive downloaded"
+              : update.status === "updated"
+                ? "Archive updated"
+                : "Archive up to date",
+          // `+3` is the part an author reads first, and it is a claim: it is
+          // there only when records genuinely arrived.
+          detail: added > 0 ? `+${ui.count(added)} · ${submissions(after)}` : submissions(after),
+        });
+      }
     }
-    execFileSync("git", ["clone", "--filter=blob:none", url, target], { stdio: "inherit" });
-  } else {
-    execFileSync("git", ["-C", target, "remote", "set-url", "origin", url], {
-      stdio: "ignore",
-    });
-    execFileSync("git", ["-C", target, "pull", "--ff-only"], { stdio: "inherit" });
+  } finally {
+    // The row spins on an interval, which holds the event loop open: a throw
+    // that skipped this would hang the CLI rather than exit it.
+    steps.finish();
   }
-  console.log(`lax-database is current at ${target}`);
+  if (transcript !== undefined) ui.verbose(transcript);
+  if (failure !== undefined) throw failure;
+}
+
+/**
+ * How many submissions this machine's copy of the archive holds. A record
+ * directory per submission is the archive's own layout, so counting them is the
+ * one number worth printing about a refresh — and `lax serve` and `lax doctor`
+ * describe the same copy.
+ */
+export function countDatabaseRecords(): number {
+  try {
+    return fs
+      .readdirSync(databaseDirectory(), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && SUBMISSION_ID_PATTERN.test(entry.name)).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** `1,204 submissions`: the archive as a size, which is what an author asked
+ * about, rather than as a commit. */
+function submissions(value: number): string {
+  return `${ui.count(value)} ${value === 1 ? "submission" : "submissions"}`;
 }
 
 export type DatabaseUpdate =
@@ -54,10 +141,12 @@ export type DatabaseUpdate =
 /**
  * Bring the local checkout in line with the public repository.
  *
- * Unlike `pullDatabase` this inherits no stdio and prints nothing: `lax doctor`
- * runs it underneath a live spinner, and a git transcript written straight to
- * the terminal would tear the redrawn region apart. Failure is reported rather
- * than thrown — an offline author still wants the rest of the report.
+ * This inherits no stdio and prints nothing: every caller — `lax doctor`,
+ * `lax sync`, `lax update` — runs it underneath a live spinner, and a git
+ * transcript written straight to the terminal would tear the redrawn region
+ * apart. Failure is reported rather than thrown: an offline author still wants
+ * the rest of the report, and the caller decides whether a copy left as it is
+ * is fatal.
  */
 export async function updateDatabaseQuietly(): Promise<DatabaseUpdate> {
   const target = databaseDirectory();
@@ -138,7 +227,8 @@ function migrateLegacyDatabase(target: string): void {
     const legacy = path.join(laxHome(), name);
     if (!fs.existsSync(legacy)) continue;
     fs.renameSync(legacy, target);
-    console.log(`moved the existing database checkout from ${legacy} to ${target}`);
+    // A rename the author never asked for and cannot act on: true, and verbose.
+    ui.verbose(`moved the existing database checkout from ${legacy} to ${target}`);
     return;
   }
 }

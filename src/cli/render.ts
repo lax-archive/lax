@@ -86,13 +86,3 @@ function collapseBlanks(lines: string[]): string[] {
   while (output.length > 0 && output[output.length - 1] === "") output.pop();
   return output;
 }
-
-/**
- * Print a rendered comment under a command label, continuation lines indented
- * so a multi-line report stays visibly one answer.
- */
-export function labelled(label: string, text: string): string {
-  const lines = text.split("\n");
-  const [first, ...rest] = lines;
-  return [`${label}: ${first ?? ""}`, ...rest.map((line) => (line === "" ? "" : `  ${line}`))].join("\n");
-}

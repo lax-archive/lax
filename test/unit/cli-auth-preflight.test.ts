@@ -13,13 +13,14 @@ import { AuthenticationError } from "../../src/cli/github-app.js";
 
 const stub = vi.hoisted(() => ({
   databaseDirectory: "",
-  buildSubmission: vi.fn(async () => 0),
+  buildSubmission: vi.fn(async () => ({ ok: true, warnings: [], violations: [] })),
   hasCurrentLocalBuild: vi.fn(() => false),
   ensureLoggedIn: vi.fn(async () => "author"),
   githubAppUserToken: vi.fn(async () => "ghu_test-token"),
 }));
 
-vi.mock("../../src/cli/build.js", () => ({
+vi.mock("../../src/cli/build.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   buildSubmission: stub.buildSubmission,
   hasCurrentLocalBuild: stub.hasCurrentLocalBuild,
 }));
@@ -58,7 +59,7 @@ describe("CLI authentication preflight", () => {
     seedRepository(stub.databaseDirectory);
     logged = [];
     errors = [];
-    stub.buildSubmission.mockClear().mockResolvedValue(0);
+    stub.buildSubmission.mockClear().mockResolvedValue({ ok: true, warnings: [], violations: [] });
     stub.hasCurrentLocalBuild.mockClear().mockReturnValue(false);
     stub.ensureLoggedIn.mockClear().mockResolvedValue("author");
     stub.githubAppUserToken.mockClear().mockResolvedValue("ghu_test-token");
@@ -88,12 +89,17 @@ describe("CLI authentication preflight", () => {
 
   it("names the authenticated account before spending the build", async () => {
     stub.githubAppUserToken.mockRejectedValue(new AuthenticationError("stop before posting"));
+    // The row is committed by the time the build starts, so the author knows
+    // *whose* submission this is going to be before spending minutes of Lean.
+    let onScreen: string[] = [];
+    stub.buildSubmission.mockImplementation(async () => {
+      onScreen = [...logged];
+      return { ok: true, warnings: [], violations: [] };
+    });
 
     await expect(submitFolder(home)).rejects.toThrow("stop before posting");
 
-    expect(logged.indexOf("lax submit: authenticated as author.")).toBeLessThan(
-      logged.findIndex((line) => line.includes("running lax build first")),
-    );
+    expect(onScreen.some((line) => line.includes("Signed in as author"))).toBe(true);
   });
 
   it("does not offer a resume hint for a submit that never reached GitHub", async () => {
@@ -107,8 +113,9 @@ describe("CLI authentication preflight", () => {
     await expect(submitFolder(home)).rejects.toThrow("run `lax login` again");
 
     expect(stub.buildSubmission).toHaveBeenCalledOnce();
-    expect(errors.join("\n")).not.toContain("lost contact");
-    expect(errors.join("\n")).not.toContain("--resume");
+    const printed = [...logged, ...errors].join("\n");
+    expect(printed).not.toContain("Lost contact");
+    expect(printed).not.toContain("--resume");
   });
 });
 

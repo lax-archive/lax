@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,18 +14,41 @@ import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../submission-validation/pins.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, updateDatabaseQuietly } from "./database.js";
-import { LoadingBlock } from "./loading.js";
 import { issueNumberFromFolder } from "./manifest.js";
 import { registeredSubmissions } from "./registry.js";
+import * as ui from "./ui.js";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * One probe's answer, in the shape a row is built from.
+ *
+ * `label` is what the author calls the thing, not what we call the check: a
+ * check that only ever appears when it is broken is read by whoever has to fix
+ * it. `fact` is the opposite — the words a healthy check contributes to the row
+ * it shares with its group, where its own name is not worth a line.
+ */
 interface Check {
-  name: string;
-  status: "ok" | "warn" | "fail";
+  label: string;
+  status: ui.Status;
+  /** The one line the author reads first. */
   detail: string;
-  fix?: string;
+  /** Anything else that had to be said, a line each under the detail. */
+  more?: readonly string[];
+  /** The imperative, a line each. Commands in backticks come out bold. */
+  fix?: readonly string[];
+  /** What the collapsed group row shows for this check while it passes. */
+  fact?: string;
+  /** The path, id or client behind the check: a `--verbose` concern. */
+  internal?: string;
 }
+
+/** doctor's labels are one word each — `Lax`, `Account`, `lax-50` — so its
+ * details sit further left than a command report's. */
+const LABEL_WIDTH = 20;
+
+/** `v4.30.0` out of `leanprover/lean4:v4.30.0`: the pin as the author reads it. */
+const TOOLCHAIN_VERSION = LEAN_TOOLCHAIN.slice(LEAN_TOOLCHAIN.indexOf(":") + 1);
 
 /**
  * The binary a lax command would actually run for `tool`.
@@ -70,10 +94,22 @@ async function toolVersionAsync(tool: string): Promise<string | undefined> {
   }
 }
 
-const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;
-
 /** The fix line for a gap `--dry` reported instead of closing. */
 const WOULD_INSTALL = "run `lax doctor` without --dry to install it";
+
+/**
+ * The version the author would put in a bug report, read the way main.ts reads
+ * it. Best-effort: a package.json we cannot read is not a problem with the
+ * machine, and the rest of the row is still worth printing.
+ */
+function cliVersion(): string | undefined {
+  try {
+    const pkg = createRequire(import.meta.url)("../../package.json") as { version?: string };
+    return pkg.version;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * elan, plus the install that provisions it.
@@ -86,37 +122,42 @@ const WOULD_INSTALL = "run `lax doctor` without --dry to install it";
  * and nowhere else. `--no-modify-path` means the user's shell still will not
  * find `elan`; `toolBinary()` is why nothing in lax needs it to.
  */
-async function elanCheck(block: LoadingBlock, key: string, dry: boolean): Promise<Check> {
+async function elanCheck(dry: boolean, working: (text: string) => void): Promise<Check> {
   // The elan under `elanHome()` and no other: `toolchainDir()` hangs off it, so
   // an elan somewhere else on PATH is one whose toolchains lax would never find
   // — the very state the lake check below reports as "no elan to provide it".
   const elanBin = path.join(elanHome(), "bin", "elan");
   const present = fs.existsSync(elanBin);
   if (!present && dry) {
-    return { name: "elan", status: "fail", detail: `none at ${elanBin}`, fix: WOULD_INSTALL };
+    return {
+      label: "elan",
+      status: "fail",
+      detail: `nothing at ${ui.tilde(elanBin)}`,
+      fix: [WOULD_INSTALL],
+    };
   }
   if (!present) {
-    block.relabel(key, "elan — installing it, which takes a moment the first time");
-    block.begin(key);
+    working("installing elan, a moment the first time");
     const install = await installElan(elanBin, { echo: false });
-    block.relabel(key, "elan");
     if (!install.ok) {
-      return { name: "elan", status: "fail", detail: install.reason, fix: installHint("elan") };
+      return { label: "elan", status: "fail", detail: install.reason, fix: [installHint("elan")] };
     }
   }
   const version = await toolVersionAt(elanBin);
   if (version === undefined) {
     return {
-      name: "elan",
+      label: "elan",
       status: "fail",
-      detail: `${elanBin} does not run`,
-      fix: installHint("elan"),
+      detail: `${ui.tilde(elanBin)} does not run`,
+      fix: [installHint("elan")],
     };
   }
   return {
-    name: "elan",
+    label: "elan",
     status: "ok",
-    detail: present ? version : `${version} — installed just now at ${elanBin}`,
+    detail: version,
+    fact: shortElan(version),
+    internal: `${version} at ${elanBin}`,
   };
 }
 
@@ -131,49 +172,47 @@ async function elanCheck(block: LoadingBlock, key: string, dry: boolean): Promis
  * binaries directly, so that is the lake worth reporting, and the pinned
  * toolchain is the one worth installing.
  */
-async function lakeCheck(block: LoadingBlock, key: string, dry: boolean): Promise<Check> {
+async function lakeCheck(dry: boolean, working: (text: string) => void): Promise<Check> {
   const elanBin = path.join(elanHome(), "bin", "elan");
   if (!fs.existsSync(elanBin)) {
     return {
-      name: "lake",
+      label: "Lake",
       status: "fail",
       detail: "no elan to provide it",
-      fix: dry ? WOULD_INSTALL : installHint("elan"),
+      fix: [dry ? WOULD_INSTALL : installHint("elan")],
     };
   }
   if (!fs.existsSync(path.join(toolchainBinDir(), "lean")) && dry) {
     return {
-      name: "lake",
+      label: "Lake",
       status: "fail",
-      detail: `${LEAN_TOOLCHAIN} is not installed`,
-      fix: WOULD_INSTALL,
+      detail: `${TOOLCHAIN_VERSION} is not installed`,
+      fix: [WOULD_INSTALL],
     };
   }
   if (!fs.existsSync(path.join(toolchainBinDir(), "lean"))) {
-    block.relabel(key, `lake — installing ${LEAN_TOOLCHAIN}, which takes minutes the first time`);
-    block.begin(key);
+    working(`installing ${TOOLCHAIN_VERSION}, a few minutes the first time`);
     const install = await run(elanBin, ["toolchain", "install", LEAN_TOOLCHAIN], os.homedir(), {
       echo: false,
     });
-    block.relabel(key, "lake");
     if (install.code !== 0) {
       return {
-        name: "lake",
+        label: "Lake",
         status: "fail",
-        detail: `could not install ${LEAN_TOOLCHAIN} (exit ${install.code})`,
-        fix: `run \`elan toolchain install ${LEAN_TOOLCHAIN}\` to see the full transcript`,
+        detail: `could not install ${TOOLCHAIN_VERSION} (exit ${install.code})`,
+        fix: [`run \`elan toolchain install ${LEAN_TOOLCHAIN}\` to see the full transcript`],
       };
     }
   }
   const version = await toolVersionAt(path.join(toolchainBinDir(), "lake"));
   return version === undefined
     ? {
-        name: "lake",
+        label: "Lake",
         status: "fail",
-        detail: `${LEAN_TOOLCHAIN} has no working lake`,
-        fix: `reinstall it: \`elan toolchain uninstall ${LEAN_TOOLCHAIN}\` then \`lax doctor\``,
+        detail: `${TOOLCHAIN_VERSION} has no working lake`,
+        fix: [`reinstall it: \`elan toolchain uninstall ${LEAN_TOOLCHAIN}\` then \`lax doctor\``],
       }
-    : { name: "lake", status: "ok", detail: version };
+    : { label: "Lake", status: "ok", detail: version, fact: shortLake(version) };
 }
 
 async function toolVersionAt(bin: string): Promise<string | undefined> {
@@ -186,131 +225,296 @@ async function toolVersionAt(bin: string): Promise<string | undefined> {
 }
 
 /**
- * Every check runs concurrently and spins on its own line until it answers.
- * The probes behind them (two GitHub calls, `git ls-remote`, statfs, a
- * `git ls-files` per submission, an elan bootstrap, and a `lake --version` that
- * can have elan install a whole toolchain) add up to minutes in the worst case;
- * running them in sequence made that the sum rather than the maximum, and a
- * report that only printed on completion made the wait look like a hang.
+ * `Lake version 5.0.0 (Lean version 4.30.0)` → `v4.30.0 · lake 5.0.0`: the two
+ * numbers an author would compare against a pin, Lean's first because that is
+ * the one they think in. A banner we do not recognise survives whole — a tool
+ * that ran is a tool that ran, whatever it chose to print.
+ */
+function shortLake(raw: string): string {
+  const lean = /Lean version ([^\s)]+)/u.exec(raw)?.[1];
+  const lake = /Lake version (\S+)/u.exec(raw)?.[1];
+  if (lean === undefined && lake === undefined) return raw;
+  return [lean === undefined ? undefined : `v${lean}`, lake === undefined ? undefined : `lake ${lake}`]
+    .filter((part) => part !== undefined)
+    .join(" · ");
+}
+
+/** `elan 3.1.1 (a1b2c3d 2026-01-01)` → `elan 3.1.1`; same fallback. */
+function shortElan(raw: string): string {
+  const version = /^elan (\S+)/u.exec(raw)?.[1];
+  return version === undefined ? raw : `elan ${version}`;
+}
+
+/**
+ * Eight rows, plus one per registered submission, whatever the machine turns
+ * out to be — and every probe behind them running at once.
+ *
+ * The probes (two GitHub calls, `git ls-remote`, statfs, a `git ls-files` per
+ * submission, an elan bootstrap, and a `lake --version` that can have elan
+ * install a whole toolchain) add up to minutes in the worst case; running them
+ * in sequence made that the sum rather than the maximum, and a report that only
+ * printed on completion made the wait look like a hang.
  *
  * The one ordering that has to survive the concurrency is the Lean chain, and
  * it is a chain because each link provisions the next: the elan check installs
  * elan, `lake --version` then has it install the pinned toolchain, and the two
- * checks that only read the installed state run last.
+ * checks that only read the installed state — the toolchain directory and the
+ * mathlib store — run last.
  *
  * `dry` turns all of that off: the four checks that write something — elan, the
- * toolchain, the database clone, and the credentials refresh behind `github
- * auth` — report the gap and its fix instead of closing it. Nothing else here
- * ever wrote, so a dry run leaves the machine byte-for-byte as it found it, and
- * the report is otherwise the same report. It still exits 1 on a ✗, which is
- * what makes it usable as a check in a script.
+ * toolchain, the archive clone, and the credentials refresh behind `Account` —
+ * report the gap and its fix instead of closing it. Nothing else here ever
+ * wrote, so a dry run leaves the machine byte-for-byte as it found it, and the
+ * report is otherwise the same report. It still exits 1 on a ✗, which is what
+ * makes it usable as a check in a script.
  */
 export async function doctor(opts: { dry?: boolean } = {}): Promise<number> {
   const dry = opts.dry === true;
-  const checks: Check[] = [];
-  const block = new LoadingBlock(process.stdout, { indent: "  " });
-  const settle = (key: string, ...found: Array<Check | undefined>): void => {
-    const lines: string[] = [];
-    for (const check of found) {
-      if (check === undefined) continue;
-      checks.push(check);
-      lines.push(`  ${MARK[check.status]} ${check.name}: ${check.detail}`);
-      if (check.fix !== undefined && check.status !== "ok") lines.push(`      → ${check.fix}`);
-    }
-    block.settle(key, lines);
+  /** Every check the verdict counts and `--verbose` reports the internals of. */
+  const found: Check[] = [];
+  const record = (...checks: readonly Check[]): readonly Check[] => {
+    found.push(...checks);
+    return checks;
   };
 
-  const submissions = registeredSubmissions();
-  // Declared in report order; they settle in whatever order they finish.
-  const keys = [
-    "platform", "node", "git", "npm", "elan", "lake", "github auth",
-    "database clone", "lean toolchain", "mathlib store", "website renderer", "disk",
-  ];
-  for (const key of keys) block.add(key, key);
-  if (submissions.length > 0) {
-    block.add("submissions", submissions.length === 1 ? "1 submission" : `${submissions.length} submissions`);
+  ui.title("Checking your setup");
+  if (dry) {
+    ui.faint("Reporting only — nothing is installed or refreshed.");
+    ui.blank();
   }
-  // The Lean chain is the one part that cannot fan out, so say what each of
-  // its rows is queued behind rather than spinning as if it were working.
-  block.waiting("lake", "waiting for elan");
-  block.waiting("lean toolchain", "waiting for lake");
-  block.waiting("mathlib store", "waiting for lake");
 
-  if (dry) console.log("lax doctor: --dry — reporting only; nothing is installed or refreshed");
-  const ticker = setInterval(() => { block.render(); }, 100);
+  // The one command whose rows genuinely all run at once, so the one that
+  // spins every row rather than only the row it is on.
+  const steps = new ui.Steps({ labelWidth: LABEL_WIDTH, concurrent: true });
+  const settle = (key: string, check: Check | undefined): void => {
+    // A probe with nothing to say (an unreadable mount) leaves no row behind.
+    if (check === undefined) {
+      steps.settle(key, { hidden: true });
+      return;
+    }
+    record(check);
+    steps.settle(key, {
+      label: check.label,
+      status: check.status,
+      detail: check.detail,
+      under: underLines(check),
+    });
+  };
+
+  // Declared in report order; they settle in whatever order they finish.
+  steps.add("lax", "Lax");
+  steps.add("lean", "Lean");
+  steps.add("git", "Git");
+  steps.add("account", "Account");
+  steps.add("archive", "Archive");
+  steps.add("mathlib", "Mathlib");
+  steps.add("disk", "Disk");
+  // The registry is known before any probing starts, so every submission gets
+  // its row up front, under the id the author calls it by.
+  const submissions = registeredSubmissions().map((root, index) => ({
+    root,
+    key: `submission:${index}`,
+    label: submissionLabel(root),
+  }));
+  for (const submission of submissions) steps.add(submission.key, submission.label);
+  // mathlib is the one row that genuinely queues behind another, so say what it
+  // is waiting for rather than spinning as if it were working.
+  steps.waiting("mathlib", "waiting for Lean");
+
   try {
-    settle("platform", platformCheck());
-    settle("node", nodeCheck());
-    settle("website renderer", pageBuilderCheck());
     await Promise.all([
-      (async () => { settle("git", await toolCheck("git")); })(),
-      (async () => { settle("npm", await toolCheck("npm")); })(),
       (async () => {
-        block.begin("elan");
-        settle("elan", await elanCheck(block, "elan", dry));
-        block.begin("lake");
-        settle("lake", await lakeCheck(block, "lake", dry));
-        // Only now do these two read a settled state: while the toolchain was
-        // installing they would have reported the half-built directory elan is
-        // in the middle of creating.
-        settle("lean toolchain", toolchainCheck());
-        settle("mathlib store", warmStoreCheck());
+        // Is the lax install healthy: four checks, one row, and npm the only one
+        // of them the row has to wait for.
+        const platform = platformCheck();
+        const node = nodeCheck();
+        const renderer = pageBuilderCheck();
+        const npm = await toolCheck("npm", "npm");
+        settleGroup(
+          steps,
+          "lax",
+          [cliVersion(), factOf(node), factOf(platform)],
+          record(platform, node, npm, renderer),
+        );
       })(),
-      (async () => { settle("github auth", await githubCheck(dry)); })(),
-      (async () => { settle("database clone", await databaseCheck(block, "database clone", dry)); })(),
-      (async () => { settle("disk", await diskCheck()); })(),
       (async () => {
-        if (submissions.length === 0) return;
-        let done = 0;
-        const found = await pooled(submissions, 4, async (root) => {
-          const check = await submissionCheck(root);
-          done += 1;
-          block.progress("submissions", `${done}/${submissions.length}`);
-          return check;
+        settle("git", await toolCheck("git", "Git", /^git version (\S+)/u));
+      })(),
+      (async () => {
+        // The row's own detail while it provisions something, with its clock
+        // restarted so the time on it measures that install rather than the
+        // probes in front of it.
+        const working = (text: string): void => {
+          steps.begin("lean");
+          steps.detail("lean", text);
+        };
+        const elan = await elanCheck(dry, working);
+        const lake = await lakeCheck(dry, working);
+        // Only now does this read a settled state: while the toolchain was
+        // installing it would have reported the half-built directory elan is in
+        // the middle of creating.
+        const toolchain = toolchainCheck();
+        // Every link runs — each one is what proves the link above it worked —
+        // but the report stops at the first that broke: with no elan, "no elan
+        // to provide it" and "the toolchain is not installed yet" are the same
+        // sentence a second and a third time.
+        const chain = [elan, lake, toolchain];
+        const broken = chain.find((check) => check.status !== "ok");
+        settleGroup(
+          steps,
+          "lean",
+          [factOf(lake), factOf(elan)],
+          record(...(broken === undefined ? chain : [broken])),
+        );
+        steps.begin("mathlib");
+        settle("mathlib", warmStoreCheck());
+      })(),
+      (async () => {
+        settle("account", await githubCheck(dry));
+      })(),
+      (async () => {
+        settle(
+          "archive",
+          await databaseCheck(dry, (text) => {
+            steps.detail("archive", text);
+          }),
+        );
+      })(),
+      (async () => {
+        settle("disk", await diskCheck());
+      })(),
+      (async () => {
+        await pooled(submissions, 4, async (submission) => {
+          settle(submission.key, await submissionCheck(submission.root, submission.label));
         });
-        settle("submissions", ...found);
       })(),
     ]);
   } finally {
-    clearInterval(ticker);
-    block.finish();
+    steps.finish();
   }
 
-  const failures = checks.filter((check) => check.status === "fail").length;
-  if (failures > 0) {
-    console.error(`lax doctor: ${failures} problem${failures === 1 ? "" : "s"} found`);
-    return 1;
+  // The paths, ids and clients the rows deliberately left out, lined up under
+  // the column the details were in — the same report with its internals put
+  // back, in the order the answers arrived.
+  const column = ui.detailColumn(LABEL_WIDTH).length - ui.INDENT.length;
+  const internals = found.filter((check) => check.internal !== undefined);
+  if (ui.isVerbose() && internals.length > 0) ui.blank();
+  for (const check of internals) ui.verbose(`${check.label.padEnd(column)}${check.internal!}`);
+
+  const problems = found.filter((check) => check.status === "fail").length;
+  const notes = found.filter((check) => check.status === "warn").length;
+  if (problems === 0 && notes === 0) {
+    ui.verdict("Everything is ready.");
+    ui.done();
+    return 0;
   }
-  console.log(
-    checks.some((check) => check.status === "warn")
-      ? "lax doctor: ready (notes above)"
-      : "lax doctor: everything is ready",
+  // A count, not a sentence: the rows above already said what and how to fix it.
+  ui.verdict(
+    [
+      ...(problems > 0 ? [ui.plural(problems, "problem")] : []),
+      ...(notes > 0 ? [ui.plural(notes, "note")] : []),
+    ].join(" · "),
   );
-  return 0;
+  ui.done();
+  return problems > 0 ? 1 : 0;
+}
+
+/**
+ * A row several checks share — `Lax` over platform/node/npm/renderer, `Lean`
+ * over elan/lake/toolchain.
+ *
+ * "Is my lax install healthy" is one question from the author's side, so while
+ * every check behind it passes the group is a single row carrying only the facts
+ * worth seeing (`0.1.23 · node v22.11.0 · linux`). The first check that does not
+ * pass takes the row over — its label, its status, its detail, its fix — because
+ * a collapsed row can only ever mean "healthy"; anything else broken in the same
+ * group follows on the lines below it, so a second, independent failure is never
+ * swallowed by the first.
+ */
+function settleGroup(
+  steps: ui.Steps,
+  key: string,
+  facts: readonly (string | undefined)[],
+  checks: readonly Check[],
+): void {
+  // Problems before notes, so the row that stands in for the group carries the
+  // worst mark in it.
+  const broken = [
+    ...checks.filter((check) => check.status === "fail"),
+    ...checks.filter((check) => check.status === "warn"),
+  ];
+  const [first, ...rest] = broken;
+  if (first === undefined) {
+    const detail = facts.filter((fact) => fact !== undefined && fact !== "").join(" · ");
+    steps.settle(key, detail === "" ? { hidden: true } : { detail });
+    return;
+  }
+  steps.settle(key, {
+    label: first.label,
+    status: first.status,
+    detail: first.detail,
+    under: [
+      ...underLines(first),
+      ...rest.flatMap((check) => [`${check.label} · ${check.detail}`, ...underLines(check)]),
+    ],
+  });
+}
+
+function factOf(check: Check): string | undefined {
+  return check.status === "ok" ? check.fact : undefined;
+}
+
+/**
+ * What goes under a row: whatever else it had to say, then the fix. Commands
+ * are bold rather than backticked — the author is meant to type them, and a
+ * terminal has no code voice.
+ */
+function underLines(check: Check): readonly string[] {
+  const fixes = check.status === "ok" ? [] : (check.fix ?? []);
+  return [
+    ...(check.more ?? []),
+    ...fixes.map((fix) => `→ ${fix.replace(/`([^`]+)`/gu, (_, command: string) => ui.cmd(command))}`),
+  ];
 }
 
 function platformCheck(): Check {
   const platform = os.platform();
+  // The one place the whole environment is written down, for a bug report: the
+  // rows themselves only carry it while the install is healthy.
+  const internal = `lax ${cliVersion() ?? "unknown"} on node ${process.versions.node}, ${platform} ${os.arch()}`;
   return platform === "linux" || platform === "darwin"
-    ? { name: "platform", status: "ok", detail: platform }
-    : { name: "platform", status: "fail", detail: platform, fix: "use Linux, macOS, or WSL" };
+    ? { label: "Platform", status: "ok", detail: platform, fact: platform, internal }
+    : {
+        label: "Platform",
+        status: "fail",
+        detail: platform,
+        fix: ["use Linux, macOS, or WSL"],
+        internal,
+      };
 }
 
 function nodeCheck(): Check {
   const major = Number(process.versions.node.split(".")[0]);
-  return {
-    name: "node",
-    status: major >= 20 ? "ok" : "fail",
-    detail: `v${process.versions.node}`,
-    ...(major >= 20 ? {} : { fix: "install Node.js 20 or newer — https://nodejs.org" }),
-  };
+  const version = `v${process.versions.node}`;
+  return major >= 20
+    ? { label: "Node", status: "ok", detail: version, fact: `node ${version}` }
+    : {
+        label: "Node",
+        status: "fail",
+        detail: version,
+        fix: ["install Node.js 20 or newer — https://nodejs.org"],
+      };
 }
 
-async function toolCheck(tool: string): Promise<Check> {
+/** A tool lax runs by name. `shorten` cuts its `--version` banner down to the
+ * number the author reads. */
+async function toolCheck(tool: string, label: string, shorten?: RegExp): Promise<Check> {
   const version = await toolVersionAsync(tool);
-  return version === undefined
-    ? { name: tool, status: "fail", detail: "not found", fix: installHint(tool) }
-    : { name: tool, status: "ok", detail: version };
+  if (version === undefined) {
+    return { label, status: "fail", detail: "not found", fix: [installHint(tool)] };
+  }
+  const short = shorten === undefined ? version : (shorten.exec(version)?.[1] ?? version);
+  return { label, status: "ok", detail: short, fact: short };
 }
 
 /** Run `limit` of `items` at a time — a long registry should not put a
@@ -341,10 +545,13 @@ async function diskCheck(): Promise<Check | undefined> {
     const stats = await fs.promises.statfs(target);
     const free = (stats.bavail * stats.bsize) / 2 ** 30;
     return {
-      name: "disk",
+      label: "Disk",
       status: free < 10 ? "warn" : "ok",
-      detail: `${free.toFixed(0)} GB free at ${target}`,
-      ...(free < 10 ? { fix: "the validation runtime and Lean build need roughly 10 GB free" } : {}),
+      detail: `${free.toFixed(0)} GB free`,
+      ...(free < 10
+        ? { fix: ["the validation runtime and Lean build need roughly 10 GB free"] }
+        : {}),
+      internal: `${free.toFixed(1)} GB free at ${target}`,
     };
   } catch {
     return undefined;
@@ -360,14 +567,21 @@ async function githubCheck(dry: boolean): Promise<Check> {
     // below stay: reading GitHub changes nothing.
     token = await githubAppUserToken({ refresh: !dry });
   } catch (error) {
-    // Not every failure here is a missing login — a stored login whose refresh
-    // GitHub answers with a 500 also lands here, and "no login found" would
-    // send the author off to re-run `lax login` for an outage.
+    // Not every failure here is a missing login — an expired one the CLI cannot
+    // renew lands here too, and "no login found" would describe neither. The
+    // messages carry their own "; run `lax login`" tail, which is the fix
+    // line's job.
+    // These messages are paragraphs — an outage explains itself — so the row
+    // takes the first clause and the rest goes under it rather than off the
+    // right edge of the terminal.
+    const message = error instanceof Error ? error.message : "no login found";
+    const [headline, ...rest] = message.replace(/;\s*run `[^`]+`.*$/u, "").split(" — ");
     return {
-      name: "github auth",
+      label: "Account",
       status: "fail",
-      detail: error instanceof Error ? error.message : "no login found",
-      fix: "run `lax login`",
+      detail: headline ?? message,
+      more: rest,
+      fix: ["run `lax login`"],
     };
   }
   const source =
@@ -392,10 +606,10 @@ async function githubCheck(dry: boolean): Promise<Check> {
     } catch (error) {
       if (error instanceof GitHubError && (error.status === 403 || error.status === 404)) {
         return {
-          name: "github auth",
+          label: "Account",
           status: "fail",
-          detail: `credentials do not authorize the current ${CONTROL_REPOSITORY} repository`,
-          fix: "run `lax logout`, `lax update`, then `lax login` again",
+          detail: "these credentials are for a different archive",
+          fix: ["run `lax logout`, `lax update`, then `lax login` again"],
         };
       }
       throw error;
@@ -404,92 +618,114 @@ async function githubCheck(dry: boolean): Promise<Check> {
       process.env.LAX_GITHUB_APP_USER_TOKEN !== undefined
         ? "environment App token"
         : `GitHub App ${readGitHubAppCredentials().clientId}`;
-    return { name: "github auth", status: "ok", detail: `${user.login} (${client}; ${source})` };
+    return {
+      label: "Account",
+      status: "ok",
+      detail: user.login,
+      internal: `${user.login} (${client}; ${source})`,
+    };
   } catch (error) {
     return error instanceof GitHubError && (error.status === 401 || error.status === 403)
       ? {
-          name: "github auth",
+          label: "Account",
           status: "fail",
-          detail: `GitHub rejected the token from ${source}`,
-          fix: "run `lax login` again",
+          detail: "GitHub rejected your login",
+          fix: ["run `lax login` again"],
+          internal: `the token came from ${source}`,
         }
       : {
-          name: "github auth",
+          label: "Account",
           status: "warn",
-          detail: `token found at ${source}; GitHub could not be reached`,
+          detail: "signed in; GitHub could not be reached",
+          internal: `the token came from ${source}`,
         };
   }
 }
 
 /** Doctor does not just report the clone's age, it brings it up to date — a
- * stale database is a problem doctor can simply end, and every local build and
+ * stale archive is a problem doctor can simply end, and every local build and
  * `lax serve` reads it. Only a checkout it must not touch, or an unreachable
- * remote, comes back as a note. */
-async function databaseCheck(block: LoadingBlock, key: string, dry: boolean): Promise<Check> {
+ * remote, comes back as a note. The path stays off the happy path: it is the
+ * first thing said when something is wrong with it, and nothing when it is not. */
+async function databaseCheck(dry: boolean, working: (text: string) => void): Promise<Check> {
   const directory = databaseDirectory();
+  const where = ui.tilde(directory);
   const cloning = !fs.existsSync(path.join(directory, ".git"));
   if (dry) {
     // Reporting what is on disk is all a read-only run can honestly say: the
     // clone's freshness is a question only a fetch answers, and a fetch writes.
     return cloning
       ? {
-          name: "database clone",
+          label: "Archive",
           status: "warn",
-          detail: `none at ${directory}`,
-          fix: "run `lax pull-db` (or `lax doctor` without --dry) to clone it",
+          detail: `none at ${where}`,
+          fix: ["run `lax doctor` without --dry to download it"],
+          internal: directory,
         }
       : {
-          name: "database clone",
+          label: "Archive",
           status: "ok",
-          detail: `${directory} (not refreshed — --dry)`,
+          detail: "not refreshed (--dry)",
+          internal: directory,
         };
   }
-  block.relabel(key, cloning ? "database clone — cloning lax-database" : "database clone — updating");
+  working(cloning ? "downloading" : "updating");
   const update = await updateDatabaseQuietly();
-  block.relabel(key, "database clone");
-  if (update.status === "invalid") return {
-    name: "database clone",
-    status: "warn",
-    detail: `${directory} is not a usable git clone`,
-    fix: "move it aside and run `lax pull-db`",
-  };
-  if (update.status === "failed") return {
-    name: "database clone",
-    status: "warn",
-    detail: cloning
-      ? `none at ${directory}; lax-database could not be cloned`
-      : `${directory} (left as it is — lax-database could not be reached)`,
-    ...(cloning ? { fix: "run `lax pull-db` once you are online" } : {}),
-  };
+  if (update.status === "invalid") {
+    return {
+      label: "Archive",
+      status: "warn",
+      detail: `${where} is not a usable git clone`,
+      fix: ["move it aside, then run `lax doctor` again"],
+      internal: directory,
+    };
+  }
+  if (update.status === "failed") {
+    return {
+      label: "Archive",
+      status: "warn",
+      detail: cloning
+        ? `none at ${where} — the archive could not be reached`
+        : `${where} left as it is — the archive could not be reached`,
+      ...(cloning ? { fix: ["run `lax doctor` again once you are online"] } : {}),
+      internal: `${directory}: ${update.detail}`,
+    };
+  }
   const detail: Record<typeof update.status, string> = {
     cloned: "cloned just now",
     updated: "updated just now",
     current: "up to date",
   };
-  return { name: "database clone", status: "ok", detail: `${directory} (${detail[update.status]})` };
+  return { label: "Archive", status: "ok", detail: detail[update.status], internal: directory };
 }
 
 function toolchainCheck(): Check {
   const binDir = toolchainBinDir();
   return fs.existsSync(binDir)
-    ? { name: "lean toolchain", status: "ok", detail: `${LEAN_TOOLCHAIN} at ${binDir}` }
+    ? {
+        label: "Lean toolchain",
+        status: "ok",
+        detail: TOOLCHAIN_VERSION,
+        internal: `${LEAN_TOOLCHAIN} at ${binDir}`,
+      }
     : {
-        name: "lean toolchain",
+        label: "Lean toolchain",
         status: "warn",
-        detail: `${LEAN_TOOLCHAIN} is not installed yet`,
-        fix: "elan installs it automatically on the first `lax build`",
+        detail: `${TOOLCHAIN_VERSION} is not installed yet`,
+        fix: ["elan installs it automatically on the first `lax build`"],
       };
 }
 
 function warmStoreCheck(): Check {
   const ws = warmDir();
   return warmReady(ws)
-    ? { name: "mathlib store", status: "ok", detail: ws }
+    ? { label: "Mathlib", status: "ok", detail: "ready", internal: ws }
     : {
-        name: "mathlib store",
+        label: "Mathlib",
         status: "warn",
-        detail: `none at ${ws}`,
-        fix: "the first `lax build` builds it once (downloads gigabytes)",
+        detail: "not downloaded yet",
+        fix: ["the first `lax build` builds it once (downloads gigabytes)"],
+        internal: ws,
       };
 }
 
@@ -504,12 +740,22 @@ function pageBuilderCheck(): Check {
   );
   return root === undefined
     ? {
-        name: "website renderer",
+        label: "Website renderer",
         status: "fail",
-        detail: "the pinned lax-website bundle is missing",
-        fix: "reinstall the CLI package",
+        detail: "the bundle that draws the pages is missing",
+        fix: ["reinstall the CLI package"],
       }
-    : { name: "website renderer", status: "ok", detail: root };
+    : { label: "Website renderer", status: "ok", detail: "ready", internal: root };
+}
+
+/** The id the author calls a registered folder by. A folder whose manifest has
+ * lost its id still gets a row — the check behind it is the one that says so. */
+function submissionLabel(root: string): string {
+  try {
+    return `lax-${issueNumberFromFolder(root)}`;
+  } catch {
+    return path.basename(root);
+  }
 }
 
 /**
@@ -518,8 +764,7 @@ function pageBuilderCheck(): Check {
  * leftovers, and git hygiene. Deliberately no network and no subprocess
  * beyond a local `git ls-files`, so a long registry cannot stall the report.
  */
-async function submissionCheck(root: string): Promise<Check> {
-  const name = `submission ${path.basename(root)}`;
+async function submissionCheck(root: string, label: string): Promise<Check> {
   const problems: string[] = [];
   const fixes = new Set<string>();
   try {
@@ -603,12 +848,19 @@ async function submissionCheck(root: string): Promise<Check> {
     problems.push(`${tracked} is tracked in git but must stay generated`);
     fixes.add("`git rm --cached` it and add it to .gitignore");
   }
-  if (problems.length === 0) return { name, status: "ok", detail: root };
+  // A healthy submission is its folder and nothing else; a broken one leads with
+  // its first problem and lists the rest under it, one to a line, because the
+  // joined form ran to three hundred characters.
+  if (problems.length === 0) {
+    return { label, status: "ok", detail: ui.tilde(root), internal: root };
+  }
   return {
-    name,
+    label,
     status: "warn",
-    detail: problems.join("; "),
-    fix: [...fixes].join("; "),
+    detail: problems[0]!,
+    more: problems.slice(1),
+    fix: [...fixes],
+    internal: root,
   };
 }
 

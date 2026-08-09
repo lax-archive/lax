@@ -68,7 +68,7 @@ export async function ensureValidationHost(
   }
   console.log(`lax setup: warm workspace ready at ${warm}`);
 
-  const inspector = await span("inspector build", () => inspectorBinary());
+  const inspector = await span("inspector build", () => inspectorBinary({ echo }));
   console.log(`lax setup: inspector ready at ${inspector}`);
   console.log("lax setup: validation host ready");
   return true;

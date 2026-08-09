@@ -77,14 +77,14 @@ describe("workflow comment correlation", () => {
         { id: 1, body: preview, user: bot },
         { id: 2, body: result, user: bot },
       ]);
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    await followCommand({ paginate } as unknown as GitHubClient, 42, 77, {
-      label: "lax register",
-      showPreview: true,
+    const previews: string[] = [];
+    const outcome = await followCommand({ paginate } as unknown as GitHubClient, 42, 77, {
+      onPreview: (text) => previews.push(text),
     });
     expect(paginate).toHaveBeenCalledTimes(2);
-    expect(log.mock.calls.flat().join("\n")).toContain("workflow run #123456789");
-    expect(log.mock.calls.flat().join("\n")).toContain("Done.");
+    expect(outcome.runId).toBe("123456789");
+    expect(previews).toEqual(["Preview."]);
+    expect(outcome.comment).toContain("Done.");
   });
 
   it("follows initialization until the correlated final comment", async () => {
@@ -92,10 +92,10 @@ describe("workflow comment correlation", () => {
     vi.stubEnv("LAX_WORKFLOW_TIMEOUT_MS", "1000");
     const result = appendWorkflowRun(`Initialized.\n\n${initializationMarker(42)}`, run());
     const paginate = vi.fn().mockResolvedValue([{ id: 1, body: result, user: bot }]);
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    await followInitialization({ paginate } as unknown as GitHubClient, 42);
-    expect(log.mock.calls.flat().join("\n")).toContain("workflow run #123456789");
-    expect(log.mock.calls.flat().join("\n")).toContain("Initialized.");
+    const outcome = await followInitialization({ paginate } as unknown as GitHubClient, 42);
+    expect(outcome.outcome).toBe("success");
+    expect(outcome.runId).toBe("123456789");
+    expect(outcome.comment).toContain("Initialized.");
   });
 });
 

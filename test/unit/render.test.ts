@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labelled, renderComment } from "../../src/cli/render.js";
+import { renderComment } from "../../src/cli/render.js";
 import { appendWorkflowRun, resultMarker } from "../../src/shared/workflow-comments.js";
 
 const run = { id: "31160822139", url: "https://github.com/lax-archive/lax/actions/runs/31160822139" };
@@ -45,7 +45,4 @@ describe("comment rendering for the terminal", () => {
     );
   });
 
-  it("labels the first line and indents the rest", () => {
-    expect(labelled("lax submit", "first\n\nsecond")).toBe("lax submit: first\n\n  second");
-  });
 });

@@ -16,7 +16,7 @@ export default async function setup(): Promise<void> {
   process.env.LAX_MATHLIB_REV = rev;
   await putToolchainOnPath();
   const { inspectorBinary } = await import("../src/submission-validation/host/inspector.js");
-  await inspectorBinary(SHARED_TOOLS);
+  await inspectorBinary({}, SHARED_TOOLS);
   const { buildWarmWorkspace, makeStoreReadOnly, markWarmReady, warmDir, warmReady } = await import(
     "../src/submission-validation/host/warmstore.js"
   );

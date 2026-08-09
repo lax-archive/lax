@@ -7,7 +7,7 @@ import { hasCurrentLocalBuild } from "../../src/cli/build.js";
 import {
   databaseDirectory,
   databaseFreshnessAsync,
-  pullDatabase,
+  syncDatabase,
 } from "../../src/cli/database.js";
 import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
 
@@ -27,7 +27,7 @@ describe("local command preflights", () => {
     expect(databaseDirectory()).toBe(path.join(home, "lax-database"));
   });
 
-  it("migrates the previous checkout name during a pull", () => {
+  it("migrates the previous checkout name during a pull", async () => {
     const home = temporary("lax-home-");
     const seed = temporary("lax-database-seed-");
     const remote = path.join(temporary("lax-database-remote-"), "database.git");
@@ -44,7 +44,7 @@ describe("local command preflights", () => {
     process.env.LAX_DATABASE_URL = remote;
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    pullDatabase();
+    await syncDatabase();
 
     expect(fs.existsSync(path.join(home, "database"))).toBe(false);
     expect(fs.existsSync(path.join(home, "lax-database", ".git"))).toBe(true);
@@ -83,7 +83,7 @@ describe("local command preflights", () => {
     writeRecord(database, "lax-8", "draft", ["Lax7"]);
 
     expect(checkDeleteLocally("lax-7", "refreshed")).toEqual({
-      refusal: "lax-7 is registered and immutable",
+      refusal: "lax-7 is registered, so it can never be changed or removed",
       warnings: [],
     });
   });
@@ -96,7 +96,7 @@ describe("local command preflights", () => {
     writeRecord(database, "lax-8", "draft", ["Lax7Proofs"]);
 
     expect(checkDeleteLocally("lax-7", "refreshed")).toEqual({
-      warnings: ["deleting lax-7 will strand lax-8"],
+      warnings: [{ text: "lax-8 builds on lax-7 and will be left broken." }],
     });
   });
 
@@ -125,7 +125,7 @@ describe("local command preflights", () => {
     expect(checkRegisterLocally("lax-7", "refreshed")).toEqual({
       refusal:
         "registration admits only registered dependencies — lax-5 is deleted, " +
-        "lax-9 is not in the local lax-database",
+        "lax-9 is not in your copy of the archive",
       warnings: [],
     });
   });

@@ -322,12 +322,20 @@ end Lax3.Broken
       {
         cwd: repoRoot,
         encoding: "utf8",
-        env: { ...process.env, LAX_HOME: clientHome, TMPDIR: tmp },
+        env: { ...process.env, LAX_HOME: clientHome, TMPDIR: tmp, NO_COLOR: "1" },
         timeout: 590_000,
       },
     );
-    expect(result.stderr).not.toContain("lax build:");
-    expect(result.stdout).toContain("lax build: OK");
+    // The report is the six rows and the verdict; nothing goes to stderr on a
+    // build that worked, and `build-output.json` never reaches the screen.
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Building lax-4");
+    expect(result.stdout).toContain("✓ Checked the layout");
+    expect(result.stdout).toContain("✓ Compiled concepts");
+    expect(result.stdout).toContain("✓ Compiled proofs");
+    expect(result.stdout).toContain("✓ Inspected the statements");
+    expect(result.stdout).toMatch(/Built lax-4 in \d/u);
+    expect(result.stdout).not.toContain("build-output.json");
     expect(result.status).toBe(0);
     // no lax-build-* workspace lingers in the temp dir (the EACCES littering
     // bug: cleanup must restore write bits before removal)

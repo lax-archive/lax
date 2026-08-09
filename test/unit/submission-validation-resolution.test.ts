@@ -130,7 +130,7 @@ describe("Archive dependency resolution retained from main", () => {
     // has to say how to relink the chain
     expect(crossWiredMessage).toContain("chain workflow");
     // locally the same mismatch can just be an out-of-date database clone
-    expect(crossWiredMessage).toContain("lax pull-db");
+    expect(crossWiredMessage).toContain("lax sync");
   });
 
   it("carries every statement of a multi-statement upstream concept", () => {
@@ -172,8 +172,8 @@ describe("Archive dependency resolution retained from main", () => {
     expect(byRule.get("deleted-dependency")).toContain("id is retired");
     expect(byRule.get("missing-dependency")).toContain("has no content-bearing Archive record");
     // a deletion is monotone, so only the missing record can be a stale clone
-    expect(byRule.get("missing-dependency")).toContain("lax pull-db");
-    expect(byRule.get("deleted-dependency")).not.toContain("lax pull-db");
+    expect(byRule.get("missing-dependency")).toContain("lax sync");
+    expect(byRule.get("deleted-dependency")).not.toContain("lax sync");
   });
 
   it("warns for draft dependencies and validates capture provenance", () => {

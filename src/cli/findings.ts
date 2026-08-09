@@ -1,62 +1,63 @@
 import type { ValidationFinding } from "../submission-validation/contracts.js";
-
-/** Which run produced the findings; only the heading differs. */
-export interface FindingsOrigin {
-  /** Command name, e.g. `lax build`. */
-  label: string;
-  /** What was being done, e.g. `local validation`. */
-  activity: string;
-}
-
-const LOCAL_BUILD: FindingsOrigin = { label: "lax build", activity: "local validation" };
+import { plural } from "./ui.js";
 
 /**
- * Format validation findings as one phase-grouped diagnostic. The same
- * renderer serves `lax build` and `lax submit`: a compile error is the same
- * text whether the compiler ran on this machine or on the validate runner, and
- * an author who has learned to read one has learned to read the other.
+ * Validation phases as the author's nouns. The pipeline's nineteen internal
+ * phases are the machinery's names for its own stages; a finding is about the
+ * author's `concepts/` or `proofs/` folder, their layout, or their statements,
+ * and that is the only vocabulary a diagnosis needs.
  */
-export function formatFindings(
-  warnings: ValidationFinding[],
-  errors: ValidationFinding[],
-  origin: FindingsOrigin = LOCAL_BUILD,
-): string | undefined {
-  const uniqueWarnings = unique(warnings);
-  const uniqueErrors = unique(errors);
-  if (uniqueWarnings.length === 0 && uniqueErrors.length === 0) return undefined;
-  const totals = [
-    count(uniqueErrors.length, "error"),
-    count(uniqueWarnings.length, "warning"),
-  ].filter((entry): entry is string => entry !== undefined);
-  const lines = [`${origin.label}: found ${totals.join(" and ")} during ${origin.activity}`];
-  appendSeverity(lines, "errors", uniqueErrors);
-  appendSeverity(lines, "warnings", uniqueWarnings);
-  return lines.join("\n");
+const PHASE_LABEL = new Map<string, string>([
+  ["source", "source"],
+  ["static", "layout"],
+  ["resolution", "dependencies"],
+  ["provision", "dependencies"],
+  ["compile-concepts", "concepts"],
+  ["compile-proofs", "proofs"],
+  ["replay", "kernel replay"],
+  ["inspect", "statements"],
+  ["dialect", "dialect"],
+  ["emit", "output"],
+]);
+
+export function phaseLabel(phase: string): string {
+  return PHASE_LABEL.get(phase) ?? phase;
 }
 
-function appendSeverity(
-  lines: string[],
-  label: "errors" | "warnings",
-  findings: ValidationFinding[],
-): void {
-  if (findings.length === 0) return;
-  lines.push(`  ${label}:`);
-  const phases = new Map<string, ValidationFinding[]>();
-  for (const finding of findings) {
-    const group = phases.get(finding.phase) ?? [];
-    group.push(finding);
-    phases.set(finding.phase, group);
-  }
-  for (const [phase, group] of phases) {
-    lines.push(`    ${phase}:`);
-    for (const finding of group) {
-      const message = finding.message.replace(/[\r\n]+/gu, "\n        ");
-      lines.push(`      - [${finding.rule}] ${message}`);
-    }
-  }
+/** A findings block, ready for `ui.Notes.add(headline, ...body)`. */
+export interface FindingGroup {
+  headline: string;
+  body: string[];
 }
 
-function unique(findings: ValidationFinding[]): ValidationFinding[] {
+/**
+ * Group findings of one severity into a headline and its indented body. The
+ * same renderer serves `lax build` and `lax submit`: a compile error is the same
+ * text whether the compiler ran on this machine or on the archive's runner, and
+ * an author who has learned to read one has learned to read the other.
+ *
+ * ```
+ * ! 2 warnings
+ *   concepts · unused-import
+ *     Lax50/Basic.lean imports Mathlib.Tactic but uses nothing from it
+ * ```
+ */
+export function groupFindings(
+  findings: readonly ValidationFinding[],
+  severity: "error" | "warning",
+): FindingGroup | undefined {
+  const distinct = unique(findings);
+  if (distinct.length === 0) return undefined;
+  const body: string[] = [];
+  for (const finding of distinct) {
+    body.push(`${phaseLabel(finding.phase)} · ${finding.rule}`);
+    // A compile transcript is its lines; keep them, indented under their rule.
+    for (const message of finding.message.split(/\r?\n/u)) body.push(`  ${message}`);
+  }
+  return { headline: plural(distinct.length, severity), body };
+}
+
+function unique(findings: readonly ValidationFinding[]): ValidationFinding[] {
   return [
     ...new Map(
       findings.map((finding) => [
@@ -65,9 +66,4 @@ function unique(findings: ValidationFinding[]): ValidationFinding[] {
       ]),
     ).values(),
   ];
-}
-
-function count(value: number, label: string): string | undefined {
-  if (value === 0) return undefined;
-  return `${value} ${label}${value === 1 ? "" : "s"}`;
 }

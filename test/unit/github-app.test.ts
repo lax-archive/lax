@@ -13,6 +13,7 @@ import {
   AuthenticationError,
   credentialsFromTokenResponse,
   GITHUB_APP_CLIENT_ID,
+  requestDeviceCode,
   requestDeviceToken,
   validateGitHubAppUserToken,
 } from "../../src/cli/github-app.js";
@@ -44,12 +45,13 @@ describe.sequential("GitHub App CLI authentication", () => {
   });
 
   it("explains the CLI App access before device authorization", () => {
-    expect(GITHUB_LOGIN_ACCESS_NOTICE).toContain("read your public GitHub profile");
-    expect(GITHUB_LOGIN_ACCESS_NOTICE).toContain(
-      "read and write issues and issue comments in lax-archive/lax",
-    );
-    expect(GITHUB_LOGIN_ACCESS_NOTICE).toContain("cannot write repository contents");
-    expect(GITHUB_LOGIN_ACCESS_NOTICE).toContain("lax-database or lax-website");
+    // Printed above the code: a thing to read before authorizing, not after.
+    const notice = GITHUB_LOGIN_ACCESS_NOTICE.join(" ");
+    expect(notice).toContain("read your public GitHub profile");
+    expect(notice).toContain("post issues and");
+    expect(notice).toContain("comments to lax-archive/lax as you");
+    expect(notice).toContain("cannot write repository contents");
+    expect(notice).toContain("lax-database or lax-website");
   });
 
   it("accepts only GitHub App user access tokens", async () => {
@@ -138,7 +140,10 @@ describe.sequential("GitHub App CLI authentication", () => {
     await expect(githubAppUserToken()).rejects.toThrow("different GitHub App");
   });
 
-  it("blames GitHub, not the login, when the token endpoint 5xxes", async () => {
+  /** An expired access token with a refresh token still in date: the state
+   * every login reaches eight hours after `lax login`, and the one that sends
+   * the CLI to the renewal endpoint. */
+  function storeExpiredLogin(): void {
     storeGitHubAppCredentials({
       version: 1,
       kind: "github-app-user",
@@ -148,14 +153,56 @@ describe.sequential("GitHub App CLI authentication", () => {
       refreshToken: "ghr_old-refresh",
       refreshTokenExpiresAt: Date.now() + 120_000,
     });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 500 }));
+  }
 
-    // The author saw only `GitHub App authorization failed with HTTP 500`: no
-    // hint that it was the stored login being renewed, nor which side failed.
+  it("reports a refused renewal as the expired login it is", async () => {
+    storeExpiredLogin();
+    // GitHub answers the renewal grant with HTTP 200 and an error in the body:
+    // it renews a user token only for a client that can present the App's
+    // client secret, which a published CLI has nowhere to keep. So this is not
+    // an outage to wait out — the login is over and `lax login` is the fix.
+    // A fresh Response per call: a body can only be read once, and every
+    // assertion below drives the whole path again.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          error: "incorrect_client_credentials",
+          error_description: "The client_id and/or client_secret passed are incorrect.",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ));
+
     await expect(githubAppUserToken()).rejects.toThrow(AuthenticationError);
-    await expect(githubAppUserToken()).rejects.toThrow(/refresh your stored GitHub login/u);
-    await expect(githubAppUserToken()).rejects.toThrow(/that is GitHub's side, not your login/u);
+    await expect(githubAppUserToken()).rejects.toThrow(/login expired/u);
+    await expect(githubAppUserToken()).rejects.toThrow(/cannot renew it by itself/u);
     await expect(githubAppUserToken()).rejects.toThrow(/lax login/u);
+  });
+
+  it("does not blame a GitHub outage for a renewal that failed", async () => {
+    storeExpiredLogin();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("", { status: 500 }));
+
+    // The author saw `GitHub's authorization service is failing — that is
+    // GitHub's side, not your login; try again shortly`, and went off to wait
+    // for an outage that was not happening. Renewal is not something the CLI
+    // can do, so a failure here is always the login, whatever the status.
+    await expect(githubAppUserToken()).rejects.toThrow(AuthenticationError);
+    await expect(githubAppUserToken()).rejects.toThrow(/could not be renewed \(HTTP 500\)/u);
+    await expect(githubAppUserToken()).rejects.not.toThrow(/not your login/u);
+    await expect(githubAppUserToken()).rejects.toThrow(/lax login/u);
+  });
+
+  it("quotes GitHub's own words when it refuses to authorize", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "device_flow_disabled" }), {
+        status: 422,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    // Printing our guess instead of the answer GitHub already gave is how a
+    // refused credential comes to read as a mystery.
+    await expect(requestDeviceCode(GITHUB_APP_CLIENT_ID)).rejects.toThrow(/device_flow_disabled/u);
   });
 
   it("reports a missing or foreign login as an authentication failure", async () => {

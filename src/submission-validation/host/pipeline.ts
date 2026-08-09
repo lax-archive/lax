@@ -63,6 +63,12 @@ export interface HostValidationOptions {
   echo?: boolean;
   /** Local presentation hook, mirroring ValidationOptions.onPhase. */
   onPhase?: (event: { name: string; state: "start" | "complete"; durationMs?: number }) => void;
+  /**
+   * What a phase found, for the row it settles. `onPhase` says only that a
+   * stage happened; the author's step list wants the answer next to it — which
+   * dependencies were resolved, not that resolution ran.
+   */
+  onDetail?: (phase: string, detail: string) => void;
   /** Collects the span tree; the caller owns it (see ValidationOptions). */
   profiler?: Profiler;
 }
@@ -149,6 +155,13 @@ export async function validateSubmissionOnHost(
   warnings.push(...resolution.findings.warnings);
   violations.push(...resolution.findings.violations);
   state.dependencies = resolution.result.all;
+  // mathlib is not a resolved dependency — it is the environment every
+  // submission builds in — so it leads the list the author sees rather than
+  // being absent from it.
+  options.onDetail?.(
+    "dependency resolution",
+    ["mathlib", ...new Set(resolution.result.all.map((dependency) => dependency.submissionId))].join(", "),
+  );
   if (resolution.findings.failed) return report(false);
 
   let warmWs: string | undefined;
@@ -270,7 +283,14 @@ export async function validateSubmissionOnHost(
 
   let inspectorBin: string;
   try {
-    inspectorBin = await state.phase("inspector binary", () => inspectorBinary());
+    inspectorBin = await state.phase("inspector binary", () =>
+      inspectorBinary({
+        echo,
+        // Half a minute of lake with nothing else to show for it, once per
+        // inspector source change. Say so on the row rather than let it read
+        // as a hang.
+        onBuild: () => options.onDetail?.("inspector binary", "building the inspector"),
+      }));
   } catch (error) {
     return fail("inspect", "inspector", error);
   }

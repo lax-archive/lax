@@ -56,7 +56,7 @@ function lax(
     ],
     {
       cwd: repoRoot,
-      env: { ...inherited, LAX_DISABLE_UPDATE_CHECK: "1", ...env },
+      env: { ...inherited, LAX_DISABLE_UPDATE_CHECK: "1", NO_COLOR: "1", ...env },
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 120_000,
     },
@@ -101,13 +101,16 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
 
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain(`enter code ${FAKE_USER_CODE}`);
-    // the poll loop is not silent: one heartbeat per wait (spinning on a TTY),
-    // ending in the bare URL so terminal linkification stays intact
-    expect(result.stdout).toContain(
-      `waiting for authorization — enter code ${FAKE_USER_CODE} at https://github.com/login/device\n`,
-    );
-    expect(result.stdout).toContain("Logged in as alice through the Lax GitHub App.");
+    // The scope notice is above the code — a thing to read before authorizing
+    // — and the code and URL are plain lines, not spinner text, so a redirected
+    // log still carries everything the terminal showed.
+    expect(result.stdout).toContain("read your public GitHub profile");
+    expect(result.stdout).toContain("Open        https://github.com/login/device");
+    expect(result.stdout).toContain(`Enter code  ${FAKE_USER_CODE}`);
+    expect(result.stdout).toContain("✓ Signed in as alice");
+    // A finished command reports what it did and stops there: the author knows
+    // what they came to do, and being told it back is noise.
+    expect(result.stdout).not.toContain("Next  ");
 
     const credentialsFile = path.join(home, "credentials.json");
     const stored = JSON.parse(fs.readFileSync(credentialsFile, "utf8")) as Record<string, unknown>;
@@ -140,9 +143,13 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
 
   it("reaches the API through the stored credentials in `lax doctor`", async () => {
     const before = github.requests.length;
-    const result = await lax(["doctor"], env);
+    const result = await lax(["doctor", "--verbose"], env);
 
-    expect(result.stdout).toContain(`github auth: alice (GitHub App ${GITHUB_APP_CLIENT_ID}`);
+    // The handle is the whole answer on the happy path; which App and which
+    // credentials file it came from is exactly what a bug report needs, so it
+    // lives behind --verbose.
+    expect(result.stdout).toMatch(/Account\s+alice/u);
+    expect(result.stdout).toContain(GITHUB_APP_CLIENT_ID);
     expect(result.stdout).toContain(path.join(home, "credentials.json"));
 
     const during = github.requests.slice(before);
@@ -177,10 +184,14 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       });
 
       expect(result.status).toBe(1);
-      expect(result.stdout).toContain("lax delete: command posted:");
+      // The archive's own words are the diagnosis, in the report's own column;
+      // the comment URL that carried them is a --verbose internal.
+      expect(result.stdout).toContain("✗ the archive refused this command");
       expect(result.stdout).toContain("Publication failed");
       expect(result.stdout).toContain("lax-42 is registered and immutable");
-      expect(result.stderr).toContain("lax delete: FAILED");
+      expect(result.stdout).not.toContain("command posted:");
+      // the exit code carries the failure, so nothing is said twice
+      expect(result.stderr).toBe("");
       // the hidden correlation marker never reaches the author's terminal
       expect(result.stdout).not.toContain("lax-result-comment-id");
       // and the command itself was posted as the logged-in author
@@ -258,7 +269,10 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     }, 20);
 
     try {
-      const result = await lax(["submit", "--resume", folder], {
+      // --verbose so the correlation this test is about is on screen; without
+      // it the run id, the comment it reattached to, and the record comment are
+      // all internals the author cannot act on.
+      const result = await lax(["submit", "--resume", folder, "--verbose"], {
         ...env,
         LAX_POLL_INTERVAL_MS: "25",
         LAX_WORKFLOW_TIMEOUT_MS: "30000",
@@ -266,23 +280,25 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
 
       expect(result.status).toBe(0);
       // the folder's manifest, not a stored job id, names the issue
-      expect(result.stdout).toContain("resuming lax-77");
+      expect(result.stdout).toContain("Submitting lax-77");
+      expect(result.stdout).toContain("Reattaching to the run already in progress.");
       expect(result.stdout).toContain("#issuecomment-5001");
       expect(result.stdout).toContain(
-        "lax submit: workflow run #777: https://github.com/lax-archive/lax/actions/runs/777",
+        "workflow run #777: https://github.com/lax-archive/lax/actions/runs/777",
       );
-      // submit already printed the triple it sent; the echo is not repeated
+      // submit already printed the source it sent; the echo is not repeated
       expect(result.stdout).not.toContain("Parsed source preview for lax-77.");
-      // and the result reaches the author as text, not as markdown
-      expect(result.stdout).toContain("lax submit: Published lax-77.");
+      // and the author gets one verdict and one link, not the record comment
+      expect(result.stdout).toContain("✓ Wrote the public record");
+      expect(result.stdout).toContain("lax-77 is a draft in the archive");
+      expect(result.stdout).toContain("https://laxarchive.org/lax-77/");
       expect(result.stdout).not.toContain("lax-result-comment-id");
       // resume polled the correlated run itself, and posted no new command
       expect(github.requests.map((r) => r.path)).toContain(
         "/repos/lax-archive/lax/actions/runs/777",
       );
       expect(github.state.issueComments.get(77)).toHaveLength(2);
-      // and the live job/step line came from that run
-      expect(result.stderr).toContain("lax submit · validating: compile, kernel replay, inspection");
+      expect(result.stderr).toBe("");
     } finally {
       clearInterval(finish);
       fs.rmSync(folder, { recursive: true, force: true });
@@ -325,11 +341,15 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       });
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("lax submit: found 1 error during validation");
-      expect(result.stderr).toContain("      - [build] Proofs/Main.lean:9:2: error: unsolved goals");
-      expect(result.stderr).toContain("        ⊢ False");
-      expect(result.stderr).toContain("lax submit: validation failed; lax-database was not changed");
-      expect(result.stderr).toContain("lax submit: FAILED");
+      // The report is the verdict, in the author's nouns for the phase, and the
+      // transcript keeps its lines.
+      expect(result.stdout).toContain("✗ 1 error");
+      expect(result.stdout).toContain("proofs · build");
+      expect(result.stdout).toContain("Proofs/Main.lean:9:2: error: unsolved goals");
+      expect(result.stdout).toContain("⊢ False");
+      expect(result.stdout).toContain("lax-80 was not published");
+      expect(result.stdout).not.toContain("lax-database");
+      expect(result.stderr).toBe("");
       // No result comment was posted, and none was waited for.
       expect(github.state.issueComments.get(80)).toHaveLength(1);
       // The download took the redirect to the blob, and only the API leg
@@ -393,9 +413,14 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(result.stderr).toContain("lax submit: found 1 warning during validation");
-      expect(result.stderr).toContain("      - [abstract] the abstract is very short");
-      expect(result.stdout).toContain("lax submit: Published lax-81.");
+      // a warning does not block publication, so it waits for the notes block
+      // after the verdict rather than interrupting the rows
+      expect(result.stdout).toContain("lax-81 is a draft in the archive");
+      expect(result.stdout).toContain("! 1 warning");
+      expect(result.stdout).toContain("statements · abstract");
+      expect(result.stdout).toContain("the abstract is very short");
+      expect(result.stdout.indexOf("lax-81 is a draft"))
+        .toBeLessThan(result.stdout.indexOf("! 1 warning"));
     } finally {
       clearInterval(finish);
       fs.rmSync(folder, { recursive: true, force: true });
@@ -423,7 +448,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       expect(result.stderr).toContain("Actions read permission");
       expect(result.stderr).toContain("run `lax login`");
       // An authoritative refusal, so no "lost contact with GitHub" guess.
-      expect(result.stderr).not.toContain("lost contact with GitHub");
+      expect(`${result.stdout}${result.stderr}`).not.toContain("Lost contact with GitHub");
     } finally {
       delete github.state.artifactListStatus;
       fs.rmSync(folder, { recursive: true, force: true });
@@ -464,7 +489,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     try {
       const result = await lax(["submit", "--resume", folder], env);
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("no submit command of yours is on lax-78");
+      expect(result.stderr).toContain("no submit of yours is on lax-78");
       expect(result.stderr).toContain("run `lax submit` instead");
     } finally {
       fs.rmSync(folder, { recursive: true, force: true });
@@ -481,8 +506,10 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
         LAX_GITHUB_API_URL: "http://127.0.0.1:1",
       });
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("lost contact with GitHub; the workflow run may still be going");
-      expect(result.stderr).toContain(`lax submit: reattach with: lax submit --resume ${folder}`);
+      // A note with its fix, in the report's own voice; the transport error
+      // itself is the failure line underneath it.
+      expect(result.stdout).toContain("! Lost contact with GitHub. The archive may still be working on this.");
+      expect(result.stdout).toContain(`Reattach with lax submit --resume ${folder}`);
     } finally {
       fs.rmSync(folder, { recursive: true, force: true });
     }
@@ -493,7 +520,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
 
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Revoked the GitHub App credentials and logged out.");
+    expect(result.stdout).toContain("✓ Signed out");
     expect(fs.existsSync(path.join(home, "credentials.json"))).toBe(false);
     expect(github.state.revoked).toEqual([tokenFor("alice"), refreshTokenFor("alice")]);
     const revoke = github.requests.find((r) => r.path === "/credentials/revoke");

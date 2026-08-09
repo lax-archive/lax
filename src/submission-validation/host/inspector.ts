@@ -45,6 +45,14 @@ function inspectorCacheKey(): string {
   return `${cliVersion()}-${hash.digest("hex").slice(0, 16)}`;
 }
 
+export interface InspectorBuildOptions {
+  /** Stream lake's own transcript, as `--verbose` does for every other build. */
+  echo?: boolean;
+  /** Say that this run has to compile the inspector, so the caller's row can
+   * account for the half-minute rather than looking stuck. */
+  onBuild?: () => void;
+}
+
 /**
  * The inspector's source ships with the CLI; the first build on a machine
  * compiles it into ~/.lax/tools/<cli-version>-<source-hash>/ and every later
@@ -54,8 +62,15 @@ function inspectorCacheKey(): string {
  * concurrent builders (parallel test forks; two CLI runs right after an
  * upgrade) must not interleave `lake build` inside one directory. The loser
  * of the rename discards its copy and uses the winner's.
+ *
+ * Nothing here writes to the terminal on its own: the CLI is redrawing a live
+ * region by counting the lines it wrote, and a line it did not write is a line
+ * it erases instead of its own — which is what a torn, duplicated step list is.
  */
-export async function inspectorBinary(toolsBase = path.join(laxHome(), "tools")): Promise<string> {
+export async function inspectorBinary(
+  options: InspectorBuildOptions = {},
+  toolsBase = path.join(laxHome(), "tools"),
+): Promise<string> {
   const toolsDir = path.join(toolsBase, inspectorCacheKey());
   const binOf = (dir: string): string => path.join(dir, "src", ".lake", "build", "bin", "laxinspector");
   // resolve symlinks (shared tools dirs are linked into each test home):
@@ -72,10 +87,10 @@ export async function inspectorBinary(toolsBase = path.join(laxHome(), "tools"))
   for (const f of SOURCE_FILES) {
     fs.copyFileSync(path.join(inspectorSourceDir(), f), path.join(stagingSrc, f));
   }
-  console.log("building the Lax inspector (first run of these inspector sources)...");
+  options.onBuild?.();
   // artifact-cache off like every host lake invocation (see warmstore.ts)
   const res = await run("lake", ["build"], stagingSrc, {
-    echo: true,
+    echo: options.echo ?? false,
     env: { LAKE_ARTIFACT_CACHE: "false" },
   });
   if (res.code !== 0 || !fs.existsSync(binOf(staging))) {

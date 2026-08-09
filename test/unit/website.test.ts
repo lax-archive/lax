@@ -1,11 +1,18 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as ui from "../../src/cli/ui.js";
 import {
   applyWebsiteWarning,
   loadWebsiteSubmissions,
+  type PageBuilder,
+  serveWebsite,
   websiteDatabaseWarning,
+  type WebsitePreview,
 } from "../../src/cli/website.js";
 import { initialFiles } from "../../src/shared/archive-schema.js";
 
@@ -82,24 +89,7 @@ describe("local website Archive adapter", () => {
     const local = temporaryDirectory("lax-site-local-");
     fs.writeFileSync(
       path.join(local, "build-output.json"),
-      JSON.stringify({
-        specVersion: "1",
-        id: "lax-42",
-        manifest: {
-          specVersion: "1",
-          id: "lax-42",
-          leanVersion: "v4.19.0",
-          mathlibVersion: "a".repeat(40),
-          title: "Local version",
-          authors: [],
-          bibEntries: [],
-        },
-        abstract: "",
-        requiredByConcepts: [],
-        requiredByProofs: [],
-        concepts: [],
-        proofs: [],
-      }),
+      JSON.stringify(localBuildOutput("lax-42", "Local version")),
     );
 
     const submissions = loadWebsiteSubmissions(archive, local);
@@ -111,7 +101,9 @@ describe("local website Archive adapter", () => {
   it("starts with local content when the database is missing", () => {
     const missing = path.join(temporaryDirectory("lax-site-missing-"), "database");
     expect(loadWebsiteSubmissions(missing)).toEqual([]);
-    expect(websiteDatabaseWarning({ status: "missing" }, missing)).toContain("lax pull-db");
+    expect(websiteDatabaseWarning({ status: "missing" }, missing)).toBe(
+      "Your copy of the archive is missing. Run lax sync.",
+    );
   });
 
   it("adds a visible database warning to every generated page", () => {
@@ -133,6 +125,190 @@ describe("local website Archive adapter", () => {
   });
 });
 
+describe("the local preview", () => {
+  const environment = {
+    home: process.env.LAX_HOME,
+    url: process.env.LAX_DATABASE_URL,
+    poll: process.env.LAX_DATABASE_POLL_INTERVAL_MS,
+  };
+  // A preview leaves a listening server, two watchers, and a freshness poll
+  // behind: the handle `onListening` hands out is how this suite puts them down
+  // again so vitest can exit.
+  let preview: WebsitePreview | undefined;
+  const blockers: http.Server[] = [];
+
+  beforeEach(() => {
+    ui.configure({ color: false });
+    // One poll is enough: the immediate one. A second, mid-assertion, would race.
+    process.env.LAX_DATABASE_POLL_INTERVAL_MS = "600000";
+  });
+
+  afterEach(async () => {
+    await preview?.close();
+    preview = undefined;
+    for (const blocker of blockers.splice(0)) {
+      blocker.closeAllConnections();
+      await new Promise<void>((resolve) => blocker.close(() => { resolve(); }));
+    }
+    restore("LAX_HOME", environment.home);
+    restore("LAX_DATABASE_URL", environment.url);
+    restore("LAX_DATABASE_POLL_INTERVAL_MS", environment.poll);
+  });
+
+  it("opens with the URL and says what it is showing once the first render knows", async () => {
+    currentDatabase(["lax-1", "lax-2"]);
+    const local = temporaryDirectory("lax-serve-local-");
+    fs.writeFileSync(
+      path.join(local, "build-output.json"),
+      JSON.stringify(localBuildOutput("lax-50", "Bounded gaps")),
+    );
+    const port = await freePort();
+    const renderer = stubRenderer();
+    const output = capture();
+
+    try {
+      await serveWebsite(local, port, {
+        renderer,
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    expect(preview?.port).toBe(port);
+    expect(trimmed(output.lines)).toEqual([
+      "  Preview",
+      "",
+      `  http://localhost:${port}`,
+      "",
+      "  lax-50 and 2 published submissions.",
+      "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
+    ]);
+
+    const page = await fetch(`http://localhost:${port}/`);
+    expect(await page.text()).toContain("rendered by the stub");
+
+    // A later render is one dim line, not a sentence.
+    const rebuilt = capture();
+    try {
+      fs.writeFileSync(
+        path.join(local, "build-output.json"),
+        JSON.stringify(localBuildOutput("lax-50", "Bounded gaps, again")),
+      );
+      await waitFor(
+        () => rebuilt.lines.some((line) => /^ {2}↻ \d{2}:\d{2}:\d{2} {2}rebuilt$/u.test(line)),
+        "the rebuild line",
+      );
+    } finally {
+      rebuilt.restore();
+    }
+    expect(renderer.renders).toBeGreaterThan(1);
+    expect(output.lines.join("\n")).not.toContain("site rebuilt from");
+    expect(output.lines.join("\n")).not.toContain("loading the pinned");
+  });
+
+  it("moves to the next free port and says so", async () => {
+    currentDatabase([]);
+    const local = temporaryDirectory("lax-serve-local-");
+    // Bound, and left bound for the whole test: `serveWebsite` must walk past it
+    // rather than die of EADDRINUSE. The port above it is free the same way
+    // `freePort` is free — nothing else here is expected to take it mid-test.
+    const blocker = await listening();
+    blockers.push(blocker);
+    const taken = (blocker.address() as AddressInfo).port;
+    const output = capture();
+
+    try {
+      await serveWebsite(local, taken, {
+        renderer: stubRenderer(),
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    expect(preview?.port).toBe(taken + 1);
+    expect(trimmed(output.lines)).toEqual([
+      "  Preview",
+      "",
+      `  http://localhost:${taken + 1}`,
+      "",
+      "  No published submissions yet.",
+      "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
+      "",
+      `  ! Port ${taken} was busy, so this preview is on ${taken + 1}.`,
+    ]);
+  });
+
+  it("counts only the archive with --database-only, and notes a missing copy", async () => {
+    const home = temporaryDirectory("lax-serve-home-");
+    const archive = path.join(home, "lax-database");
+    fs.mkdirSync(archive);
+    writeSubmission(
+      archive,
+      "lax-7",
+      initialFiles("lax-7", issue, alice, "2026-07-30T10:00:00Z"),
+    );
+    process.env.LAX_HOME = home;
+    const port = await freePort();
+    const output = capture();
+
+    try {
+      await serveWebsite(temporaryDirectory("lax-serve-local-"), port, {
+        databaseOnly: true,
+        renderer: stubRenderer(),
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    expect(trimmed(output.lines)).toEqual([
+      "  Preview",
+      "",
+      `  http://localhost:${port}`,
+      "",
+      "  1 published submission.",
+      "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
+      "",
+      "  ! Your copy of the archive is missing.",
+      "    Run lax sync.",
+    ]);
+  });
+
+  it("keeps a failed render on the screen and stays up", async () => {
+    currentDatabase([]);
+    const port = await freePort();
+    const output = capture();
+
+    try {
+      await serveWebsite(temporaryDirectory("lax-serve-local-"), port, {
+        renderer: {
+          generateSite: () => Promise.reject(new Error("the renderer exploded")),
+          mimeTypes: {},
+        },
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    expect(preview?.port).toBe(port);
+    expect(output.lines.join("\n")).toMatch(
+      /^ {2}✗ \d{2}:\d{2}:\d{2} {2}the preview could not be rebuilt$/mu,
+    );
+    expect(output.lines).toContain("    the renderer exploded");
+    // Still a live preview, and no count it could not have known.
+    expect(output.lines).toContain("  Rebuilds when lax build writes a new result. Ctrl-C to stop.");
+    expect(output.lines.join("\n")).not.toContain("published submission");
+  });
+
+  it("rejects a port that is not a port at all", async () => {
+    await expect(serveWebsite(".", 0)).rejects.toThrow("between 1 and 65535");
+    await expect(serveWebsite(".", 70_000)).rejects.toThrow("between 1 and 65535");
+  });
+});
+
 function temporaryDirectory(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
@@ -141,4 +317,127 @@ function writeSubmission(root: string, id: string, files: Record<string, string>
   const directory = path.join(root, id);
   fs.mkdirSync(directory, { recursive: true });
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(directory, name), text);
+}
+
+function localBuildOutput(id: string, title: string): Record<string, unknown> {
+  return {
+    specVersion: "1",
+    id,
+    manifest: {
+      specVersion: "1",
+      id,
+      leanVersion: "v4.19.0",
+      mathlibVersion: "a".repeat(40),
+      title,
+      authors: [],
+      bibEntries: [],
+    },
+    abstract: "",
+    requiredByConcepts: [],
+    requiredByProofs: [],
+    concepts: [],
+    proofs: [],
+  };
+}
+
+/**
+ * A temp LAX_HOME whose lax-database is its own git remote: `git ls-remote` then
+ * answers from disk, so the freshness poll stays offline and reports `current` —
+ * no note, and nothing asynchronous racing the assertions.
+ */
+function currentDatabase(ids: readonly string[]): string {
+  const home = temporaryDirectory("lax-serve-home-");
+  const archive = path.join(home, "lax-database");
+  fs.mkdirSync(archive);
+  for (const id of ids) {
+    writeSubmission(archive, id, initialFiles(id, issue, alice, "2026-07-30T10:00:00Z"));
+  }
+  const git = (...args: string[]): void => {
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "-C", archive, ...args], {
+      stdio: "ignore",
+    });
+  };
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-q", "--allow-empty", "-m", "records");
+  process.env.LAX_HOME = home;
+  process.env.LAX_DATABASE_URL = archive;
+  return home;
+}
+
+/** A renderer standing in for the pinned lax-website bundle, which only a
+ * release carries: it writes one page and counts how often it was asked to. */
+function stubRenderer(): PageBuilder & { renders: number } {
+  const builder: PageBuilder & { renders: number } = {
+    renders: 0,
+    generateSite: async (_submissions, outDir) => {
+      builder.renders += 1;
+      fs.writeFileSync(
+        path.join(outDir, "index.html"),
+        "<!doctype html><html><head></head><body>rendered by the stub</body></html>",
+      );
+    },
+    mimeTypes: { ".html": "text/html; charset=utf-8" },
+  };
+  return builder;
+}
+
+/** A port nothing is listening on — as close to a promise as an OS makes. */
+async function freePort(): Promise<number> {
+  const probe = await listening();
+  const { port } = probe.address() as AddressInfo;
+  probe.closeAllConnections();
+  await new Promise<void>((resolve) => probe.close(() => { resolve(); }));
+  return port;
+}
+
+function listening(): Promise<http.Server> {
+  const server = http.createServer();
+  return new Promise((resolve) => {
+    server.listen(0, () => { resolve(server); });
+  });
+}
+
+/** Everything `ui` printed, with the ANSI-free lines it printed them as. */
+function capture(): { lines: string[]; restore: () => void } {
+  const lines: string[] = [];
+  const log = vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
+    lines.push(parts.map(String).join(" "));
+  });
+  const errors = vi
+    .spyOn(process.stderr, "write")
+    .mockImplementation(((chunk: string | Uint8Array): boolean => {
+      lines.push(...String(chunk).replace(/\n$/u, "").split("\n"));
+      return true;
+    }) as typeof process.stderr.write);
+  return {
+    lines,
+    restore: () => {
+      log.mockRestore();
+      errors.mockRestore();
+    },
+  };
+}
+
+/** The block itself: `ui` opens and closes with blank lines whose presence
+ * depends on what the previous command printed, which is not under test. */
+function trimmed(lines: readonly string[]): string[] {
+  const kept = [...lines];
+  while (kept[0] === "") kept.shift();
+  while (kept.at(-1) === "") kept.pop();
+  return kept;
+}
+
+function restore(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
+async function waitFor(condition: () => boolean, label: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`timed out waiting for ${label}`);
 }

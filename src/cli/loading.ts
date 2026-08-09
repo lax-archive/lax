@@ -45,8 +45,27 @@ interface Row {
   readonly key: string;
   label: string;
   started: number;
+  /** Whether this row's own work has begun — see `concurrent` below. */
+  activated: boolean;
   detail?: string;
   settled?: readonly string[];
+}
+
+/** A row that has not settled yet, as the caller's formatter sees it. */
+export interface PendingRow {
+  readonly label: string;
+  readonly detail?: string;
+  /** The current spinner frame, so a formatter can place it as a row's mark. */
+  readonly spinner: string;
+  /** How long the row has been running, or `undefined` below the threshold. */
+  readonly time?: string;
+  /**
+   * Whether this row is running yet. A declared-but-not-started row is a
+   * promise about what comes later, not work in progress: it has no spinner to
+   * turn and no honest clock, and a formatter should draw it as the quiet thing
+   * it is.
+   */
+  readonly started: boolean;
 }
 
 export interface LoadingBlockOptions {
@@ -58,10 +77,29 @@ export interface LoadingBlockOptions {
   readonly indent?: string;
   /** How long a row must be pending before its elapsed time is shown. */
   readonly elapsedAfterMs?: number;
+  /**
+   * How a still-pending row is drawn. The default is a plain
+   * `label · detail · elapsed`; the CLI passes the column layout its settled
+   * rows use, so a row does not move sideways the moment it settles. Lives
+   * here as a callback rather than as an import so the presentation layer
+   * (ui.ts) can own every format decision without this module depending on it.
+   */
+  readonly pending?: (row: PendingRow) => string;
+  /**
+   * All rows run at once (`lax doctor`), rather than one at a time.
+   *
+   * The default is one at a time, which is what every other command does, and
+   * there only the first unsettled row is running: the ones below it have not
+   * started, so they neither spin nor carry a clock. Getting this wrong is what
+   * a screenful of spinners with disagreeing timers looks like.
+   */
+  readonly concurrent?: boolean;
 }
 
 /**
- * Several concurrent tasks, each a line that spins until it settles.
+ * A list of tasks, each a line that spins while it runs and settles into its
+ * result. By default they run one at a time, so exactly one line spins; with
+ * `concurrent` they all run at once and all of them spin.
  *
  * Rows are declared in display order and settle in completion order, so a row
  * is committed — printed for good, above the live region — only once every row
@@ -76,6 +114,8 @@ export class LoadingBlock {
   private readonly now: () => number;
   private readonly indent: string;
   private readonly elapsedAfterMs: number;
+  private readonly pending?: (row: PendingRow) => string;
+  private readonly concurrent: boolean;
   private liveLines = 0;
   private frame = 0;
   private committed = 0;
@@ -87,10 +127,17 @@ export class LoadingBlock {
     this.now = options.now ?? Date.now;
     this.indent = options.indent ?? "";
     this.elapsedAfterMs = options.elapsedAfterMs ?? 3_000;
+    this.concurrent = options.concurrent ?? false;
+    if (options.pending !== undefined) this.pending = options.pending;
   }
 
   add(key: string, label: string): void {
-    this.rows.push({ key, label, started: this.now() });
+    this.rows.push({ key, label, started: this.now(), activated: this.concurrent });
+  }
+
+  /** The label a row is currently spinning under. */
+  labelOf(key: string): string | undefined {
+    return this.row(key)?.label;
   }
 
   /** Replace a row's label — for work whose nature is only known once it
@@ -116,8 +163,15 @@ export class LoadingBlock {
     if (row !== undefined) {
       row.detail = undefined;
       row.started = this.now();
+      row.activated = true;
     }
     this.render();
+  }
+
+  /** How long this row has been running — its wait in front of it excluded. */
+  runningFor(key: string): number {
+    const row = this.row(key);
+    return row === undefined ? 0 : this.now() - row.started;
   }
 
   /** Extra text on a still-pending row — a running count, say. */
@@ -142,8 +196,19 @@ export class LoadingBlock {
       for (const line of this.rows[this.committed]!.settled!) this.commit(line);
       this.committed += 1;
     }
-    if (this.output.isTTY !== true) return;
     const live = this.rows.slice(this.committed);
+    // One row at a time: the first unsettled row is the one that is running,
+    // and its clock starts the moment it becomes that — not when it was
+    // declared, which would bill it for every row above it. Done before the
+    // TTY check so a piped run times its rows the same way a terminal does.
+    if (!this.concurrent) {
+      const active = live.find((row) => row.settled === undefined);
+      if (active !== undefined && !active.activated) {
+        active.activated = true;
+        active.started = this.now();
+      }
+    }
+    if (this.output.isTTY !== true) return;
     if (live.length === 0) return;
     this.frame += 1;
     // A pty can report 0 columns (no window size attached — `script`, some CI
@@ -159,6 +224,16 @@ export class LoadingBlock {
     for (const row of live) text += `${truncate(this.line(row), width)}\n`;
     this.output.write(text);
     this.liveLines = live.length;
+  }
+
+  /**
+   * Drop the live region without committing or finishing anything, for a caller
+   * that is about to write to the terminal itself. The next `render()` draws it
+   * again, so the block survives the interruption; without this the cursor
+   * arithmetic here and the interloper's own line would tear each other apart.
+   */
+  suspend(): void {
+    this.erase();
   }
 
   /** Commit what settled, drop the live region, and give the cursor back. */
@@ -210,10 +285,22 @@ export class LoadingBlock {
   private line(row: Row): string {
     if (row.settled !== undefined) return row.settled[0] ?? "";
     const waited = this.now() - row.started;
+    const frame = spinner[this.frame % spinner.length]!;
+    const time = row.activated && waited >= this.elapsedAfterMs ? elapsed(waited) : undefined;
+    if (this.pending !== undefined) {
+      return this.pending({
+        label: row.label,
+        spinner: frame,
+        started: row.activated,
+        ...(row.detail === undefined || !row.activated ? {} : { detail: row.detail }),
+        ...(time === undefined ? {} : { time }),
+      });
+    }
+    if (!row.activated) return `${this.indent}· ${row.label}`;
     const parts = [row.label];
     if (row.detail !== undefined) parts.push(row.detail);
-    if (waited >= this.elapsedAfterMs) parts.push(elapsed(waited));
-    return `${this.indent}${spinner[this.frame % spinner.length]!} ${parts.join(" · ")}`;
+    if (time !== undefined) parts.push(time);
+    return `${this.indent}${frame} ${parts.join(" · ")}`;
   }
 
   private erase(): void {
@@ -223,10 +310,35 @@ export class LoadingBlock {
   }
 }
 
-/** Wrapping would desynchronise the cursor arithmetic that redraws the region,
- * so a long line is cut rather than allowed to occupy two. */
+/**
+ * Wrapping would desynchronise the cursor arithmetic that redraws the region,
+ * so a long line is cut rather than allowed to occupy two. Colour is measured
+ * as the zero width it occupies rather than as characters, and a cut line ends
+ * with a reset so a severed sequence cannot leave the terminal dyed.
+ */
+const ANSI = /\u001B\[[0-9;]*m/gu;
+
 function truncate(line: string, width: number): string {
   if (width <= 1) return "";
-  const characters = [...line];
-  return characters.length <= width ? line : `${characters.slice(0, width - 1).join("")}…`;
+  const visible = line.replace(ANSI, "").length;
+  if (visible <= width) return line;
+  let kept = "";
+  let shown = 0;
+  // Walk the line keeping escape sequences whole; only printable characters
+  // count against the budget.
+  for (let index = 0; index < line.length; ) {
+    ANSI.lastIndex = index;
+    const match = ANSI.exec(line);
+    if (match !== null && match.index === index) {
+      kept += match[0];
+      index += match[0].length;
+      continue;
+    }
+    if (shown >= width - 1) break;
+    const character = String.fromCodePoint(line.codePointAt(index)!);
+    kept += character;
+    shown += 1;
+    index += character.length;
+  }
+  return `${kept}…\u001B[0m`;
 }
