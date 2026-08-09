@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { doctor } from "../../src/cli/doctor.js";
 import { recordSubmission } from "../../src/cli/registry.js";
-import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../../src/submission-validation/pins.js";
+import { ELAN_COMMIT, LEAN_TOOLCHAIN, MATHLIB_REV } from "../../src/submission-validation/pins.js";
 import { warmDir } from "../../src/submission-validation/host/warmstore.js";
 
 const previous = {
@@ -30,10 +30,15 @@ beforeEach(() => {
   // exercise the install seeds a fake elan into this directory.
   process.env.ELAN_HOME = path.join(home, "elan");
   delete process.env.LAX_GITHUB_APP_USER_TOKEN;
+  // The elan check now *installs* elan, so an unstubbed run would fetch the
+  // pinned bootstrap script and unpack a real elan into that temp ELAN_HOME.
+  // Offline by default; the two tests that exercise the install say so.
+  vi.stubGlobal("fetch", () => Promise.reject(new Error("offline")));
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   fs.rmSync(home, { recursive: true, force: true });
   for (const root of seeded.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   if (previous.home === undefined) delete process.env.LAX_HOME;
@@ -169,10 +174,13 @@ describe("lax doctor", () => {
     const log = path.join(home, "elan-args");
     fs.mkdirSync(path.join(elanRoot, "bin"), { recursive: true });
     // A fake elan that records what it was asked to install and produces the
-    // toolchain that request implies — no network, no real download.
+    // toolchain that request implies — no network, no real download. It answers
+    // `--version` without installing anything, as the real one does: the elan
+    // check probes with it before the lake check asks for the toolchain.
     fs.writeFileSync(
       path.join(elanRoot, "bin", "elan"),
       `#!/bin/sh\necho "$@" >> ${JSON.stringify(log)}\n` +
+        `case "$1" in --version) echo "elan 4.0.0"; exit 0 ;; esac\n` +
         `mkdir -p ${JSON.stringify(installed)}\n` +
         `touch ${JSON.stringify(path.join(installed, "lean"))}\n` +
         `printf '#!/bin/sh\\necho "Lake version 5.0.0 (Lean version 4.30.0)"\\n' > ${JSON.stringify(path.join(installed, "lake"))}\n` +
@@ -184,10 +192,129 @@ describe("lax doctor", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     await doctor();
 
-    expect(fs.readFileSync(log, "utf8").trim()).toBe(`toolchain install ${LEAN_TOOLCHAIN}`);
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+      "--version",
+      `toolchain install ${LEAN_TOOLCHAIN}`,
+    ]);
     const lake = printed.mock.calls.map(([line]) => String(line)).find((line) => line.includes(" lake: "))!;
     expect(lake).toContain("Lean version 4.30.0");
     expect(lake).toContain("✓");
+  });
+
+  it("installs elan itself when the machine has none, then the toolchain under it", async () => {
+    // `npm i -g lax-archive && lax doctor` has to be a complete setup on a bare
+    // container: without this the elan row was a ✗ with a link, the lake row a
+    // ✗ behind it ("no elan to provide it"), and nothing was provisioned at all.
+    const elanRoot = path.join(home, "elan");
+    const elanBin = path.join(elanRoot, "bin", "elan");
+    const toolchain = LEAN_TOOLCHAIN.replace("/", "--").replace(":", "---");
+    const installed = path.join(elanRoot, "toolchains", toolchain, "bin");
+    // The pinned bootstrap script, faked: the real one is fetched from
+    // raw.githubusercontent.com at ELAN_COMMIT and run with ELAN_HOME set, so a
+    // stub that plants an elan there exercises the whole install path offline.
+    const bootstrap =
+      `#!/bin/sh\nmkdir -p "$ELAN_HOME/bin"\n` +
+      `cat > "$ELAN_HOME/bin/elan" <<'ELAN'\n` +
+      `#!/bin/sh\n` +
+      `case "$1" in --version) echo "elan 4.0.0"; exit 0 ;; esac\n` +
+      `mkdir -p ${JSON.stringify(installed)}\n` +
+      `touch ${JSON.stringify(path.join(installed, "lean"))}\n` +
+      `printf '#!/bin/sh\\necho "Lake version 5.0.0 (Lean version 4.30.0)"\\n' > ${JSON.stringify(path.join(installed, "lake"))}\n` +
+      `chmod +x ${JSON.stringify(path.join(installed, "lake"))}\n` +
+      `ELAN\nchmod +x "$ELAN_HOME/bin/elan"\n`;
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetched.push(String(url));
+      return new Response(bootstrap, { status: 200 });
+    });
+
+    const printed = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await doctor();
+
+    expect(fetched[0]).toBe(
+      `https://raw.githubusercontent.com/leanprover/elan/${ELAN_COMMIT}/elan-init.sh`,
+    );
+    expect(fs.existsSync(elanBin)).toBe(true);
+    const lines = printed.mock.calls.map(([line]) => String(line));
+    const elan = lines.find((line) => line.includes(" elan: "))!;
+    expect(elan).toContain("✓");
+    expect(elan).toContain("installed just now");
+    // and the chain continues: the elan it just installed installs the pin
+    expect(lines.find((line) => line.includes(" lake: "))).toContain("Lean version 4.30.0");
+  });
+
+  it("--dry reports the same gaps and provisions none of them", async () => {
+    // The promise is byte-for-byte: no elan install (hence no bootstrap fetch),
+    // no toolchain, no database clone, and no credentials refresh. Everything
+    // it declines to do it names instead, and a ✗ still exits 1.
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", (url: string) => {
+      fetched.push(String(url));
+      return Promise.reject(new Error("offline"));
+    });
+    const printed = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await doctor({ dry: true });
+
+    const lines = printed.mock.calls.map(([line]) => String(line));
+    expect(lines[0]).toContain("--dry");
+    expect(lines.find((line) => line.includes(" elan: "))).toContain("✗");
+    expect(lines.find((line) => line.includes(" lake: "))).toContain("✗");
+    expect(lines.some((line) => line.includes("without --dry"))).toBe(true);
+    expect(lines.find((line) => line.includes(" database clone: "))).toContain("none at");
+    expect(code).toBe(1);
+    // and nothing was touched: no bootstrap fetched, no elan, no clone
+    expect(fetched).toEqual([]);
+    expect(fs.existsSync(path.join(home, "elan", "bin"))).toBe(false);
+    expect(fs.existsSync(path.join(home, "lax-database"))).toBe(false);
+  });
+
+  it("--dry still reads a provisioned machine as ready", async () => {
+    // The report is the same report: a dry run on a machine that has everything
+    // must not invent problems out of the work it skipped.
+    const elanRoot = path.join(home, "elan");
+    const toolchain = LEAN_TOOLCHAIN.replace("/", "--").replace(":", "---");
+    const installed = path.join(elanRoot, "toolchains", toolchain, "bin");
+    fs.mkdirSync(path.join(elanRoot, "bin"), { recursive: true });
+    fs.mkdirSync(installed, { recursive: true });
+    fs.writeFileSync(
+      path.join(elanRoot, "bin", "elan"),
+      `#!/bin/sh\necho "elan 4.0.0"\n`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(installed, "lean"), "");
+    fs.writeFileSync(
+      path.join(installed, "lake"),
+      `#!/bin/sh\necho "Lake version 5.0.0 (Lean version 4.30.0)"\n`,
+      { mode: 0o755 },
+    );
+    fs.mkdirSync(path.join(home, "lax-database", ".git"), { recursive: true });
+
+    const printed = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await doctor({ dry: true });
+
+    const lines = printed.mock.calls.map(([line]) => String(line));
+    expect(lines.find((line) => line.includes(" elan: "))).toContain("✓ elan: elan 4.0.0");
+    expect(lines.find((line) => line.includes(" lake: "))).toContain("Lean version 4.30.0");
+    expect(lines.find((line) => line.includes(" database clone: "))).toContain("not refreshed");
+  });
+
+  it("reports the reason when the elan bootstrap cannot be fetched", async () => {
+    vi.stubGlobal("fetch", async () => new Response("nope", { status: 404 }));
+    const printed = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const code = await doctor();
+
+    const lines = printed.mock.calls.map(([line]) => String(line));
+    const elan = lines.find((line) => line.includes(" elan: "))!;
+    expect(elan).toContain("✗");
+    expect(elan).toContain("HTTP 404");
+    expect(lines.some((line) => line.includes("get_started"))).toBe(true);
+    expect(code).toBe(1);
   });
 
   it("keeps the check line format (mark, name, detail, indented fix)", async () => {

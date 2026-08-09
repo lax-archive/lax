@@ -18,7 +18,9 @@ export function credentialsFile(): string {
   return path.join(laxHome(), "credentials.json");
 }
 
-export async function githubAppUserToken(): Promise<string> {
+export async function githubAppUserToken(
+  opts: { refresh?: boolean } = {},
+): Promise<string> {
   const environment = process.env.LAX_GITHUB_APP_USER_TOKEN;
   if (environment !== undefined && environment !== "") {
     return validateGitHubAppUserToken(environment);
@@ -32,6 +34,10 @@ export async function githubAppUserToken(): Promise<string> {
   if (credentials.expiresAt === undefined || credentials.expiresAt > Date.now() + 60_000) {
     return credentials.accessToken;
   }
+  // `refresh: false` is `lax doctor --dry`: renewing rotates the stored `ghr_`
+  // and invalidates the old one on GitHub, which is a change a read-only run
+  // has no business making. Reported, not performed.
+  if (opts.refresh === false) throw new AuthenticationError("stored login needs a token refresh");
   if (
     credentials.refreshTokenExpiresAt !== undefined &&
     credentials.refreshTokenExpiresAt <= Date.now() + 60_000

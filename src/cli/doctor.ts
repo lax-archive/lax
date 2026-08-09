@@ -8,6 +8,7 @@ import { CONTROL_REPOSITORY } from "../shared/constants.js";
 import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import { elanHome, toolchainBinDir } from "../submission-validation/host/leanenv.js";
 import { run } from "../submission-validation/host/proc.js";
+import { installElan } from "../submission-validation/host/setup.js";
 import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../submission-validation/pins.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
@@ -25,12 +26,33 @@ interface Check {
   fix?: string;
 }
 
+/**
+ * The binary a lax command would actually run for `tool`.
+ *
+ * elan and lake are resolved in the lax-owned locations first: doctor installs
+ * elan under `elanHome()` with `--no-modify-path`, and elan installs lake under
+ * `toolchainBinDir()`, so on a machine provisioned by `lax doctor` neither is on
+ * PATH — while every build path already runs them from exactly these paths
+ * (leanenv.ts). Probing PATH alone made the preflight refuse to build with a
+ * toolchain the CLI had just installed and was about to use. Anything else, and
+ * either of these when lax has not installed it, is a plain PATH lookup.
+ */
+function toolBinary(tool: string): string {
+  const owned =
+    tool === "elan"
+      ? path.join(elanHome(), "bin", "elan")
+      : tool === "lake"
+        ? path.join(toolchainBinDir(), "lake")
+        : undefined;
+  return owned !== undefined && fs.existsSync(owned) ? owned : tool;
+}
+
 /** The blocking probe, kept for the callers that only want a yes/no before
  * running a command (`lax build`'s preflight, the missing-tool hint in
  * main.ts). The report uses `toolVersionAsync`. */
 export function toolVersion(tool: string): string | undefined {
   try {
-    return execFileSync(tool, ["--version"], {
+    return execFileSync(toolBinary(tool), ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).split("\n")[0]!.trim();
@@ -41,7 +63,7 @@ export function toolVersion(tool: string): string | undefined {
 
 async function toolVersionAsync(tool: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execFileAsync(tool, ["--version"], { encoding: "utf8" });
+    const { stdout } = await execFileAsync(toolBinary(tool), ["--version"], { encoding: "utf8" });
     return stdout.split("\n")[0]!.trim();
   } catch {
     return undefined;
@@ -49,6 +71,54 @@ async function toolVersionAsync(tool: string): Promise<string | undefined> {
 }
 
 const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;
+
+/** The fix line for a gap `--dry` reported instead of closing. */
+const WOULD_INSTALL = "run `lax doctor` without --dry to install it";
+
+/**
+ * elan, plus the install that provisions it.
+ *
+ * The one prerequisite a fresh machine cannot talk itself out of: no elan, no
+ * toolchain, and no `lax build`. Installing it here is what makes `npm i -g
+ * lax-archive && lax doctor` a complete setup on a bare container rather than a
+ * list of things to go and do — it runs the pinned bootstrap script
+ * (`ELAN_COMMIT`), the same one the trusted VM setup runs, into `elanHome()`
+ * and nowhere else. `--no-modify-path` means the user's shell still will not
+ * find `elan`; `toolBinary()` is why nothing in lax needs it to.
+ */
+async function elanCheck(block: LoadingBlock, key: string, dry: boolean): Promise<Check> {
+  // The elan under `elanHome()` and no other: `toolchainDir()` hangs off it, so
+  // an elan somewhere else on PATH is one whose toolchains lax would never find
+  // — the very state the lake check below reports as "no elan to provide it".
+  const elanBin = path.join(elanHome(), "bin", "elan");
+  const present = fs.existsSync(elanBin);
+  if (!present && dry) {
+    return { name: "elan", status: "fail", detail: `none at ${elanBin}`, fix: WOULD_INSTALL };
+  }
+  if (!present) {
+    block.relabel(key, "elan — installing it, which takes a moment the first time");
+    block.begin(key);
+    const install = await installElan(elanBin, { echo: false });
+    block.relabel(key, "elan");
+    if (!install.ok) {
+      return { name: "elan", status: "fail", detail: install.reason, fix: installHint("elan") };
+    }
+  }
+  const version = await toolVersionAt(elanBin);
+  if (version === undefined) {
+    return {
+      name: "elan",
+      status: "fail",
+      detail: `${elanBin} does not run`,
+      fix: installHint("elan"),
+    };
+  }
+  return {
+    name: "elan",
+    status: "ok",
+    detail: present ? version : `${version} — installed just now at ${elanBin}`,
+  };
+}
 
 /**
  * The lake that `lax build` actually runs, plus the install that provisions it.
@@ -61,10 +131,23 @@ const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;
  * binaries directly, so that is the lake worth reporting, and the pinned
  * toolchain is the one worth installing.
  */
-async function lakeCheck(block: LoadingBlock, key: string): Promise<Check> {
+async function lakeCheck(block: LoadingBlock, key: string, dry: boolean): Promise<Check> {
   const elanBin = path.join(elanHome(), "bin", "elan");
   if (!fs.existsSync(elanBin)) {
-    return { name: "lake", status: "fail", detail: "no elan to provide it", fix: installHint("elan") };
+    return {
+      name: "lake",
+      status: "fail",
+      detail: "no elan to provide it",
+      fix: dry ? WOULD_INSTALL : installHint("elan"),
+    };
+  }
+  if (!fs.existsSync(path.join(toolchainBinDir(), "lean")) && dry) {
+    return {
+      name: "lake",
+      status: "fail",
+      detail: `${LEAN_TOOLCHAIN} is not installed`,
+      fix: WOULD_INSTALL,
+    };
   }
   if (!fs.existsSync(path.join(toolchainBinDir(), "lean"))) {
     block.relabel(key, `lake — installing ${LEAN_TOOLCHAIN}, which takes minutes the first time`);
@@ -105,16 +188,25 @@ async function toolVersionAt(bin: string): Promise<string | undefined> {
 /**
  * Every check runs concurrently and spins on its own line until it answers.
  * The probes behind them (two GitHub calls, `git ls-remote`, statfs, a
- * `git ls-files` per submission, and a `lake --version` that can have elan
- * install a whole toolchain) add up to minutes in the worst case; running them
- * in sequence made that the sum rather than the maximum, and a report that
- * only printed on completion made the wait look like a hang.
+ * `git ls-files` per submission, an elan bootstrap, and a `lake --version` that
+ * can have elan install a whole toolchain) add up to minutes in the worst case;
+ * running them in sequence made that the sum rather than the maximum, and a
+ * report that only printed on completion made the wait look like a hang.
  *
- * The one ordering that has to survive the concurrency is the Lean chain:
- * `lake --version` is what triggers the elan install, so the two checks that
- * read the installed state run after it, and elan is not probed twice at once.
+ * The one ordering that has to survive the concurrency is the Lean chain, and
+ * it is a chain because each link provisions the next: the elan check installs
+ * elan, `lake --version` then has it install the pinned toolchain, and the two
+ * checks that only read the installed state run last.
+ *
+ * `dry` turns all of that off: the four checks that write something — elan, the
+ * toolchain, the database clone, and the credentials refresh behind `github
+ * auth` — report the gap and its fix instead of closing it. Nothing else here
+ * ever wrote, so a dry run leaves the machine byte-for-byte as it found it, and
+ * the report is otherwise the same report. It still exits 1 on a ✗, which is
+ * what makes it usable as a check in a script.
  */
-export async function doctor(): Promise<number> {
+export async function doctor(opts: { dry?: boolean } = {}): Promise<number> {
+  const dry = opts.dry === true;
   const checks: Check[] = [];
   const block = new LoadingBlock(process.stdout, { indent: "  " });
   const settle = (key: string, ...found: Array<Check | undefined>): void => {
@@ -144,6 +236,7 @@ export async function doctor(): Promise<number> {
   block.waiting("lean toolchain", "waiting for lake");
   block.waiting("mathlib store", "waiting for lake");
 
+  if (dry) console.log("lax doctor: --dry — reporting only; nothing is installed or refreshed");
   const ticker = setInterval(() => { block.render(); }, 100);
   try {
     settle("platform", platformCheck());
@@ -153,17 +246,18 @@ export async function doctor(): Promise<number> {
       (async () => { settle("git", await toolCheck("git")); })(),
       (async () => { settle("npm", await toolCheck("npm")); })(),
       (async () => {
-        settle("elan", await toolCheck("elan"));
+        block.begin("elan");
+        settle("elan", await elanCheck(block, "elan", dry));
         block.begin("lake");
-        settle("lake", await lakeCheck(block, "lake"));
+        settle("lake", await lakeCheck(block, "lake", dry));
         // Only now do these two read a settled state: while the toolchain was
         // installing they would have reported the half-built directory elan is
         // in the middle of creating.
         settle("lean toolchain", toolchainCheck());
         settle("mathlib store", warmStoreCheck());
       })(),
-      (async () => { settle("github auth", await githubCheck()); })(),
-      (async () => { settle("database clone", await databaseCheck(block, "database clone")); })(),
+      (async () => { settle("github auth", await githubCheck(dry)); })(),
+      (async () => { settle("database clone", await databaseCheck(block, "database clone", dry)); })(),
       (async () => { settle("disk", await diskCheck()); })(),
       (async () => {
         if (submissions.length === 0) return;
@@ -257,10 +351,14 @@ async function diskCheck(): Promise<Check | undefined> {
   }
 }
 
-async function githubCheck(): Promise<Check> {
+async function githubCheck(dry: boolean): Promise<Check> {
   let token: string;
   try {
-    token = await githubAppUserToken();
+    // A refresh is a change on both sides — a new credentials.json here and a
+    // rotated `ghr_` on GitHub, which invalidates the one on disk — so --dry
+    // reads the stored token and reports rather than renewing it. The GETs
+    // below stay: reading GitHub changes nothing.
+    token = await githubAppUserToken({ refresh: !dry });
   } catch (error) {
     // Not every failure here is a missing login — a stored login whose refresh
     // GitHub answers with a 500 also lands here, and "no login found" would
@@ -327,9 +425,25 @@ async function githubCheck(): Promise<Check> {
  * stale database is a problem doctor can simply end, and every local build and
  * `lax serve` reads it. Only a checkout it must not touch, or an unreachable
  * remote, comes back as a note. */
-async function databaseCheck(block: LoadingBlock, key: string): Promise<Check> {
+async function databaseCheck(block: LoadingBlock, key: string, dry: boolean): Promise<Check> {
   const directory = databaseDirectory();
   const cloning = !fs.existsSync(path.join(directory, ".git"));
+  if (dry) {
+    // Reporting what is on disk is all a read-only run can honestly say: the
+    // clone's freshness is a question only a fetch answers, and a fetch writes.
+    return cloning
+      ? {
+          name: "database clone",
+          status: "warn",
+          detail: `none at ${directory}`,
+          fix: "run `lax pull-db` (or `lax doctor` without --dry) to clone it",
+        }
+      : {
+          name: "database clone",
+          status: "ok",
+          detail: `${directory} (not refreshed — --dry)`,
+        };
+  }
   block.relabel(key, cloning ? "database clone — cloning lax-database" : "database clone — updating");
   const update = await updateDatabaseQuietly();
   block.relabel(key, "database clone");

@@ -220,8 +220,9 @@ when the database is missing, stale, invalid, or cannot be checked. Pass
 
 `lax build [folder]` runs the shared submission-validation phases against the
 working tree and local database clone, then writes `build-output.json`. It
-needs `git` plus the host Lean toolchain (`elan` and `lake` on PATH) — no
-docker; containers are a CI-only concern.
+needs `git` plus the host Lean toolchain — elan under `~/.elan` and the pinned
+toolchain's `lake` under it, either on PATH or wherever `lax doctor` installed
+them — no docker; containers are a CI-only concern.
 `lake build` runs **in place** in the submission's own `concepts/`
 and `proofs/` directories, so `.lake` persists between runs and rebuilds are
 incremental, and its transcript streams live to the terminal. On first use the
@@ -246,9 +247,17 @@ dependents, and asks for a typed confirmation; scripts must pass `--yes`.
 `~/.lax/lax-database`. `lax register` likewise requires typed confirmation
 unless `--yes` is passed. `lax doctor` checks the tailored issue-workflow
 toolchain, running every check concurrently and spinning on a line per check
-until it answers; it also provisions what it safely can, installing the pinned
-Lean toolchain when it is missing and bringing the local `lax-database`
-checkout up to date rather than only reporting that they are stale. `lax spec`
+until it answers; it also provisions what it safely can, installing elan and
+the pinned Lean toolchain when they are missing and bringing the local
+`lax-database` checkout up to date rather than only reporting that they are
+stale. On a bare machine `npm i -g lax-archive && lax doctor` is therefore the
+whole setup: elan (the pinned bootstrap installer, into `~/.elan`, without
+touching your shell profile), the pinned toolchain under it, and the database
+clone. The one thing it still only reports is the warm mathlib workspace —
+gigabytes that the first `lax build` downloads once. `lax doctor --dry` is the
+same report with none of that: it installs nothing, refreshes neither the
+database clone nor the login, writes nothing at all, and names each gap it
+declined to close. It still exits 1 on a ✗, so it works as a check in a script. `lax spec`
 prints the bundled specification, and `lax update`
 upgrades the npm CLI before refreshing the database. A best-effort background
 check reports newer CLI releases without delaying commands.

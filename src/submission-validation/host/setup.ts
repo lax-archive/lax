@@ -36,7 +36,11 @@ export async function ensureValidationHost(
     console.log(`lax setup: elan present at ${elanBin}`);
   } else {
     console.log(`lax setup: installing elan (pinned installer ${ELAN_COMMIT.slice(0, 12)})`);
-    if (!(await span("elan install", () => installElan(elanBin)))) return false;
+    const install = await span("elan install", () => installElan(elanBin, { echo }));
+    if (!install.ok) {
+      console.error(`lax setup: ${install.reason}`);
+      return false;
+    }
   }
 
   if (fs.existsSync(path.join(toolchainBinDir(), "lean"))) {
@@ -70,8 +74,24 @@ export async function ensureValidationHost(
   return true;
 }
 
-/** Run elan's pinned bootstrap script non-interactively into elanHome(). */
-async function installElan(elanBin: string): Promise<boolean> {
+/** Why an install failed, for a caller that renders its own diagnosis. */
+export type ElanInstall = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Run elan's pinned bootstrap script non-interactively into elanHome().
+ *
+ * Shared with `lax doctor`, which installs elan the same way on an author's
+ * machine — hence the returned reason rather than a printed one: doctor renders
+ * a line per check and cannot have a child scribble over its spinner block, so
+ * `echo: false` silences the installer's own output too. `--no-modify-path` is
+ * deliberate on both paths: nothing in lax resolves elan or lake through PATH
+ * (leanenv.ts and doctor's toolBinary() read elanHome()/toolchainBinDir()
+ * directly), so editing the user's shell profile would buy nothing lax needs.
+ */
+export async function installElan(
+  elanBin: string,
+  opts: { echo?: boolean } = {},
+): Promise<ElanInstall> {
   const url = `https://raw.githubusercontent.com/leanprover/elan/${ELAN_COMMIT}/elan-init.sh`;
   let script: string;
   try {
@@ -80,8 +100,7 @@ async function installElan(elanBin: string): Promise<boolean> {
     script = await response.text();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`lax setup: could not download the pinned elan installer: ${message}`);
-    return false;
+    return { ok: false, reason: `could not download the pinned elan installer: ${message}` };
   }
   const staged = path.join(os.tmpdir(), `lax-elan-init-${process.pid}.sh`);
   fs.writeFileSync(staged, script, { mode: 0o700 });
@@ -90,20 +109,26 @@ async function installElan(elanBin: string): Promise<boolean> {
       "sh",
       [staged, "-y", "--no-modify-path", "--default-toolchain", "none"],
       { ...process.env, ELAN_HOME: elanHome() } as Record<string, string>,
+      opts.echo ?? true,
     );
     if (installed !== 0 || !fs.existsSync(elanBin)) {
-      console.error(`lax setup: elan installation failed (exit ${installed})`);
-      return false;
+      return { ok: false, reason: `elan installation failed (exit ${installed})` };
     }
-    return true;
+    return { ok: true };
   } finally {
     fs.rmSync(staged, { force: true });
   }
 }
 
-function runWithEnv(cmd: string, args: string[], env: Record<string, string>): Promise<number> {
+function runWithEnv(
+  cmd: string,
+  args: string[],
+  env: Record<string, string>,
+  echo = true,
+): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "inherit", "inherit"], env });
+    const stream = echo ? "inherit" : "ignore";
+    const child = spawn(cmd, args, { stdio: ["ignore", stream, stream], env });
     child.once("error", reject);
     child.once("close", (code) => resolve(code ?? 1));
   });

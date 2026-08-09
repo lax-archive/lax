@@ -21,7 +21,12 @@ import { serveWebsite } from "./website.js";
 import { checkForCliUpdate } from "./update-check.js";
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
-checkForCliUpdate(version);
+// The background release probe caches its result in ~/.lax/update-check.json,
+// which is a write — and `lax doctor --dry` promises there are none. Commander
+// has not parsed anything yet, so this reads argv directly rather than moving
+// the probe behind the parse, where every command would have to remember it.
+const argv = process.argv.slice(2);
+if (!(argv.includes("doctor") && argv.includes("--dry"))) checkForCliUpdate(version);
 const program = new Command()
   .name("lax")
   .description("the Lax archive CLI")
@@ -187,8 +192,9 @@ program
 
 program
   .command("doctor")
+  .option("--dry", "report only: install nothing, refresh nothing, write nothing")
   .description("check tools, login, and local state — with fixes")
-  .action(run("lax doctor", doctor));
+  .action(run("lax doctor", (options: { dry?: boolean }) => doctor({ dry: options.dry === true })));
 
 program
   .command("update")

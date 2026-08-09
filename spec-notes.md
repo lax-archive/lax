@@ -6,6 +6,48 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## `lax doctor` installs elan, not just the toolchain (implemented, 2026-08-09)
+
+spec.md (~1141) has `lax doctor` "check ... and report concrete fixes"; it
+already installed the pinned toolchain and refreshed the database clone
+instead of only naming them. It now also installs **elan** itself, with the
+pinned bootstrap script (`ELAN_COMMIT`, the same one the trusted VM setup
+runs, shared as `installElan`), into `elanHome()` and with
+`--no-modify-path`. The motive is a bare container: `npm i -g lax-archive &&
+lax doctor` is now the entire host setup, which is what a Claude Code cloud
+environment's setup script gets to run. Without it the elan row was a ✗ with
+a link, the lake row a ✗ behind it, and nothing was provisioned at all.
+
+Two consequences worth recording:
+
+- **PATH is no longer the resolver.** `--no-modify-path` means a
+  doctor-installed elan is invisible to the user's shell, so the tool probes
+  (`toolVersion`, and with it `lax build`'s preflight) look in the
+  lax-owned locations first — `elanHome()/bin/elan`, `toolchainBinDir()/lake`
+  — and fall back to PATH. Otherwise the preflight refused to build with the
+  toolchain the CLI had just installed and was about to use, which is how
+  every build path already runs them (leanenv.ts).
+- **The elan that counts is `elanHome()`'s**, not any elan on PATH:
+  `toolchainDir()` hangs off `elanHome()`, so an elan installed elsewhere
+  owns toolchains lax never looks at. The check therefore probes that path and
+  installs there when it is missing, even on a machine that has some other
+  elan.
+
+The warm mathlib workspace stays a `warn`, not an install: it is gigabytes,
+and `lax build` builds it once with progress. So "full environment" here
+means elan + toolchain + database clone, and a first build still downloads.
+
+**`lax doctor --dry`** is the same report with every change suppressed — the
+spec's original reading of the command, kept as a flag now that the default
+provisions. Four things it declines: the elan install, the toolchain install,
+the database clone/update (freshness is a question only a fetch answers, and a
+fetch writes), and the credentials refresh behind `github auth` (renewing
+rotates the stored `ghr_` and invalidates the old one *on GitHub*, so it is a
+change on both sides — `githubAppUserToken` grew a `refresh` option for it).
+The background release probe in main.ts is skipped too: its cache file under
+`~/.lax` would otherwise be the one write a read-only run still made. Exit
+codes are unchanged, so `lax doctor --dry` is usable as a script's check.
+
 ## The run artifact carries the report; comments record the outcome (implemented, 2026-08-07)
 
 **Partially supersedes "Result comments carry the diagnosis and a

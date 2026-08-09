@@ -125,7 +125,11 @@ describe("CLI compatibility surface", () => {
   });
 
   it("aggregates missing tools for the host build toolchain", () => {
-    const result = cli(["build"], { PATH: "/nonexistent" });
+    // An empty PATH is no longer enough to make elan and lake missing: the
+    // preflight resolves them in the lax-owned locations first (doctor installs
+    // elan with --no-modify-path, so on a provisioned machine neither is ever on
+    // PATH). An ELAN_HOME that does not exist is what "no toolchain" means now.
+    const result = cli(["build"], { PATH: "/nonexistent", ELAN_HOME: "/nonexistent/elan" });
     expect(result.code).toBe(1);
     expect(result.output).toContain("missing required tools");
     expect(result.output).toContain("git:");
