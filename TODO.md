@@ -69,6 +69,26 @@ history/go-live.md). Still owed:
   `lax-ops-backup` bucket still holds the last `ops.sql`; decide
   keep-or-delete when the final export has a durable home.
 
+## CLI
+
+- **`lax update` silently no-ops right after a release**: it shells out to
+  `npm install --global lax-archive@latest`, and npm serves the packument
+  from its cache for the registry's `max-age` (~5 min), so an update run in
+  that window reinstalls the version already present and reports success.
+  Seen 2026-08-07 minutes after 0.1.22 published; the same command with
+  `--prefer-online` installed 0.1.22 immediately. Pass `--prefer-online`
+  and verify the installed version afterwards instead of trusting npm's
+  exit code.
+- **`lax doctor` blames the wrong era for cross-submission clones**: the
+  `.lake/packages` check intersects override *names* with materialized
+  clones, so a hand-added relative override for a `LaxN` git require makes
+  its correctly-pinned clone report as a "mathlib-closure clone from the
+  pre-overrides era". Only the warm closure is ours to call dead weight;
+  a `LaxN` clone is live the moment the overrides file is regenerated
+  (`seedOverrides` rewrites it wholesale from the warm manifest, dropping
+  every hand-added entry). Narrow the check to the warm-closure names, and
+  say what deleting costs (a re-clone) when a `LaxN` entry is involved.
+
 ## spec.md reconciliation queue (Jan, manually)
 
 - The "Continuous preview while authoring" subsection an agent inserted into
