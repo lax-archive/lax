@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { doctor } from "../../src/cli/doctor.js";
 import { recordSubmission } from "../../src/cli/registry.js";
 import { ELAN_COMMIT, LEAN_TOOLCHAIN, MATHLIB_REV } from "../../src/submission-validation/pins.js";
-import { warmDir } from "../../src/submission-validation/host/warmstore.js";
+import { warmDir, warmReady } from "../../src/submission-validation/host/warmstore.js";
 
 const previous = {
   home: process.env.LAX_HOME,
@@ -39,8 +39,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-  fs.rmSync(home, { recursive: true, force: true });
-  for (const root of seeded.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  removeTree(home);
+  for (const root of seeded.splice(0)) removeTree(root);
   if (previous.home === undefined) delete process.env.LAX_HOME;
   else process.env.LAX_HOME = previous.home;
   if (previous.database === undefined) delete process.env.LAX_DATABASE_URL;
@@ -49,6 +49,31 @@ afterEach(() => {
   else process.env.ELAN_HOME = previous.elan;
   if (previous.token !== undefined) process.env.LAX_GITHUB_APP_USER_TOKEN = previous.token;
 });
+
+/**
+ * Remove a temp tree that may hold a sealed warm store: the seal strips write
+ * permission from directories too, and rm needs it back before it can unlink
+ * what is inside them.
+ */
+function removeTree(root: string): void {
+  if (fs.existsSync(root)) {
+    fs.chmodSync(root, 0o700);
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (entry.isDirectory()) removeTree(path.join(root, entry.name));
+    }
+  }
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+/** A warm store doctor reads as ready, for the tests that are about some
+ * other link in the Lean chain: without one, the store check behind them
+ * starts a build of its own. */
+function seedWarmStore(): void {
+  const ws = warmDir();
+  fs.mkdirSync(path.join(ws, ".lake", "packages"), { recursive: true });
+  fs.writeFileSync(path.join(ws, "lake-manifest.json"), '{"packages":[]}\n');
+  fs.writeFileSync(path.join(ws, ".lax-warm-ok"), "");
+}
 
 function writeOverrides(pkg: string, packages: Array<{ name: string; dir: string }>): void {
   fs.mkdirSync(path.join(pkg, ".lake"), { recursive: true });
@@ -60,6 +85,7 @@ function writeOverrides(pkg: string, packages: Array<{ name: string; dir: string
 
 /** A submission that passes every check but the ones a test then breaks. */
 function seedSubmission(): string {
+  seedWarmStore();
   fs.mkdirSync(path.join(warmDir(), ".lake", "packages", "mathlib"), { recursive: true });
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "lax-submission-"));
   seeded.push(parent);
@@ -172,6 +198,7 @@ describe("lax doctor", () => {
     const toolchain = LEAN_TOOLCHAIN.replace("/", "--").replace(":", "---");
     const installed = path.join(elanRoot, "toolchains", toolchain, "bin");
     const log = path.join(home, "elan-args");
+    seedWarmStore();
     fs.mkdirSync(path.join(elanRoot, "bin"), { recursive: true });
     // A fake elan that records what it was asked to install and produces the
     // toolchain that request implies — no network, no real download. It answers
@@ -209,6 +236,7 @@ describe("lax doctor", () => {
     const elanBin = path.join(elanRoot, "bin", "elan");
     const toolchain = LEAN_TOOLCHAIN.replace("/", "--").replace(":", "---");
     const installed = path.join(elanRoot, "toolchains", toolchain, "bin");
+    seedWarmStore();
     // The pinned bootstrap script, faked: the real one is fetched from
     // raw.githubusercontent.com at ELAN_COMMIT and run with ELAN_HOME set, so a
     // stub that plants an elan there exercises the whole install path offline.
@@ -264,16 +292,20 @@ describe("lax doctor", () => {
     expect(lines.find((line) => line.includes(" lake: "))).toContain("✗");
     expect(lines.some((line) => line.includes("without --dry"))).toBe(true);
     expect(lines.find((line) => line.includes(" database clone: "))).toContain("none at");
+    expect(lines.find((line) => line.includes(" mathlib store: "))).toContain("✗");
     expect(code).toBe(1);
-    // and nothing was touched: no bootstrap fetched, no elan, no clone
+    // and nothing was touched: no bootstrap fetched, no elan, no clone, and
+    // above all no gigabyte store build
     expect(fetched).toEqual([]);
     expect(fs.existsSync(path.join(home, "elan", "bin"))).toBe(false);
     expect(fs.existsSync(path.join(home, "lax-database"))).toBe(false);
+    expect(fs.existsSync(warmDir())).toBe(false);
   });
 
   it("--dry still reads a provisioned machine as ready", async () => {
     // The report is the same report: a dry run on a machine that has everything
     // must not invent problems out of the work it skipped.
+    seedWarmStore();
     const elanRoot = path.join(home, "elan");
     const toolchain = LEAN_TOOLCHAIN.replace("/", "--").replace(":", "---");
     const installed = path.join(elanRoot, "toolchains", toolchain, "bin");
@@ -300,6 +332,70 @@ describe("lax doctor", () => {
     expect(lines.find((line) => line.includes(" elan: "))).toContain("✓ elan: elan 4.0.0");
     expect(lines.find((line) => line.includes(" lake: "))).toContain("Lean version 4.30.0");
     expect(lines.find((line) => line.includes(" database clone: "))).toContain("not refreshed");
+    expect(lines.find((line) => line.includes(" mathlib store: "))).toContain("✓");
+  });
+
+  it("builds the warm mathlib store when the machine has none", async () => {
+    // The gap that made `npm i -g lax-archive && lax doctor` an incomplete
+    // setup: the store was reported as a note and left to the first `lax
+    // build`, so doctor exited 0 on a machine that could not build anything.
+    const elanRoot = path.join(home, "elan");
+    const toolchain = LEAN_TOOLCHAIN.replace("/", "--").replace(":", "---");
+    const installed = path.join(elanRoot, "toolchains", toolchain, "bin");
+    const lakeLog = path.join(home, "lake-args");
+    fs.mkdirSync(path.join(elanRoot, "bin"), { recursive: true });
+    fs.mkdirSync(installed, { recursive: true });
+    fs.writeFileSync(path.join(elanRoot, "bin", "elan"), `#!/bin/sh\necho "elan 4.0.0"\n`, {
+      mode: 0o755,
+    });
+    fs.writeFileSync(path.join(installed, "lean"), "");
+    // The pinned toolchain's own lake, faked: it records its arguments and
+    // leaves behind what a real `lake build` of the warm workspace leaves —
+    // the locked manifest and the package checkouts `warmReady` looks for. It
+    // writes them relative to its cwd, which is the store being built.
+    fs.writeFileSync(
+      path.join(installed, "lake"),
+      `#!/bin/sh\necho "$@" >> ${JSON.stringify(lakeLog)}\n` +
+        `case "$1" in --version) echo "Lake version 5.0.0 (Lean version 4.30.0)"; exit 0 ;; esac\n` +
+        `mkdir -p .lake/packages/mathlib\n` +
+        `printf '{"packages":[]}\\n' > lake-manifest.json\n`,
+      { mode: 0o755 },
+    );
+
+    const printed = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await doctor();
+
+    // It ran the pinned toolchain's lake, not whatever `lake` PATH offers —
+    // elan is installed with --no-modify-path, so a bare lookup finds either
+    // nothing or another elan's shim resolving an unpinned toolchain.
+    expect(fs.readFileSync(lakeLog, "utf8")).toContain("build");
+    const store = printed.mock.calls
+      .map(([line]) => String(line))
+      .find((line) => line.includes(" mathlib store: "))!;
+    expect(store).toContain("✓");
+    expect(store).toContain("built just now");
+    // and the store is left in the state every consumer relies on: complete,
+    // marked, and sealed against writes
+    expect(warmReady(warmDir())).toBe(true);
+    expect(fs.statSync(warmDir()).mode & 0o200).toBe(0);
+  });
+
+  it("names the missing toolchain instead of downloading gigabytes without one", async () => {
+    // The store check runs last in the Lean chain, so on a machine where elan
+    // never arrived there is no lake to build with. It must not spend the
+    // download to find that out — the lake row above already carries the fix.
+    const printed = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await doctor();
+
+    const store = printed.mock.calls
+      .map(([line]) => String(line))
+      .find((line) => line.includes(" mathlib store: "))!;
+    expect(store).toContain("✗");
+    expect(store).toContain(`no ${LEAN_TOOLCHAIN} to build it with`);
+    expect(fs.existsSync(warmDir())).toBe(false);
   });
 
   it("reports the reason when the elan bootstrap cannot be fetched", async () => {

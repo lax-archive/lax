@@ -9,7 +9,7 @@ import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import { elanHome, toolchainBinDir } from "../submission-validation/host/leanenv.js";
 import { run } from "../submission-validation/host/proc.js";
 import { installElan } from "../submission-validation/host/setup.js";
-import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
+import { ensureLocalWarm, warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../submission-validation/pins.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, updateDatabaseQuietly } from "./database.js";
@@ -195,15 +195,16 @@ async function toolVersionAt(bin: string): Promise<string | undefined> {
  *
  * The one ordering that has to survive the concurrency is the Lean chain, and
  * it is a chain because each link provisions the next: the elan check installs
- * elan, `lake --version` then has it install the pinned toolchain, and the two
- * checks that only read the installed state run last.
+ * elan, `lake --version` then has it install the pinned toolchain, the check
+ * that only reads the installed state follows, and the warm mathlib store —
+ * which that toolchain builds — comes last.
  *
- * `dry` turns all of that off: the four checks that write something — elan, the
- * toolchain, the database clone, and the credentials refresh behind `github
- * auth` — report the gap and its fix instead of closing it. Nothing else here
- * ever wrote, so a dry run leaves the machine byte-for-byte as it found it, and
- * the report is otherwise the same report. It still exits 1 on a ✗, which is
- * what makes it usable as a check in a script.
+ * `dry` turns all of that off: the five checks that write something — elan, the
+ * toolchain, the warm store, the database clone, and the credentials refresh
+ * behind `github auth` — report the gap and its fix instead of closing it.
+ * Nothing else here ever wrote, so a dry run leaves the machine byte-for-byte
+ * as it found it, and the report is otherwise the same report. It still exits 1
+ * on a ✗, which is what makes it usable as a check in a script.
  */
 export async function doctor(opts: { dry?: boolean } = {}): Promise<number> {
   const dry = opts.dry === true;
@@ -250,11 +251,13 @@ export async function doctor(opts: { dry?: boolean } = {}): Promise<number> {
         settle("elan", await elanCheck(block, "elan", dry));
         block.begin("lake");
         settle("lake", await lakeCheck(block, "lake", dry));
-        // Only now do these two read a settled state: while the toolchain was
-        // installing they would have reported the half-built directory elan is
+        // Only now does this read a settled state: while the toolchain was
+        // installing it would have reported the half-built directory elan is
         // in the middle of creating.
         settle("lean toolchain", toolchainCheck());
-        settle("mathlib store", warmStoreCheck());
+        // Last, and behind the toolchain it builds with: the store is the one
+        // check that can run for tens of minutes.
+        settle("mathlib store", await warmStoreCheck(block, "mathlib store", dry));
       })(),
       (async () => { settle("github auth", await githubCheck(dry)); })(),
       (async () => { settle("database clone", await databaseCheck(block, "database clone", dry)); })(),
@@ -481,16 +484,62 @@ function toolchainCheck(): Check {
       };
 }
 
-function warmStoreCheck(): Check {
+/**
+ * The warm mathlib workspace, plus the build that provisions it.
+ *
+ * The last piece of the machine doctor only reported: `npm i -g lax-archive
+ * && lax doctor` installed elan, the toolchain and the database clone, then
+ * left the largest and slowest dependency to whichever `lax init` or `lax
+ * build` came first — a setup that exits 0 on a machine that still cannot
+ * build anything, with the gap reported as a note rather than a gap. Building
+ * it here is what makes those two commands the whole setup they claim to be.
+ *
+ * It is also the one check that costs tens of minutes and gigabytes, so it
+ * stays last in the Lean chain, and it reports its stage on the spinner row
+ * instead of through the store's own console notices, which would scribble
+ * over the live block.
+ */
+async function warmStoreCheck(block: LoadingBlock, key: string, dry: boolean): Promise<Check> {
   const ws = warmDir();
-  return warmReady(ws)
-    ? { name: "mathlib store", status: "ok", detail: ws }
-    : {
+  if (warmReady(ws)) return { name: "mathlib store", status: "ok", detail: ws };
+  if (dry) {
+    return { name: "mathlib store", status: "fail", detail: `none at ${ws}`, fix: WOULD_INSTALL };
+  }
+  // Nothing to build it with: the lake check above already reported that gap
+  // and its fix, so this row names the dependency rather than spending a
+  // gigabyte download on a `lake` that is missing or, worse, some other
+  // elan's shim resolving a toolchain no lax build uses.
+  if (!fs.existsSync(path.join(toolchainBinDir(), "lean"))) {
+    return {
+      name: "mathlib store",
+      status: "fail",
+      detail: `none at ${ws}; no ${LEAN_TOOLCHAIN} to build it with`,
+      fix: "close the lake problem above, then run `lax doctor` again",
+    };
+  }
+  block.begin(key);
+  const warm = await ensureLocalWarm({
+    echo: false,
+    onStage: (stage) => {
+      block.relabel(
+        key,
+        stage === "building"
+          ? "mathlib store — downloading and building mathlib, tens of minutes the first time"
+          : "mathlib store — sealing the store read-only, a few quiet minutes",
+      );
+    },
+  });
+  block.relabel(key, "mathlib store");
+  return warm === undefined
+    ? {
         name: "mathlib store",
-        status: "warn",
-        detail: `none at ${ws}`,
-        fix: "the first `lax build` builds it once (downloads gigabytes)",
-      };
+        status: "fail",
+        detail: `could not be built at ${ws}`,
+        fix:
+          "usually the network or free disk (the store needs roughly 10 GB); rerun `lax doctor`, " +
+          "or `lax build --build-from-source` to compile mathlib locally instead",
+      }
+    : { name: "mathlib store", status: "ok", detail: `${ws} — built just now` };
 }
 
 function pageBuilderCheck(): Check {
