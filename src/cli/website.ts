@@ -12,6 +12,7 @@ import {
   type DatabaseFreshness,
 } from "./database.js";
 import * as ui from "./ui.js";
+import { downloadedPageBuilderDirectory } from "./website-renderer.js";
 
 interface WebsiteSubmission {
   record: Record<string, unknown> & { id: string; state: string };
@@ -508,28 +509,41 @@ function parseJson(text: string, label: string): unknown {
 async function loadPageBuilder(): Promise<PageBuilder> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
+    downloadedPageBuilderDirectory(),
     path.join(here, "vendor", "page-builder"),
     path.resolve(here, "..", "..", ".build", "page-builder", "source"),
   ];
-  const root = candidates.find((candidate) =>
-    fs.existsSync(path.join(candidate, "dist", "sitegen", "generate.js")),
+  const failures: string[] = [];
+  for (const [index, root] of candidates.entries()) {
+    if (!fs.existsSync(path.join(root, "dist", "sitegen", "generate.js"))) {
+      if (index === 0 && fs.existsSync(root)) {
+        ui.verbose("downloaded Website renderer is incomplete; using the bundled fallback");
+      }
+      continue;
+    }
+    try {
+      const generated = await import(
+        pathToFileURL(path.join(root, "dist", "sitegen", "generate.js")).href
+      ) as { generateSite?: unknown };
+      const assets = await import(
+        pathToFileURL(path.join(root, "dist", "sitegen", "assets.js")).href
+      ) as { SITE_MIME?: unknown };
+      if (typeof generated.generateSite !== "function" || !isObject(assets.SITE_MIME)) {
+        throw new Error("invalid public API");
+      }
+      return {
+        generateSite: generated.generateSite as PageBuilder["generateSite"],
+        mimeTypes: assets.SITE_MIME as Record<string, string>,
+      };
+    } catch (error) {
+      failures.push(`${root}: ${(error as Error).message}`);
+      if (index === 0) {
+        ui.verbose("downloaded Website renderer is unusable; using the bundled fallback");
+      }
+    }
+  }
+  const detail = failures.length === 0 ? "no renderer installation was found" : failures.join("; ");
+  throw new Error(
+    "the lax-website page-builder is unavailable; reinstall the CLI or run `lax update`: " + detail,
   );
-  if (root === undefined) {
-    throw new Error(
-      "the pinned lax-website page-builder is missing; run the page-builder fetch and package scripts",
-    );
-  }
-  const generated = await import(
-    pathToFileURL(path.join(root, "dist", "sitegen", "generate.js")).href
-  ) as { generateSite?: unknown };
-  const assets = await import(
-    pathToFileURL(path.join(root, "dist", "sitegen", "assets.js")).href
-  ) as { SITE_MIME?: unknown };
-  if (typeof generated.generateSite !== "function" || !isObject(assets.SITE_MIME)) {
-    throw new Error("the bundled lax-website page-builder has an invalid public API");
-  }
-  return {
-    generateSite: generated.generateSite as PageBuilder["generateSite"],
-    mimeTypes: assets.SITE_MIME as Record<string, string>,
-  };
 }

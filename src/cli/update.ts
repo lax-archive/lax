@@ -3,14 +3,13 @@ import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { syncDatabase } from "./database.js";
 import * as ui from "./ui.js";
+import { updateWebsiteRenderer } from "./website-renderer.js";
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 
 /**
- * Upgrade the CLI, then the archive: two rows, one per thing the author asked
- * for. They are two `ui.Steps` blocks rather than one because the work is
- * strictly sequential and `syncDatabase` owns its own row — same indent, same
- * label column, so the block boundary is invisible.
+ * Upgrade the CLI, then refresh the archive and Website renderer. Each owns a
+ * separate report because the work is strictly sequential.
  */
 export async function updateCli(): Promise<void> {
   const verbose = ui.isVerbose();
@@ -37,6 +36,24 @@ export async function updateCli(): Promise<void> {
     steps.finish();
   }
   await syncDatabase();
+  let websiteCommit: string | undefined;
+  if (verbose) websiteCommit = await updateWebsiteRenderer({ verbose: true });
+  const renderer = new ui.Steps();
+  renderer.add("renderer", "Website renderer");
+  try {
+    if (!verbose) websiteCommit = await updateWebsiteRenderer();
+    renderer.settle("renderer", { label: "Website renderer is current" });
+  } catch (error) {
+    renderer.settle("renderer", {
+      status: "fail",
+      label: "Website renderer not updated",
+      detail: "download or install failed",
+    });
+    throw error;
+  } finally {
+    renderer.finish();
+  }
+  ui.verbose(`website renderer ${websiteCommit ?? "unknown"}`);
 }
 
 /**
@@ -151,5 +168,3 @@ function transcript(error: unknown): string {
   if (said !== "") return said;
   return error instanceof Error ? error.message : String(error);
 }
-
-

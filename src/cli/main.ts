@@ -219,7 +219,7 @@ program
 program
   .command("update")
   .alias("upgrade")
-  .description("upgrade lax to the latest release, then refresh your copy of the archive")
+  .description("upgrade lax to the latest release, then refresh the archive and Website renderer")
   .action(run(() => {
     preflight(["npm", "git"]);
     return updateCli();

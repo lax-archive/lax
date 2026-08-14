@@ -225,9 +225,10 @@ Set `LAX_POLL_INTERVAL_MS` or
 `LAX_WORKFLOW_TIMEOUT_MS` to override the 3-second poll interval or 6-hour
 timeout.
 
-`lax serve [folder]` uses the page-builder bundled from the pinned
-`lax-website` revision. It starts the preview at `http://localhost:8123/`
-immediately with a loading page, then renders the local
+`lax serve [folder]` uses the current `lax-website` page-builder downloaded by
+`lax update`, with the revision bundled in the CLI as its safe fallback. It
+starts the preview at `http://localhost:8123/` immediately with a loading page,
+then renders the local
 `~/.lax/lax-database` checkout plus the folder's `build-output.json` and
 rebuilds when either changes. The CLI and every generated page show a warning
 when the database is missing, stale, invalid, or cannot be checked. Pass
@@ -277,9 +278,10 @@ database clone nor the login, writes nothing at all, and names each gap it
 declined to close. It still exits 1 on a ✗, so it works as a check in a script. `lax print spec`
 prints the bundled specification and `lax print instructions` the guide an
 author hands to a coding agent — both verbatim, because their reader is an agent
-rather than a terminal. `lax update`
-upgrades the npm CLI before refreshing the database. A best-effort background
-check reports newer CLI releases without delaying commands.
+rather than a terminal. `lax update` upgrades the npm CLI before refreshing
+the database and Website renderer. A
+best-effort background check reports newer CLI releases without delaying
+commands.
 
 `lax login` uses the GitHub App device flow and accepts only the resulting
 `ghu_` GitHub App user access token. Expiring tokens are refreshed with the
