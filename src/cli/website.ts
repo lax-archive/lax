@@ -12,7 +12,11 @@ import {
   type DatabaseFreshness,
 } from "./database.js";
 import * as ui from "./ui.js";
-import { downloadedPageBuilderDirectory } from "./website-renderer.js";
+import {
+  downloadedPageBuilderDirectory,
+  installWebsiteRendererIfMissing,
+  websiteRendererIsReady,
+} from "./website-renderer.js";
 
 interface WebsiteSubmission {
   record: Record<string, unknown> & { id: string; state: string };
@@ -508,14 +512,27 @@ function parseJson(text: string, label: string): unknown {
 
 async function loadPageBuilder(): Promise<PageBuilder> {
   const here = path.dirname(fileURLToPath(import.meta.url));
+  const downloaded = downloadedPageBuilderDirectory();
+  try {
+    if (await installWebsiteRendererIfMissing()) {
+      ui.verbose("downloaded the current Website renderer");
+    }
+  } catch (error) {
+    ui.verbose(
+      `Website renderer could not be downloaded; using the bundled fallback: ${(error as Error).message}`,
+    );
+  }
   const candidates = [
-    downloadedPageBuilderDirectory(),
+    downloaded,
     path.join(here, "vendor", "page-builder"),
     path.resolve(here, "..", "..", ".build", "page-builder", "source"),
   ];
   const failures: string[] = [];
   for (const [index, root] of candidates.entries()) {
-    if (!fs.existsSync(path.join(root, "dist", "sitegen", "generate.js"))) {
+    const ready = index === 0
+      ? websiteRendererIsReady(root)
+      : fs.existsSync(path.join(root, "dist", "sitegen", "generate.js"));
+    if (!ready) {
       if (index === 0 && fs.existsSync(root)) {
         ui.verbose("downloaded Website renderer is incomplete; using the bundled fallback");
       }

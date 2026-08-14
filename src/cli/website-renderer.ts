@@ -9,6 +9,13 @@ const MAX_MANIFEST_BYTES = 16 * 1024;
 const MAX_RENDERER_BYTES = 50 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
+const REQUIRED_RENDERER_PATHS = [
+  "dist/sitegen/generate.js",
+  "dist/sitegen/assets.js",
+  "assets/site",
+  "content/landing.md",
+  "content/contributing.md",
+] as const;
 
 export interface RendererManifest {
   commit: string;
@@ -28,6 +35,21 @@ export function downloadedPageBuilderDirectory(): string {
     "@lax-archive",
     "website",
   );
+}
+
+export function websiteRendererIsReady(
+  directory = downloadedPageBuilderDirectory(),
+): boolean {
+  return REQUIRED_RENDERER_PATHS.every((relative) =>
+    fs.existsSync(path.join(directory, relative)),
+  );
+}
+
+/** Bootstrap a fresh CLI installation without making the preview depend on the network. */
+export async function installWebsiteRendererIfMissing(): Promise<boolean> {
+  if (websiteRendererIsReady()) return false;
+  await updateWebsiteRenderer();
+  return true;
 }
 
 export function parseRendererManifest(value: unknown): RendererManifest {
@@ -102,13 +124,7 @@ export async function updateWebsiteRenderer(
       "@lax-archive",
       "website",
     );
-    for (const relative of [
-      "dist/sitegen/generate.js",
-      "dist/sitegen/assets.js",
-      "assets/site",
-      "content/landing.md",
-      "content/contributing.md",
-    ]) {
+    for (const relative of REQUIRED_RENDERER_PATHS) {
       if (!fs.existsSync(path.join(installed, relative))) {
         throw new Error(`installed website renderer is missing ${relative}`);
       }

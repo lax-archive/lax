@@ -1137,10 +1137,10 @@ preflight the local database and require the user to type ``lax-N`` unless
 to the archive and needs no authentication.
 
 **lax update** upgrades the CLI itself to the latest release and then refreshes
-the local database; ``lax upgrade`` is an alias. Likewise needs no
-authentication. **lax doctor** checks the issue-workflow toolchain, login,
-local database, host Lean setup, and bundled Website renderer and reports
-concrete fixes.
+the local database and current Website renderer; ``lax upgrade`` is an alias.
+Likewise needs no authentication. **lax doctor** checks the issue-workflow
+toolchain, login, local database, host Lean setup, and bundled Website renderer
+and reports concrete fixes.
 
 **lax login** uses the GitHub App device flow and accepts only the resulting
 ``ghu_`` user access token. Expiring credentials are refreshed with the
@@ -1222,7 +1222,8 @@ form the write control plane; the public database remains the read surface.
 
 The CLI is the one component users install. We distribute via npm (package
 ``lax-archive``), making installs and updates one-liners; ``lax update``
-runs ``npm install -g lax-archive@latest`` and then refreshes the database.
+runs ``npm install -g lax-archive@latest`` and then refreshes the database and
+current Website renderer.
 
 Local builds shell out to ``elan``/``lake`` for the pinned host toolchain and
 to ``git`` for source checks and the database clone; ``lax update`` also needs

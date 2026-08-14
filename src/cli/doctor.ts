@@ -17,6 +17,7 @@ import { databaseDirectory, updateDatabaseQuietly } from "./database.js";
 import { issueNumberFromFolder } from "./manifest.js";
 import { registeredSubmissions } from "./registry.js";
 import * as ui from "./ui.js";
+import { websiteRendererIsReady } from "./website-renderer.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -791,9 +792,7 @@ function pageBuilderCheck(): Check {
     path.join(here, "vendor", "page-builder"),
     path.resolve(here, "..", "..", ".build", "page-builder", "source"),
   ];
-  const root = candidates.find((candidate) =>
-    fs.existsSync(path.join(candidate, "dist", "sitegen", "generate.js")),
-  );
+  const root = candidates.find((candidate) => websiteRendererIsReady(candidate));
   return root === undefined
     ? {
         label: "Website renderer",

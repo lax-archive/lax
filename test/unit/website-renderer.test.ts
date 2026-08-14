@@ -5,8 +5,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   downloadedPageBuilderDirectory,
+  installWebsiteRendererIfMissing,
   parseRendererManifest,
-  updateWebsiteRenderer,
+  websiteRendererIsReady,
 } from "../../src/cli/website-renderer.js";
 
 const temporary: string[] = [];
@@ -20,6 +21,31 @@ afterEach(() => {
 });
 
 describe("downloaded Website renderer", () => {
+  it("does not contact the manifest when a complete renderer is already installed", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "lax-renderer-test-"));
+    temporary.push(home);
+    process.env.LAX_HOME = home;
+    process.env.LAX_WEBSITE_RENDERER_MANIFEST_URL = "http://127.0.0.1:1/latest.json";
+    const installed = downloadedPageBuilderDirectory();
+    for (const relative of [
+      "dist/sitegen/generate.js",
+      "dist/sitegen/assets.js",
+      "assets/site",
+      "content/landing.md",
+      "content/contributing.md",
+    ]) {
+      const target = path.join(installed, relative);
+      if (path.extname(target) === "") fs.mkdirSync(target, { recursive: true });
+      else {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, "fixture");
+      }
+    }
+
+    expect(websiteRendererIsReady()).toBe(true);
+    await expect(installWebsiteRendererIfMissing()).resolves.toBe(false);
+  });
+
   it("accepts the published manifest contract", () => {
     const commit = "a".repeat(40);
     expect(parseRendererManifest({
@@ -70,7 +96,9 @@ describe("downloaded Website renderer", () => {
       process.env.LAX_WEBSITE_RENDERER_MANIFEST_URL =
         `http://127.0.0.1:${address.port}/latest.json`;
 
-      await expect(updateWebsiteRenderer()).rejects.toThrow("does not match its SHA-256 digest");
+      await expect(installWebsiteRendererIfMissing()).rejects.toThrow(
+        "does not match its SHA-256 digest",
+      );
       expect(fs.readFileSync(sentinel, "utf8")).toBe("current");
     } finally {
       await new Promise<void>((resolve, reject) => {

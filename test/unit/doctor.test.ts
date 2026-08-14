@@ -134,15 +134,23 @@ function provision(): void {
  */
 let planted: string | undefined;
 function seedPageBuilder(): void {
-  const entry = path.join(
-    repoRoot, ".build", "page-builder", "source", "dist", "sitegen", "generate.js",
-  );
+  const root = path.join(repoRoot, ".build", "page-builder", "source");
+  const entry = path.join(root, "dist", "sitegen", "generate.js");
   if (fs.existsSync(entry)) return;
   let outermost = path.dirname(entry);
   while (!fs.existsSync(path.dirname(outermost))) outermost = path.dirname(outermost);
   planted = outermost;
-  fs.mkdirSync(path.dirname(entry), { recursive: true });
-  fs.writeFileSync(entry, "");
+  for (const relative of [
+    "dist/sitegen/generate.js",
+    "dist/sitegen/assets.js",
+    "content/landing.md",
+    "content/contributing.md",
+  ]) {
+    const target = path.join(root, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, "");
+  }
+  fs.mkdirSync(path.join(root, "assets", "site"), { recursive: true });
 }
 
 /** A warm store doctor reads as ready, for the tests that are about some

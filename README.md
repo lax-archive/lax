@@ -226,9 +226,10 @@ Set `LAX_POLL_INTERVAL_MS` or
 timeout.
 
 `lax serve [folder]` uses the current `lax-website` page-builder downloaded by
-`lax update`, with the revision bundled in the CLI as its safe fallback. It
-starts the preview at `http://localhost:8123/` immediately with a loading page,
-then renders the local
+`lax update`. If none has been downloaded yet, the first preview downloads it;
+if that fails, the revision bundled in the CLI remains the safe fallback. The
+preview starts at `http://localhost:8123/` immediately with a loading page, then
+renders the local
 `~/.lax/lax-database` checkout plus the folder's `build-output.json` and
 rebuilds when either changes. The CLI and every generated page show a warning
 when the database is missing, stale, invalid, or cannot be checked. Pass
