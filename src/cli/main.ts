@@ -32,7 +32,7 @@ program.addHelpText(
 Typical workflow:
   lax init my-work --title "My formalization"   allocate an issue and scaffold locally
   lax build my-work                              validate the local submission
-  lax serve my-work                              preview it with the pinned Website renderer
+  lax serve my-work                              preview it with the current Website renderer
   git commit && git push                         publish an immutable source commit
   lax submit my-work                             request the issue-backed import
   lax register my-work                           make the accepted record immutable
@@ -159,7 +159,7 @@ program
   .argument("[folder]", "local submission folder", ".")
   .option("--port <port>", "local preview port", "8123")
   .option("--database-only", "render only lax-database, without the local folder")
-  .description("build the website with the pinned lax-website renderer and serve it locally")
+  .description("build the website with the current lax-website renderer and serve it locally")
   .action(
     run(
       "lax serve",
@@ -177,7 +177,7 @@ program
 
 program
   .command("upgrade")
-  .description("upgrade the CLI to the latest release, then refresh lax-database")
+  .description("upgrade the CLI, database, and Website renderer")
   .action(run("lax upgrade", () => {
     preflight(["npm", "git"]);
     return upgradeCli();
