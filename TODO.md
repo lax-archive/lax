@@ -93,6 +93,16 @@ history/go-live.md). Still owed:
   every hand-added entry). Narrow the check to the warm-closure names, and
   say what deleting costs (a re-clone) when a `LaxN` entry is involved.
 
+## Admin tool (admin-plan.md — designed, not implemented)
+
+Maintainer-only operations: `/lax admin <verb>` issue commands
+(delete/reset-draft/undelete/revalidate/owners, two-phase confirm for the
+destructive ones) plus an `admin.yml` workflow_dispatch for repo-wide work
+(rebuild-website, sweep, verify, gc-captures). Numeric-id allowlist in
+constants, checks repeated credential-free in the publisher; no standalone
+tool, no direct database writes. See admin-plan.md; spec-notes entry due
+when it lands. Partially answers the abuse-stance item below.
+
 ## spec.md reconciliation queue (Jan, manually)
 
 - The "Continuous preview while authoring" subsection an agent inserted into
