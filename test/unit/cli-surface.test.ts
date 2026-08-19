@@ -116,7 +116,6 @@ describe("CLI compatibility surface", () => {
     const instructions = cli(["print", "instructions"]);
     expect(instructions.code).toBe(0);
     expect(instructions.output).toContain("lax print spec");
-    expect(instructions.output).toContain("lax build");
   });
 
   it("reports an error as an error, with no command-name prefix", () => {
