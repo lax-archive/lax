@@ -1,65 +1,41 @@
-# Formalizing a result with Lax
+# Instructions
 
-These instructions are for you, the agent. When a user asks you to formalize
-some result, this is how the work goes. It says how to proceed, not how the
-system is defined: run `lax print spec` for the full specification of the Lax
-ecosystem — the layout, the concept dialect, and everything validation
-enforces — and work from that rather than from guesses or from examples.
+These are instructions to you, the agent, on how to formalize a mathematical
+result with Lax. On a high level, this proceeds as follows.
 
-## Before you write anything
+- The user provides the mathematical result to formalize, e.g., by pointing to
+  a recent paper, a classical result in the literature, or maybe even an open
+  problem.
 
-**Read the spec.** `lax print spec`. Every rule you would otherwise infer is
-written down there.
+- Then you deeply familiarize yourself with the work and decide on the scope
+  together with the user. Unless there are good reasons otherwise, the
+  formalization scope contains the full transitive dependencies of the result.
+  Note that it might be scattered across the literature. It's worth checking
+  the Lax database if there is something that can be built upon.
 
-**Set yourself up to work across sessions.** A formalization is not one
-sitting. Before the first line of Lean, create your own memory files and entry
-points: where the state of the work lives, what you write down at the end of a
-session, what the next session reads first to pick the thread back up. Assume
-the user has never run a project this way — most people have not. Walk them
-through what you are setting up, where it lives, and what you will need from
-them when you start again.
+- Then you write the concept files. Carefully decide how mathematical ideas are
+  distributed among concepts. Hold the concept files to the highest standard
+  of elegance and polish you are capable of. The definitions should be the ones
+  a mathematician would choose, the statements should be the ones they would
+  recognize, and nothing should be in the file that does not need to be there.
+  In particular, the user likely is only vaguely familiar with Lean, so choose
+  formalisms that laypeople can read and verify easily. It probably pays off to
+  read a few existing submissions for good practices. When unsure about
+  something, ask the user for their preferences, but do not assume deep Lean
+  knowledge from them. Once the user signs off on the concept files, they become
+  frozen. Afterwards, significant changes require explicit confirmation by the user.
 
-## Concepts first
+- Lastly, write the proofs. This might take many sessions, so a good plan and
+  subagent workflow is valuable here. Do not underestimate your capabilities.
+  The library shows the impressive formalization results you have pulled off in
+  the past, so you can also pull off this one.
 
-Write the concept files first, and then stop and ask the user to review them.
-The concepts are the statement of what will be proved; a flawless proof of the
-wrong statement is worth nothing, and the user is the only one who can tell you
-that the statement is the one they meant.
+# Additional Info
 
-Hold the concept files to the highest standard of elegance and polish you are
-capable of. They are the part of the submission that other people read, cite,
-and build on: the definitions should be the ones a mathematician would choose,
-the statements should be the ones they would recognize, and nothing should be in
-the file that does not need to be there.
-
-Reading the existing library before you invent anything pays off — it is where
-the conventions of the archive actually live. `lax sync` brings your copy of the
-archive up to date, `lax serve --database-only` browses it locally, and
-<https://laxarchive.org> serves the same pages.
-
-## The commands
-
-The user has usually reserved the submission already, with `lax init`, so you
-are working in a folder that is set up. From there:
-
-```sh
-lax build <folder>      # check it on your machine
-lax serve <folder>      # preview the pages the archive would publish
-lax submit <folder>     # send it to the archive as a draft
-lax register <folder>   # make it permanent and citable
-```
-
-- `lax build` is the loop you live in. It runs the archive's own validation
-  locally and reports what it found; iterate until it is clean. While the proofs
-  are still empty, `--only concepts` is faster, and `--replay` adds the kernel
-  replay the archive performs.
-- `lax serve` renders the submission and the archive together and serves them
-  for preview, rebuilding whenever `lax build` produces a new result.
-- `lax submit` sends the *pushed* commit, so commit and push before you run it.
-  A draft can be replaced: fix something, push, and submit again.
-- `lax register` is permanent. The record becomes immutable and citable and can
-  never be changed or removed, so it is the user's decision to make, not yours.
-
-If the folder has not been set up yet, `lax init <folder>` reserves the id and
-scaffolds the layout. If a command complains about the machine rather than about
-the submission, `lax doctor` checks the setup and prints the fix.
+The first time you work with Lax, you want to run `lax print spec` to
+familiarize yourself with the tool. Once you are familiar with the full
+dimensions of the task, you may want to adjust the environment so that it feels
+comfortable to you: create your own memory files, entry points and workflows.
+Be supportive of the user. They might not be that familiar with recent
+agent systems, so feel free to make suggestions that improve the overall
+experience and productivity.
