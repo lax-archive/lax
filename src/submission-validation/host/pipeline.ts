@@ -37,7 +37,7 @@ import { hostValidationRuntime } from "../pins.js";
 import type { FetchedSource } from "../source/fetch.js";
 import { Profiler } from "../../shared/profile.js";
 import { inspectorBinary } from "./inspector.js";
-import { hostLeanEnv, packageLibDir, type LeanEnv } from "./leanenv.js";
+import { hostLeanEnv, lakeBinary, lakePathEnv, packageLibDir, type LeanEnv } from "./leanenv.js";
 import { run } from "./proc.js";
 import {
   ensureLocalWarm,
@@ -202,9 +202,9 @@ export async function validateSubmissionOnHost(
     }
     if (echo) console.log(`\n== lake build (${kind}) ==`);
     const build = await state.phase(`compile ${kind}`, () =>
-      run("lake", ["build"], pkgDir, {
+      run(lakeBinary(), ["build"], pkgDir, {
         echo,
-        env: { LAKE_ARTIFACT_CACHE: "false", LEAN_NUM_THREADS: "4" },
+        env: { LAKE_ARTIFACT_CACHE: "false", LEAN_NUM_THREADS: "4", PATH: lakePathEnv() },
         maxOutputBytes: limits.maxOutputBytes,
       }));
     if (build.code !== 0) {

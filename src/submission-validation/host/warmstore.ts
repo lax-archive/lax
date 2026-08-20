@@ -41,7 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { laxHome } from "../../shared/lax-home.js";
 import { LEAN_TOOLCHAIN, LEAN_VERSION, MATHLIB_REV, MATHLIB_URL } from "../pins.js";
-import { toolchainBinDir } from "./leanenv.js";
+import { lakeBinary, lakePathEnv } from "./leanenv.js";
 import { run } from "./proc.js";
 
 /** The local warm workspace for the current archive pins, keyed by toolchain
@@ -77,25 +77,6 @@ export function markWarmReady(ws: string): void {
   fs.chmodSync(staged, 0o444);
   fs.renameSync(staged, path.join(ws, READY_MARKER));
   fs.chmodSync(ws, 0o555);
-}
-
-/**
- * The lake this build runs: the pinned toolchain's own binary when it is
- * installed where lax puts it, and a PATH lookup only otherwise.
- *
- * elan is installed with `--no-modify-path` (setup.ts, doctor), so on a
- * machine lax provisioned nothing lax needs is on the user's PATH — a bare
- * `lake` there is either absent (the warm build then died with ENOENT, having
- * passed a preflight that probed the installed binary) or some other elan's
- * shim, which resolves `elan default` and would build the store against a
- * toolchain no lax build ever uses. Same reasoning as doctor's `toolBinary()`;
- * the fallback keeps a developer's own toolchain working. `ensureValidationHost`
- * still prepends the toolchain to PATH for its own sake — the inspector build
- * runs lake too — so this only ever agrees with it.
- */
-function lakeBinary(): string {
-  const owned = path.join(toolchainBinDir(), "lake");
-  return fs.existsSync(owned) ? owned : "lake";
 }
 
 /**
@@ -153,11 +134,7 @@ name = "LaxWarm"
     // needs `leantar`, and without it on PATH `lake exe cache get` dies with
     // "leantar not found in Lean sysroot" — a failure this reports as a
     // network problem, sending the author off to debug the wrong thing.
-    // ensureValidationHost prepends the same dir to its own process
-    // environment (it also builds the inspector), but `lax build` and `lax
-    // doctor` do not, and on a machine lax provisioned nothing is on PATH:
-    // elan is installed with --no-modify-path.
-    PATH: `${toolchainBinDir()}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: lakePathEnv(),
   };
   const lake = lakeBinary();
 

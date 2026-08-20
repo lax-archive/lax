@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { laxHome } from "../../shared/lax-home.js";
+import { lakeBinary, lakePathEnv } from "./leanenv.js";
 import { run } from "./proc.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -89,9 +90,9 @@ export async function inspectorBinary(
   }
   options.onBuild?.();
   // artifact-cache off like every host lake invocation (see warmstore.ts)
-  const res = await run("lake", ["build"], stagingSrc, {
+  const res = await run(lakeBinary(), ["build"], stagingSrc, {
     echo: options.echo ?? false,
-    env: { LAKE_ARTIFACT_CACHE: "false" },
+    env: { LAKE_ARTIFACT_CACHE: "false", PATH: lakePathEnv() },
   });
   if (res.code !== 0 || !fs.existsSync(binOf(staging))) {
     fs.rmSync(staging, { recursive: true, force: true });

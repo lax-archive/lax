@@ -89,3 +89,32 @@ export function hostLeanEnv(
     exec: (bin, args, cwd) => run(bin, args, cwd, { env }),
   };
 }
+
+/**
+ * The lake this build runs: the pinned toolchain's own binary when it is
+ * installed where lax puts it, and a PATH lookup only otherwise.
+ *
+ * elan is installed with `--no-modify-path` (setup.ts, doctor), so on a
+ * machine lax provisioned nothing lax needs is on the user's PATH — a bare
+ * `lake` there is either absent (`spawn lake ENOENT`, having passed a
+ * preflight that probed the installed binary) or some other elan's shim,
+ * which resolves `elan default` and would build against a toolchain no lax
+ * build ever uses. Same reasoning as doctor's `toolBinary()`; the fallback
+ * keeps a developer's own toolchain working.
+ */
+export function lakeBinary(): string {
+  const owned = path.join(toolchainBinDir(), "lake");
+  return fs.existsSync(owned) ? owned : "lake";
+}
+
+/**
+ * PATH for a host lake invocation: the pinned toolchain's bin dir first, for
+ * the tools lake's children look up by name rather than in the sysroot
+ * (mathlib's `cache` needs `leantar`). `ensureValidationHost` prepends the
+ * same dir to its own process environment, but it runs only on the trusted
+ * VM — `lax build` and `lax doctor` never call it, so every host lake
+ * invocation must carry this itself.
+ */
+export function lakePathEnv(): string {
+  return `${toolchainBinDir()}${path.delimiter}${process.env.PATH ?? ""}`;
+}

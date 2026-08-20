@@ -127,7 +127,7 @@ export async function initializeSubmission(folder: string, titleInput?: string):
     } catch {
       notes.add(
         "This folder is not in a git repository yet.",
-        `${ui.cmd("lax submit")} needs one — run ${ui.cmd("git init")}, then push it to GitHub.`,
+        `${ui.cmd("lax build")} and ${ui.cmd("lax submit")} both need one — run ${ui.cmd("git init")}, then push it to GitHub.`,
       );
     }
     steps.finish();
