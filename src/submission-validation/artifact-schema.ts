@@ -278,6 +278,7 @@ function parseManifest(
   expectedId: string,
   runtime: ValidationRuntimeIdentity,
 ): SubmissionManifest {
+  if (!isObject(value)) throw new ValidationError("generated manifest must be an object");
   const object = exactObject(value, [
     "specVersion",
     "id",
@@ -286,6 +287,7 @@ function parseManifest(
     "title",
     "authors",
     "bibEntries",
+    ...(value.supersedes === undefined ? [] : ["supersedes"]),
   ], "generated manifest");
   if (object.specVersion !== "1" || object.id !== expectedId) {
     throw new ValidationError("generated manifest identity is invalid");
@@ -297,6 +299,16 @@ function parseManifest(
   if (normalizeTitle(title) !== title) throw new ValidationError("generated manifest title is not normalized");
   const authors = boundedArray(object.authors, "generated manifest authors", 100)
     .map((entry, index) => parseAuthor(entry, index));
+  let supersedes: string | undefined;
+  if (object.supersedes !== undefined) {
+    if (typeof object.supersedes !== "string") {
+      throw new ValidationError("generated manifest supersedes must be a string");
+    }
+    supersedes = validateSubmissionId(object.supersedes);
+    if (supersedes === expectedId) {
+      throw new ValidationError("generated manifest cannot supersede its own submission");
+    }
+  }
   return {
     specVersion: "1",
     id: expectedId,
@@ -305,6 +317,7 @@ function parseManifest(
     title,
     authors,
     bibEntries: stringArray(object.bibEntries, "generated manifest bibEntries", 1_000, 16 * 1024, true),
+    ...(supersedes === undefined ? {} : { supersedes }),
   };
 }
 

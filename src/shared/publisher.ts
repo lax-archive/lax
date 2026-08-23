@@ -6,6 +6,7 @@ import {
   parseOwnerList,
   registeredFiles,
   replaceOwnerList,
+  supersedesClaim,
   type ArchiveChanges,
   type ArchiveFilename,
 } from "./archive-schema.js";
@@ -49,6 +50,7 @@ export interface PublisherControl {
 
 export interface PublisherArchive {
   load(id: string, snapshot?: ArchiveSnapshot): Promise<LoadedSubmission | undefined>;
+  listRegisteredSuperseders(targetId: string, snapshot: ArchiveSnapshot): Promise<string[]>;
   writeFiles(args: {
     id: string;
     changes: ArchiveChanges;
@@ -215,6 +217,23 @@ export class Publisher {
               : `dependency ${dependency} is ${state}; registration admits only registered dependencies — register ${dependency} first`,
         );
       }
+      // Registration is where a supersedes claim binds, so it is checked at
+      // the same CAS-consistent snapshot as the dependency states.
+      let claim: string | undefined;
+      try {
+        claim = supersedesClaim(current.files.buildOutput);
+      } catch (error) {
+        problems.push((error as Error).message);
+      }
+      problems.push(
+        ...(await supersedesProblems(
+          this.archive,
+          claim,
+          request.id,
+          current.files.ownerList.owners,
+          current.snapshot,
+        )),
+      );
     }
     if (
       request.preconditions === undefined ||
@@ -230,6 +249,53 @@ export class Publisher {
     }
     if (problems.length > 0) throw new ValidationError(problems.join("\n- "));
   }
+}
+
+/**
+ * Trust rule 2 for a supersedes claim: repeat every admission check
+ * credential-free at the snapshot the CAS commits against — the target is a
+ * registered record, the claimant shares an owner with it, and its single
+ * successor slot is still free. Shared by the register and submit publishers;
+ * the pipeline's resolution phase ran the same checks earlier, but only
+ * untrusted code did.
+ */
+export async function supersedesProblems(
+  archive: PublisherArchive,
+  claim: string | undefined,
+  id: string,
+  owners: GitHubIdentity[],
+  snapshot: ArchiveSnapshot,
+): Promise<string[]> {
+  if (claim === undefined) return [];
+  if (claim === id) return [`${id} cannot supersede itself`];
+  let target: LoadedSubmission | undefined;
+  try {
+    target = await archive.load(claim, snapshot);
+  } catch (error) {
+    return [`superseded submission ${claim} cannot be read: ${(error as Error).message}`];
+  }
+  if (target === undefined) {
+    return [`this submission declares it supersedes ${claim}, which is missing from lax-database`];
+  }
+  if (target.files.record.state !== "registered") {
+    return [
+      target.files.record.state === "deleted"
+        ? `${claim} is deleted and its id is retired; a deleted submission cannot be superseded`
+        : `${claim} is ${target.files.record.state}; only a registered submission can be superseded`,
+    ];
+  }
+  const problems: string[] = [];
+  const targetOwners = new Set(target.files.ownerList.owners.map((owner) => owner.githubId));
+  if (!owners.some((owner) => targetOwners.has(owner.githubId))) {
+    problems.push(`no owner of ${claim} owns ${id}; a submission can be superseded only by its own owners`);
+  }
+  const existing = (await archive.listRegisteredSuperseders(claim, snapshot)).filter(
+    (superseder) => superseder !== id,
+  );
+  if (existing.length > 0) {
+    problems.push(`${existing.join(", ")} already supersedes ${claim}; a submission has at most one successor`);
+  }
+  return problems;
 }
 
 export async function dispatchWebsiteAndReport(

@@ -60,6 +60,45 @@ describe("submission static validation retained from main", () => {
     }
   });
 
+  it("accepts an optional supersedes claim and normalizes its legacy spelling", () => {
+    const findings = new FindingCollector("static");
+    const parsed = validateManifest(
+      manifest("lax-261") + "supersedes: lax-9\n",
+      "lax-261",
+      RUNTIME,
+      findings,
+    );
+    expect(findings.violations).toEqual([]);
+    expect(parsed?.supersedes).toBe("lax-9");
+
+    const legacyFindings = new FindingCollector("static");
+    const legacy = validateManifest(
+      manifest("lax-261") + "supersedes: Lax9\n",
+      "lax-261",
+      RUNTIME,
+      legacyFindings,
+    );
+    expect(legacyFindings.violations).toEqual([]);
+    expect(legacy?.supersedes).toBe("lax-9");
+
+    const absentFindings = new FindingCollector("static");
+    const absent = validateManifest(manifest("lax-261"), "lax-261", RUNTIME, absentFindings);
+    expect(absentFindings.violations).toEqual([]);
+    expect(absent !== undefined && "supersedes" in absent).toBe(false);
+
+    for (const [content, expected] of [
+      [manifest("lax-261") + "supersedes: lax-261\n", "cannot supersede itself"],
+      [manifest("lax-261") + "supersedes: Lax261\n", "cannot supersede itself"],
+      [manifest("lax-261") + "supersedes: RamseyTheory\n", "supersedes"],
+      [manifest("lax-261") + "supersedes: [lax-9]\n", "must be a string"],
+      [manifest("lax-261") + "supersedes:\n", "must be a string"],
+    ] as const) {
+      const invalid = new FindingCollector("static");
+      validateManifest(content, "lax-261", RUNTIME, invalid);
+      expect(invalid.violations.map((finding) => finding.message).join("\n")).toContain(expected);
+    }
+  });
+
   it("accepts an empty author list", () => {
     const findings = new FindingCollector("static");
     const parsed = validateManifest(

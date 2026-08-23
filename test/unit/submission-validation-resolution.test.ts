@@ -47,6 +47,10 @@ function writeArchiveRecord(
     /** Statement ids per concept entry of the record's build output. */
     statements?: string[][];
     capture?: PublishedCapture | Record<string, unknown>;
+    /** Numeric owner ids written to owner-list.json when present. */
+    owners?: number[];
+    /** A supersedes claim echoed under the build output's inputs.manifest. */
+    supersedes?: string;
   } = {},
 ): void {
   const state = options.state ?? "registered";
@@ -77,8 +81,21 @@ function writeArchiveRecord(
         statements: ids.map((statementId) => ({ id: statementId, signature: `${statementId} : True` })),
       })),
       capture: options.capture ?? capture(),
+      ...(options.supersedes === undefined
+        ? {}
+        : { inputs: { manifest: { supersedes: options.supersedes } } }),
     }),
   );
+  if (options.owners !== undefined) {
+    writeFile(
+      directory,
+      "owner-list.json",
+      JSON.stringify({
+        specVersion: "1",
+        owners: options.owners.map((githubId) => ({ githubId, handle: `owner-${githubId}` })),
+      }),
+    );
+  }
 }
 
 function withConceptRequires(
@@ -272,5 +289,95 @@ describe("new validation trust boundaries", () => {
 
     fs.symlinkSync(path.join(root, "a", "file"), path.join(root, "link"));
     expect(() => describeLocalCapture(root, COMMIT, RUNTIME)).toThrow("symbolic link");
+  });
+});
+
+describe("supersedes resolution", () => {
+  function withSupersedes(target: string): StaticResult {
+    const result = staticResult("lax-9");
+    result.manifest = {
+      specVersion: "1",
+      id: "lax-9",
+      leanVersion: RUNTIME.leanVersion,
+      mathlibVersion: RUNTIME.mathlibCommit,
+      title: "Test submission",
+      authors: [],
+      bibEntries: [],
+      supersedes: target,
+    };
+    return result;
+  }
+
+  it("admits a registered target sharing an owner, with a free successor slot", () => {
+    const root = temporary("lax-supersedes-archive-");
+    writeArchiveRecord(root, "lax-9", { state: "init", owners: [1] });
+    writeArchiveRecord(root, "lax-5", { owners: [1, 2] });
+
+    const outcome = resolve(withSupersedes("lax-5"), new ArchiveSnapshot(root, "a".repeat(40)));
+    expect(outcome.findings.violations).toEqual([]);
+    expect(outcome.findings.warnings).toEqual([]);
+  });
+
+  it("rejects missing, draft, and deleted targets", () => {
+    const root = temporary("lax-supersedes-archive-");
+    writeArchiveRecord(root, "lax-9", { state: "init", owners: [1] });
+    writeArchiveRecord(root, "lax-5", { state: "draft", owners: [1] });
+    writeArchiveRecord(root, "lax-6", { state: "deleted" });
+    const archive = new ArchiveSnapshot(root, "a".repeat(40));
+
+    const messages = (target: string) =>
+      resolve(withSupersedes(target), archive).findings.violations.map((finding) => finding.message).join("\n");
+    expect(messages("lax-99")).toContain("has no Archive record");
+    expect(messages("lax-5")).toContain("only a registered submission can be superseded");
+    expect(messages("lax-6")).toContain("id is retired");
+  });
+
+  it("requires an owner of the target to own the submission, warning when it cannot tell", () => {
+    const root = temporary("lax-supersedes-archive-");
+    writeArchiveRecord(root, "lax-9", { state: "init", owners: [3] });
+    writeArchiveRecord(root, "lax-5", { owners: [1, 2] });
+    const disjoint = resolve(withSupersedes("lax-5"), new ArchiveSnapshot(root, "a".repeat(40)));
+    expect(disjoint.findings.violations.map((finding) => finding.message).join("\n")).toContain(
+      "can be superseded only by its own owners",
+    );
+
+    const bare = temporary("lax-supersedes-archive-");
+    writeArchiveRecord(bare, "lax-9", { state: "init" });
+    writeArchiveRecord(bare, "lax-5", {});
+    const unknown = resolve(withSupersedes("lax-5"), new ArchiveSnapshot(bare, "a".repeat(40)));
+    expect(unknown.findings.violations).toEqual([]);
+    expect(unknown.findings.warnings.map((finding) => finding.message).join("\n")).toContain(
+      "the archive itself will decide",
+    );
+
+    // an out-of-date copy may not carry the submitting record at all
+    const absent = temporary("lax-supersedes-archive-");
+    writeArchiveRecord(absent, "lax-5", { owners: [1] });
+    const noOwnRecord = resolve(withSupersedes("lax-5"), new ArchiveSnapshot(absent, "a".repeat(40)));
+    expect(noOwnRecord.findings.violations).toEqual([]);
+    expect(noOwnRecord.findings.warnings.map((finding) => finding.message).join("\n")).toContain(
+      "the archive itself will decide",
+    );
+  });
+
+  it("enforces the single successor slot and warns about competing drafts", () => {
+    const root = temporary("lax-supersedes-archive-");
+    writeArchiveRecord(root, "lax-9", { state: "init", owners: [1] });
+    writeArchiveRecord(root, "lax-5", { owners: [1] });
+    writeArchiveRecord(root, "lax-8", { owners: [1], supersedes: "lax-5" });
+    const taken = resolve(withSupersedes("lax-5"), new ArchiveSnapshot(root, "a".repeat(40)));
+    expect(taken.findings.violations.map((finding) => finding.message).join("\n")).toContain(
+      "lax-8 already supersedes lax-5",
+    );
+
+    const racing = temporary("lax-supersedes-archive-");
+    writeArchiveRecord(racing, "lax-9", { state: "init", owners: [1] });
+    writeArchiveRecord(racing, "lax-5", { owners: [1] });
+    writeArchiveRecord(racing, "lax-8", { state: "draft", owners: [1], supersedes: "lax-5" });
+    const race = resolve(withSupersedes("lax-5"), new ArchiveSnapshot(racing, "a".repeat(40)));
+    expect(race.findings.violations).toEqual([]);
+    expect(race.findings.warnings.map((finding) => finding.message).join("\n")).toContain(
+      "the first to register claims the successor slot",
+    );
   });
 });

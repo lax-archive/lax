@@ -6,6 +6,7 @@ import {
   parseOwnerList,
   registeredFiles,
   replaceOwnerList,
+  supersedesClaim,
 } from "../../src/shared/archive-schema.js";
 
 const issue = { repositoryId: 123456789, number: 42 };
@@ -159,5 +160,21 @@ describe("lax-database record transitions", () => {
       handle: `owner-${index + 1}`,
     }));
     expect(parseOwnerList({ specVersion: "1", owners }).owners).toHaveLength(51);
+  });
+});
+
+describe("supersedes claim extraction", () => {
+  it("reads the canonical claim and fails closed on anything else", () => {
+    expect(supersedesClaim({})).toBeUndefined();
+    expect(supersedesClaim({ inputs: { manifest: {} } })).toBeUndefined();
+    expect(supersedesClaim({ inputs: { manifest: { supersedes: "lax-7" } } })).toBe("lax-7");
+    // trusted writes only ever store the normalized value; anything else is
+    // corruption and must never silently free the successor slot
+    expect(() => supersedesClaim({ inputs: { manifest: { supersedes: 7 } } })).toThrow(
+      "must be a string",
+    );
+    expect(() => supersedesClaim({ inputs: { manifest: { supersedes: "Lax7" } } })).toThrow(
+      "must match lax-<positive decimal>",
+    );
   });
 });

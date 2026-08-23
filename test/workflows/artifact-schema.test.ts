@@ -37,6 +37,36 @@ describe("trusted validation artifact parser", () => {
     ).toEqual([]);
   });
 
+  it("re-validates a supersedes claim as a canonical foreign submission id", () => {
+    const fixture = successfulArtifacts();
+    fixture.buildOutput.inputs.manifest.supersedes = "lax-7";
+    expect(
+      parseSuccessfulValidationArtifacts(
+        fixture.report,
+        fixture.buildOutput,
+        validationRequest(),
+        TEST_RUNTIME,
+      ).buildOutput.inputs.manifest.supersedes,
+    ).toBe("lax-7");
+
+    for (const [supersedes, expected] of [
+      ["Lax7", "must match lax-<positive decimal>"],
+      [7 as unknown as string, "must be a string"],
+      ["lax-42", "cannot supersede its own submission"],
+    ] as const) {
+      const invalid = successfulArtifacts();
+      invalid.buildOutput.inputs.manifest.supersedes = supersedes;
+      expect(() =>
+        parseSuccessfulValidationArtifacts(
+          invalid.report,
+          invalid.buildOutput,
+          validationRequest(),
+          TEST_RUNTIME,
+        ),
+      ).toThrow(expected);
+    }
+  });
+
   it("accepts a concept declaring several statements", () => {
     // The parser used to cap `statements` at one entry, mirroring the
     // one-statement-per-concept gate; that gate is gone (rewrite.md,

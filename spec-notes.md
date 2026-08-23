@@ -6,6 +6,72 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## Versioning: `supersedes` successor chains (implemented, 2026-08-23)
+
+Submissions stay frozen in time (spec.md, Versioning), but work improves.
+The implemented mechanism is the arXiv model: a new version is an ordinary
+new submission with a fresh, unrelated id, and `manifest.yaml` gains one
+**optional** key, `supersedes: lax-N`, naming the registered submission it
+replaces. Fresh ids are essential, not incidental: package names derive from
+the id, so both versions can coexist in one dependency graph, every
+dependent's rev-pinned require stays valid forever, and citations to the old
+id keep meaning what they meant.
+
+Semantics, all enforced by the control plane:
+
+- **Only a registered submission can be superseded.** Drafts are updated by
+  re-submitting; deleted ids are retired.
+- **A submission has at most one successor** — the chain is a list, never a
+  tree. The claim travels through drafts *provisionally* and **binds at the
+  successor's registration**; competing drafts may claim the same target,
+  and the first to register wins the slot. A deleted draft never bound
+  anything, so the slot reopens by itself.
+- **Only the target's owners may supersede it**: at least one numeric owner
+  id of the target's (frozen) owner list must appear in the claimant's owner
+  list. Manifest `authors` play no role — they are credit, not
+  rights-management.
+- **The superseded record is never touched.** The forward pointer lives only
+  in the successor's validated manifest, echoed into its
+  `build-output.json` (`inputs.manifest.supersedes`); "superseded" is a
+  property the site generator *derives* from reverse pointers. Registered
+  immutability survives unmodified, and cycles are structurally impossible:
+  when a claim binds, its target is already immutable.
+
+Where the checks run: shape and self-reference in the manifest validator;
+target existence/state, owner overlap, and slot uniqueness in the resolution
+phase against the pinned Archive snapshot (so `lax build` and the read-only
+gate answer before anything compiles); and — trust rule 2 — all of them
+again, credential-free, in both trusted publishers at the CAS-consistent
+snapshot (`supersedesProblems` in `src/shared/publisher.ts`, slot scan in
+`ArchiveRepository.listRegisteredSuperseders`). `lax register` runs the same
+checks in its local preflight and names the permanence in its notes before
+the typed confirmation. `lax submit` refuses a claim that can never bind
+(unregistered target, foreign owner, occupied slot) while the author still
+holds a fresh build.
+
+The website (lax-archive/lax-website) derives the chains: a superseded
+submission's pages carry a prominent banner linking to the latest version, a
+Versions list renders the whole chain, superseded work is grouped after
+current work in the library, and its BibTeX gains a `note = {superseded by
+lax-N}`. Endorsements do **not** carry over — they attest specific code —
+so both versions' standing stays visible.
+
+Accepted limitations, on record: no retro-linking (two already-registered
+submissions can never be joined into a chain afterwards — the claim lives in
+the immutable manifest) and no undo (a bound claim is as permanent as
+registration itself; the CLI's typed confirmation is the guard). The
+acyclicity argument rests on registered-record immutability; the designed
+`admin reset-draft` verb (admin-plan.md, unimplemented) would break that
+premise and must carry its own chain check when it lands — the caveat is
+recorded there. If the
+retro case ever becomes real, the alternative is a `/lax supersede` command
+writing into `record.json`, at the cost of a hole in registered-record
+immutability — deliberately not built now.
+
+Spec touchpoints: manifest.yaml key list ("no keys beyond these" needs the
+optional `supersedes`), Lifecycle/Actions (what registration additionally
+binds and checks), Site Generator (the derived chain views).
+
 ## The CLI prints one report, not a log (implemented, 2026-08-09)
 
 spec.md's command list (~1135–1155) says what each command *does*; it says

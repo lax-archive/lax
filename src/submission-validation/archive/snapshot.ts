@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { supersedesClaim } from "../../shared/archive-schema.js";
 import { DATABASE_REPOSITORY } from "../../shared/constants.js";
 import { fetchGitCheckout } from "../source/fetch.js";
 import type { ValidationLimits } from "../config.js";
@@ -22,6 +23,22 @@ export class ArchiveSnapshot {
 
   get(id: string): ArchiveSourceRecord | undefined {
     return this.records.get(id);
+  }
+
+  /** Every record at this snapshot, for whole-archive scans. */
+  all(): ArchiveSourceRecord[] {
+    return [...this.records.values()];
+  }
+
+  /** The successor claim a record's build output carries; undefined when the
+   * copy holds none or holds one this reader cannot make sense of — the
+   * trusted publisher stays the authority either way. */
+  supersedes(record: ArchiveSourceRecord): string | undefined {
+    try {
+      return supersedesClaim(record.buildOutput ?? {});
+    } catch {
+      return undefined;
+    }
   }
 
   packageNames(record: ArchiveSourceRecord): { concepts: string[]; proofs: string[] } {
@@ -139,7 +156,31 @@ function loadRecordDirectory(root: string, id: string): ArchiveSourceRecord {
     state: record.state as ArchiveSourceRecord["state"],
     ...(source === undefined ? {} : { source }),
     buildOutput,
+    owners: readOwners(root, id),
   };
+}
+
+/**
+ * Owner ids for the supersedes ownership check, which degrades to a warning
+ * without them. Read leniently: a partial or hand-built copy without owner
+ * lists must not fail unrelated dependency resolution, and the trusted
+ * publisher repeats the check against the real database regardless.
+ */
+function readOwners(root: string, id: string): number[] {
+  try {
+    const value = readJson(path.join(root, id, "owner-list.json"));
+    if (!isObject(value) || !Array.isArray(value.owners)) return [];
+    return value.owners.flatMap((owner) =>
+      isObject(owner) &&
+      typeof owner.githubId === "number" &&
+      Number.isSafeInteger(owner.githubId) &&
+      owner.githubId > 0
+        ? [owner.githubId]
+        : [],
+    );
+  } catch {
+    return [];
+  }
 }
 
 function safeCapturePath(value: string): boolean {

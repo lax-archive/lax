@@ -105,6 +105,9 @@ when it lands. Partially answers the abuse-stance item below.
 
 ## spec.md reconciliation queue (Jan, manually)
 
+- Versioning via `supersedes` successor chains (spec-notes, 2026-08-23):
+  the optional manifest key, what registration additionally binds and
+  checks, and the site generator's derived chain views.
 - The "Continuous preview while authoring" subsection an agent inserted into
   this repo's spec.md (see spec-notes, 2026-08-05): bless or strip.
 - Auth model: GitHub App user tokens replaced the OAuth device flow the spec

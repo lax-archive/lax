@@ -22,6 +22,17 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 | `/lax register` | Makes an init/draft record immutable. |
 | `/lax submit <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. |
 
+**Versioning.** A new version of a registered submission is an ordinary new
+submission whose `manifest.yaml` carries the optional `supersedes: lax-N`
+key. The claim binds when the new submission registers: the target must be
+registered, at least one of its owners must own the successor, and each
+submission has at most one successor (first to register wins; competing
+drafts merely race). The superseded record itself is never modified — the
+website derives the version chain from the successors' build outputs and
+nudges readers to the latest version. Fresh ids keep both versions usable in
+one dependency graph and keep old citations meaningful. Details and accepted
+limitations: spec-notes.md, "Versioning: `supersedes` successor chains".
+
 The Lean validation job has no App key, installation token, or Archive write
 credential. Artifacts are its only egress: `validation-report.json` alone,
 which the author's CLI downloads to print the findings, and beside it the

@@ -146,6 +146,89 @@ describe("local command preflights", () => {
     });
   });
 
+  it("runs the supersedes admission checks before the registration is sent", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-5", "registered", [], { owners: [1, 2] });
+    writeRecord(database, "lax-6", "draft", [], { owners: [1] });
+    writeRecord(database, "lax-7", "draft", [], { owners: [1], supersedes: "lax-5" });
+    writeRecord(database, "lax-8", "draft", [], { owners: [3], supersedes: "lax-5" });
+    writeRecord(database, "lax-9", "draft", [], { owners: [1], supersedes: "lax-6" });
+    writeRecord(database, "lax-10", "draft", [], { owners: [1], supersedes: "lax-99" });
+
+    expect(checkRegisterLocally("lax-7", "refreshed")).toEqual({
+      warnings: [
+        { text: "Registering also makes lax-5 permanently show as superseded by lax-7." },
+      ],
+    });
+    expect(checkRegisterLocally("lax-8", "refreshed")).toEqual({
+      refusal: "no owner of lax-5 owns lax-8; a submission can be superseded only by its own owners",
+      warnings: [],
+    });
+    expect(checkRegisterLocally("lax-9", "refreshed")).toEqual({
+      refusal: "lax-6 is draft; only a registered submission can be superseded",
+      warnings: [],
+    });
+    expect(checkRegisterLocally("lax-10", "refreshed")).toEqual({
+      refusal:
+        "this submission declares it supersedes lax-99, which is not in your copy of the archive",
+      warnings: [],
+    });
+  });
+
+  it("refuses a supersedes claim whose successor slot is already taken", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-5", "registered", [], { owners: [1] });
+    writeRecord(database, "lax-6", "registered", [], { owners: [1], supersedes: "lax-5" });
+    writeRecord(database, "lax-7", "draft", [], { owners: [1], supersedes: "lax-5" });
+
+    expect(checkRegisterLocally("lax-7", "refreshed")).toEqual({
+      refusal: "lax-6 already supersedes lax-5; a submission has at most one successor",
+      warnings: [],
+    });
+  });
+
+  it("refuses superseding a deleted target and degrades supersedes refusals when stale", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-5", "deleted", [], { owners: [1] });
+    writeRecord(database, "lax-7", "draft", [], { owners: [1], supersedes: "lax-5" });
+
+    expect(checkRegisterLocally("lax-7", "refreshed")).toEqual({
+      refusal: "lax-5 is deleted and its id is retired; a deleted submission cannot be superseded",
+      warnings: [],
+    });
+    // a stale copy never blocks: the archive itself decides
+    const stale = checkRegisterLocally("lax-7", "failed");
+    expect(stale.refusal).toBeUndefined();
+    expect(stale.warnings.map((warning) => warning.text).join("\n")).toContain(
+      "lax-5 is deleted and its id is retired",
+    );
+  });
+
+  it("warns instead of judging ownership when the copy carries no owner lists", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-5", "registered", []);
+    writeRecord(database, "lax-7", "draft", [], { supersedes: "lax-5" });
+
+    expect(checkRegisterLocally("lax-7", "refreshed")).toEqual({
+      warnings: [
+        {
+          text:
+            "Whether an owner of lax-5 owns lax-7 could not be checked here; " +
+            "the archive itself will decide.",
+        },
+        { text: "Registering also makes lax-5 permanently show as superseded by lax-7." },
+      ],
+    });
+  });
+
   it("reuses only a build tied to the same source and Archive snapshot", () => {
     const root = temporary("lax-submission-");
     fs.writeFileSync(path.join(root, "manifest.yaml"), "id: lax-7\n");
@@ -213,14 +296,35 @@ function temporary(prefix: string): string {
   return directory;
 }
 
-function writeRecord(root: string, id: string, state: string, requirements: string[]): void {
+function writeRecord(
+  root: string,
+  id: string,
+  state: string,
+  requirements: string[],
+  options: { owners?: number[]; supersedes?: string } = {},
+): void {
   const directory = path.join(root, id);
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, "record.json"), JSON.stringify({ id, state }));
   fs.writeFileSync(
     path.join(directory, "build-output.json"),
-    JSON.stringify({ requiredByConcepts: requirements, requiredByProofs: [] }),
+    JSON.stringify({
+      requiredByConcepts: requirements,
+      requiredByProofs: [],
+      ...(options.supersedes === undefined
+        ? {}
+        : { inputs: { manifest: { supersedes: options.supersedes } } }),
+    }),
   );
+  if (options.owners !== undefined) {
+    fs.writeFileSync(
+      path.join(directory, "owner-list.json"),
+      JSON.stringify({
+        specVersion: "1",
+        owners: options.owners.map((githubId) => ({ githubId, handle: `owner-${githubId}` })),
+      }),
+    );
+  }
 }
 
 function git(cwd: string, args: string[]): void {

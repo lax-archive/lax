@@ -55,7 +55,19 @@ Issue-scoped (`/lax admin <verb>`):
   record (lesson recorded in `history/front-worker-split.md`).
 - **`admin reset-draft`** — `registered` → `draft`, for wrongly registered
   records. Dependents keep building (cross-submission edges are rev-pinned
-  git requires), but the preview must say so.
+  git requires), but the preview must say so. **Supersedes caveat:** the
+  acyclicity of supersedes chains is *proved by* registered-record
+  immutability (a claim binds only against an already-registered target, so
+  registration order strictly decreases along any chain — see the
+  2026-08-23 spec-notes entry). reset-draft breaks that premise: demote B,
+  re-submit it claiming its own successor A, and every one-hop check passes
+  at re-registration while A↔B is now a cycle. When this verb lands, its
+  re-registration path must additionally walk the target's chain and refuse
+  a claim that reaches the claimant — or reset-draft must refuse records
+  that are a supersedes target or claimant. (An `admin delete` of a
+  superseded target is fine as-is: the site generator drops deleted records
+  from the model, so the successor's claim dangles harmlessly and the chain
+  dissolves.)
 - **`admin undelete`** — restore the pre-tombstone record from git
   history. "Deletion is permanent" stays true for authors; admin undo of a
   mistake is what this tool is for.

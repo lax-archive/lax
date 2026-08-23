@@ -178,6 +178,58 @@ describe("protected Archive publication", () => {
     expect(commitParents).toEqual([[baseSha], [advancedSha]]);
     expect(branchSha).toBe(secondCandidate);
   });
+
+  it("scans build outputs for registered superseders of a target, skipping drafts", async () => {
+    const blobs = new Map<string, unknown>([
+      ["blob-30-output", { inputs: { manifest: { supersedes: "lax-7" } } }],
+      ["blob-30-record", { state: "registered" }],
+      ["blob-31-output", { inputs: { manifest: { supersedes: "lax-7" } } }],
+      ["blob-31-record", { state: "draft" }],
+      ["blob-32-output", { requiredByConcepts: [] }],
+    ]);
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.pathname === `/repos/example/database/git/commits/${baseSha}`) {
+        return json({ sha: baseSha, tree: { sha: "root-tree" } });
+      }
+      if (method === "GET" && url.pathname === "/repos/example/database/git/trees/root-tree") {
+        return json({
+          truncated: false,
+          tree: [
+            { path: "lax-7/build-output.json", type: "blob", mode: "100644", sha: "blob-7-output" },
+            { path: "lax-7/record.json", type: "blob", mode: "100644", sha: "blob-7-record" },
+            { path: "lax-30/build-output.json", type: "blob", mode: "100644", sha: "blob-30-output" },
+            { path: "lax-30/record.json", type: "blob", mode: "100644", sha: "blob-30-record" },
+            { path: "lax-31/build-output.json", type: "blob", mode: "100644", sha: "blob-31-output" },
+            { path: "lax-31/record.json", type: "blob", mode: "100644", sha: "blob-31-record" },
+            { path: "lax-32/build-output.json", type: "blob", mode: "100644", sha: "blob-32-output" },
+            { path: "lax-32/record.json", type: "blob", mode: "100644", sha: "blob-32-record" },
+          ],
+        });
+      }
+      if (method === "GET" && url.pathname.startsWith("/repos/example/database/git/blobs/")) {
+        const blob = blobs.get(url.pathname.split("/").at(-1)!);
+        if (blob !== undefined) {
+          return json({
+            encoding: "base64",
+            content: Buffer.from(JSON.stringify(blob), "utf8").toString("base64"),
+          });
+        }
+      }
+      return json({ message: `unhandled ${method} ${url.pathname}` }, 500);
+    }));
+
+    const repository = new ArchiveRepository(
+      new GitHubClient("test-token", "https://api.example.test"),
+      "example/database",
+    );
+    // lax-7's own record never claims itself, lax-31's draft claim does not
+    // bind, and lax-32 carries no claim at all — only lax-30 occupies the slot.
+    await expect(
+      repository.listRegisteredSuperseders("lax-7", { branch: "main", sha: baseSha }),
+    ).resolves.toEqual(["lax-30"]);
+  });
 });
 
 function json(value: unknown, status = 200): Response {

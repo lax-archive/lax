@@ -32,6 +32,14 @@ result with Lax. On a high level, this proceeds as follows.
 
 # Additional Info
 
+To publish an improved version of a submission that is already registered,
+do not edit it — registered submissions are immutable. Instead create a new
+submission (`lax init`) and add `supersedes: lax-N` to its `manifest.yaml`,
+naming the submission it replaces. The link becomes permanent when the new
+submission registers; the old version must be registered, one of its owners
+must own the new one, and it can have only one successor. The website will
+then point readers from the old version to the new one.
+
 The first time you work with Lax, you want to run `lax print spec` to
 familiarize yourself with the tool. Once you are familiar with the full
 dimensions of the task, you may want to adjust the environment so that it feels

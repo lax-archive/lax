@@ -4,6 +4,7 @@ import {
   ARCHIVE_FILENAMES,
   fileDigests,
   parseArchiveFiles,
+  supersedesClaim,
   type ArchiveChanges,
   type ArchiveFilename,
 } from "./archive-schema.js";
@@ -144,6 +145,47 @@ export class ArchiveRepository {
       if ([...concepts, ...proofs].includes(id)) dependents.push(candidateId);
     }
     return dependents.sort();
+  }
+
+  /**
+   * The registered records whose build output claims to supersede `targetId`,
+   * read at the snapshot the publication commits against. Only a registered
+   * claimant occupies the target's single successor slot — drafts still
+   * compete and drop out here. Same tree walk as listDependents; a claim the
+   * database should never hold fails the scan closed (supersedesClaim throws).
+   */
+  async listRegisteredSuperseders(targetId: string, snapshot: ArchiveSnapshot): Promise<string[]> {
+    const commit = await this.github.request<GitCommit>("GET", `${this.base}/git/commits/${snapshot.sha}`);
+    const tree = await this.github.request<GitTree>(
+      "GET",
+      `${this.base}/git/trees/${commit.tree.sha}?recursive=1`,
+    );
+    if (tree.truncated) throw new Error("lax-database tree is too large for a complete supersedes scan");
+    const recordShaById = new Map<string, string>();
+    for (const entry of tree.tree) {
+      if (entry.type === "blob" && /^lax-[1-9][0-9]*\/record\.json$/u.test(entry.path)) {
+        recordShaById.set(entry.path.split("/")[0]!, entry.sha);
+      }
+    }
+    const candidates = tree.tree.filter(
+      (entry) => entry.type === "blob" && /^lax-[1-9][0-9]*\/build-output\.json$/u.test(entry.path),
+    );
+    const superseders: string[] = [];
+    for (const entry of candidates) {
+      const candidateId = entry.path.split("/")[0]!;
+      if (candidateId === targetId) continue;
+      const blob = await this.github.request<GitBlob>("GET", `${this.base}/git/blobs/${entry.sha}`);
+      const output = JSON.parse(decodeBase64(blob.content)) as Record<string, unknown>;
+      if (supersedesClaim(output) !== targetId) continue;
+      const recordSha = recordShaById.get(candidateId);
+      if (recordSha === undefined) continue;
+      const recordBlob = await this.github.request<GitBlob>("GET", `${this.base}/git/blobs/${recordSha}`);
+      const record = JSON.parse(decodeBase64(recordBlob.content)) as Record<string, unknown>;
+      if (record.state === "registered") superseders.push(candidateId);
+    }
+    return superseders.sort(
+      (left, right) => Number(left.slice("lax-".length)) - Number(right.slice("lax-".length)),
+    );
   }
 
   async writeFiles(args: {

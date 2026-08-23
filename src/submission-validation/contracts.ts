@@ -59,6 +59,8 @@ export interface SubmissionManifest {
   title: string;
   authors: SubmissionAuthor[];
   bibEntries: string[];
+  /** The registered submission this one replaces as its single successor. */
+  supersedes?: string;
 }
 
 export interface GitRequire {
@@ -101,6 +103,8 @@ export interface ArchiveSourceRecord {
   state: "init" | "draft" | "registered" | "deleted";
   source?: SourceLocation;
   buildOutput?: Record<string, unknown>;
+  /** Numeric owner ids; empty when the copy carries no readable owner list. */
+  owners: number[];
 }
 
 export interface ResolvedDependency {

@@ -12,6 +12,7 @@ const MANIFEST_KEYS = new Set([
   "authors",
   "bibEntries",
 ]);
+const OPTIONAL_MANIFEST_KEYS = new Set(["supersedes"]);
 const AUTHOR_KEYS = new Set(["name", "orcid", "github"]);
 
 export function validateManifest(
@@ -36,7 +37,8 @@ export function validateManifest(
     return undefined;
   }
   for (const key of Object.keys(value)) {
-    if (!MANIFEST_KEYS.has(key)) findings.violate("manifest", `manifest.yaml: unknown key \`${key}\``);
+    if (!MANIFEST_KEYS.has(key) && !OPTIONAL_MANIFEST_KEYS.has(key))
+      findings.violate("manifest", `manifest.yaml: unknown key \`${key}\``);
   }
   for (const key of MANIFEST_KEYS) {
     if (!(key in value)) findings.violate("manifest", `manifest.yaml: missing key \`${key}\``);
@@ -90,6 +92,22 @@ export function validateManifest(
   if (mathlibVersion !== undefined && mathlibVersion !== runtime.mathlibCommit)
     findings.violate("manifest", `manifest.yaml: mathlibVersion must be ${runtime.mathlibCommit}`);
 
+  let supersedes: string | undefined;
+  if ("supersedes" in value) {
+    const rawSupersedes = stringField("supersedes", 64);
+    if (rawSupersedes !== undefined) {
+      try {
+        supersedes = normalizeSubmissionId(rawSupersedes);
+      } catch (error) {
+        findings.violate("manifest", `manifest.yaml: supersedes: ${(error as Error).message}`);
+      }
+    }
+    if (supersedes !== undefined && supersedes === expectedId) {
+      findings.violate("manifest", "manifest.yaml: a submission cannot supersede itself");
+      supersedes = undefined;
+    }
+  }
+
   const authors = [] as SubmissionManifest["authors"];
   if (!Array.isArray(value.authors) || value.authors.length > 100) {
     findings.violate("manifest", "manifest.yaml: authors must be a list of at most 100 entries");
@@ -137,6 +155,7 @@ export function validateManifest(
     title: title!,
     authors,
     bibEntries,
+    ...(supersedes === undefined ? {} : { supersedes }),
   };
 }
 

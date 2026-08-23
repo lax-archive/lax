@@ -5,6 +5,7 @@ import type { GhcrCaptureStore } from "./capture-store.js";
 import {
   commitMessage,
   parsePublishRequest,
+  supersedesProblems,
   type PublisherArchive,
   type PublisherControl,
 } from "./publisher.js";
@@ -129,6 +130,17 @@ export class SubmitPublisher {
       current.snapshot,
     );
     problems.push(...dependencyProblems);
+    // The claim only binds at registration, but a submit that can never
+    // register is refused here, where the author still holds a fresh build.
+    problems.push(
+      ...(await supersedesProblems(
+        this.archive,
+        artifacts.buildOutput.inputs.manifest.supersedes,
+        request.id,
+        current.files.ownerList.owners,
+        current.snapshot,
+      )),
+    );
     if (problems.length > 0) throw new ValidationError(problems.join("\n- "));
   }
 

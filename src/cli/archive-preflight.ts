@@ -9,6 +9,10 @@ interface LocalRecord {
   id: string;
   state: string;
   requirements: string[];
+  /** Numeric owner ids; empty when the copy carries no readable owner list. */
+  owners: number[];
+  /** The successor claim in the record's build output, when it carries one. */
+  supersedes?: string;
 }
 
 /**
@@ -136,7 +140,57 @@ export function checkRegisterLocally(id: string, refresh: DatabaseRefreshResult)
     if (!stale) return { refusal: fix === undefined ? message : `${message}; ${fix}`, warnings };
     warnings.push(fix === undefined ? { text: message } : { text: message, fix });
   }
+  const supersedesProblem = checkSupersedesLocally(current, records, warnings);
+  if (supersedesProblem !== undefined) {
+    if (!stale) return { refusal: supersedesProblem, warnings };
+    warnings.push({ text: supersedesProblem });
+  }
   return { warnings };
+}
+
+/**
+ * The supersedes claim binds when this submission registers, so the same
+ * checks the archive will run come first here, in the author's nouns. A
+ * problem is returned (refusal when the copy is fresh); an admissible claim
+ * leaves a note instead — registering permanently marks the older submission
+ * superseded, and that belongs next to the confirmation.
+ */
+function checkSupersedesLocally(
+  current: LocalRecord,
+  records: LocalRecord[],
+  warnings: PreflightNote[],
+): string | undefined {
+  const target = current.supersedes;
+  if (target === undefined) return undefined;
+  const targetRecord = records.find((record) => record.id === target);
+  if (targetRecord === undefined) {
+    return `this submission declares it supersedes ${target}, which is not in your copy of the archive`;
+  }
+  if (targetRecord.state !== "registered") {
+    return targetRecord.state === "deleted"
+      ? `${target} is deleted and its id is retired; a deleted submission cannot be superseded`
+      : `${target} is ${targetRecord.state}; only a registered submission can be superseded`;
+  }
+  const taken = records.find(
+    (record) =>
+      record.id !== current.id && record.supersedes === target && record.state === "registered",
+  );
+  if (taken !== undefined) {
+    return `${taken.id} already supersedes ${target}; a submission has at most one successor`;
+  }
+  if (current.owners.length > 0 && targetRecord.owners.length > 0) {
+    if (!targetRecord.owners.some((owner) => current.owners.includes(owner))) {
+      return `no owner of ${target} owns ${current.id}; a submission can be superseded only by its own owners`;
+    }
+  } else {
+    warnings.push({
+      text: `Whether an owner of ${target} owns ${current.id} could not be checked here; the archive itself will decide.`,
+    });
+  }
+  warnings.push({
+    text: `Registering also makes ${target} permanently show as superseded by ${current.id}.`,
+  });
+  return undefined;
 }
 
 const NO_LOCAL_COPY: PreflightNote = {
@@ -175,12 +229,44 @@ function readRecords(root: string): LocalRecord[] {
       const requirements = [output.requiredByConcepts, output.requiredByProofs].flatMap((value) =>
         Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [],
       );
+      const supersedes = readSupersedes(output);
       return {
         id: entry.name,
         state: typeof record.state === "string" ? record.state : "invalid",
         requirements,
+        owners: readLocalOwners(directory),
+        ...(supersedes === undefined ? {} : { supersedes }),
       };
     });
+}
+
+/** The claim `lax submit` echoed under inputs.manifest, read leniently: a
+ * value this reader cannot make sense of is a stale-copy problem, and the
+ * archive itself re-checks everything. */
+function readSupersedes(output: Record<string, unknown>): string | undefined {
+  const inputs = output.inputs;
+  if (inputs === null || typeof inputs !== "object" || Array.isArray(inputs)) return undefined;
+  const manifest = (inputs as Record<string, unknown>).manifest;
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) return undefined;
+  const value = (manifest as Record<string, unknown>).supersedes;
+  return typeof value === "string" && SUBMISSION_ID_PATTERN.test(value) ? value : undefined;
+}
+
+/** Numeric owner ids, or empty when the copy has no readable owner list. */
+function readLocalOwners(directory: string): number[] {
+  try {
+    const value = readObject(path.join(directory, "owner-list.json"));
+    if (!Array.isArray(value.owners)) return [];
+    return value.owners.flatMap((owner) =>
+      owner !== null &&
+      typeof owner === "object" &&
+      typeof (owner as Record<string, unknown>).githubId === "number"
+        ? [(owner as Record<string, unknown>).githubId as number]
+        : [],
+    );
+  } catch {
+    return [];
+  }
 }
 
 function readObject(filename: string): Record<string, unknown> {

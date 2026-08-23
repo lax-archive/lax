@@ -20,6 +20,7 @@ import {
 
 const repositoryId = 123456789;
 const alice = { githubId: 10, handle: "alice" };
+const bob = { githubId: 20, handle: "bob" };
 const issue = { repositoryId, number: 42 };
 const run = {
   id: "123456789",
@@ -136,6 +137,48 @@ describe("trusted submit publisher", () => {
     expect(rejected.captureStore.promote).not.toHaveBeenCalled();
   });
 
+  it("admits a supersedes claim only against a registered target with a shared owner and a free slot", async () => {
+    const current = loaded();
+    const artifacts = successfulArtifacts();
+    artifacts.buildOutput.inputs.manifest.supersedes = "lax-7";
+
+    const accepted = submitHarness(new Map([["lax-42", current], ["lax-7", registeredTarget()]]));
+    await expect(
+      accepted.publisher.publish(request(current), artifacts, "/capture.tar", run),
+    ).resolves.toMatchObject({ kind: "committed" });
+    expect(accepted.listRegisteredSuperseders).toHaveBeenCalledWith("lax-7", current.snapshot);
+    const combined = { ...current.texts, ...accepted.changes } as Record<string, string>;
+    const published = JSON.parse(combined["build-output.json"]!) as {
+      inputs: { manifest: { supersedes?: string } };
+    };
+    expect(published.inputs.manifest.supersedes).toBe("lax-7");
+
+    const draftTarget = submitHarness(new Map([["lax-42", current], ["lax-7", dependencyLoaded()]]));
+    await expect(
+      draftTarget.publisher.publish(request(current), artifacts, "/capture.tar", run),
+    ).rejects.toThrow("lax-7 is draft; only a registered submission can be superseded");
+    expect(draftTarget.captureStore.promote).not.toHaveBeenCalled();
+
+    const missingTarget = submitHarness(new Map([["lax-42", current]]));
+    await expect(
+      missingTarget.publisher.publish(request(current), artifacts, "/capture.tar", run),
+    ).rejects.toThrow("supersedes lax-7, which is missing from lax-database");
+
+    const foreignTarget = submitHarness(new Map([["lax-42", current], ["lax-7", registeredTarget(bob)]]));
+    await expect(
+      foreignTarget.publisher.publish(request(current), artifacts, "/capture.tar", run),
+    ).rejects.toThrow("no owner of lax-7 owns lax-42; a submission can be superseded only by its own owners");
+
+    const takenSlot = submitHarness(
+      new Map([["lax-42", current], ["lax-7", registeredTarget()]]),
+      false,
+      ["lax-30"],
+    );
+    await expect(
+      takenSlot.publisher.publish(request(current), artifacts, "/capture.tar", run),
+    ).rejects.toThrow("lax-30 already supersedes lax-7; a submission has at most one successor");
+  });
+
   it("treats an existing correlated result as a no-op", async () => {
     const current = loaded();
     const harness = submitHarness(new Map([["lax-42", current]]), true);
@@ -151,10 +194,12 @@ describe("trusted submit publisher", () => {
 function submitHarness(
   values: Map<string, LoadedSubmission>,
   resultExists = false,
+  registeredSuperseders: string[] = [],
 ): {
   publisher: SubmitPublisher;
   captureStore: { promote: ReturnType<typeof vi.fn> };
   load: ReturnType<typeof vi.fn>;
+  listRegisteredSuperseders: ReturnType<typeof vi.fn>;
   writeFiles: ReturnType<typeof vi.fn>;
   clearProgress: ReturnType<typeof vi.fn>;
   readonly changes: ArchiveChanges;
@@ -175,7 +220,8 @@ function submitHarness(
     await args.validateCurrent(values.get(args.id));
     return "c".repeat(40);
   });
-  const archive: PublisherArchive = { load, writeFiles };
+  const listRegisteredSuperseders = vi.fn(async () => registeredSuperseders);
+  const archive: PublisherArchive = { load, listRegisteredSuperseders, writeFiles };
   const publishedCapture: PublishedCapture = {
     ...TEST_CAPTURE,
     registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`,
@@ -187,6 +233,7 @@ function submitHarness(
     publisher: new SubmitPublisher(control, archive, captureStore, repositoryId),
     captureStore,
     load,
+    listRegisteredSuperseders,
     writeFiles,
     clearProgress,
     get changes() { return changes; },
@@ -200,6 +247,25 @@ function loaded(
     snapshot: { branch: "main", sha: "a".repeat(40) },
     texts,
     files: parseArchiveFiles("lax-42", texts),
+    preconditions: fileDigests(texts),
+  };
+}
+
+/** A registered lax-7 for supersedes targets; `owner` varies the overlap. */
+function registeredTarget(owner = alice): LoadedSubmission {
+  const targetIssue = { repositoryId, number: 7 };
+  const texts = initialFiles("lax-7", targetIssue, owner, "2026-07-01T10:00:00Z");
+  texts["record.json"] = jsonFile({
+    specVersion: "1",
+    id: "lax-7",
+    state: "registered",
+    createdAt: "2026-07-01T10:00:00Z",
+    source: { repository: "https://github.com/alice/dependency", commit: "7".repeat(40), folder: "." },
+  });
+  return {
+    snapshot: { branch: "main", sha: "a".repeat(40) },
+    texts,
+    files: parseArchiveFiles("lax-7", texts),
     preconditions: fileDigests(texts),
   };
 }

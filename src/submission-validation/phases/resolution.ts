@@ -124,6 +124,8 @@ export function runResolution(
     if (dependency !== undefined) proofs.push(dependency);
   }
 
+  checkSupersedes(request, staticResult, archive, findings);
+
   return {
     result: {
       concepts: unique(concepts),
@@ -132,6 +134,69 @@ export function runResolution(
     },
     findings,
   };
+}
+
+/**
+ * The manifest's supersedes claim is admitted against the same Archive
+ * snapshot the dependencies resolve against: the target must be a registered
+ * record sharing an owner with this submission, and its single successor
+ * slot must still be free. The claim binds when this submission registers;
+ * the trusted publishers repeat every check credential-free at their own
+ * publication snapshot (trust rule 2) — this run only moves the verdict in
+ * front of the compile.
+ */
+function checkSupersedes(
+  request: ValidationRequest,
+  staticResult: StaticResult,
+  archive: ArchiveSnapshot,
+  findings: FindingCollector,
+): void {
+  const target = staticResult.manifest?.supersedes;
+  if (target === undefined) return;
+  const record = archive.get(target);
+  if (record === undefined) {
+    findings.violate(
+      "supersedes-missing",
+      `this submission declares it supersedes ${target}, which has no Archive record at ${archive.sha}. ${STALE_DATABASE_HINT}`,
+    );
+    return;
+  }
+  if (record.state !== "registered") {
+    findings.violate(
+      "supersedes-state",
+      record.state === "deleted"
+        ? `${target} is deleted and its id is retired; a deleted submission cannot be superseded`
+        : `${target} is ${record.state}; only a registered submission can be superseded` +
+          (record.state === "draft" ? ` — a draft is updated by submitting to it again` : ""),
+    );
+    return;
+  }
+  const own = archive.get(request.id);
+  if (own === undefined || own.owners.length === 0 || record.owners.length === 0) {
+    findings.warn(
+      "supersedes-owners",
+      `whether an owner of ${target} owns ${request.id} could not be checked against this copy of the archive; the archive itself will decide. ${STALE_DATABASE_HINT}`,
+    );
+  } else if (!record.owners.some((owner) => own.owners.includes(owner))) {
+    findings.violate(
+      "supersedes-owners",
+      `no owner of ${target} owns ${request.id}; a submission can be superseded only by its own owners`,
+    );
+  }
+  for (const other of archive.all()) {
+    if (other.id === request.id || archive.supersedes(other) !== target) continue;
+    if (other.state === "registered") {
+      findings.violate(
+        "supersedes-taken",
+        `${other.id} already supersedes ${target}; a submission has at most one successor`,
+      );
+    } else if (other.state === "draft") {
+      findings.warn(
+        "supersedes-race",
+        `draft ${other.id} also declares it supersedes ${target}; the first to register claims the successor slot`,
+      );
+    }
+  }
 }
 
 function checkExpectedSource(

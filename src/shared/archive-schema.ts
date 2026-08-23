@@ -130,6 +130,23 @@ export function parseOwnerList(value: unknown): OwnerList {
   return { specVersion: "1", owners };
 }
 
+/**
+ * The successor claim `lax submit` echoed into a record's build output
+ * (`inputs.manifest.supersedes`), in its canonical id form. Trusted writes
+ * only ever store the normalized value, so anything else is corruption and
+ * fails closed instead of silently freeing the target's successor slot.
+ */
+export function supersedesClaim(buildOutput: Record<string, unknown>): string | undefined {
+  const inputs = buildOutput.inputs;
+  if (!isObject(inputs) || !isObject(inputs.manifest)) return undefined;
+  const value = inputs.manifest.supersedes;
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new ValidationError("build-output.json supersedes claim must be a string");
+  }
+  return validateSubmissionId(value);
+}
+
 export function parseIssueBinding(value: unknown): IssueBinding {
   if (!isObject(value)) throw new ValidationError("build-output.json issue must be an object");
   const problems = new ValidationCollector();

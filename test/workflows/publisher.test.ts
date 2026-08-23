@@ -333,6 +333,90 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.changes()["record.json"]).toContain('"state": "registered"');
   });
 
+  it("register binds a supersedes claim against a registered target with a shared owner", async () => {
+    const current = loadedWithSupersedes("lax-7");
+    const harness = publisherHarness(current, current, () => undefined, {
+      "lax-7": dependencyLoaded("lax-7", "registered"),
+    });
+    const result = await harness.publisher.publish(
+      request({
+        action: "register",
+        commentId: 79,
+        command: { action: "register" },
+        preconditions: current.preconditions,
+      }),
+      run,
+    );
+    expect(result.kind).toBe("committed");
+    // successor uniqueness is read at the CAS-consistent snapshot
+    expect(harness.listRegisteredSuperseders).toHaveBeenCalledWith("lax-7", current.snapshot);
+  });
+
+  it("register refuses a supersedes claim on an unregistered target, a foreign one, or a taken slot", async () => {
+    const current = loadedWithSupersedes("lax-7");
+    const registration = {
+      action: "register" as const,
+      commentId: 79,
+      command: { action: "register" as const },
+      preconditions: current.preconditions,
+    };
+
+    const draftTarget = publisherHarness(current, current, () => undefined, {
+      "lax-7": dependencyLoaded("lax-7", "draft"),
+    });
+    await expect(draftTarget.publisher.publish(request(registration), run)).rejects.toThrow(
+      "lax-7 is draft; only a registered submission can be superseded",
+    );
+
+    const missingTarget = publisherHarness(current);
+    await expect(missingTarget.publisher.publish(request(registration), run)).rejects.toThrow(
+      "supersedes lax-7, which is missing from lax-database",
+    );
+
+    const deletedTarget = publisherHarness(current, current, () => undefined, {
+      "lax-7": dependencyLoaded("lax-7", "deleted"),
+    });
+    await expect(deletedTarget.publisher.publish(request(registration), run)).rejects.toThrow(
+      "lax-7 is deleted and its id is retired; a deleted submission cannot be superseded",
+    );
+
+    const malformed = loadedWithSupersedes("lax-7");
+    malformed.texts["build-output.json"] = malformed.texts["build-output.json"]!.replace(
+      '"lax-7"',
+      "7",
+    );
+    malformed.files = parseArchiveFiles("lax-42", malformed.texts);
+    malformed.preconditions = fileDigests(malformed.texts);
+    const corrupt = publisherHarness(malformed, malformed, () => undefined, {
+      "lax-7": dependencyLoaded("lax-7", "registered"),
+    });
+    await expect(
+      corrupt.publisher.publish(
+        request({ ...registration, preconditions: malformed.preconditions }),
+        run,
+      ),
+    ).rejects.toThrow("supersedes claim must be a string");
+
+    const foreignTarget = publisherHarness(current, current, () => undefined, {
+      "lax-7": dependencyLoaded("lax-7", "registered", bob),
+    });
+    await expect(foreignTarget.publisher.publish(request(registration), run)).rejects.toThrow(
+      "no owner of lax-7 owns lax-42; a submission can be superseded only by its own owners",
+    );
+
+    const takenSlot = publisherHarness(
+      current,
+      current,
+      () => undefined,
+      { "lax-7": dependencyLoaded("lax-7", "registered") },
+      ["lax-30"],
+    );
+    await expect(takenSlot.publisher.publish(request(registration), run)).rejects.toThrow(
+      "lax-30 already supersedes lax-7; a submission has at most one successor",
+    );
+    expect(takenSlot.website.request).not.toHaveBeenCalled();
+  });
+
   it("routes Lean submits away from the ordinary publisher", async () => {
     const current = loaded();
     const harness = publisherHarness(current);
@@ -450,6 +534,7 @@ function publisherHarness(
   latest = current,
   afterValidation: () => void = () => undefined,
   dependencies: Record<string, LoadedSubmission> = {},
+  registeredSuperseders: string[] = [],
 ): {
   publisher: Publisher;
   control: PublisherControl;
@@ -458,6 +543,7 @@ function publisherHarness(
   successes: number[];
   clearedProgress: number[];
   load: ReturnType<typeof vi.fn>;
+  listRegisteredSuperseders: ReturnType<typeof vi.fn>;
   writeFiles: ReturnType<typeof vi.fn>;
   website: { request: ReturnType<typeof vi.fn> };
 } {
@@ -486,7 +572,8 @@ function publisherHarness(
     return "c".repeat(40);
   });
   const load = vi.fn(async (id: string) => (id === "lax-42" ? current : dependencies[id]));
-  const archive: PublisherArchive = { load, writeFiles };
+  const listRegisteredSuperseders = vi.fn(async () => registeredSuperseders);
+  const archive: PublisherArchive = { load, listRegisteredSuperseders, writeFiles };
   const website = { request: vi.fn().mockResolvedValue(undefined) };
   return {
     publisher: new Publisher(control, archive, issue.repositoryId),
@@ -496,6 +583,7 @@ function publisherHarness(
     successes,
     clearedProgress,
     load,
+    listRegisteredSuperseders,
     writeFiles,
     website,
   };
@@ -523,9 +611,23 @@ function loadedWithRequires(concepts: string[], proofs: string[] = []): LoadedSu
   return loaded(texts);
 }
 
-function dependencyLoaded(id: string, state: "draft" | "registered" | "deleted"): LoadedSubmission {
+function loadedWithSupersedes(target: string): LoadedSubmission {
+  const texts = initialFiles("lax-42", issue, alice, "2026-07-30T10:00:00Z");
+  const output = JSON.parse(texts["build-output.json"]!) as Record<string, unknown>;
+  texts["build-output.json"] = jsonFile({
+    ...output,
+    inputs: { manifest: { supersedes: target } },
+  });
+  return loaded(texts);
+}
+
+function dependencyLoaded(
+  id: string,
+  state: "draft" | "registered" | "deleted",
+  owner: GitHubIdentity = alice,
+): LoadedSubmission {
   const binding = { repositoryId: issue.repositoryId, number: Number(id.slice("lax-".length)) };
-  let texts = initialFiles(id, binding, alice, "2026-07-30T09:00:00Z");
+  let texts = initialFiles(id, binding, owner, "2026-07-30T09:00:00Z");
   if (state === "draft") {
     const record = JSON.parse(texts["record.json"]!) as Record<string, unknown>;
     texts = {
