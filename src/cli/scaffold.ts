@@ -22,12 +22,23 @@ export function ensureEmptyFolder(folder: string): string {
   return root;
 }
 
+/**
+ * The author entry a fresh manifest starts with. Online that is the GitHub
+ * account that opened the issue; offline there is no handle to use, so the
+ * name Git knows stands in — and when Git has none either, the list starts
+ * empty (which the spec allows) rather than carrying an invented author.
+ */
+export interface ScaffoldAuthor {
+  name: string;
+  github?: string;
+}
+
 /** Scaffold the source layout after the issue number has allocated the id. */
 export function scaffoldSubmission(
   folder: string,
   issueNumber: number,
   title: string,
-  ownerHandle: string,
+  author: ScaffoldAuthor | undefined,
 ): void {
   const root = ensureEmptyFolder(folder);
   const id = `lax-${issueNumber}`;
@@ -43,8 +54,7 @@ export function scaffoldSubmission(
     "manifest.yaml",
     `specVersion: "1"\nid: ${id}\nleanVersion: ${JSON.stringify(runtime.leanVersion)}\n` +
       `mathlibVersion: ${JSON.stringify(runtime.mathlibCommit)}\n` +
-      `title: ${JSON.stringify(title)}\nauthors:\n  - name: ${JSON.stringify(ownerHandle)}\n` +
-      `    github: ${JSON.stringify(ownerHandle)}\nbibEntries: []\n`,
+      `title: ${JSON.stringify(title)}\n${authorsBlock(author)}bibEntries: []\n`,
   );
   write("abstract.md", "TODO: describe this submission.\n");
   write("LICENSE", fs.readFileSync(asset("apache-2.0.txt"), "utf8"));
@@ -97,6 +107,14 @@ export async function provisionScaffold(
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function authorsBlock(author: ScaffoldAuthor | undefined): string {
+  if (author === undefined) return "authors: []\n";
+  return (
+    `authors:\n  - name: ${JSON.stringify(author.name)}\n` +
+    (author.github === undefined ? "" : `    github: ${JSON.stringify(author.github)}\n`)
+  );
 }
 
 function lakefile(packageName: string, conceptsName: string, proofs: boolean): string {

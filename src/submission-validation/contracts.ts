@@ -283,12 +283,22 @@ export function validationRequestFromUnknown(value: unknown): ValidationRequest 
   return { requestVersion: 1, id: value.id, source, archiveSha };
 }
 
-/** Lean and Lake identifiers cannot contain the hyphen used by Archive ids. */
+/**
+ * Lean and Lake identifiers cannot contain the hyphen used by Archive ids.
+ *
+ * The offline placeholder is a legal input here — an offline scaffold's
+ * packages really are named `Lax0` — because naming a package is not a
+ * decision about the archive. Whether an id may name a *record* is settled
+ * before this: the trusted path takes `request.id` from the issue number, and
+ * `validationRequestFromUnknown` refuses `lax-0` on the way in.
+ */
 export function packageNameForSubmission(id: string): string {
-  validateSubmissionId(id);
+  validateSubmissionId(id, { placeholder: true });
   return `Lax${id.slice("lax-".length)}`;
 }
 
+/** The reverse, for dependency package names — which are always real records,
+ * so `Lax0` is deliberately not one of them. */
 export function submissionIdForPackage(name: string): string | undefined {
   const base = name.endsWith("Proofs") ? name.slice(0, -"Proofs".length) : name;
   const match = /^Lax([1-9][0-9]*)$/u.exec(base);

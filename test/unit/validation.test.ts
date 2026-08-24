@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeUtf8,
+  isPlaceholderSubmissionId,
   normalizeSubmissionId,
   normalizeTitle,
   submissionId,
@@ -9,6 +10,7 @@ import {
   validateIdentity,
   validateRepositoryUrl,
   validateSource,
+  validateSubmissionId,
 } from "../../src/shared/validation.js";
 import { packageNameForSubmission } from "../../src/submission-validation/contracts.js";
 
@@ -73,6 +75,25 @@ describe("shared input validation", () => {
     expect(normalizeSubmissionId("Lax42")).toBe("lax-42");
     expect(() => normalizeSubmissionId("Lax-42")).toThrow("lax-<positive decimal>");
     expect(() => normalizeSubmissionId("lax-0")).toThrow("lax-<positive decimal>");
+  });
+
+  it("admits the offline placeholder only where a caller asks for it", () => {
+    // `lax init --offline` scaffolds under lax-0. Refusing it stays the
+    // default — every archive path keeps the two throws above — and opting in
+    // buys exactly that one id, in the two spellings a manifest may use.
+    expect(isPlaceholderSubmissionId("lax-0")).toBe(true);
+    expect(isPlaceholderSubmissionId("Lax0")).toBe(true);
+    expect(isPlaceholderSubmissionId("lax-42")).toBe(false);
+    expect(() => validateSubmissionId("lax-0")).toThrow("lax-<positive decimal>");
+    expect(validateSubmissionId("lax-0", { placeholder: true })).toBe("lax-0");
+    expect(normalizeSubmissionId("lax-0", { placeholder: true })).toBe("lax-0");
+    expect(normalizeSubmissionId("Lax0", { placeholder: true })).toBe("lax-0");
+    expect(normalizeSubmissionId("Lax42", { placeholder: true })).toBe("lax-42");
+    for (const near of ["lax-00", "lax-0x", "Lax00", "lax-", "lax-1_0"]) {
+      expect(() => normalizeSubmissionId(near, { placeholder: true })).toThrow();
+    }
+    // the placeholder's package name is a plain name mapping, so it resolves
+    expect(packageNameForSubmission("lax-0")).toBe("Lax0");
   });
 
   it("accepts only canonical HTTPS GitHub repository URLs", () => {

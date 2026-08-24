@@ -83,6 +83,15 @@ history/go-live.md). Still owed:
   renewal path is never entered, and the login lasts until it is revoked.
   Decide against the security trade-off (a leaked `ghu_` stops expiring on
   its own; `lax logout` and GitHub's revocation page still kill it).
+- **An offline scaffold cannot be renumbered.** `lax init --offline` writes
+  `lax-0` into the manifest, both lakefiles, both root modules, both module
+  directories — and from then on into every import and namespace the author
+  writes. Nothing turns that into the `lax-N` a real init reserves, so the
+  answer today is `lax init` in a fresh folder plus a manual carry-across,
+  which is what the refusal message says. Candidate once the flag has seen
+  some use: `lax init --adopt <folder>`, which reserves an id and rewrites
+  the `Lax0` identifier throughout (a rename over `.lean` sources, so it
+  wants a real test, not a `sed`).
 - **`lax doctor` blames the wrong era for cross-submission clones**: the
   `.lake/packages` check intersects override *names* with materialized
   clones, so a hand-added relative override for a `LaxN` git require makes
@@ -105,6 +114,9 @@ when it lands. Partially answers the abuse-stance item below.
 
 ## spec.md reconciliation queue (Jan, manually)
 
+- `lax init --offline` and the placeholder id `lax-0` (spec-notes,
+  2026-08-24): init no longer always allocates an id, and the CLI section's
+  init description needs the flag.
 - Versioning via `supersedes` successor chains (spec-notes, 2026-08-23):
   the optional manifest key, what registration additionally binds and
   checks, and the site generator's derived chain views.

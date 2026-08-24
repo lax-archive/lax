@@ -40,6 +40,20 @@ export const GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]";
 
 export const SUBMISSION_ID_PATTERN = /^lax-[1-9][0-9]*$/;
 export const LEGACY_SUBMISSION_ID_PATTERN = /^Lax([1-9][0-9]*)$/;
+
+/**
+ * The id an offline scaffold carries until the archive allocates a real one.
+ *
+ * GitHub numbers issues from 1, so `lax-0` can never name a record: it is the
+ * one id the local pipeline accepts and every archive path refuses. Keeping it
+ * out of `SUBMISSION_ID_PATTERN` is what makes that refusal the default —
+ * accepting the placeholder is opt-in, one call site at a time.
+ */
+export const PLACEHOLDER_SUBMISSION_ID = "lax-0";
+export const PLACEHOLDER_SUBMISSION_ID_PATTERN = /^(?:lax-0|Lax0)$/;
+/** The issue number behind that id — the one number GitHub never issues. */
+export const PLACEHOLDER_ISSUE_NUMBER = 0;
+
 export const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 export const HANDLE_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
 

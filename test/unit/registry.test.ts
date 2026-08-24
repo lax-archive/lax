@@ -76,10 +76,15 @@ function makeWarmStore(): string {
   return warm;
 }
 
+/** A path as a literal inside a report-matching regular expression. */
+function escape(value: string): string {
+  return value.replace(/[.*+?^$()|[\]\\]/gu, "\\$&");
+}
+
 function makeSubmission(name: string, issue: number): string {
   const root = path.join(home, name);
   fs.mkdirSync(root, { recursive: true });
-  scaffoldSubmission(root, issue, "Registry test", "alice");
+  scaffoldSubmission(root, issue, "Registry test", { name: "alice", github: "alice" });
   return root;
 }
 
@@ -165,7 +170,19 @@ describe("lax doctor submission checks", () => {
     recordSubmission(root);
     const report = await doctorReport();
     // the author's noun for the folder is the id it was reserved under
-    expect(report).toMatch(new RegExp(`✓ lax-42\\s+${root.replace(/[.*+?^$()|[\]\\]/gu, "\\$&")}`, "u"));
+    expect(report).toMatch(new RegExp(`✓ lax-42\\s+${escape(root)}`, "u"));
+  });
+
+  it("names an offline scaffold by its folder, since every one of them is lax-0", async () => {
+    makeWarmStore();
+    const root = makeSubmission("offline-draft", 0);
+    await provisionScaffold(root, 0);
+    recordSubmission(root);
+    const report = await doctorReport();
+    // `lax-0` is a placeholder every offline scaffold shares, so three of them
+    // in the registry would be three identical rows. The folder distinguishes.
+    expect(report).toMatch(new RegExp(`✓ offline-draft\\s+${escape(root)}`, "u"));
+    expect(report).not.toContain("lax-0");
   });
 
   it("flags missing overrides, stale clones, and pin drift", async () => {

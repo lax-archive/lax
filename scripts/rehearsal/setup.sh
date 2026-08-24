@@ -171,7 +171,7 @@ env -u LAX_MATHLIB_URL -u LAX_MATHLIB_REV \
       process.env.SUBMISSION_TREE,
       1,
       process.env.SUBMISSION_TITLE,
-      process.env.SUBMISSION_OWNER,
+      { name: process.env.SUBMISSION_OWNER, github: process.env.SUBMISSION_OWNER },
     );
   '
 

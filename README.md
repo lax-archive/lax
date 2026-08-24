@@ -206,6 +206,15 @@ pushed-`HEAD` check, and the validation build — and posts the issue command
 straight away; the trusted workflow is then the only thing that validates the
 submission, so an unpushed commit fails there instead of here.
 
+`lax init --offline` sets a folder up without reserving anything: it signs in
+to nothing, opens no issue, and scaffolds under the placeholder id `lax-0`
+(packages `Lax0` and `Lax0Proofs`). GitHub numbers issues from 1, so no record
+can ever carry that id. `lax build`, `lax serve` and `lax doctor` work with it
+unchanged; `lax submit`, `lax register`, `lax owners` and `lax delete` refuse
+it, because there is no issue to post to. Moving such a folder to the archive
+means `lax init` in a fresh one and carrying the sources across — the id is
+part of every package name, import and namespace.
+
 `lax submit --resume` reattaches to an interrupted submit. The durable job
 record is the Actions run, correlated to the originating `/lax submit` comment
 by hidden markers, so resume re-derives both from the issue's own comments —

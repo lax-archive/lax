@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { CONTROL_REPOSITORY } from "../shared/constants.js";
+import { CONTROL_REPOSITORY, PLACEHOLDER_SUBMISSION_ID } from "../shared/constants.js";
 import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import { elanHome, toolchainBinDir } from "../submission-validation/host/leanenv.js";
 import { run } from "../submission-validation/host/proc.js";
@@ -14,7 +14,7 @@ import { ensureLocalWarm, warmDir, warmReady } from "../submission-validation/ho
 import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../submission-validation/pins.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, updateDatabaseQuietly } from "./database.js";
-import { issueNumberFromFolder } from "./manifest.js";
+import { submissionIdFromFolder } from "./manifest.js";
 import { registeredSubmissions } from "./registry.js";
 import * as ui from "./ui.js";
 import { websiteRendererIsReady } from "./website-renderer.js";
@@ -804,10 +804,12 @@ function pageBuilderCheck(): Check {
 }
 
 /** The id the author calls a registered folder by. A folder whose manifest has
- * lost its id still gets a row — the check behind it is the one that says so. */
+ * lost its id still gets a row — the check behind it is the one that says so.
+ * Offline scaffolds all share `lax-0`, so those are named by their folder. */
 function submissionLabel(root: string): string {
   try {
-    return `lax-${issueNumberFromFolder(root)}`;
+    const id = submissionIdFromFolder(root);
+    return id === PLACEHOLDER_SUBMISSION_ID ? path.basename(root) : id;
   } catch {
     return path.basename(root);
   }
@@ -823,7 +825,7 @@ async function submissionCheck(root: string, label: string): Promise<Check> {
   const problems: string[] = [];
   const fixes = new Set<string>();
   try {
-    issueNumberFromFolder(root);
+    submissionIdFromFolder(root);
   } catch {
     problems.push("manifest.yaml is missing a valid lax-N id");
   }

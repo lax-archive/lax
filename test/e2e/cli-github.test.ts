@@ -169,6 +169,37 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     expect(during.map((r) => r.path)).toContain("/repos/lax-archive/lax/issues?per_page=1");
   });
 
+  it("scaffolds under the placeholder id without asking GitHub for one", async () => {
+    // The login above is stored and valid, so anything this command sends
+    // would be sent successfully — which is what makes an unchanged request
+    // log evidence about `--offline` rather than about a missing credential.
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "lax-offline-"));
+    const folder = path.join(parent, "work");
+    try {
+      const before = github.requests.length;
+      const result = await lax(["init", "--offline", folder, "--title", "Offline draft"], env);
+
+      expect(result.status).toBe(0);
+      expect(github.requests.length).toBe(before);
+      // The two rows that exist only to reach the archive are not drawn at all
+      expect(result.stdout).not.toContain("Signed in as");
+      expect(result.stdout).not.toContain("Reserving");
+      expect(result.stdout).toContain("✓ Created the files");
+      expect(result.stdout).toContain("lax-0 · Offline draft");
+      expect(result.stdout).toContain("lax-0 is a placeholder, not an archive id");
+      expect(fs.readFileSync(path.join(folder, "manifest.yaml"), "utf8")).toContain("id: lax-0");
+
+      // and the commands that would post to an issue say why they cannot,
+      // before reaching for the network
+      const submit = await lax(["submit", folder], env);
+      expect(submit.status).toBe(1);
+      expect(`${submit.stdout}${submit.stderr}`).toContain("placeholder id lax-0");
+      expect(github.requests.length).toBe(before);
+    } finally {
+      removeTree(parent);
+    }
+  });
+
   it("surfaces the bot's refusal comment on delete", async () => {
     // The end-to-end refusal path: `lax delete` posts the issue command, the
     // control-plane bot answers with a refusal result comment, and the CLI

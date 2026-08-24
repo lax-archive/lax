@@ -33,6 +33,14 @@ describe("CLI compatibility surface", () => {
     expect(help.output).toContain("lax <command> --help for options");
   });
 
+  it("offers `init` the offline placeholder scaffold", () => {
+    const init = cli(["init", "--help"]);
+    expect(init.code).toBe(0);
+    expect(init.output).toContain("--title <title>");
+    expect(init.output).toContain("--offline");
+    expect(init.output).toContain("lax-0");
+  });
+
   it("keeps the build iteration options discoverable", () => {
     const build = cli(["build", "--help"]);
     expect(build.output).toContain("--profile");

@@ -5,6 +5,8 @@ import {
   LEGACY_SUBMISSION_ID_PATTERN,
   MAX_FOLDER_BYTES,
   MAX_FOLDER_SEGMENTS,
+  PLACEHOLDER_SUBMISSION_ID,
+  PLACEHOLDER_SUBMISSION_ID_PATTERN,
   SUBMISSION_ID_PATTERN,
 } from "./constants.js";
 import type { GitHubIdentity, SourceLocation } from "./types.js";
@@ -98,7 +100,24 @@ export function normalizeTitle(raw: string): string {
   return title;
 }
 
-export function validateSubmissionId(value: string): string {
+/**
+ * How an id check treats `lax-0`, the id `lax init --offline` scaffolds with.
+ *
+ * Refusing it is the default everywhere, so a new call site is strict until
+ * someone decides otherwise: only the local pipeline — which never touches the
+ * archive — opts in. See PLACEHOLDER_SUBMISSION_ID.
+ */
+export interface SubmissionIdOptions {
+  placeholder?: boolean;
+}
+
+/** Whether an id is the offline placeholder, in either spelling. */
+export function isPlaceholderSubmissionId(value: string): boolean {
+  return PLACEHOLDER_SUBMISSION_ID_PATTERN.test(value);
+}
+
+export function validateSubmissionId(value: string, options: SubmissionIdOptions = {}): string {
+  if (options.placeholder === true && value === PLACEHOLDER_SUBMISSION_ID) return value;
   if (!SUBMISSION_ID_PATTERN.test(value)) {
     throw new ValidationError(`submission id must match lax-<positive decimal>, got ${value}`);
   }
@@ -106,7 +125,10 @@ export function validateSubmissionId(value: string): string {
 }
 
 /** Accept a source-facing legacy LaxN id and return the canonical lax-N spelling. */
-export function normalizeSubmissionId(value: string): string {
+export function normalizeSubmissionId(value: string, options: SubmissionIdOptions = {}): string {
+  if (options.placeholder === true && isPlaceholderSubmissionId(value)) {
+    return PLACEHOLDER_SUBMISSION_ID;
+  }
   if (SUBMISSION_ID_PATTERN.test(value)) return value;
   const legacy = LEGACY_SUBMISSION_ID_PATTERN.exec(value);
   if (legacy !== null) return `lax-${legacy[1]}`;

@@ -63,7 +63,11 @@ export function validateManifest(
   let id: string | undefined;
   if (rawId !== undefined) {
     try {
-      id = normalizeSubmissionId(rawId);
+      // `lax-0` is a well-formed id here so that an offline scaffold gets the
+      // equality violation below rather than a syntax one. In the trusted path
+      // `submissionId` comes from the issue number, so a `lax-0` manifest is
+      // refused either way — this only decides which sentence the author reads.
+      id = normalizeSubmissionId(rawId, { placeholder: true });
     } catch (error) {
       findings.violate("manifest", `manifest.yaml: ${(error as Error).message}`);
     }

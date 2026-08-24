@@ -6,6 +6,7 @@ import {
   CONTROL_REPOSITORY,
   githubOauthBase,
   HANDLE_PATTERN,
+  PLACEHOLDER_ISSUE_NUMBER,
   SUBMISSION_ID_PATTERN,
   submissionUrl,
 } from "../shared/constants.js";
@@ -34,12 +35,17 @@ import {
   type FollowOptions,
   type FollowResult,
 } from "./follow.js";
-import { deriveSubmittedSource, repositoryRoot } from "./git.js";
+import { deriveSubmittedSource, gitAuthorName, repositoryRoot } from "./git.js";
 import { issueNumberFromFolder } from "./manifest.js";
 import { recordSubmission } from "./registry.js";
 import { renderComment } from "./render.js";
 import { ValidationReportUnavailableError } from "./run-artifacts.js";
-import { ensureEmptyFolder, provisionScaffold, scaffoldSubmission } from "./scaffold.js";
+import {
+  ensureEmptyFolder,
+  provisionScaffold,
+  type ScaffoldAuthor,
+  scaffoldSubmission,
+} from "./scaffold.js";
 import * as ui from "./ui.js";
 
 const base = repositoryPath(CONTROL_REPOSITORY);
@@ -59,57 +65,87 @@ async function client(): Promise<GitHubClient> {
   return GitHubClient.forGitHubAppUser(await githubAppUserToken());
 }
 
-export async function initializeSubmission(folder: string, titleInput?: string): Promise<void> {
+export interface InitOptions {
+  title?: string;
+  /**
+   * Scaffold against the placeholder id instead of reserving one. Nothing is
+   * signed in to and no issue is opened, so the archive never learns the
+   * folder exists — see PLACEHOLDER_SUBMISSION_ID.
+   */
+  offline?: boolean;
+}
+
+export async function initializeSubmission(
+  folder: string,
+  options: InitOptions = {},
+): Promise<void> {
   const root = ensureEmptyFolder(folder);
+  const offline = options.offline === true;
   // No title given means the folder name stands in for one — which is a thing
   // the author will want to fix, so the identity block says so once.
-  const defaulted = titleInput === undefined;
-  const title = normalizeTitle(titleInput ?? (path.basename(root) || "Untitled submission"));
+  const defaulted = options.title === undefined;
+  const title = normalizeTitle(options.title ?? (path.basename(root) || "Untitled submission"));
   const notes = new ui.Notes();
 
   ui.title("Creating a submission");
   const steps = new ui.Steps();
-  steps.add("account", "Signing in");
-  steps.add("reserve", "Reserving an id");
+  // Offline there is no account to sign in to and no id to reserve, so those
+  // rows are not declared rather than declared and skipped.
+  if (!offline) {
+    steps.add("account", "Signing in");
+    steps.add("reserve", "Reserving an id");
+  }
   steps.add("files", "Creating the files");
   steps.add("mathlib", "Preparing mathlib");
   try {
-    const github = await client();
-    const user = await github.request<{ id: number; login: string; type: string }>("GET", "/user");
-    if (user.type !== "User") throw new Error("the authenticated GitHub identity is not a human user");
-    steps.settle("account", { label: `Signed in as ${user.login}` });
+    let issueNumber = PLACEHOLDER_ISSUE_NUMBER;
+    let author: ScaffoldAuthor | undefined;
+    if (offline) {
+      // No login, so no handle: the name Git knows is the closest thing this
+      // machine has to the author, and it may be nothing at all.
+      const name = gitAuthorName(root);
+      if (name !== undefined) author = { name };
+    } else {
+      const github = await client();
+      const user = await github.request<{ id: number; login: string; type: string }>("GET", "/user");
+      if (user.type !== "User") throw new Error("the authenticated GitHub identity is not a human user");
+      steps.settle("account", { label: `Signed in as ${user.login}` });
 
-    const issue = await github.request<{ number: number; html_url: string }>("POST", `${base}/issues`, {
-      title,
-      body:
-        "This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.",
-    });
-    ui.verbose(`submission issue: ${issue.html_url}`);
-    const id = `lax-${issue.number}`;
-    steps.relabel("reserve", `Reserving ${id}`);
-    const result = await followInitialization(github, issue.number, {
-      onStage: (stage) => {
-        if (stage.row === "queued") steps.waiting("reserve", QUEUED);
-        else steps.begin("reserve");
-      },
-    });
-    if (result.outcome === "failure") {
-      steps.settle("reserve", { status: "fail" });
-      steps.settle("files", { hidden: true });
-      steps.settle("mathlib", { hidden: true });
-      steps.finish();
-      ui.problem(`the archive refused to create ${id}`, renderComment(result.comment ?? "").split("\n"));
-      throw new CommandFailedError(`${id} was not created`);
+      const issue = await github.request<{ number: number; html_url: string }>("POST", `${base}/issues`, {
+        title,
+        body:
+          "This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.",
+      });
+      ui.verbose(`submission issue: ${issue.html_url}`);
+      issueNumber = issue.number;
+      author = { name: user.login, github: user.login };
+      const reserved = `lax-${issue.number}`;
+      steps.relabel("reserve", `Reserving ${reserved}`);
+      const result = await followInitialization(github, issue.number, {
+        onStage: (stage) => {
+          if (stage.row === "queued") steps.waiting("reserve", QUEUED);
+          else steps.begin("reserve");
+        },
+      });
+      if (result.outcome === "failure") {
+        steps.settle("reserve", { status: "fail" });
+        steps.settle("files", { hidden: true });
+        steps.settle("mathlib", { hidden: true });
+        steps.finish();
+        ui.problem(`the archive refused to create ${reserved}`, renderComment(result.comment ?? "").split("\n"));
+        throw new CommandFailedError(`${reserved} was not created`);
+      }
+      steps.settle("reserve", { label: `Reserved ${reserved}` });
     }
-    steps.settle("reserve", { label: `Reserved ${id}` });
+    const id = `lax-${issueNumber}`;
 
-    scaffoldSubmission(root, issue.number, title, user.login);
+    scaffoldSubmission(root, issueNumber, title, author);
     recordSubmission(root);
     steps.settle("files", { label: "Created the files" });
 
     // Provision mathlib right away: a bare `lake build` straight after init
     // (agents do this) must replay the shared store, not clone mathlib.
-    const provisioned = await provisionScaffold(root, issue.number);
+    const provisioned = await provisionScaffold(root, issueNumber);
     steps.settle("mathlib", {
       status: provisioned.ok ? "ok" : "warn",
       label: provisioned.ok ? "Prepared mathlib" : "Could not prepare mathlib",
@@ -120,6 +156,14 @@ export async function initializeSubmission(folder: string, titleInput?: string):
         `Run ${ui.cmd("lax build")} before any direct ${ui.cmd("lake build")} — without it lake would`,
         "download and compile mathlib from scratch inside the submission.",
         ...(provisioned.reason === undefined ? [] : [ui.dim(provisioned.reason)]),
+      );
+    }
+    if (offline) {
+      notes.add(
+        `${id} is a placeholder, not an archive id: nothing was reserved.`,
+        `${ui.cmd("lax build")} and ${ui.cmd("lax serve")} work with it; ${ui.cmd("lax submit")} does not.`,
+        `To send this work to the archive, run ${ui.cmd("lax init")} in a fresh folder for a real`,
+        "id and move the sources across — package names, imports and namespaces all carry it.",
       );
     }
     try {
@@ -657,12 +701,16 @@ function list(values: readonly string[]): string {
 /** Issue commands also accept a submission folder containing manifest.yaml. */
 export function resolveIssueReference(value: string): number {
   const candidate = path.resolve(value);
+  let folder = false;
   try {
-    if (fs.statSync(candidate).isDirectory()) return issueNumberFromFolder(candidate);
+    folder = fs.statSync(candidate).isDirectory();
   } catch {
     // It is an issue reference, not a local folder.
   }
-  return parseIssueReference(value);
+  // Once this *is* a folder, what its manifest says is the answer — including
+  // its refusals. Reading a bad manifest as "not a folder after all" would
+  // answer a placeholder id, or a broken one, with a lecture about issue URLs.
+  return folder ? issueNumberFromFolder(candidate) : parseIssueReference(value);
 }
 
 export function parseIssueReference(value: string): number {

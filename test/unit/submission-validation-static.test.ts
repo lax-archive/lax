@@ -99,6 +99,25 @@ describe("submission static validation retained from main", () => {
     }
   });
 
+  it("gates the offline placeholder id on what the request is for", () => {
+    // `lax init --offline` writes `id: lax-0`, and a local build passes its own
+    // id in, so the whole static gate is happy with it …
+    const root = makeSubmission("lax-0");
+    initializeGit(root);
+    const local = runStaticValidation(request("lax-0"), root, RUNTIME);
+    expect(local.findings.violations).toEqual([]);
+    expect(local.result.manifest?.id).toBe("lax-0");
+    expect(local.result.concepts?.lakefile.packageName).toBe("Lax0");
+
+    // … while the trusted path takes the id from the issue, where the
+    // placeholder can only ever be the wrong one.
+    const trusted = new FindingCollector("static");
+    validateManifest(manifest("lax-0"), "lax-261", RUNTIME, trusted);
+    expect(trusted.violations.map((finding) => finding.message).join("\n")).toContain(
+      "id must be lax-261",
+    );
+  });
+
   it("accepts an empty author list", () => {
     const findings = new FindingCollector("static");
     const parsed = validateManifest(

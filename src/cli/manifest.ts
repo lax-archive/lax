@@ -1,10 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse } from "yaml";
+import { PLACEHOLDER_SUBMISSION_ID } from "../shared/constants.js";
 import { normalizeSubmissionId } from "../shared/validation.js";
+import * as ui from "./ui.js";
 
-/** Resolve the authoritative issue number from a local submission manifest. */
-export function issueNumberFromFolder(folder: string): number {
+/**
+ * The id a local submission folder carries.
+ *
+ * `lax-0` is one of the answers: `lax init --offline` scaffolds with it, and
+ * everything that runs on this machine — `lax build`, `lax serve`,
+ * `lax doctor` — works with it unchanged. The commands that reach the archive
+ * go through `issueNumberFromFolder` instead, which refuses it.
+ */
+export function submissionIdFromFolder(folder: string): string {
   const root = path.resolve(folder);
   const filename = path.join(root, "manifest.yaml");
   let value: unknown;
@@ -23,15 +32,29 @@ export function issueNumberFromFolder(folder: string): number {
   const id = (value as Record<string, unknown>).id;
   if (typeof id !== "string")
     throw new Error(`${filename} must contain an id of the form lax-N or LaxN`);
-  let canonical: string;
   try {
-    canonical = normalizeSubmissionId(id);
+    return normalizeSubmissionId(id, { placeholder: true });
   } catch {
     throw new Error(`${filename} must contain an id of the form lax-N or LaxN`);
   }
-  return Number(canonical.slice("lax-".length));
 }
 
-export function submissionIdFromFolder(folder: string): string {
-  return `lax-${issueNumberFromFolder(folder)}`;
+/**
+ * The issue number behind a submission folder, for the commands that post to
+ * the archive.
+ *
+ * An offline scaffold has none: nothing was ever reserved for it, so the
+ * placeholder is refused here rather than turned into issue 0.
+ */
+export function issueNumberFromFolder(folder: string): number {
+  const id = submissionIdFromFolder(folder);
+  if (id === PLACEHOLDER_SUBMISSION_ID) {
+    throw new Error(
+      `${ui.tilde(path.resolve(folder))} carries the placeholder id ${PLACEHOLDER_SUBMISSION_ID}.\n` +
+        "It was scaffolded offline, so the archive never allocated an id for it — and\n" +
+        `there is no issue to post to. Run ${ui.cmd("lax init")} in a fresh folder for a real id\n` +
+        "and move the sources across: package names, imports and namespaces carry it.",
+    );
+  }
+  return Number(id.slice("lax-".length));
 }

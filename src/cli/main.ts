@@ -70,10 +70,11 @@ program
   .command("init")
   .argument("[folder]", "target folder", ".")
   .option("--title <title>", "submission title (defaults to the folder name)")
+  .option("--offline", "set up the folder under the placeholder id lax-0, reserving nothing")
   .description("start a submission: reserve its id and set up the folder")
   .action(
-    run((folder: string, options: { title?: string }) =>
-      initializeSubmission(folder, options.title),
+    run((folder: string, options: { title?: string; offline?: boolean }) =>
+      initializeSubmission(folder, { title: options.title, offline: options.offline }),
     ),
   );
 

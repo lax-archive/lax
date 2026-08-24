@@ -6,6 +6,53 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## `lax init --offline`: the placeholder id `lax-0` (implemented, 2026-08-24)
+
+`lax init` opens an issue to allocate `lax-N` before it writes a single file
+(spec.md, Actions/Init). `--offline` skips that half: it signs in to nothing,
+opens no issue, and scaffolds under **`lax-0`** — `id: lax-0` in the manifest,
+packages `Lax0` and `Lax0Proofs`. Nothing is reserved, so a folder that turns
+out to be a false start burns no id, and the scaffold needs no login at all.
+Mathlib provisioning is unchanged: init still seeds the warm store's overrides
+and manifests, and still only warns when it cannot.
+
+GitHub numbers issues from 1, which is what makes 0 usable: no record can ever
+carry it. Refusing it therefore stays the default everywhere.
+`SUBMISSION_ID_PATTERN` is unchanged, and `validateSubmissionId` /
+`normalizeSubmissionId` accept the placeholder only when a caller passes
+`{ placeholder: true }`. Exactly three do: `packageNameForSubmission` (naming
+a package is not a decision about the archive), the manifest validator (so an
+offline scaffold reads the id-mismatch violation rather than a syntax one —
+in the trusted path the expected id comes from the issue number, so `lax-0` is
+refused either way), and `submissionIdFromFolder` in the CLI. Everything on
+the archive side — `validationRequestFromUnknown` and the container entry
+point, the trusted publisher, the database schema, dependency ids,
+`supersedes`, the capture store — is untouched and refuses `lax-0` as before.
+
+What works with the placeholder: `lax build` (a full local validation,
+`build-output.json` and all), `lax serve` (the preview renders it as a
+synthetic draft beside the database records), and `lax doctor`, which labels
+such a folder by its basename rather than its id — every offline scaffold
+shares `lax-0`, so three of them would otherwise be three identical rows.
+What refuses it: `lax submit`, `lax register`, `lax delete` and `lax owners`,
+all four of which resolve their target through `issueNumberFromFolder`. That
+function now names the placeholder and says what to do instead; on the way,
+`resolveIssueReference` stopped swallowing a folder's manifest error and
+answering it with a lecture about issue URLs.
+
+There is no renumbering command. Moving an offline scaffold to a real id
+means `lax init` in a fresh folder and carrying the sources across, because
+package names, imports and namespaces all embed the id — the open item is in
+TODO.md.
+
+The author entry is the one thing an offline init cannot know: `lax init`
+writes the GitHub handle it just authenticated as, `--offline` writes the name
+Git is configured with, and when Git has none either it writes the empty
+`authors:` list the spec already allows.
+
+Spec touchpoint: the CLI `lax init` description and the Actions/Init
+paragraph — init no longer always allocates an id.
+
 ## Versioning: `supersedes` successor chains (implemented, 2026-08-23)
 
 Submissions stay frozen in time (spec.md, Versioning), but work improves.
