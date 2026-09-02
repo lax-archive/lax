@@ -153,6 +153,8 @@ export async function reportValidation(): Promise<void> {
           Array.isArray(parsed.warnings) &&
           isObject(parsed.request) &&
           parsed.request.id === context.id &&
+          validValidationFailure(parsed.failure) &&
+          (parsed.failure === undefined || (!parsed.ok && parsed.violations.length === 0)) &&
           (!parsed.ok || (isObject(parsed.buildOutput) && isObject(parsed.capture)))
         ) report = parsed as unknown as ValidationReport;
       } catch {
@@ -167,10 +169,21 @@ export async function reportValidation(): Promise<void> {
     : report.ok
       ? `Submission validation passed for **${context.id}**, but the validation job failed before trusted ` +
         `publication could start. lax-database was not changed.\n\n${marker}`
-      : `Submission validation failed for **${context.id}**; lax-database was not changed.\n` +
-        `${firstViolation(report)}\n` +
-        `The complete findings are in this run's artifacts, where \`lax submit\` reads them.` +
-        `\n\n${marker}`;
+      : report.failure?.kind === "infrastructure"
+        ? `Validation infrastructure failed for **${context.id}**; the submission did not receive a content ` +
+          `verdict and lax-database was not changed.\n${validationFailureSummary(report)}\n` +
+          (report.failure.retryable
+            ? "This failure appears transient; retrying the unchanged submission may succeed."
+            : "Inspect this workflow run; if the failure persists, report it as an Archive problem.") +
+          `\n\n${marker}`
+        : report.failure?.kind === "resource-limit"
+          ? `Validation for **${context.id}** reached an Archive resource limit; the submission was not rejected ` +
+            `on content and lax-database was not changed.\n${validationFailureSummary(report)}\n` +
+            `Reduce the submission's resource use before retrying.\n\n${marker}`
+          : `Submission validation failed for **${context.id}**; lax-database was not changed.\n` +
+            `${firstViolation(report)}\n` +
+            `The complete findings are in this run's artifacts, where \`lax submit\` reads them.` +
+            `\n\n${marker}`;
   await clearCommandProgress(control, context.commentId);
   await control.postIssueComment(
     context.issueNumber,
@@ -621,6 +634,27 @@ function firstViolation(report: ValidationReport): string {
   const rule = safeInline(String(finding.rule ?? "unspecified"), 60) || "unspecified";
   const message = String(finding.message ?? "").split("\n")[0] ?? "";
   return `First finding \`[${phase}/${rule}]\`: ${safeInline(message, 400) || "unspecified failure"}`;
+}
+
+function validationFailureSummary(report: ValidationReport): string {
+  const failure = report.failure;
+  if (failure === undefined) return "Validation stopped without a structured operational failure.";
+  const phase = safeInline(String(failure.phase), 40) || "validation";
+  const rule = safeInline(String(failure.rule), 60) || "unspecified";
+  const message = String(failure.message ?? "").split("\n")[0] ?? "";
+  return `Failure \`[${phase}/${rule}]\`: ${safeInline(message, 400) || "unspecified failure"}`;
+}
+
+function validValidationFailure(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isObject(value) &&
+    (value.kind === "resource-limit" || value.kind === "infrastructure") &&
+    typeof value.retryable === "boolean" &&
+    typeof value.phase === "string" &&
+    typeof value.rule === "string" &&
+    typeof value.message === "string"
+  );
 }
 
 function issueNumber(event: unknown): number | undefined {

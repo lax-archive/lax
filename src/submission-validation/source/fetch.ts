@@ -14,6 +14,7 @@ import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { SourceLocation } from "../../shared/types.js";
 import { validateCommit, validateRepositoryUrl } from "../../shared/validation.js";
+import { resourceLimitFailure } from "../failures.js";
 
 export interface FetchedSource {
   repositoryRoot: string;
@@ -21,7 +22,8 @@ export interface FetchedSource {
 }
 
 /** Runs one git command in the fetch workspace and reports exit code + output. */
-export type GitRunner = (args: string[]) => Promise<{ code: number; output: string }>;
+export type GitResult = { code: number; output: string; timedOut?: boolean };
+export type GitRunner = (args: string[]) => Promise<GitResult>;
 
 // Cap on how deep the progressive-deepening fallback digs behind the remote
 // branch tips before giving up. Submitted commits are normally at or near a
@@ -81,19 +83,32 @@ export async function checkoutRemoteCommit(
   commit: string,
   maxDepth = MAX_FALLBACK_DEPTH,
 ): Promise<void> {
-  if ((await git(["init", "--quiet"])).code !== 0) throw new Error("could not initialize the fetch workspace");
-  if ((await git(["remote", "add", "origin", repository])).code !== 0) {
-    throw new Error("could not configure the fetch remote");
+  const initialized = await git(["init", "--quiet"]);
+  if (initialized.code !== 0) {
+    throw new Error(withGitOutput("could not initialize the fetch workspace", initialized));
+  }
+  const configured = await git(["remote", "add", "origin", repository]);
+  if (configured.code !== 0) {
+    throw new Error(withGitOutput("could not configure the fetch remote", configured));
   }
   const direct = await git(["fetch", "--quiet", "--depth", "1", "origin", commit]);
   if (direct.code !== 0) {
     // The host refused the unadvertised-SHA fetch. Fetch the branch tips,
     // then deepen until the commit shows up (or a bound is hit — the
     // checkout below then reports the failure).
-    if ((await git(["fetch", "--quiet", "--depth", "1", "origin"])).code !== 0) {
-      throw new Error("repository or commit could not be fetched anonymously");
+    const tips = await git(["fetch", "--quiet", "--depth", "1", "origin"]);
+    if (tips.code !== 0) {
+      throw new Error(withGitOutput("repository or commit could not be fetched anonymously", tips));
     }
-    await deepenUntilPresent(git, commit, maxDepth);
+    const deepenFailure = await deepenUntilPresent(git, commit, maxDepth);
+    if (deepenFailure === "depth-limit") {
+      throw resourceLimitFailure(
+        `requested commit is deeper than the validation fetch limit of ${maxDepth} commits`,
+      );
+    }
+    if (deepenFailure !== undefined) {
+      throw new Error(withGitOutput("repository history could not be fetched", deepenFailure));
+    }
   }
   if ((await git(["-c", "advice.detachedHead=false", "checkout", "--quiet", commit])).code !== 0) {
     throw new Error("requested commit is not present in the fetched repository");
@@ -107,21 +122,33 @@ export async function checkoutRemoteCommit(
 /**
  * Deepens the shallow tip-only fetch until `commit` is present locally, the
  * history is complete (the commit is simply absent), the depth cap is
- * reached, or a fetch fails (including hitting the shared deadline). Never
- * throws: the caller's checkout is the single authority on absence.
+ * reached, or a fetch fails (including hitting the shared deadline). A failed
+ * deepen is returned so the caller can retain its transport diagnostics;
+ * ordinary absence still falls through to the authoritative checkout.
  */
-async function deepenUntilPresent(git: GitRunner, commit: string, maxDepth: number): Promise<void> {
+async function deepenUntilPresent(
+  git: GitRunner,
+  commit: string,
+  maxDepth: number,
+): Promise<GitResult | "depth-limit" | undefined> {
   let depth = 1;
   let step = 32;
   while ((await git(["cat-file", "-e", `${commit}^{commit}`])).code !== 0) {
-    if (depth >= maxDepth) return;
+    if (depth >= maxDepth) return "depth-limit";
     const shallow = await git(["rev-parse", "--is-shallow-repository"]);
-    if (shallow.code !== 0 || shallow.output.trim() !== "true") return;
+    if (shallow.code !== 0 || shallow.output.trim() !== "true") return undefined;
     const deepenBy = Math.min(step, maxDepth - depth);
-    if ((await git(["fetch", "--quiet", `--deepen=${deepenBy}`, "origin"])).code !== 0) return;
+    const deepened = await git(["fetch", "--quiet", `--deepen=${deepenBy}`, "origin"]);
+    if (deepened.code !== 0) return deepened;
     depth += deepenBy;
     step *= 2;
   }
+  return undefined;
+}
+
+function withGitOutput(message: string, result: GitResult): string {
+  const output = result.output.trim();
+  return output === "" ? message : `${message}: ${output}`;
 }
 
 function runGit(
@@ -129,7 +156,7 @@ function runGit(
   cwd: string,
   env: Record<string, string>,
   timeoutMs: number,
-): Promise<{ code: number; output: string }> {
+): Promise<GitResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
@@ -149,8 +176,8 @@ function runGit(
     });
     child.once("close", (code) => {
       clearTimeout(timer);
-      if (timedOut) resolve({ code: 124, output: `${output}\n[fetch timed out]` });
-      else resolve({ code: code ?? 1, output });
+      if (timedOut) resolve({ code: 124, output: `${output}\n[fetch timed out]`, timedOut: true });
+      else resolve({ code: code ?? 1, output, timedOut: false });
     });
   });
 }
@@ -201,8 +228,10 @@ function inspectCheckout(root: string): void {
       else if (entry.isFile()) {
         files += 1;
         bytes += fs.statSync(current).size;
-        if (files > maxFiles) throw new Error(`repository contains more than ${maxFiles} files`);
-        if (bytes > maxBytes) throw new Error("repository checkout exceeds 2 GiB");
+        if (files > maxFiles) {
+          throw resourceLimitFailure(`repository contains more than ${maxFiles} files`);
+        }
+        if (bytes > maxBytes) throw resourceLimitFailure("repository checkout exceeds 2 GiB");
       } else {
         throw new Error(`repository contains a non-regular entry: ${path.relative(root, current)}`);
       }

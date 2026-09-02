@@ -10,12 +10,20 @@ import type {
   ResolutionResult,
   StaticPaper,
   StaticResult,
+  ValidationFailure,
   ValidationFinding,
   ValidationReport,
   ValidationRequest,
   ValidationRuntimeIdentity,
   ValidationScope,
 } from "./contracts.js";
+import {
+  asPipelineFailure,
+  infrastructureFailure,
+  looksRetryable,
+  type PipelineFailureKind,
+  submittedSourceFailure,
+} from "./failures.js";
 import { commitTimestamp, laxmarkDirectory } from "./host/paper.js";
 import { warmDir } from "./host/warmstore.js";
 import { FindingCollector } from "./findings.js";
@@ -82,6 +90,7 @@ interface ReportState {
   dependencies: ResolvedDependency[];
   warnings: ValidationFinding[];
   violations: ValidationFinding[];
+  failure?: ValidationFailure;
   /**
    * The paper's independent piece, running beside the Lean chain from right
    * after resolution (paper-plan.md, "Pipeline placement"). Never rejects.
@@ -159,10 +168,14 @@ async function compileStage(state: PreparedValidation): Promise<ValidationReport
         state.limits,
       ));
   } catch (error) {
-    return fail(state, "provision", "dependency-capture", error);
+    return fail(state, "provision", "dependency-capture", error, "infrastructure", looksRetryable(error));
   }
 
-  fs.mkdirSync(state.captureRoot, { recursive: true, mode: 0o700 });
+  try {
+    fs.mkdirSync(state.captureRoot, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    return fail(state, "provision", "capture-workspace", error);
+  }
   let conceptWorkspace: ProvisionedWorkspace;
   try {
     conceptWorkspace = await state.phase("provision concepts", () =>
@@ -175,8 +188,16 @@ async function compileStage(state: PreparedValidation): Promise<ValidationReport
         state.jobDir,
         state.warmWs,
       ));
+  } catch (error) {
+    return fail(state, "provision", "concept-workspace", error);
+  }
+  try {
     await state.phase("compile concepts", () =>
       compileConcepts(conceptWorkspace, state.dependencyRoot, state.runner, state.limits));
+  } catch (error) {
+    return fail(state, "compile-concepts", "compile", error);
+  }
+  try {
     await state.phase("capture concepts", () => capturePackage(
       "concepts",
       state.fetched.submissionRoot,
@@ -186,12 +207,13 @@ async function compileStage(state: PreparedValidation): Promise<ValidationReport
       state.captureRoot,
     ));
   } catch (error) {
-    return fail(state, "compile-concepts", "compile", error);
+    return fail(state, "compile-concepts", "capture", error);
   }
 
   if (state.scope !== "concepts") {
+    let proofWorkspace: ProvisionedWorkspace;
     try {
-      const proofWorkspace: ProvisionedWorkspace = await state.phase("provision proofs", () =>
+      proofWorkspace = await state.phase("provision proofs", () =>
         provisionWorkspace(
           "proofs",
           state.fetched,
@@ -201,10 +223,22 @@ async function compileStage(state: PreparedValidation): Promise<ValidationReport
           state.jobDir,
           state.warmWs,
         ));
+    } catch (error) {
+      return fail(state, "provision", "proof-workspace", error);
+    }
+    try {
       await state.phase("install concept capture", () =>
         installOwnConceptCapture(proofWorkspace, state.captureRoot));
+    } catch (error) {
+      return fail(state, "provision", "concept-capture", error);
+    }
+    try {
       await state.phase("compile proofs", () =>
         compileProofs(proofWorkspace, state.dependencyRoot, state.runner, state.limits));
+    } catch (error) {
+      return fail(state, "compile-proofs", "compile", error);
+    }
+    try {
       await state.phase("capture proofs", () => capturePackage(
         "proofs",
         state.fetched.submissionRoot,
@@ -214,7 +248,7 @@ async function compileStage(state: PreparedValidation): Promise<ValidationReport
         state.captureRoot,
       ));
     } catch (error) {
-      return fail(state, "compile-proofs", "compile", error);
+      return fail(state, "compile-proofs", "capture", error);
     }
   }
 
@@ -283,14 +317,19 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
   } catch (error) {
     return fail(state, "inspect", "inspector", error);
   }
-  const inspection = await state.phase("judge inspection", () => judgeInspection(
-    conceptReport,
-    proofReport,
-    state.staticResult.concepts!.inventory,
-    state.scope === "concepts" ? undefined : state.staticResult.proofs!.inventory,
-    state.resolution,
-    state.scope,
-  ));
+  let inspection;
+  try {
+    inspection = await state.phase("judge inspection", () => judgeInspection(
+      conceptReport,
+      proofReport,
+      state.staticResult.concepts!.inventory,
+      state.scope === "concepts" ? undefined : state.staticResult.proofs!.inventory,
+      state.resolution,
+      state.scope,
+    ));
+  } catch (error) {
+    return fail(state, "inspect", "judge", error);
+  }
   state.warnings.push(...inspection.findings.warnings);
   state.violations.push(...inspection.findings.violations);
   if (inspection.findings.failed) return report(state, false);
@@ -350,7 +389,9 @@ async function joinPaper(state: ReportState): Promise<PaperPhaseResult | undefin
   if (state.paperJoined === undefined) {
     state.paperJoined = await state.paperRun;
     state.warnings.push(...state.paperJoined.findings.warnings);
-    state.violations.push(...state.paperJoined.findings.violations);
+    if (state.failure === undefined) {
+      state.violations.push(...state.paperJoined.findings.violations);
+    }
   }
   return state.paperJoined;
 }
@@ -426,28 +467,53 @@ async function prepareValidation(
 
   let fetched: FetchedSource;
   let archive: ArchiveSnapshot;
-  try {
-    if (options.local !== undefined) {
-      ({ fetched, archive } = options.local);
-    } else {
-      [fetched, archive] = await Promise.all([
-        fetchSource(request.source, jobDir, limits),
-        fetchArchiveSnapshot(request.archiveSha, jobDir, limits),
-      ]);
+  if (options.local !== undefined) {
+    ({ fetched, archive } = options.local);
+  } else {
+    const [sourceResult, archiveResult] = await Promise.allSettled([
+      fetchSource(request.source, jobDir, limits),
+      fetchArchiveSnapshot(request.archiveSha, jobDir, limits),
+    ]);
+    if (archiveResult.status === "rejected") {
+      const error = archiveResult.reason;
+      return {
+        report: fail(
+          base(),
+          "source",
+          "archive-snapshot",
+          infrastructureFailure(
+            error instanceof Error ? error.message : String(error),
+            looksRetryable(error),
+          ),
+        ),
+      };
     }
-  } catch (error) {
-    return { report: fail(base(), "source", "fetch", error) };
+    if (sourceResult.status === "rejected") {
+      return { report: fail(base(), "source", "fetch", submittedSourceFailure(sourceResult.reason)) };
+    }
+    fetched = sourceResult.value;
+    archive = archiveResult.value;
   }
 
-  const staticCheck = await phase("static validation", () =>
-    runStaticValidation(request, fetched.submissionRoot, runtime));
+  let staticCheck;
+  try {
+    staticCheck = await phase("static validation", () =>
+      runStaticValidation(request, fetched.submissionRoot, runtime));
+  } catch (error) {
+    return { report: fail(base(), "static", "validator", error) };
+  }
   warnings.push(...staticCheck.findings.warnings);
   violations.push(...staticCheck.findings.violations);
   if (staticCheck.findings.failed || staticCheck.result.concepts === undefined || staticCheck.result.proofs === undefined)
     return { report: report(base(), false) };
 
-  const resolution = await phase("dependency resolution", () =>
-    runResolution(request, staticCheck.result, archive, runtime));
+  let resolution;
+  try {
+    resolution = await phase("dependency resolution", () =>
+      runResolution(request, staticCheck.result, archive, runtime));
+  } catch (error) {
+    return { report: fail(base(), "resolution", "resolver", error) };
+  }
   warnings.push(...resolution.findings.warnings);
   violations.push(...resolution.findings.violations);
   dependencies = resolution.result.all;
@@ -468,7 +534,7 @@ async function prepareValidation(
       await phase("validation runtime", () => runner.verifyRuntime());
     } catch (error) {
       const state = { ...base(), paperRun };
-      state.violations.push({ phase: "provision", rule: "runtime", message: safeError(error) });
+      fail(state, "provision", "runtime", error, "infrastructure", looksRetryable(error));
       await joinPaper(state);
       return { report: report(state, false) };
     }
@@ -502,13 +568,21 @@ function fail(
   phase: ValidationFinding["phase"],
   rule: string,
   error: unknown,
+  fallbackKind: PipelineFailureKind = "infrastructure",
+  retryable = false,
 ): ValidationReport {
-  state.violations.push({ phase, rule, message: safeError(error) });
+  const failure = asPipelineFailure(error, fallbackKind, retryable);
+  const message = safeError(failure);
+  if (failure.kind === "submission") {
+    state.violations.push({ phase, rule, message });
+  } else {
+    state.failure = { kind: failure.kind, retryable: failure.retryable, phase, rule, message };
+  }
   return report(state, false);
 }
 
 function report(state: ReportState, ok: boolean): ValidationReport {
-  return {
+  const validationReport: ValidationReport = {
     reportVersion: 1,
     ok,
     request: state.request,
@@ -517,6 +591,8 @@ function report(state: ReportState, ok: boolean): ValidationReport {
     warnings: [...state.warnings],
     violations: [...state.violations],
   };
+  if (state.failure !== undefined) validationReport.failure = state.failure;
+  return validationReport;
 }
 
 /**

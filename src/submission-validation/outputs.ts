@@ -117,8 +117,17 @@ export function writeValidationOutputs(outputDir: string, outcome: ValidationOut
   // exactly the shape parseSuccessfulValidationArtifacts accepts.
   const { paperPdfPath, ...report } = outcome;
   if (!report.ok) {
+    if (report.failure !== undefined && report.violations.length > 0) {
+      throw new Error("a validation report cannot contain both an operational failure and submission violations");
+    }
+    if (report.failure === undefined && report.violations.length === 0) {
+      throw new Error("an unsuccessful validation report must describe a failure or a submission violation");
+    }
     atomicWriteJson(path.join(outputDir, VALIDATION_REPORT_FILENAME), report);
     return;
+  }
+  if (report.failure !== undefined) {
+    throw new Error("a successful validation report cannot contain an operational failure");
   }
   if (report.buildOutput === undefined || report.capture === undefined) {
     throw new Error("successful full validation produced no build output or capture manifest");

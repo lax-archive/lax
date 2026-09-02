@@ -26,6 +26,7 @@ import {
   writeValidationOutputs,
 } from "./outputs.js";
 import { validateSubmission } from "./pipeline.js";
+import { validationExitCode } from "./failures.js";
 import { removeValidationWorkspace } from "./workspace-cleanup.js";
 
 const gate = process.argv[2] === "--gate";
@@ -52,7 +53,10 @@ try {
   // A passing gate leaves nothing behind: its report is not evidence of a
   // validation (nothing compiled), and the full run writes the real outputs.
   if (!gate || !report.ok) writeValidationOutputs(outputDir, report);
-  exitCode = report.ok ? 0 : 2;
+  // A typed failure means no content verdict was reached. Keep exit 2 for an
+  // ordinary submission rejection and exit 1 for capacity/infrastructure so
+  // callers never have to infer ownership from a transcript.
+  exitCode = validationExitCode(report);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
 } finally {

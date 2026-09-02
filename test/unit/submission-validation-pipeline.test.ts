@@ -78,9 +78,14 @@ describe("trusted validation pipeline preparation", () => {
     expect(report.ok).toBe(false);
     // The runtime is provisioning, not source handling: by the time it is
     // checked the submission's own bytes have already passed every phase.
-    expect(report.violations).toEqual([
-      { phase: "provision", rule: "runtime", message: expect.stringContaining("docker is unavailable") },
-    ]);
+    expect(report.violations).toEqual([]);
+    expect(report.failure).toEqual({
+      kind: "infrastructure",
+      retryable: false,
+      phase: "provision",
+      rule: "runtime",
+      message: expect.stringContaining("docker is unavailable"),
+    });
     expect(runner.calls).toEqual(["verify-runtime"]);
   });
 
@@ -93,6 +98,7 @@ describe("trusted validation pipeline preparation", () => {
     expect(runner.calls).toEqual([]);
     expect(report.ok).toBe(true);
     expect(report.violations).toEqual([]);
+    expect(report.failure).toBeUndefined();
     // A passing gate is not evidence of a validation: nothing compiled, so
     // there is no build output or capture for a publisher to read.
     expect(report.buildOutput).toBeUndefined();
@@ -111,15 +117,18 @@ describe("trusted validation pipeline preparation", () => {
     expect(gated.violations.map((violation) => violation.message).join("\n"))
       .toContain("manifest.yaml: missing key `title`");
     expect(gated.violations).toEqual(full.violations);
+    expect(gated.failure).toBeUndefined();
+    expect(full.failure).toBeUndefined();
     // Neither run pays for the runtime once the submission is already refused.
     expect(gateRunner.calls).toEqual([]);
     expect(fullRunner.calls).toEqual([]);
   });
 
-  it("starts a declared paper before the runtime is verified and joins its findings into a runtime failure", async () => {
+  it("waits for a declared paper while keeping a runtime failure distinct from content findings", async () => {
     // The paper needs no Lean, so its container work overlaps the Lean chain
-    // from right after resolution; whatever the Lean side does, the report
-    // carries both findings and the job directory outlives the compile.
+    // from right after resolution; whatever the Lean side does, the job
+    // directory outlives the compile. An operational Lean failure remains the
+    // sole outcome because the submission did not receive a complete verdict.
     const root = makePaperSubmission("lax-1");
     const commit = gitInitCommit(root);
     const jobDir = path.join(temporary("lax-pipeline-job-"), "work");
@@ -142,10 +151,14 @@ describe("trusted validation pipeline preparation", () => {
     expect([...runner.calls].sort()).toEqual([`verify-image ${PAPER_IMAGE}`, "paper-compile", "verify-runtime"].sort());
     expect(runner.calls.indexOf(`verify-image ${PAPER_IMAGE}`)).toBeLessThan(runner.calls.indexOf("paper-compile"));
     expect(report.ok).toBe(false);
-    expect(report.violations).toEqual([
-      { phase: "provision", rule: "runtime", message: expect.stringContaining("docker is unavailable") },
-      { phase: "paper", rule: "runtime", message: expect.stringContaining("unexpected container invocation paper-compile") },
-    ]);
+    expect(report.violations).toEqual([]);
+    expect(report.failure).toEqual({
+      kind: "infrastructure",
+      retryable: false,
+      phase: "provision",
+      rule: "runtime",
+      message: expect.stringContaining("docker is unavailable"),
+    });
     // The compile copy was made in the job directory, rewritten, never in the author's tree.
     expect(fs.readFileSync(path.join(jobDir, "paper", "src", "main.tex"), "latin1")).toContain("\\laxmark{");
     expect(fs.readFileSync(path.join(root, "paper", "main.tex"), "utf8")).toContain("% lax begin");
@@ -172,6 +185,7 @@ describe("trusted validation pipeline preparation", () => {
     expect(gated.runner.calls).toEqual([]);
     const concepts = await validateWith({ scope: "concepts" });
     expect(concepts.runner.calls).toEqual(["verify-runtime"]);
-    expect(concepts.report.violations.map((violation) => violation.phase)).toEqual(["provision"]);
+    expect(concepts.report.violations).toEqual([]);
+    expect(concepts.report.failure).toMatchObject({ kind: "infrastructure", phase: "provision" });
   });
 });

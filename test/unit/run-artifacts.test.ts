@@ -84,6 +84,43 @@ describe("validation report artifacts", () => {
     ]);
   });
 
+  it("reads and sanitizes a typed infrastructure failure separately from findings", () => {
+    const report = parseValidationReportZip(reportZip({
+      reportVersion: 1,
+      ok: false,
+      warnings: [],
+      violations: [],
+      failure: {
+        kind: "infrastructure",
+        retryable: true,
+        phase: "provision\u200b",
+        rule: "runtime",
+        message: "could not connect\u001b[31m\nto Docker",
+      },
+    }));
+    expect(report.failure).toEqual({
+      kind: "infrastructure",
+      retryable: true,
+      phase: "provision",
+      rule: "runtime",
+      message: "could not connect [31m\nto Docker",
+    });
+    expect(report.violations).toEqual([]);
+  });
+
+  it("refuses a report that mixes an operational failure with submission violations", () => {
+    expect(() => parseValidationReportZip(reportZip({
+      ...failedReport,
+      failure: {
+        kind: "resource-limit",
+        retryable: false,
+        phase: "compile-proofs",
+        rule: "compile",
+        message: "memory limit",
+      },
+    }))).toThrow("mixes an operational failure");
+  });
+
   it("refuses an artifact without the report entry", () => {
     expect(() => parseValidationReportZip(zipOf({ "capture.tar": "not the report" }))).toThrow(
       ValidationReportUnavailableError,

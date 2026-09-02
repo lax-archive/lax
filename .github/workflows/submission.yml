@@ -299,8 +299,10 @@ jobs:
           PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
         run: node dist/workflows/submission.js publish
 
-  # The validate job's own result is the verdict: run.js exits 0 only when the
-  # full report is ok. This job reports a failed one. It never checks out or
+  # The validate job's own result controls publication: run.js exits 0 only
+  # after a complete pass, 2 for submission findings, and 1 when capacity or
+  # infrastructure prevented a content verdict. This job reports either
+  # unsuccessful outcome from the typed report. It never checks out or
   # executes submission code — it reads the report artifact as data, and the
   # artifact may be absent when validate died before writing it.
   report-validation-failure:
