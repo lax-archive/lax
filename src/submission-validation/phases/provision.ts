@@ -5,6 +5,7 @@ import type { ResolutionResult, ResolvedDependency, StaticResult } from "../cont
 import type { FetchedSource } from "../source/fetch.js";
 import type { ContainerMount } from "../sandbox/container.js";
 import { seedManifest, seedOverrides } from "../host/warmstore.js";
+import { copyPackageInputs } from "./package-files.js";
 
 export interface ProvisionedWorkspace {
   repositoryRoot: string;
@@ -17,7 +18,7 @@ export interface ProvisionedWorkspace {
 
 /**
  * Provision a build workspace on the host, before any container starts: copy
- * the fetched checkout, then seed each package's complete `lake-manifest.json`
+ * the declared inputs of each package, then seed its complete `lake-manifest.json`
  * and `.lake/package-overrides.json` from the warm workspace — the same
  * seedManifest/seedOverrides the local host build uses (see
  * host/warmstore.ts for why lake then resolves nothing, fetches nothing, and
@@ -36,18 +37,18 @@ export function provisionWorkspace(
   warmWs: string,
 ): ProvisionedWorkspace {
   const repositoryRoot = path.join(jobDir, "workspaces", label, "repository");
-  fs.mkdirSync(path.dirname(repositoryRoot), { recursive: true, mode: 0o700 });
-  fs.cpSync(fetched.repositoryRoot, repositoryRoot, {
-    recursive: true,
-    dereference: false,
-    filter: (filename) => {
-      const relative = path.relative(fetched.repositoryRoot, filename);
-      if (relative === "") return true;
-      const parts = relative.split(path.sep);
-      return !parts.includes(".git") && !parts.includes(".lake");
-    },
-  });
+  fs.mkdirSync(repositoryRoot, { recursive: true, mode: 0o700 });
   const submissionRoot = sourceFolder === "." ? repositoryRoot : path.join(repositoryRoot, sourceFolder);
+  for (const kind of ["concepts", "proofs"] as const) {
+    const checked = staticResult[kind];
+    if (checked !== undefined) {
+      copyPackageInputs(
+        path.join(fetched.submissionRoot, kind),
+        path.join(submissionRoot, kind),
+        checked.lakefile.packageName,
+      );
+    }
+  }
   for (const kind of ["concepts", "proofs"] as const) {
     const staticPackage = staticResult[kind];
     if (staticPackage === undefined) continue;

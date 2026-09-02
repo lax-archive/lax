@@ -63,8 +63,8 @@ the build.
 We fix the following **archive environment**:
 
 - ``specVersion: "1"``
-- pinned Lean toolchain: ``leanprover/lean4:v4.30.0`` (the trimmed content
-  of every ``lean-toolchain`` file; it also fixes the Lake version)
+- pinned Lean toolchain: ``leanprover/lean4:v4.30.0`` (the exact content of
+  every ``lean-toolchain`` file, followed by one newline; it also fixes Lake)
 - trusted background imports
     - mathlib, pinned to revision ``c5ea00351c28e24afc9f0f84379aa41082b1188f``,
       present in **every** submission workspace: the concept package requires
@@ -109,8 +109,8 @@ Additional Rules:
 
 - **License.** The file ``LICENSE`` in the submission root folder must contain
   an accepted license, matched against the canonical text after whitespace
-  normalization. One optional final line is ignored and is intended for a
-  copyright notice. For the MVP we accept exactly one license: the **Apache
+  normalization. One optional final line of the form ``Copyright YYYY[-YYYY]
+  NAME`` is ignored. For the MVP we accept exactly one license: the **Apache
   License 2.0**, the license of Lean and mathlib.
 
 - **Abstract.** ``abstract.md`` must be non-empty. It is rendered as markdown,
@@ -119,9 +119,8 @@ Additional Rules:
 
 - **Files.** ``build-output.json``, ``lake-manifest.json``, ``.lake/``, and
   Lake package-overrides files must not be checked in. Generated files left by
-  a local build are fine. Extra root-level documentation is allowed and is not
-  submission content; additional files inside either package are included in
-  the immutable source capture.
+  a local build are fine. Extra root-level documentation is allowed but is not
+  submission content; undeclared files inside either package are rejected.
 
 - **Limits.** A repository may contain at most 100,000 regular files totalling
   2 GiB and no symlinks or special files. ``manifest.yaml``, ``LICENSE``, and
@@ -151,17 +150,16 @@ following rules.
   tuple with a required ``name`` (display name) and optional ``orcid`` and
   ``github`` identifiers. Used for credit only, not rights-management.
 
-- ``bibEntries``: a possibly empty list of strings containing BibTeX text as
-  it would appear in a ``.bib`` file. Entries are size-checked, but their
-  BibTeX structure is not parsed by validation.
+- ``bibEntries``: a possibly empty list of strings. Each string contains one
+  or more structurally complete BibTeX entries, as in a ``.bib`` file.
 
 Additional Rules:
 - ``specVersion``, ``leanVersion``, ``mathlibVersion``: must match the
   archive environment for now. ``leanVersion`` holds the version tag
   (``v4.30.0``); the full toolchain name (``leanprover/lean4:v4.30.0``)
   appears only in the ``lean-toolchain`` files.
-- Scalar version, id, and title values are normalized to strings before these
-  checks; author and bibliography fields must be actual strings.
+- All scalar manifest fields are YAML strings, not numbers or other scalar
+  types.
 - No keys beyond the ones listed here are allowed.
 
 Example:
@@ -251,8 +249,8 @@ following rules:
 
 - **Empty submission.** A submission may contain no concepts and no proofs.
 
-- **Pinned toolchain.** The trimmed content of ``lean-toolchain`` must equal
-  the archive-wide toolchain.
+- **Pinned toolchain.** ``lean-toolchain`` contains exactly the archive-wide
+  toolchain followed by one newline.
 
 - **Builds.** Both packages must build: ``lake build`` succeeds in
   ``concepts/`` and in ``proofs/``. Lean warnings do not fail a submission.
@@ -548,10 +546,11 @@ Example content-bearing ``build-output.json``
 - ``requiredByConcepts`` lists Archive packages directly required by the
   concept package, and ``requiredByProofs`` lists those directly required by
   proofs. Pinned mathlib and the proof package's own concept path are omitted.
-- ``capture`` authenticates the package sources, generated manifests, and
-  Lake build artifacts produced by trusted validation. Consumers fetch its
-  OCI blob from GHCR by the recorded digest and verify the archive digest and
-  per-file hashes; mutable tags are only for discoverability.
+- ``capture`` authenticates the declared Lake and Lean package inputs,
+  generated manifests, and Lake build artifacts produced by trusted
+  validation. Consumers fetch its OCI blob from GHCR by the recorded digest
+  and verify the archive digest and per-file hashes; mutable tags are only for
+  discoverability.
 
 Each entry of ``concepts``:
 
@@ -609,8 +608,9 @@ Owners act on the archival layer.
 
 Submitted source is identified by a folder and commit hash in the authors'
 public git repository. After validation, the archive also publishes an
-immutable, content-addressed capture containing the exact package sources,
-generated manifests, and artifacts that the workflow checked.
+immutable, content-addressed capture containing the exact declared Lake and
+Lean package inputs, generated manifests, and artifacts that the workflow
+checked.
 
 The source repository is a canonical, anonymously fetchable HTTPS URL on
 ``github.com``, ``gitlab.com``, ``codeberg.org``, or ``bitbucket.org``. GitHub,
