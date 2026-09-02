@@ -16,6 +16,7 @@ import { validateLakefile } from "../validators/lakefile.js";
 import { isAcceptedLicense } from "../validators/license.js";
 import { validateManifest } from "../validators/manifest.js";
 import { deriveInventory } from "./inventory.js";
+import { checkPackageFiles } from "./package-files.js";
 
 export function runStaticValidation(
   request: ValidationRequest,
@@ -60,12 +61,16 @@ export function runStaticValidation(
       findings.violate("layout", `${kind}/ is missing`);
       continue;
     }
+    checkPackageFiles(packageDir, kind, packageName, findings);
     const toolchainPath = path.join(packageDir, "lean-toolchain");
     if (!regularFile(toolchainPath)) findings.violate("toolchain", `${kind}/lean-toolchain is missing`);
     else {
       const content = readBounded(toolchainPath, 1024, `${kind}/lean-toolchain`, findings);
-      if (content !== undefined && content.trim() !== runtime.leanToolchain)
-        findings.violate("toolchain", `${kind}/lean-toolchain must contain ${runtime.leanToolchain}`);
+      if (content !== undefined && content !== `${runtime.leanToolchain}\n`)
+        findings.violate(
+          "toolchain",
+          `${kind}/lean-toolchain must contain exactly ${runtime.leanToolchain} followed by one newline`,
+        );
     }
     if (fs.existsSync(path.join(packageDir, "lakefile.lean")))
       findings.violate("lakefile", `${kind}/lakefile.lean is forbidden; use lakefile.toml`);

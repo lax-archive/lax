@@ -236,6 +236,20 @@ describe("submission static validation retained from main", () => {
     );
   });
 
+  it("requires the canonical lean-toolchain file representation", () => {
+    for (const content of [
+      RUNTIME.leanToolchain,
+      ` ${RUNTIME.leanToolchain}\n`,
+      `${RUNTIME.leanToolchain}\n\n`,
+    ]) {
+      const root = makeSubmission("lax-6");
+      writeFile(root, "concepts/lean-toolchain", content);
+      initializeGit(root);
+      const check = runStaticValidation(request("lax-6"), root, RUNTIME);
+      expect(check.findings.violations.some((finding) => finding.rule === "toolchain")).toBe(true);
+    }
+  });
+
   it("accepts only the proof package's own ../concepts edge and walks every other path require to the chain workflow", () => {
     // accept: the own-concepts edge, exactly spelled, is the one path require
     const own = new FindingCollector("static");
@@ -370,6 +384,21 @@ describe("submission static validation retained from main", () => {
     );
     expect(generated.map((finding) => finding.message).join("\n")).toContain("build-output.json");
     expect(generated.map((finding) => finding.message).join("\n")).toContain("lake-manifest.json");
+  });
+
+  it("rejects undeclared files inside either package", () => {
+    const root = makeSubmission("lax-8", undefined, {
+      "concepts/README.md": "package notes\n",
+      "proofs/Lax8Proofs/data.json": "{}\n",
+    });
+    initializeGit(root);
+    const check = runStaticValidation(request("lax-8"), root, RUNTIME);
+    const messages = check.findings.violations
+      .filter((finding) => finding.rule === "unexpected-files")
+      .map((finding) => finding.message)
+      .join("\n");
+    expect(messages).toContain("concepts/README.md");
+    expect(messages).toContain("proofs/Lax8Proofs/data.json");
   });
 
   it("rejects a checked-in package-overrides file but tolerates the gitignored lax-written one", () => {

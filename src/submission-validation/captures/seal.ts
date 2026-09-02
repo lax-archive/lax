@@ -9,6 +9,7 @@ import type {
   ValidationRuntimeIdentity,
 } from "../contracts.js";
 import type { ValidationRunner } from "../sandbox/container.js";
+import { copyPackageInputs } from "../phases/package-files.js";
 
 const MAX_CAPTURE_FILES = 100_000;
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -23,7 +24,7 @@ export function capturePackage(
 ): void {
   const packageSource = path.join(pristineSubmissionRoot, kind);
   const capturedSource = path.join(captureRoot, kind, "package");
-  copyPackageSource(packageSource, capturedSource);
+  copyPackageInputs(packageSource, capturedSource, inventory.packageName);
   fs.writeFileSync(path.join(capturedSource, "lake-manifest.json"), provisionedManifest, { mode: 0o444 });
   const modules = [inventory.rootModule, ...inventory.modules];
   const olean = (moduleName: string): string =>
@@ -96,19 +97,6 @@ function regularContainedArtifact(compiledLibrary: string, filename: string): bo
   } catch {
     return false;
   }
-}
-
-function copyPackageSource(source: string, destination: string): void {
-  fs.cpSync(source, destination, {
-    recursive: true,
-    dereference: false,
-    filter: (filename) => {
-      const relative = path.relative(source, filename);
-      if (relative === "") return true;
-      const parts = relative.split(path.sep);
-      return !parts.includes(".lake") && !parts.includes(".git") && path.basename(filename) !== "build-output.json";
-    },
-  });
 }
 
 export async function sealCapture(

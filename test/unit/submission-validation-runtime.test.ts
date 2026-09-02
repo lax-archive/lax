@@ -235,6 +235,8 @@ describe("validation runtime boundaries retained from main", () => {
     writeFile(pristine, "concepts/lakefile.toml", "name = \"Lax9\"\n");
     writeFile(pristine, "concepts/Lax9.lean", "import Lax9.A\n");
     writeFile(pristine, "concepts/Lax9/A.lean", "def a := 1\n");
+    writeFile(pristine, "concepts/README.md", "package notes\n");
+    writeFile(pristine, "concepts/Lax9/data.json", "{}\n");
     writeFile(pristine, "concepts/.lake/ignored", "generated\n");
     writeFile(compiled, "concepts/.lake/build/lib/lean/Lax9.olean", "root artifact");
     writeFile(compiled, "concepts/.lake/build/lib/lean/Lax9/A.olean", "module artifact");
@@ -256,6 +258,8 @@ describe("validation runtime boundaries retained from main", () => {
     );
 
     expect(fs.existsSync(path.join(output, "concepts", "package", ".lake", "ignored"))).toBe(false);
+    expect(fs.existsSync(path.join(output, "concepts", "package", "README.md"))).toBe(false);
+    expect(fs.existsSync(path.join(output, "concepts", "package", "Lax9", "data.json"))).toBe(false);
     expect(fs.readFileSync(path.join(output, "concepts", "package", "Lax9", "A.lean"), "utf8")).toBe(
       "def a := 1\n",
     );
