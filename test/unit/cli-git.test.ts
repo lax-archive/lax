@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   deriveLocalSource,
   deriveSubmittedSource,
+  normalizeRepositoryUrl,
   repositoryFolder,
   repositoryRoot,
 } from "../../src/cli/git.js";
@@ -24,6 +25,25 @@ afterEach(() => {
 });
 
 describe("CLI Git source derivation retained from main", () => {
+  it("normalizes standard clone URLs for every supported provider", () => {
+    expect(normalizeRepositoryUrl("git@github.com:alice/formalization.git")).toBe(
+      "https://github.com/alice/formalization",
+    );
+    expect(normalizeRepositoryUrl("ssh://git@gitlab.com/group/team/formalization.git")).toBe(
+      "https://gitlab.com/group/team/formalization",
+    );
+    expect(normalizeRepositoryUrl("git@codeberg.org:alice/formalization.git")).toBe(
+      "https://codeberg.org/alice/formalization",
+    );
+    expect(normalizeRepositoryUrl("https://alice@bitbucket.org/team/formalization.git")).toBe(
+      "https://bitbucket.org/team/formalization",
+    );
+    expect(() => normalizeRepositoryUrl("git@example.com:alice/formalization.git")).toThrow(
+      "repository host must be one of",
+    );
+    expect(() => normalizeRepositoryUrl("https://token@github.com/alice/formalization.git")).toThrow();
+  });
+
   it("derives the commit and repository-relative folder for local builds", () => {
     const root = temporary("lax-cli-git-");
     writeFile(root, "submission/manifest.yaml", "id: lax-1\n");
@@ -47,9 +67,9 @@ describe("CLI Git source derivation retained from main", () => {
 
     expect(() => deriveSubmittedSource(root)).toThrow("worktree is dirty");
     expect(() => deriveSubmittedSource(root, { allowDirty: true })).toThrow(
-      "no usable GitHub `origin`",
+      "no usable supported `origin`",
     );
-    expect(() => deriveSubmittedSource(root, { force: true })).toThrow("no usable GitHub `origin`");
+    expect(() => deriveSubmittedSource(root, { force: true })).toThrow("no usable supported `origin`");
   });
 
   it("requires HEAD to be present on origin and returns the immutable source triple", () => {

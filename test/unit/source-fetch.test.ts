@@ -144,12 +144,22 @@ describe("source fetch fallback", () => {
     const destination = path.join(temporary("lax-fetch-guard-"), "checkout");
     await expect(
       fetchGitCheckout("https://example.com/owner/repo", "a".repeat(40), destination, 1000),
-    ).rejects.toThrow("repository is not a canonical public GitHub URL");
+    ).rejects.toThrow("repository host must be one of");
     await expect(
       fetchGitCheckout("https://github.com/owner/repo", "abc", destination, 1000),
-    ).rejects.toThrow("commit must be a full lowercase SHA");
+    ).rejects.toThrow("commit must be a full lowercase 40-character SHA");
     await expect(
       fetchGitCheckout("https://github.com/owner/repo", "a".repeat(40), "relative/path", 1000),
     ).rejects.toThrow("destination must be a specific absolute path");
+    for (const repository of [
+      "https://github.com/owner/repo",
+      "https://gitlab.com/group/team/repo",
+      "https://codeberg.org/owner/repo",
+      "https://bitbucket.org/owner/repo",
+    ]) {
+      await expect(fetchGitCheckout(repository, "a".repeat(40), "relative/path", 1000)).rejects.toThrow(
+        "destination must be a specific absolute path",
+      );
+    }
   });
 });

@@ -11,6 +11,20 @@ import {
 } from "./constants.js";
 import type { GitHubIdentity, SourceLocation } from "./types.js";
 
+interface SourceRepositoryHostPolicy {
+  minPathSegments: number;
+  maxPathSegments: number | null;
+  forbiddenSegments: string[];
+}
+
+const SOURCE_REPOSITORY_HOSTS: Record<string, SourceRepositoryHostPolicy> = {
+  "github.com": { minPathSegments: 2, maxPathSegments: 2, forbiddenSegments: [] },
+  "gitlab.com": { minPathSegments: 2, maxPathSegments: null, forbiddenSegments: ["-"] },
+  "codeberg.org": { minPathSegments: 2, maxPathSegments: 2, forbiddenSegments: [] },
+  "bitbucket.org": { minPathSegments: 2, maxPathSegments: 2, forbiddenSegments: [] },
+};
+const SOURCE_REPOSITORY_HOST_NAMES = Object.keys(SOURCE_REPOSITORY_HOSTS).sort();
+
 export class ValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -160,10 +174,12 @@ export function validateIdentity(value: unknown, label = "GitHub identity"): Git
 }
 
 export function validateRepositoryUrl(raw: unknown): string {
-  if (typeof raw !== "string") throw new ValidationError("repository must be an HTTPS GitHub URL");
+  if (typeof raw !== "string") {
+    throw new ValidationError("repository must be a canonical public HTTPS repository URL");
+  }
   const problems = new ValidationCollector();
   if (utf8Bytes(raw) > 2_048)
-    problems.add("repository must be an HTTPS GitHub URL of at most 2,048 bytes");
+    problems.add("repository URL must be at most 2,048 UTF-8 bytes");
   if (/\p{Cc}/u.test(raw)) problems.add("repository URL contains a control character");
   let url: URL;
   try {
@@ -173,25 +189,38 @@ export function validateRepositoryUrl(raw: unknown): string {
     problems.throwIfAny();
     throw new Error("unreachable URL validation state");
   }
+  const hostname = url.hostname.toLowerCase();
+  const policy = Object.hasOwn(SOURCE_REPOSITORY_HOSTS, hostname)
+    ? SOURCE_REPOSITORY_HOSTS[hostname]
+    : undefined;
   if (
-    !raw.startsWith("https://github.com/") ||
     url.protocol !== "https:" ||
-    url.hostname.toLowerCase() !== "github.com" ||
     url.username !== "" ||
     url.password !== "" ||
     url.search !== "" ||
     url.hash !== "" ||
     url.port !== ""
   ) {
-    problems.add("repository must be a canonical public HTTPS GitHub URL");
+    problems.add("repository must be a canonical public HTTPS repository URL");
   }
-  const match = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(url.pathname);
-  if (match === null || match[2]!.endsWith(".git")) {
-    problems.add("repository must have the form https://github.com/owner/repository");
+  if (policy === undefined) {
+    problems.add(`repository host must be one of: ${SOURCE_REPOSITORY_HOST_NAMES.join(", ")}`);
   }
+  const segments = url.pathname.slice(1).split("/");
+  if (
+    segments.some((segment) => !/^[A-Za-z0-9_.-]+$/u.test(segment)) ||
+    segments.at(-1)?.endsWith(".git") === true ||
+    policy === undefined ||
+    segments.length < policy.minPathSegments ||
+    (policy.maxPathSegments !== null && segments.length > policy.maxPathSegments) ||
+    segments.some((segment) => policy.forbiddenSegments.includes(segment))
+  ) {
+    problems.add(`repository path is not valid for ${hostname || "the selected host"}`);
+  }
+  const canonical = `https://${hostname}/${segments.join("/")}`;
+  if (raw !== canonical) problems.add("repository URL is not in canonical form");
   problems.throwIfAny();
-  if (match === null) throw new Error("unreachable repository path validation state");
-  return `https://github.com/${match![1]}/${match![2]}`;
+  return canonical;
 }
 
 export function validateCommit(raw: unknown): string {

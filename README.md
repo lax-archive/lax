@@ -195,7 +195,12 @@ self-upgrade (`lax upgrade` remains as an alias) and the database refresh is
 `lax sync` — the last command named after the machinery rather than after the
 thing. Submit derives the issue from `manifest.yaml`, derives the source triple from
 Git, rejects dirty work unless `--allow-dirty` is passed, and requires HEAD to
-be present on `origin`. Registration stays a separate `lax register` command;
+be present on `origin`. Source repositories must be anonymously fetchable over
+HTTPS from GitHub, GitLab.com, Codeberg, or Bitbucket Cloud. The CLI normalizes
+the providers' standard SSH clone URLs, strips a trailing `.git`, and supports
+nested GitLab groups; the Lax account and issue workflow remain on GitHub
+regardless of where the source is hosted. Registration stays a separate `lax
+register` command;
 multi-folder submission is intentionally not supported yet. Before posting the
 issue command, submit reuses a full local build only when it matches the clean
 Git commit, folder, and current local Archive snapshot. Otherwise it runs
