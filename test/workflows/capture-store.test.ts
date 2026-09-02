@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { captureTag, GhcrCaptureStore } from "../../src/shared/capture-store.js";
 import type { CaptureManifest } from "../../src/submission-validation/contracts.js";
+import { startFakeGhcr } from "../fake-ghcr.js";
 import { cleanupTemporary, temporary } from "../support/submission-validation.js";
 
 const SOURCE = {
@@ -122,6 +123,136 @@ describe("ghcr capture promotion", () => {
     await expect(
       store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, { pdfPath, digest: pdfDigest, bytes: pdf.length + 1 }),
     ).rejects.toThrow("paper.pdf does not match the digest");
+  });
+
+  it("pushes a web bundle as the third layer of the same single manifest", async () => {
+    const fixture = captureFixture();
+    const pdf = Buffer.from("%PDF-1.7 paper fixture bytes");
+    const bundle = Buffer.from("paper-web deterministic tar fixture bytes");
+    const directory = temporary("lax-paper-web-fixture-");
+    const pdfPath = path.join(directory, "paper.pdf");
+    const bundlePath = path.join(directory, "paper-web.tar");
+    fs.writeFileSync(pdfPath, pdf);
+    fs.writeFileSync(bundlePath, bundle);
+    const pdfDigest = createHash("sha256").update(pdf).digest("hex");
+    const webDigest = createHash("sha256").update(bundle).digest("hex");
+    const registry = fakeRegistry();
+    const store = new GhcrCaptureStore("job-token", REPOSITORY);
+    await expect(
+      store.promote(
+        "lax-42",
+        SOURCE,
+        fixture.manifest,
+        fixture.path,
+        { pdfPath, digest: pdfDigest, bytes: pdf.length },
+        { bundlePath, digest: webDigest, bytes: bundle.length },
+      ),
+    ).resolves.toEqual({
+      capture: { ...fixture.manifest, registryBlob: `ghcr.io/${REPOSITORY}@sha256:${fixture.manifest.digest}` },
+      paperBlob: `ghcr.io/${REPOSITORY}@sha256:${pdfDigest}`,
+      paperWebBlob: `ghcr.io/${REPOSITORY}@sha256:${webDigest}`,
+    });
+    // One manifest PUT names all three blobs, so they become durable
+    // together, before the database CAS commit references any of them.
+    const manifestPuts = registry.calls.filter((call) => call.method === "PUT" && call.url.includes("/manifests/"));
+    expect(manifestPuts).toHaveLength(1);
+    const manifest = JSON.parse(manifestPuts[0]!.body!) as Record<string, any>;
+    expect(manifest.layers).toEqual([
+      { mediaType: "application/vnd.lax.capture.v1+tar", digest: `sha256:${fixture.manifest.digest}`, size: fixture.size },
+      { mediaType: "application/vnd.lax.paper.v1+pdf", digest: `sha256:${pdfDigest}`, size: pdf.length },
+      { mediaType: "application/vnd.lax.paper-web.v1+tar", digest: `sha256:${webDigest}`, size: bundle.length },
+    ]);
+
+    // The bundle is hashed by the publisher itself before any push, and it
+    // never rides without its paper.
+    await expect(
+      store.promote(
+        "lax-42",
+        SOURCE,
+        fixture.manifest,
+        fixture.path,
+        { pdfPath, digest: pdfDigest, bytes: pdf.length },
+        { bundlePath, digest: "0".repeat(64), bytes: bundle.length },
+      ),
+    ).rejects.toThrow("paper-web.tar does not match the digest");
+    await expect(
+      store.promote(
+        "lax-42",
+        SOURCE,
+        fixture.manifest,
+        fixture.path,
+        { pdfPath, digest: pdfDigest, bytes: pdf.length },
+        { bundlePath, digest: webDigest, bytes: bundle.length + 1 },
+      ),
+    ).rejects.toThrow("paper-web.tar does not match the digest");
+    const before = registry.calls.length;
+    await expect(
+      store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, undefined, {
+        bundlePath,
+        digest: webDigest,
+        bytes: bundle.length,
+      }),
+    ).rejects.toThrow("beside its paper");
+    expect(registry.calls.length).toBe(before);
+  });
+
+  it("stores a three-layer manifest on the fake ghcr with every blob pullable by digest", async () => {
+    // The HTTP path against test/fake-ghcr.ts, through the same
+    // LAX_CAPTURE_REGISTRY_URL seam the e2es use — and the two-layer shape
+    // still passing beside it.
+    vi.unstubAllGlobals();
+    const ghcr = await startFakeGhcr();
+    process.env.LAX_CAPTURE_REGISTRY_URL = ghcr.url;
+    try {
+      const fixture = captureFixture();
+      const pdf = Buffer.from("%PDF-1.7 http paper bytes");
+      const bundle = Buffer.from("http paper-web tar bytes");
+      const directory = temporary("lax-ghcr-http-");
+      const pdfPath = path.join(directory, "paper.pdf");
+      const bundlePath = path.join(directory, "paper-web.tar");
+      fs.writeFileSync(pdfPath, pdf);
+      fs.writeFileSync(bundlePath, bundle);
+      const pdfDigest = createHash("sha256").update(pdf).digest("hex");
+      const webDigest = createHash("sha256").update(bundle).digest("hex");
+      const store = new GhcrCaptureStore("job-token", REPOSITORY);
+
+      const two = await store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, {
+        pdfPath,
+        digest: pdfDigest,
+        bytes: pdf.length,
+      });
+      expect(two.paperWebBlob).toBeUndefined();
+      const twoLayer = JSON.parse(
+        ghcr.state.manifests.get(captureTag(SOURCE, fixture.manifest))!.body.toString("utf8"),
+      ) as Record<string, any>;
+      expect(twoLayer.layers).toHaveLength(2);
+
+      const three = await store.promote(
+        "lax-42",
+        SOURCE,
+        fixture.manifest,
+        fixture.path,
+        { pdfPath, digest: pdfDigest, bytes: pdf.length },
+        { bundlePath, digest: webDigest, bytes: bundle.length },
+      );
+      expect(three.paperWebBlob).toBe(`ghcr.io/${REPOSITORY}@sha256:${webDigest}`);
+      const threeLayer = JSON.parse(
+        ghcr.state.manifests.get(captureTag(SOURCE, fixture.manifest))!.body.toString("utf8"),
+      ) as Record<string, any>;
+      expect(threeLayer.layers.map((layer: { mediaType: string }) => layer.mediaType)).toEqual([
+        "application/vnd.lax.capture.v1+tar",
+        "application/vnd.lax.paper.v1+pdf",
+        "application/vnd.lax.paper-web.v1+tar",
+      ]);
+      // Consumers pull each blob anonymously by the digest the record
+      // carries; the stored bytes are exactly what was pushed.
+      expect(ghcr.state.blobs.get(`sha256:${webDigest}`)!.equals(bundle)).toBe(true);
+      expect(ghcr.state.blobs.get(`sha256:${pdfDigest}`)!.equals(pdf)).toBe(true);
+      expect(ghcr.state.blobs.get(`sha256:${fixture.manifest.digest}`)).toBeDefined();
+    } finally {
+      delete process.env.LAX_CAPTURE_REGISTRY_URL;
+      await ghcr.close();
+    }
   });
 
   it("re-pushes idempotently: existing blobs are not uploaded again but the tag is still pointed", async () => {

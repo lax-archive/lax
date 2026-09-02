@@ -145,8 +145,9 @@ jobs:
           path: .build/submission-validation/validation-report.json
           if-no-files-found: warn
           retention-days: 90
-      # paper.pdf is present exactly when the submission declares a paper: the
-      # publisher hashes it against the digest the build output records.
+      # paper.pdf is present exactly when the submission declares a paper, and
+      # paper-web.tar exactly when the build output records `paper.web`: the
+      # publisher hashes each against the digest the build output records.
       - name: Preserve the report, generated build output, capture, paper, and profile
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -158,6 +159,7 @@ jobs:
             .build/submission-validation/generated-build-output.json
             .build/submission-validation/capture.tar
             .build/submission-validation/paper.pdf
+            .build/submission-validation/paper-web.tar
           if-no-files-found: warn
           retention-days: 90
 
@@ -210,6 +212,7 @@ jobs:
           GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
           VALIDATION_PAPER_PATH: ${{ github.workspace }}/.build/submission-validation/paper.pdf
+          VALIDATION_PAPER_WEB_PATH: ${{ github.workspace }}/.build/submission-validation/paper-web.tar
         run: node dist/workflows/submission.js prepare-submit
       - name: Mint lax-database token
         if: steps.prepare-submit.outputs.should_publish == 'true'
@@ -248,6 +251,7 @@ jobs:
           GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
           VALIDATION_PAPER_PATH: ${{ github.workspace }}/.build/submission-validation/paper.pdf
+          VALIDATION_PAPER_WEB_PATH: ${{ github.workspace }}/.build/submission-validation/paper-web.tar
         run: node dist/workflows/submission.js publish-submit
 
   # Keep the shorter publish branch after the validation branch in declaration

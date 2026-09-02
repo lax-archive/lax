@@ -45,6 +45,19 @@ function paperArtifacts(): SuccessfulValidationArtifacts {
   return artifacts;
 }
 
+/** Paper artifacts whose build output also records the derived web view. */
+function webArtifacts(): SuccessfulValidationArtifacts {
+  const artifacts = paperArtifacts();
+  const web = {
+    format: { tool: "reflowtex", rev: "8".repeat(40), schema: "9".repeat(64) },
+    bundle: { digest: "6".repeat(64), bytes: 54321 },
+  };
+  for (const output of [artifacts.buildOutput, artifacts.report.buildOutput]) {
+    output.paper!.web = structuredClone(web);
+  }
+  return artifacts;
+}
+
 describe("trusted submit publisher", () => {
   it("promotes the capture and commits exactly record.json and build-output.json", async () => {
     const current = loaded();
@@ -72,6 +85,7 @@ describe("trusted submit publisher", () => {
       TEST_CAPTURE,
       "/capture.tar",
       undefined,
+      undefined,
     );
     // Ordering invariant: the ghcr push completes before the database CAS
     // commit that references the blob digest.
@@ -93,6 +107,7 @@ describe("trusted submit publisher", () => {
       TEST_CAPTURE,
       "/capture.tar",
       { pdfPath: "/paper.pdf", digest: "7".repeat(64), bytes: 4321 },
+      undefined,
     );
     const combined = { ...current.texts, ...harness.changes } as Record<string, string>;
     const parsed = parseArchiveFiles("lax-42", combined);
@@ -116,6 +131,59 @@ describe("trusted submit publisher", () => {
     await expect(strayPdf.publisher.publish(request(current), successfulArtifacts(), "/capture.tar", run, "/paper.pdf"))
       .rejects.toThrow("records a paper exactly when a paper.pdf is supplied");
     expect(strayPdf.captureStore.promote).not.toHaveBeenCalled();
+  });
+
+  it("pushes a recorded web bundle as the third layer and binds its registry address into `paper.web`", async () => {
+    const current = loaded();
+    const harness = submitHarness(new Map([["lax-42", current]]));
+    const artifacts = webArtifacts();
+    const result = await harness.publisher.publish(
+      request(current),
+      artifacts,
+      "/capture.tar",
+      run,
+      "/paper.pdf",
+      "/paper-web.tar",
+    );
+    expect(result).toMatchObject({ kind: "committed" });
+    expect(harness.captureStore.promote).toHaveBeenCalledExactlyOnceWith(
+      "lax-42",
+      TEST_SOURCE,
+      TEST_CAPTURE,
+      "/capture.tar",
+      { pdfPath: "/paper.pdf", digest: "7".repeat(64), bytes: 4321 },
+      { bundlePath: "/paper-web.tar", digest: "6".repeat(64), bytes: 54321 },
+    );
+    const combined = { ...current.texts, ...harness.changes } as Record<string, string>;
+    const parsed = parseArchiveFiles("lax-42", combined);
+    const paper = (parsed.buildOutput as unknown as { paper: Record<string, unknown> }).paper;
+    expect(paper).toEqual({
+      ...artifacts.buildOutput.paper,
+      pdf: { ...artifacts.buildOutput.paper!.pdf, registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"7".repeat(64)}` },
+      web: {
+        ...artifacts.buildOutput.paper!.web,
+        bundle: {
+          ...artifacts.buildOutput.paper!.web!.bundle,
+          registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"6".repeat(64)}`,
+        },
+      },
+    });
+    // The record's paper parses as a published one: both registry blobs
+    // required, each bound to its own recorded digest.
+    expect(() => parsePaperOutput(paper, artifacts.buildOutput.inputs.manifest.paper!, true)).not.toThrow();
+  });
+
+  it("refuses a recorded web view without its tar and a tar without a record, before anything is pushed", async () => {
+    const current = loaded();
+    const withoutTar = submitHarness(new Map([["lax-42", current]]));
+    await expect(withoutTar.publisher.publish(request(current), webArtifacts(), "/capture.tar", run, "/paper.pdf"))
+      .rejects.toThrow("records a paper web view exactly when a paper-web.tar is supplied");
+    expect(withoutTar.captureStore.promote).not.toHaveBeenCalled();
+    const strayTar = submitHarness(new Map([["lax-42", current]]));
+    await expect(
+      strayTar.publisher.publish(request(current), paperArtifacts(), "/capture.tar", run, "/paper.pdf", "/paper-web.tar"),
+    ).rejects.toThrow("records a paper web view exactly when a paper-web.tar is supplied");
+    expect(strayTar.captureStore.promote).not.toHaveBeenCalled();
   });
 
   it("ignores owner-list digest changes but rechecks current numeric ownership", async () => {
@@ -296,9 +364,10 @@ function submitHarness(
     registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`,
   };
   const captureStore = {
-    promote: vi.fn(async (_id, _source, _manifest, _capturePath, paper) => ({
+    promote: vi.fn(async (_id, _source, _manifest, _capturePath, paper, paperWeb) => ({
       capture: publishedCapture,
       ...(paper === undefined ? {} : { paperBlob: `ghcr.io/lax-archive/lax-captures@sha256:${paper.digest}` }),
+      ...(paperWeb === undefined ? {} : { paperWebBlob: `ghcr.io/lax-archive/lax-captures@sha256:${paperWeb.digest}` }),
     })),
   } satisfies SubmitCaptureStore;
   return {

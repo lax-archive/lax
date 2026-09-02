@@ -30,6 +30,14 @@ export interface ValidationLimits {
   paperLogTailChars: number;
   /** Wall clock for the web derivation's encode child (paper-web-plan.md). */
   paperWebEncodeTimeoutMs: number;
+  /** Wall clock for the trusted path's post-compile export container run
+   * (font resolution + in-image picture conversion). */
+  paperWebExportTimeoutMs: number;
+  /** Bound on the enumerated container export set (font files, converted
+   * pictures): each list is refused beyond this many entries. */
+  paperWebExportFiles: number;
+  /** Bound on the enumerated container export set's total bytes. */
+  paperWebExportBytes: number;
   /** Cap on the serializer's `output.json` (and the encode child's stream
    * report) — a chapter-scale document produces tens of MB. */
   paperWebOutputJsonBytes: number;
@@ -75,6 +83,9 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   paperExtractTimeoutMs: 2 * 60_000,
   paperLogTailChars: 12_000,
   paperWebEncodeTimeoutMs: 5 * 60_000,
+  paperWebExportTimeoutMs: 5 * 60_000,
+  paperWebExportFiles: 256,
+  paperWebExportBytes: 256 * 1024 * 1024,
   paperWebOutputJsonBytes: 64 * 1024 * 1024,
   paperWebOracleSimilarity: 0.98,
 };

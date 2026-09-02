@@ -24,7 +24,18 @@ spike (`spike/paper/reflow/REPORT.md`) proved necessary:
   SVG through dvisvgm-raw specials — CSP is defense in depth, not the
   only wall); the dvisvgm invocation is injectable per call
   (`REFLOWTEX_DVISVGM`) so the trusted path can route conversion through
-  the pinned TeX container.
+  the pinned TeX container; and a pre-converted `<src>.svg` beside a
+  picture's PDF is consumed as-is (stage 3 converts inside the pinned
+  image right after the compile — the encode host has no dvisvgm), with
+  the sanitizer still applied to every consumed SVG.
+- **Injectable Type1 lookup** (`patches/t1_convert.py.patch`): with
+  `REFLOWTEX_PFB_DIR` set (read per call), `find_pfb` resolves outlines
+  from that directory and nowhere else — the trusted path exports the
+  `.pfb` outlines legacy 8-bit faces need (plain lualatex math: cmmi10,
+  cmsy10, …) from the pinned image, and a host tree must never silently
+  substitute for a missed export; without it, kpsewhich as stock, but a
+  host without kpsewhich yields the metric-box fallback instead of an
+  uncaught crash.
 - **No run-time writes into the checkout** (`patches/pipeline.py.patch`):
   `_ensure_pb2` only verifies — `latex_pb2.py` is regenerated at fetch
   time into `checkout/build/`, never into the (possibly read-only,

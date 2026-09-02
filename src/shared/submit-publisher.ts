@@ -54,7 +54,8 @@ export class SubmitPublisher {
    * `paperPdfPath` is the compiled paper from the validate artifact, required
    * exactly when the build output records one; the caller has already hashed
    * it against the recorded digest (readSuccessfulArtifacts), and promote()
-   * hashes it again before the push.
+   * hashes it again before the push. `paperWebPath` is the derived reflow
+   * bundle under exactly the same contract, keyed to `paper.web`.
    */
   async publish(
     untrustedRequest: PublishRequest,
@@ -62,6 +63,7 @@ export class SubmitPublisher {
     capturePath: string,
     run: WorkflowRunRef,
     paperPdfPath?: string,
+    paperWebPath?: string,
   ): Promise<SubmitPublishResult> {
     if (this.captureStore === undefined) throw new Error("submit publisher has no capture store");
     const ready = await this.preflight(untrustedRequest, artifacts);
@@ -80,6 +82,9 @@ export class SubmitPublisher {
     if ((paper === undefined) !== (paperPdfPath === undefined)) {
       throw new ValidationError("the validated build output records a paper exactly when a paper.pdf is supplied");
     }
+    if ((paper?.web === undefined) !== (paperWebPath === undefined)) {
+      throw new ValidationError("the validated build output records a paper web view exactly when a paper-web.tar is supplied");
+    }
     const promoted = await this.captureStore.promote(
       request.id,
       artifacts.report.request.source,
@@ -88,11 +93,24 @@ export class SubmitPublisher {
       paper === undefined || paperPdfPath === undefined
         ? undefined
         : { pdfPath: paperPdfPath, digest: paper.pdf.digest, bytes: paper.pdf.bytes },
+      paper?.web === undefined || paperWebPath === undefined
+        ? undefined
+        : { bundlePath: paperWebPath, digest: paper.web.bundle.digest, bytes: paper.web.bundle.bytes },
     );
     if ((paper === undefined) !== (promoted.paperBlob === undefined)) {
       throw new ValidationError("the capture store did not push the paper layer it was asked for");
     }
-    const changes = constructSubmitChanges(request, current, artifacts.buildOutput, promoted.capture, promoted.paperBlob);
+    if ((paper?.web === undefined) !== (promoted.paperWebBlob === undefined)) {
+      throw new ValidationError("the capture store did not push the paper web layer it was asked for");
+    }
+    const changes = constructSubmitChanges(
+      request,
+      current,
+      artifacts.buildOutput,
+      promoted.capture,
+      promoted.paperBlob,
+      promoted.paperWebBlob,
+    );
     const archiveCommit = await this.archive.writeFiles({
       id: request.id,
       changes,
@@ -226,6 +244,7 @@ function constructSubmitChanges(
   payload: BuildOutputPayload,
   publishedCapture: PublishedCapture,
   paperBlob: string | undefined,
+  paperWebBlob?: string,
 ): ArchiveChanges {
   if (request.command?.action !== "submit") throw new ValidationError("submit command is missing");
   const record = {
@@ -235,6 +254,24 @@ function constructSubmitChanges(
     createdAt: current.files.record.createdAt,
     source: source(request.command),
   };
+  // A recorded `paper.web` gains its bundle's registry address the same way
+  // the pdf does; parseArchiveFiles below refuses a published web block
+  // whose registryBlob is missing or disagrees with the bundle digest, so a
+  // dropped or wrong address can never be committed.
+  const publishedPaper = payload.paper === undefined || paperBlob === undefined
+    ? undefined
+    : {
+        ...payload.paper,
+        pdf: { ...payload.paper.pdf, registryBlob: paperBlob },
+        ...(payload.paper.web === undefined || paperWebBlob === undefined
+          ? {}
+          : {
+              web: {
+                ...payload.paper.web,
+                bundle: { ...payload.paper.web.bundle, registryBlob: paperWebBlob },
+              },
+            }),
+      };
   const buildOutput = {
     specVersion: "1",
     id: request.id,
@@ -245,9 +282,7 @@ function constructSubmitChanges(
     concepts: payload.concepts,
     proofs: payload.proofs,
     capture: publishedCapture,
-    ...(payload.paper === undefined || paperBlob === undefined
-      ? {}
-      : { paper: { ...payload.paper, pdf: { ...payload.paper.pdf, registryBlob: paperBlob } } }),
+    ...(publishedPaper === undefined ? {} : { paper: publishedPaper }),
   };
   const changes: ArchiveChanges = {
     "record.json": `${JSON.stringify(record, null, 2)}\n`,

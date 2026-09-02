@@ -307,6 +307,7 @@ describe("prepare-submit entry point", () => {
       GENERATED_BUILD_OUTPUT_PATH: path.join(directory, "generated-build-output.json"),
       VALIDATION_CAPTURE_PATH: path.join(directory, "capture.tar"),
       VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
+      VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
       // Env-poisoning canary: the preflight job holds no database credential;
       // if this value ever leaves the process something read the wrong env.
       LAX_DATABASE_TOKEN: canary,
@@ -353,6 +354,7 @@ describe("prepare-submit entry point", () => {
       GENERATED_BUILD_OUTPUT_PATH: path.join(directory, "generated-build-output.json"),
       VALIDATION_CAPTURE_PATH: path.join(directory, "capture.tar"),
       VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
+      VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
     });
     installIssueFetch({ comments: [], reactions: [] }, texts);
 
@@ -366,6 +368,68 @@ describe("prepare-submit entry point", () => {
     // Recorded but not in the artifact: refused.
     fs.rmSync(path.join(directory, "paper.pdf"));
     await expect(prepareSubmit()).rejects.toThrow("validation paper is missing");
+    // A stray bundle beside a web-less paper: refused (the tar direction of
+    // the iff, independent of the paper.pdf state).
+    fs.writeFileSync(path.join(directory, "paper.pdf"), pdf);
+    fs.writeFileSync(path.join(directory, "paper-web.tar"), "stray bundle bytes");
+    await expect(prepareSubmit()).rejects.toThrow(
+      "carries a paper-web.tar its build output does not record",
+    );
+  });
+
+  it("hashes a recorded web bundle from the validate artifact, both iff directions enforced", async () => {
+    const texts = initialFiles("lax-42", { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z");
+    const directory = workDirectory();
+    const captureBytes = Buffer.from("lax capture fixture bytes");
+    const pdf = Buffer.from("%PDF-1.7 fixture paper");
+    const bundle = Buffer.from("deterministic web bundle fixture bytes");
+    const artifacts = successfulArtifacts();
+    const digest = createHash("sha256").update(captureBytes).digest("hex");
+    const paperManifest = { folder: "paper", main: "main.tex", engine: "pdflatex" as const };
+    for (const output of [artifacts.buildOutput, artifacts.report.buildOutput]) {
+      output.capture.digest = digest;
+      output.inputs.manifest.paper = paperManifest;
+      output.paper = {
+        ...paperManifest,
+        pdf: { digest: createHash("sha256").update(pdf).digest("hex"), bytes: pdf.length, pages: 1 },
+        pageSizes: [[612, 792]],
+        marks: [],
+        web: {
+          format: { tool: "reflowtex", rev: "8".repeat(40), schema: "9".repeat(64) },
+          bundle: { digest: createHash("sha256").update(bundle).digest("hex"), bytes: bundle.length },
+        },
+      };
+    }
+    artifacts.report.capture.digest = digest;
+    fs.writeFileSync(path.join(directory, "validation-report.json"), JSON.stringify(artifacts.report));
+    fs.writeFileSync(path.join(directory, "generated-build-output.json"), JSON.stringify(artifacts.buildOutput));
+    fs.writeFileSync(path.join(directory, "capture.tar"), captureBytes);
+    fs.writeFileSync(path.join(directory, "paper.pdf"), pdf);
+    const outputFile = path.join(directory, "github-output");
+    stubWorkflowEnv({
+      GITHUB_OUTPUT: outputFile,
+      PUBLISH_REQUEST: encode(submitRequest(fileDigests(texts))),
+      VALIDATION_REPORT_PATH: path.join(directory, "validation-report.json"),
+      GENERATED_BUILD_OUTPUT_PATH: path.join(directory, "generated-build-output.json"),
+      VALIDATION_CAPTURE_PATH: path.join(directory, "capture.tar"),
+      VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
+      VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
+    });
+    installIssueFetch({ comments: [], reactions: [] }, texts);
+
+    // The recorded bytes: ready.
+    fs.writeFileSync(path.join(directory, "paper-web.tar"), bundle);
+    await prepareSubmit();
+    expect(fs.readFileSync(outputFile, "utf8")).toMatch(/should_publish<<[^\n]+\ntrue\n/u);
+    // Recorded but not in the artifact: refused before anything is minted.
+    fs.rmSync(path.join(directory, "paper-web.tar"));
+    await expect(prepareSubmit()).rejects.toThrow("validation paper web bundle is missing");
+    // The wrong size under the right name: refused.
+    fs.writeFileSync(path.join(directory, "paper-web.tar"), "wrong length");
+    await expect(prepareSubmit()).rejects.toThrow("recorded size");
+    // The recorded size with tampered bytes: refused at the digest.
+    fs.writeFileSync(path.join(directory, "paper-web.tar"), Buffer.from("X".repeat(bundle.length)));
+    await expect(prepareSubmit()).rejects.toThrow("paper web bundle digest does not match");
   });
 });
 

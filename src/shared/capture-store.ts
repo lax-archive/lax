@@ -30,7 +30,13 @@ export const CAPTURE_MEDIA_TYPE = "application/vnd.lax.capture.v1+tar";
  * and a consumer fetches the PDF alone by its digest without touching the
  * capture tar. */
 export const PAPER_MEDIA_TYPE = "application/vnd.lax.paper.v1+pdf";
+/** The derived reflow bundle, a third layer of the same artifact manifest
+ * (paper-web-plan.md, "Storage"): one digest to record, one anonymous
+ * download, push-before-CAS and retry idempotency inherited unchanged. */
+export const PAPER_WEB_MEDIA_TYPE = "application/vnd.lax.paper-web.v1+tar";
 const MAX_PAPER_BYTES = 25 * 1024 * 1024;
+/** The bundle cap (PAPER_CAPS.webBundleBytes and the schema parser agree). */
+const MAX_PAPER_WEB_BYTES = 25 * 1024 * 1024;
 const REPOSITORY_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u;
 
 /**
@@ -113,10 +119,22 @@ export interface PaperBlobInput {
   bytes: number;
 }
 
+/** The derived web bundle the publisher is asked to push as the third
+ * layer. Only meaningful beside a paper — `paper.web` nests under `paper`
+ * in the record, so promote() refuses a bundle without its PDF. */
+export interface PaperWebBlobInput {
+  bundlePath: string;
+  /** The sha256 hex the validated build output records for the bundle. */
+  digest: string;
+  bytes: number;
+}
+
 export interface PromotedArtifacts {
   capture: PublishedCapture;
   /** The PDF layer's digest-addressed reference, when a paper was pushed. */
   paperBlob?: string;
+  /** The bundle layer's digest-addressed reference, when one was pushed. */
+  paperWebBlob?: string;
 }
 
 export class GhcrCaptureStore {
@@ -136,10 +154,14 @@ export class GhcrCaptureStore {
     manifest: CaptureManifest,
     capturePath: string,
     paper?: PaperBlobInput,
+    paperWeb?: PaperWebBlobInput,
   ): Promise<PromotedArtifacts> {
     validateSubmissionId(id);
     if (source.commit !== manifest.sourceCommit) {
       throw new ValidationError("capture source commit does not match the publication source");
+    }
+    if (paperWeb !== undefined && paper === undefined) {
+      throw new ValidationError("a paper web bundle can only be pushed beside its paper");
     }
     const stat = fs.lstatSync(capturePath);
     if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_CAPTURE_BYTES) {
@@ -161,6 +183,17 @@ export class GhcrCaptureStore {
       }
       paperLayer = { digest: `sha256:${paper.digest}`, size: paperStat.size };
     }
+    let webLayer: { digest: string; size: number } | undefined;
+    if (paperWeb !== undefined) {
+      const webStat = fs.lstatSync(paperWeb.bundlePath);
+      if (!webStat.isFile() || webStat.size <= 0 || webStat.size > MAX_PAPER_WEB_BYTES) {
+        throw new ValidationError("paper-web.tar must be a non-empty regular file no larger than 25 MiB");
+      }
+      if (webStat.size !== paperWeb.bytes || sha256File(paperWeb.bundlePath) !== paperWeb.digest) {
+        throw new ValidationError("paper-web.tar does not match the digest the validated build output records");
+      }
+      webLayer = { digest: `sha256:${paperWeb.digest}`, size: webStat.size };
+    }
     const digest = `sha256:${manifest.digest}`;
     const bearer = await this.exchangeToken();
     await this.ensureBlob(bearer, digest, stat.size, () =>
@@ -170,8 +203,15 @@ export class GhcrCaptureStore {
       await this.ensureBlob(bearer, layer.digest, layer.size, () =>
         Readable.toWeb(fs.createReadStream(paper!.pdfPath)) as unknown as BodyInit);
     }
+    if (webLayer !== undefined) {
+      const layer = webLayer;
+      await this.ensureBlob(bearer, layer.digest, layer.size, () =>
+        Readable.toWeb(fs.createReadStream(paperWeb!.bundlePath)) as unknown as BodyInit);
+    }
     await this.ensureBlob(bearer, EMPTY_CONFIG_DIGEST, EMPTY_CONFIG.length, () =>
       EMPTY_CONFIG as unknown as BodyInit);
+    // One manifest PUT names every layer, so all blobs of a record become
+    // durable together, before the database CAS commit references any.
     await this.putManifest(bearer, captureTag(source, manifest), {
       schemaVersion: 2,
       mediaType: "application/vnd.oci.image.manifest.v1+json",
@@ -184,6 +224,7 @@ export class GhcrCaptureStore {
       layers: [
         { mediaType: CAPTURE_MEDIA_TYPE, digest, size: stat.size },
         ...(paperLayer === undefined ? [] : [{ mediaType: PAPER_MEDIA_TYPE, digest: paperLayer.digest, size: paperLayer.size }]),
+        ...(webLayer === undefined ? [] : [{ mediaType: PAPER_WEB_MEDIA_TYPE, digest: webLayer.digest, size: webLayer.size }]),
       ],
       // Discoverability and GC metadata only; consumers trust none of it.
       annotations: {
@@ -198,6 +239,7 @@ export class GhcrCaptureStore {
     return {
       capture: { ...manifest, registryBlob: `ghcr.io/${this.repository}@${digest}` },
       ...(paperLayer === undefined ? {} : { paperBlob: `ghcr.io/${this.repository}@${paperLayer.digest}` }),
+      ...(webLayer === undefined ? {} : { paperWebBlob: `ghcr.io/${this.repository}@${webLayer.digest}` }),
     };
   }
 

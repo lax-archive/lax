@@ -9,6 +9,7 @@ ReflowTeX source. Runs inside reflowtex/venv — the hash-pinned environment
 — as a capped child of the deriver (src/submission-validation/paper/web.ts):
 
     venv/bin/python encode_web.py --checkout <dir> --job <dir> --out <dir>
+        [--fonts <dir>]
 
 reads the injected lualatex run's `<job>/output.json` (plus `<job>/pics/`
 for externalized tikz pictures), and writes into `<out>/`:
@@ -24,6 +25,11 @@ for externalized tikz pictures), and writes into `<out>/`:
     font normalisations, deterministic serialization);
   - `fonts/` — the provisioned, cmap-patched font files the document used;
   - `encode.json` — the block size and the {original -> served} font map.
+
+`--fonts` names a directory of exported font files searched *before*
+kpsewhich (fonts.py's `local_dir`): the trusted path compiles in the
+pinned TeX image and exports the font bytes the run used into the job,
+because the encode host has no TeX installation to resolve them from.
 
 Legacy 8-bit fonts (filename "unknown") carry slot codepoints, not
 Unicode; the linearizer decodes the token-relevant subset — OT1 text
@@ -185,6 +191,7 @@ def main() -> None:
     ap.add_argument("--checkout", required=True, help="the fetched, patched reflowtex checkout")
     ap.add_argument("--job", required=True, help="the web compile's job dir (output.json, pics/)")
     ap.add_argument("--out", required=True, help="where blocks/, fonts/, stream.json, encode.json go")
+    ap.add_argument("--fonts", help="optional dir of exported font files searched before kpsewhich")
     args = ap.parse_args()
 
     checkout = Path(args.checkout).resolve()
@@ -200,7 +207,10 @@ def main() -> None:
 
     # Constructing the Pipeline runs the fork's verify-only _ensure_pb2 —
     # the generated latex_pb2.py must already exist in checkout/build/.
-    pipe = Pipeline(build_root=out / "_build", fonts_dir=out / "fonts")
+    # local_fonts_dir is fonts.py's local_dir injection point: provisioning
+    # copies from it before it ever tries kpsewhich.
+    pipe = Pipeline(build_root=out / "_build", fonts_dir=out / "fonts",
+                    local_fonts_dir=args.fonts)
 
     data = json.loads((job / "output.json").read_text())
 

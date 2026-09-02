@@ -31,6 +31,8 @@ import type { ValidationOutcome } from "./outputs.js";
 import { containerPaperCompiler } from "./paper/container.js";
 import { joinPaperMarks } from "./paper/join.js";
 import { capturePaperSources, runPaperPhase, type PaperPhaseResult } from "./paper/phase.js";
+import { containerWebDeriver } from "./paper/web-container.js";
+import type { WebDeriver } from "./paper/web.js";
 import { compileConcepts, compileProofs } from "./phases/compile.js";
 import { emitBuildOutput } from "./phases/emit.js";
 import { judgeInspection } from "./phases/inspect.js";
@@ -75,6 +77,14 @@ export interface ValidationOptions {
    * Tests inject in-process fakes here.
    */
   runner?: ValidationRunner;
+  /**
+   * The paper web derivation seam (paper-web-plan.md stage 3), mirroring the
+   * runner seam: the trusted workflow never sets it and gets the
+   * container-backed deriver (paper/web-container.ts) over `runner`; tests
+   * inject fakes here. Non-blocking by construction either way — a deriver
+   * only ever contributes `web-*` warnings.
+   */
+  webDeriver?: WebDeriver;
   /** Local presentation hook. Trusted workflow output remains unchanged. */
   onPhase?: (event: { name: string; state: "start" | "complete"; durationMs?: number }) => void;
   /**
@@ -377,6 +387,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       buildOutput,
       capture,
       ...(paper?.compiled === undefined ? {} : { paperPdfPath: paper.compiled.pdfPath }),
+      ...(paper?.compiled?.web === undefined ? {} : { paperWebPath: paper.compiled.web.bundlePath }),
     };
   } catch (error) {
     return fail(state, "emit", "emit", error);
@@ -411,6 +422,7 @@ function startPaperPhase(
     jobDir: string;
     limits: ValidationLimits;
     runner: ValidationRunner;
+    webDeriver: WebDeriver;
     phase: PreparedValidation["phase"];
   },
 ): Promise<PaperPhaseResult> {
@@ -429,6 +441,7 @@ function startPaperPhase(
           sourceDateEpoch: commitTimestamp(state.fetched.repositoryRoot, state.request.source.commit),
           limits: state.limits,
           compile: containerPaperCompiler(state.runner, state.limits, laxmarkDirectory()),
+          deriveWeb: state.webDeriver,
         });
       } catch (error) {
         return asFinding(error);
@@ -526,9 +539,12 @@ async function prepareValidation(
   let paperRun: Promise<PaperPhaseResult> | undefined;
   if (options.stopAfter !== "resolution") {
     // The paper needs no Lean, so it starts here — before the runtime is even
-    // verified — and overlaps the whole Lean chain.
+    // verified — and overlaps the whole Lean chain. The web derivation rides
+    // inside it: the container-backed deriver by default (the trusted
+    // workflow sets no options), a test's fake through the seam.
     if (staticCheck.result.paper !== undefined && scope === "both") {
-      paperRun = startPaperPhase(staticCheck.result.paper, { request, fetched, jobDir, limits, runner, phase });
+      const webDeriver = options.webDeriver ?? containerWebDeriver(runner);
+      paperRun = startPaperPhase(staticCheck.result.paper, { request, fetched, jobDir, limits, runner, webDeriver, phase });
     }
     try {
       await phase("validation runtime", () => runner.verifyRuntime());

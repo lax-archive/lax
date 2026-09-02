@@ -4,7 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Derived from: https://github.com/radek-p/reflowtex @ 36f8365eed25ece1db38e0059bcbba3c250802e1
               (src/encode/transforms.py, AGPL-3.0-or-later)
 
-Three changes: (1) 'marker' joins SUPPORTED_NODE_TYPES — the patched schema
+Four changes: (1) 'marker' joins SUPPORTED_NODE_TYPES — the patched schema
 encodes it, and stripping it would silently unmoor every passage card;
 (2) convert_pictures passes every converted picture through sanitize_svg,
 an element/attribute allowlist (drawing primitives, structure, text,
@@ -14,10 +14,14 @@ reported) — under -shell-escape a paper can emit arbitrary SVG through
 dvisvgm-raw specials, and CSP on the serving side is defense in depth,
 not the only wall; (3) the dvisvgm invocation is injectable per call
 (REFLOWTEX_DVISVGM) so the trusted path can route conversion through the
-pinned TeX container instead of assuming a host binary.
+pinned TeX container instead of assuming a host binary; (4) a
+pre-converted `<src>.svg` beside a picture's PDF is consumed as-is —
+the trusted path converts inside the pinned TeX image right after the
+compile, so the encode host needs no dvisvgm — with the sanitizer still
+applied to every consumed SVG, whoever produced it.
 
 diff --git a/src/encode/transforms.py b/src/encode/transforms.py
-index d214b4f..7f38704 100644
+index d214b4f..6153b7f 100644
 --- a/src/encode/transforms.py
 +++ b/src/encode/transforms.py
 @@ -14,11 +14,13 @@ None of these depend on any framework; they operate on the parsed dict and (for
@@ -186,16 +190,41 @@ index d214b4f..7f38704 100644
  SVG_ID_RE    = re.compile(r"\bid='([^']+)'")
  SVG_USE_RE   = re.compile(r"(xlink:href|href)='#([^']+)'")
  # dvisvgm shortens colours to 3-digit hex under --optimize (#f00, not #ff0000),
-@@ -281,13 +418,17 @@ def convert_pictures(data: dict, build_dir: Path) -> int:
-                     # just loses all its labels. A private tmpdir avoids it.
-                     with tempfile.TemporaryDirectory(prefix='dvisvgm-') as tmpdir:
-                         r = subprocess.run(
+@@ -273,21 +410,31 @@ def convert_pictures(data: dict, build_dir: Path) -> int:
+                     out = build_dir / f'{src}.svg'
+                     if not pdf.exists():
+                         sys.exit(f'ERROR: picture {pdf} missing — did tikz externalisation run?')
+-                    # --tmpdir is required for correctness, not tidiness: dvisvgm's
+-                    # temporary files are not namespaced per process, so concurrent
+-                    # conversions (blocks compile on a thread pool) collide and some
+-                    # silently emit an SVG with every glyph missing. It exits 0 and
+-                    # writes valid SVG, so nothing downstream can tell — the picture
+-                    # just loses all its labels. A private tmpdir avoids it.
+-                    with tempfile.TemporaryDirectory(prefix='dvisvgm-') as tmpdir:
+-                        r = subprocess.run(
 -                            ['dvisvgm', '--pdf', '--no-fonts', '--optimize=all',
-+                            [dvisvgm_command(), '--pdf', '--no-fonts', '--optimize=all',
-                              f'--tmpdir={tmpdir}', f'--output={out}', str(pdf)],
-                             cwd=build_dir, capture_output=True, text=True)
+-                             f'--tmpdir={tmpdir}', f'--output={out}', str(pdf)],
+-                            cwd=build_dir, capture_output=True, text=True)
++                    # (lax) A pre-converted `<src>.svg` beside the PDF is consumed
++                    # as-is: the trusted validation path converts every picture
++                    # inside the pinned TeX image right after the compile, so the
++                    # encode host needs no dvisvgm at all. The sanitiser below
++                    # still runs on every consumed SVG, whoever produced it.
                      if not out.exists():
-                         sys.exit(f'ERROR: dvisvgm failed on {pdf}:\n{r.stderr[-2000:]}')
+-                        sys.exit(f'ERROR: dvisvgm failed on {pdf}:\n{r.stderr[-2000:]}')
++                        # --tmpdir is required for correctness, not tidiness: dvisvgm's
++                        # temporary files are not namespaced per process, so concurrent
++                        # conversions (blocks compile on a thread pool) collide and some
++                        # silently emit an SVG with every glyph missing. It exits 0 and
++                        # writes valid SVG, so nothing downstream can tell — the picture
++                        # just loses all its labels. A private tmpdir avoids it.
++                        with tempfile.TemporaryDirectory(prefix='dvisvgm-') as tmpdir:
++                            r = subprocess.run(
++                                [dvisvgm_command(), '--pdf', '--no-fonts', '--optimize=all',
++                                 f'--tmpdir={tmpdir}', f'--output={out}', str(pdf)],
++                                cwd=build_dir, capture_output=True, text=True)
++                        if not out.exists():
++                            sys.exit(f'ERROR: dvisvgm failed on {pdf}:\n{r.stderr[-2000:]}')
 +                    clean, dropped = sanitize_svg(out.read_text(encoding='utf-8'))
 +                    if dropped:
 +                        print(f'  {build_dir.name}: svg sanitiser dropped from {src}: '

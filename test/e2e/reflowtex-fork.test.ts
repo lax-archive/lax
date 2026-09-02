@@ -401,6 +401,77 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
     }
   });
 
+  it("consumes a pre-converted SVG beside the picture PDF without any dvisvgm, sanitizer still applied", () => {
+    // The trusted path (paper-web-plan.md stage 3) converts pictures inside
+    // the pinned TeX image right after the compile and pins the encode
+    // child's REFLOWTEX_DVISVGM seam to a failing command; the fork must
+    // consume the `<src>.svg` beside the PDF as-is — through sanitize_svg,
+    // whoever produced it — and never reach for a host binary.
+    const jobDir = compileInjected({ "main.tex": TIKZ_MAIN_TEX });
+    expect(fs.existsSync(path.join(jobDir, "pics", "main-figure0.pdf"))).toBe(true);
+    fs.writeFileSync(
+      path.join(jobDir, "pics", "main-figure0.svg"),
+      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'>" +
+        "<script>alert(1)</script>" +
+        "<path d='M1 2L3 4' stroke='#f00' fill='none'/>" +
+        "</svg>",
+    );
+    const statsFile = path.join(jobDir, "encode-stats.json");
+    const result = spawnSync(
+      venvPython,
+      [encodeDriver, "--checkout", checkoutDir, "--build", jobDir, "--fonts", path.join(jobDir, "fonts"), "--stats", statsFile],
+      { encoding: "utf8", env: { ...process.env, REFLOWTEX_DVISVGM: "false" } },
+    );
+    expect(result.status, `encode driver failed:\n${result.stdout}\n${result.stderr}`).toBe(0);
+    const stats = JSON.parse(fs.readFileSync(statsFile, "utf8")) as EncodeStats;
+    expect(stats.converted).toBe(1);
+    expect(stats.pictures).toHaveLength(1);
+    const picture = stats.pictures[0]!;
+    // The blob carries the planted drawing (color-themed by the rewrite)…
+    expect(picture.vb_w).toBe(12);
+    expect(picture.vb_h).toBe(8);
+    expect(picture.svg).toContain("d='M1 2L3 4'");
+    expect(picture.svg).toContain("var(--latex-color-ff0000");
+    // …with the attack surface sanitized out, exactly as on the dvisvgm path.
+    expect(picture.svg).not.toContain("script");
+    expect(picture.svg).not.toContain("alert");
+  });
+
+  it("resolves Type1 outlines from the injected directory first, and degrades without kpsewhich", () => {
+    // The trusted path exports the .pfb outlines legacy 8-bit faces need
+    // (plain lualatex math: cmmi10, cmsy10, …) from the pinned TeX image
+    // and points REFLOWTEX_PFB_DIR at them, because the Validate host has
+    // no TeX tree; and a host without kpsewhich must yield the metric-box
+    // fallback (None), never an uncaught crash.
+    const pfbDir = tmpDir("lax-reflow-pfb-");
+    fs.writeFileSync(path.join(pfbDir, "fakeface10.pfb"), "%!PS-AdobeFont-1.0 fixture");
+    const probe = [
+      "import json, os, sys",
+      `sys.path.insert(0, ${JSON.stringify(path.join(checkoutDir, "src", "encode"))})`,
+      "import t1_convert",
+      `os.environ['REFLOWTEX_PFB_DIR'] = ${JSON.stringify(pfbDir)}`,
+      "injected = t1_convert.find_pfb('fakeface10')",
+      // With the directory set it is the *only* source: this TeX-full host
+      // could resolve cmmi10.pfb, and must not (a host tree silently
+      // substituting for a missed export would mask the export gap).
+      "pinned = t1_convert.find_pfb('cmmi10')",
+      "del os.environ['REFLOWTEX_PFB_DIR']",
+      "os.environ['PATH'] = '/nonexistent'",
+      "bare = t1_convert.find_pfb('cmmi10')",
+      "print(json.dumps({'injected': injected, 'pinned': pinned, 'bare': bare}))",
+    ].join("\n");
+    const result = spawnSync(venvPython, ["-c", probe], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    const { injected, pinned, bare } = JSON.parse(result.stdout) as {
+      injected: string | null;
+      pinned: string | null;
+      bare: string | null;
+    };
+    expect(injected).toBe(path.join(pfbDir, "fakeface10.pfb"));
+    expect(pinned).toBeNull();
+    expect(bare).toBeNull();
+  });
+
   it("strips disallowed elements and attributes while keeping the drawing", () => {
     const crafted = [
       "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 10 10' onload='evil()'>",

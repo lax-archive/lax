@@ -12,6 +12,8 @@ import YAML from "yaml";
 import {
   CAPTURE_FILENAME,
   GENERATED_BUILD_OUTPUT_FILENAME,
+  PAPER_FILENAME,
+  PAPER_WEB_FILENAME,
   VALIDATION_PROFILE_FILENAME,
   VALIDATION_REPORT_FILENAME,
 } from "../../src/submission-validation/outputs.js";
@@ -274,6 +276,8 @@ describe("submission workflow wiring", () => {
       VALIDATION_PROFILE_FILENAME,
       GENERATED_BUILD_OUTPUT_FILENAME,
       CAPTURE_FILENAME,
+      PAPER_FILENAME,
+      PAPER_WEB_FILENAME,
     ]) {
       expect(full.with?.path).toContain(`.build/submission-validation/${filename}`);
     }
@@ -286,6 +290,23 @@ describe("submission workflow wiring", () => {
       const download = jobs[name].steps.find((step) => step.uses?.startsWith("actions/download-artifact"));
       expect(download?.with?.name, name).toBe(artifact);
       expect(download?.with?.path, name).toBe(".build/submission-validation");
+    }
+    // The conditional paper artifacts reach both publish steps by the same
+    // env names their credential-free re-validation reads
+    // (readSuccessfulArtifacts), keyed off the workspace copy the download
+    // step above populated.
+    const submit = jobs["publish-submit"];
+    for (const stepName of [
+      "Parse artifacts and revalidate current state without Archive credentials",
+      "Promote capture, publish trusted submit, and dispatch Website",
+    ]) {
+      const step = submit.steps.find((candidate) => candidate.name === stepName);
+      expect(step?.env?.VALIDATION_PAPER_PATH, stepName).toBe(
+        `\${{ github.workspace }}/.build/submission-validation/${PAPER_FILENAME}`,
+      );
+      expect(step?.env?.VALIDATION_PAPER_WEB_PATH, stepName).toBe(
+        `\${{ github.workspace }}/.build/submission-validation/${PAPER_WEB_FILENAME}`,
+      );
     }
   });
 

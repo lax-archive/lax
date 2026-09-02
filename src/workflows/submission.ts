@@ -319,6 +319,7 @@ export async function publishSubmit(): Promise<void> {
       requiredEnv("VALIDATION_CAPTURE_PATH"),
       workflowRun(),
       artifacts.buildOutput.paper === undefined ? undefined : requiredEnv("VALIDATION_PAPER_PATH"),
+      artifacts.buildOutput.paper?.web === undefined ? undefined : requiredEnv("VALIDATION_PAPER_WEB_PATH"),
     );
     if (result.kind === "no-op") return;
     archiveCommit = result.archiveCommit;
@@ -559,6 +560,19 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
   } catch {
     paperStat = undefined;
   }
+  // The derived web bundle travels the same way, keyed to `paper.web` — the
+  // two-directional iff and the digest check mirror the PDF's exactly.
+  const webPath = requiredEnv("VALIDATION_PAPER_WEB_PATH");
+  const web = paper?.web;
+  let webStat: fs.Stats | undefined;
+  try {
+    webStat = fs.lstatSync(webPath);
+  } catch {
+    webStat = undefined;
+  }
+  if (web === undefined && webStat !== undefined) {
+    throw new ValidationError("validation artifact carries a paper-web.tar its build output does not record");
+  }
   if (paper === undefined) {
     if (paperStat !== undefined) throw new ValidationError("validation artifact carries a paper.pdf its build output does not record");
     return artifacts;
@@ -569,6 +583,14 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
   }
   if (sha256File(paperPath) !== paper.pdf.digest) {
     throw new ValidationError("validation paper digest does not match its build output");
+  }
+  if (web === undefined) return artifacts;
+  if (webStat === undefined) throw new ValidationError("validation paper web bundle is missing");
+  if (!webStat.isFile() || webStat.size !== web.bundle.bytes) {
+    throw new ValidationError("validation paper web bundle must be a regular file of the recorded size");
+  }
+  if (sha256File(webPath) !== web.bundle.digest) {
+    throw new ValidationError("validation paper web bundle digest does not match its build output");
   }
   return artifacts;
 }

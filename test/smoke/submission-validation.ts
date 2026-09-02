@@ -4,6 +4,11 @@
 // seedManifest/seedOverrides provisioning. Runs the same host-setup path the
 // trusted workflow uses (host/setup.ts) against the user's real ~/.lax, so an
 // existing warm store is reused and never re-downloaded. Needs docker.
+//
+// The `paper-web` fixture additionally needs the fetched ReflowTeX fork
+// (`npm run reflowtex:fetch` — checkout + hash-pinned venv): the web
+// derivation compiles and converts inside the pinned TeX image but encodes
+// through the fork on this host, exactly as the Validate job does.
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -23,6 +28,7 @@ import {
   LEAN_VERSION,
   MATHLIB_REV,
   MATHLIB_URL,
+  REFLOWTEX_REV,
 } from "../../src/submission-validation/pins.js";
 import {
   validateSubmission,
@@ -232,6 +238,51 @@ function fixtures(): SmokeFixture[] {
       },
     },
     {
+      // The web derivation's trusted path (paper-web-plan.md stage 3): the
+      // -shell-escape lualatex compile in the TeX image on its own fresh
+      // copy, tikz externalization through the re-injected sub-run, the
+      // in-image export (fonts by name, picture PDFs to sanitized SVG), the
+      // host-side encode over the fetched fork, the oracle, and the sealed
+      // paper-web.tar leaving the job bound to `paper.web`.
+      name: "paper-web",
+      id: "lax-45",
+      files: paperWebFiles(),
+      manifestExtra: "paper:\n  folder: paper\n  main: main.tex\n",
+      check(report, jobRoot) {
+        assertSuccessful(report);
+        const webSkips = report.warnings.filter((warning) => warning.rule.startsWith("web-"));
+        assert.equal(
+          webSkips.length,
+          0,
+          "the web derivation skipped (run `npm run reflowtex:fetch` first?): " +
+            JSON.stringify(webSkips, null, 2),
+        );
+        const paper = report.buildOutput!.paper;
+        assert(paper !== undefined, "the paper was not recorded");
+        const web = paper.web;
+        assert(web !== undefined, "the web view was not recorded");
+        assert.equal(web.format.tool, "reflowtex");
+        assert.equal(web.format.rev, REFLOWTEX_REV);
+        const webPath = (report as { paperWebPath?: string }).paperWebPath;
+        assert(webPath !== undefined && webPath.startsWith(jobRoot), "the bundle did not come out of the job directory");
+        const bundle = fs.readFileSync(webPath);
+        assert.equal(bundle.length, web.bundle.bytes);
+        assert.equal(createHash("sha256").update(bundle).digest("hex"), web.bundle.digest);
+        const entries = execFileSync("tar", ["-tf", webPath], { encoding: "utf8" }).trim().split("\n");
+        for (const required of ["index.json", "blocks/000.pb", "schema/latex.proto"]) {
+          assert(entries.includes(required), `bundle is missing ${required}`);
+        }
+        // The tikz picture came through the in-image dvisvgm conversion into
+        // the encoded block as inline SVG (the encode child's own dvisvgm
+        // seam is pinned shut on this path, so a missed conversion cannot
+        // pass silently — reaching here proves the export step converted).
+        const block = execFileSync("tar", ["-xOf", webPath, "blocks/000.pb"]);
+        assert(block.includes(Buffer.from("<path", "utf8")), "the encoded block carries no picture SVG");
+        // The PDF path is untouched beside it.
+        assert.equal(paper.pdf.pages, 1);
+      },
+    },
+    {
       name: "authored-reserved-name",
       id: "lax-41",
       files: authoredReservedNameFiles(),
@@ -402,6 +453,64 @@ end Lax44Proofs
 \\end{theorem}
 % lax end
 % lax begin Lax44Proofs.claim
+\\begin{proof}
+  By reflexivity.
+\\end{proof}
+% lax end
+\\end{document}
+`,
+  };
+}
+
+function paperWebFiles(): Record<string, string> {
+  return {
+    "concepts/Lax45.lean": "import Lax45.Claim\n",
+    "concepts/Lax45/Claim.lean": conceptModule(
+      "A claim",
+      "namespace Lax45.Claim\n/-- the claim -/\naxiom holds : 0 = 0\nend Lax45.Claim\n",
+    ),
+    "proofs/Lax45Proofs.lean": "import Lax45Proofs.Basic\n",
+    "proofs/Lax45Proofs/Basic.lean": `import Lax45.Claim
+
+namespace Lax45Proofs
+
+/--
+---
+conclusion: Lax45.Claim.holds
+---
+by reflexivity
+-/
+theorem claim : 0 = 0 := rfl
+
+end Lax45Proofs
+`,
+    // A textless tikz picture on purpose: externalization, the -shell-escape
+    // sub-run, the in-image dvisvgm conversion, and the SVG sanitizer are
+    // all exercised while the oracle's substrates stay token-identical
+    // (picture *label* text is a PDF-only token and a known oracle
+    // tolerance question, not this smoke's subject).
+    "paper/main.tex": `\\documentclass{article}
+\\usepackage{amsthm}
+\\usepackage{tikz}
+\\newtheorem{theorem}{Theorem}
+\\begin{document}
+The picture below has an arrow and a box drawn by tikz, externalized by
+the web compile into its own sub-run and converted to inline vector
+graphics for the reflow surface, while this paragraph provides the
+running text both substrates carry verbatim, word for word, so the
+derivation's oracle sees two token sequences that agree completely.
+
+\\begin{tikzpicture}
+  \\draw[->] (0,0) -- (2,1);
+  \\draw (3,0) rectangle (4,1);
+\\end{tikzpicture}
+
+% lax begin Lax45.Claim
+\\begin{theorem}
+  $0 = 0$.
+\\end{theorem}
+% lax end
+% lax begin Lax45Proofs.claim
 \\begin{proof}
   By reflexivity.
 \\end{proof}
