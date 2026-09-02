@@ -194,7 +194,7 @@ describe("trusted submit publisher", () => {
     expect(rejected.captureStore.promote).not.toHaveBeenCalled();
   });
 
-  it("admits a supersedes claim only against a registered target with a shared owner and a free slot", async () => {
+  it("admits a supersedes claim only when the command actor owns the registered target and its slot is free", async () => {
     const current = loaded();
     const artifacts = successfulArtifacts();
     artifacts.buildOutput.inputs.manifest.supersedes = "lax-7";
@@ -224,7 +224,19 @@ describe("trusted submit publisher", () => {
     const foreignTarget = submitHarness(new Map([["lax-42", current], ["lax-7", registeredTarget(bob)]]));
     await expect(
       foreignTarget.publisher.publish(request(current), artifacts, "/capture.tar", run),
-    ).rejects.toThrow("no owner of lax-7 owns lax-42; a submission can be superseded only by its own owners");
+    ).rejects.toThrow(
+      "alice does not own lax-7; only an owner of the superseded submission may submit or register lax-42",
+    );
+
+    const overlapping = loaded(replaceOwnerList("lax-42", current.texts, [alice, bob]));
+    const overlapOnly = submitHarness(
+      new Map([["lax-42", overlapping], ["lax-7", registeredTarget(bob)]]),
+    );
+    await expect(
+      overlapOnly.publisher.publish(request(overlapping), artifacts, "/capture.tar", run),
+    ).rejects.toThrow(
+      "alice does not own lax-7; only an owner of the superseded submission may submit or register lax-42",
+    );
 
     const takenSlot = submitHarness(
       new Map([["lax-42", current], ["lax-7", registeredTarget()]]),

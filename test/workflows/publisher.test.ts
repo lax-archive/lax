@@ -333,7 +333,7 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.changes()["record.json"]).toContain('"state": "registered"');
   });
 
-  it("register binds a supersedes claim against a registered target with a shared owner", async () => {
+  it("register binds a supersedes claim when the command actor owns the registered target", async () => {
     const current = loadedWithSupersedes("lax-7");
     const harness = publisherHarness(current, current, () => undefined, {
       "lax-7": dependencyLoaded("lax-7", "registered"),
@@ -401,7 +401,21 @@ describe("trusted Archive publisher modes", () => {
       "lax-7": dependencyLoaded("lax-7", "registered", bob),
     });
     await expect(foreignTarget.publisher.publish(request(registration), run)).rejects.toThrow(
-      "no owner of lax-7 owns lax-42; a submission can be superseded only by its own owners",
+      "alice does not own lax-7; only an owner of the superseded submission may submit or register lax-42",
+    );
+
+    const overlappingTexts = replaceOwnerList("lax-42", current.texts, [alice, bob]);
+    const overlapping = loaded(overlappingTexts);
+    const overlapOnly = publisherHarness(overlapping, overlapping, () => undefined, {
+      "lax-7": dependencyLoaded("lax-7", "registered", bob),
+    });
+    await expect(
+      overlapOnly.publisher.publish(
+        request({ ...registration, preconditions: overlapping.preconditions }),
+        run,
+      ),
+    ).rejects.toThrow(
+      "alice does not own lax-7; only an owner of the superseded submission may submit or register lax-42",
     );
 
     const takenSlot = publisherHarness(
