@@ -21,6 +21,7 @@ import * as ui from "./ui.js";
 import { updateCli } from "./update.js";
 import { serveWebsite } from "./website.js";
 import { checkForCliUpdate } from "./update-check.js";
+import { generateProofTree } from "./prooftree.js";
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 // The background release probe caches its result in ~/.lax/update-check.json,
@@ -209,6 +210,21 @@ program
         options: { port: string; databaseOnly?: boolean },
       ) => serveWebsite(folder, Number(options.port), { databaseOnly: options.databaseOnly }),
     ),
+  );
+
+program
+  .command("generate-prooftree")
+  .argument("<submission>", "lax-N submission id")
+  .option("--output <folder>", "output folder (defaults to ./prooftree-lax-N)")
+  .description("compose a kernel-checked proof tree for every statement of a submission")
+  .action(
+    run((
+      submission: string,
+      options: { output?: string },
+    ) => {
+      preflight(["git", "lean", "lake", "tar"]);
+      return generateProofTree(submission, { output: options.output });
+    }),
   );
 
 program

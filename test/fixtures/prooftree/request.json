@@ -1,0 +1,20 @@
+{
+  "moduleName": "Generated",
+  "outputOlean": "/tmp/lax-prooftree-smoke/Generated.olean",
+  "outputReport": "/tmp/lax-prooftree-smoke/report.json",
+  "conceptModules": ["Concepts"],
+  "entries": [
+    {
+      "statement": "A",
+      "proof": "proofA",
+      "generated": "Generated.A",
+      "assumptions": []
+    },
+    {
+      "statement": "B",
+      "proof": "proofB",
+      "generated": "Generated.B",
+      "assumptions": ["A"]
+    }
+  ]
+}
