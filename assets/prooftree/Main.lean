@@ -55,12 +55,23 @@ structure RewriteContext where
   sourceEnv : Environment
   outputEnv : IO.Ref Environment
   copied : IO.Ref (NameMap Name)
+  memo : IO.Ref (ExprMap Expr)
   helperPrefix : Name
   maxHeartbeats : USize
 
 mutual
 
 partial def rewriteExpr
+    (ctx : RewriteContext)
+    (replacements : NameMap Name)
+    (copying : NameSet)
+    (expr : Expr) : IO Expr := do
+  if let some rewritten := (← ctx.memo.get).get? expr then return rewritten
+  let rewritten ← rewriteExprCore ctx replacements copying expr
+  ctx.memo.modify fun values => values.insert expr rewritten
+  return rewritten
+
+partial def rewriteExprCore
     (ctx : RewriteContext)
     (replacements : NameMap Name)
     (copying : NameSet)
@@ -142,27 +153,25 @@ partial def rewriteExpr
       ctx.copied.modify fun values => values.insert name generatedName
       return .const generatedName levels
   | .app fn arg =>
-      return .app
+      return expr.updateApp!
         (← rewriteExpr ctx replacements copying fn)
         (← rewriteExpr ctx replacements copying arg)
-  | .lam name domain body binderInfo =>
-      return .lam name
+  | .lam _ domain body binderInfo =>
+      return expr.updateLambda! binderInfo
         (← rewriteExpr ctx replacements copying domain)
         (← rewriteExpr ctx replacements copying body)
-        binderInfo
-  | .forallE name domain body binderInfo =>
-      return .forallE name
+  | .forallE _ domain body binderInfo =>
+      return expr.updateForall! binderInfo
         (← rewriteExpr ctx replacements copying domain)
         (← rewriteExpr ctx replacements copying body)
-        binderInfo
-  | .letE name type value body nonDep =>
-      return .letE name
+  | .letE _ type value body nonDep =>
+      return expr.updateLet!
         (← rewriteExpr ctx replacements copying type)
         (← rewriteExpr ctx replacements copying value)
         (← rewriteExpr ctx replacements copying body)
         nonDep
-  | .mdata data body =>
-      return .mdata data (← rewriteExpr ctx replacements copying body)
+  | .mdata _ body =>
+      return expr.updateMData! (← rewriteExpr ctx replacements copying body)
   | .proj typeName index body =>
       let rewrittenTypeName ←
         if let some replacement := replacements.find? typeName then
@@ -178,7 +187,10 @@ partial def rewriteExpr
           match ← rewriteExpr ctx replacements copying (.const typeName levels) with
           | .const rewritten _ => pure rewritten
           | _ => throw <| IO.userError s!"could not rewrite projected proof helper {typeName}"
-      return .proj rewrittenTypeName index (← rewriteExpr ctx replacements copying body)
+      let rewrittenBody ← rewriteExpr ctx replacements copying body
+      if rewrittenTypeName == typeName then
+        return expr.updateProj! rewrittenBody
+      return .proj rewrittenTypeName index rewrittenBody
   | _ => return expr
 
 partial def copyInductive
@@ -264,10 +276,12 @@ unsafe def main (args : List String) : IO UInt32 := do
   let outputEnv ← importModules conceptImports {} (trustLevel := 1024) (loadExts := false)
   let outputEnv ← IO.mkRef (outputEnv.setMainModule request.moduleName.toName)
   let copied ← IO.mkRef ({} : NameMap Name)
+  let memo ← IO.mkRef ({} : ExprMap Expr)
   let rewriteContext : RewriteContext := {
     sourceEnv
     outputEnv
     copied
+    memo
     helperPrefix := request.moduleName.toName ++ `_proofTreeHelpers
     maxHeartbeats := (Core.getMaxHeartbeats unlimitedOptions).toUSize
   }
@@ -277,6 +291,7 @@ unsafe def main (args : List String) : IO UInt32 := do
 
   for entry in request.entries do
     IO.println s!"  composing {entry.statement}"
+    memo.set {}
     let statementName := entry.statement.toName
     let proofName := entry.proof.toName
     let generatedName := entry.generated.toName
