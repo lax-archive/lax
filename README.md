@@ -128,6 +128,7 @@ database directly:
 lax init submission --title "My formalization"
 lax build submission
 lax serve submission
+lax generate-prooftree lax-N
 git commit && git push
 lax submit submission
 lax set-owners submission --new-list alice bob
@@ -180,6 +181,16 @@ provide partial iteration builds without replacing `build-output.json`, and
 immutable `@sha256` validation image, or use `--build-from-source` to build and
 cache the pinned runtime locally. Independent local findings are reported once
 in a phase-grouped summary instead of as separate errors.
+
+`lax generate-prooftree lax-N` reads the local Archive database, selects one
+recursively grounded proof for each reachable statement when possible, and
+composes replacement theorems from the leaves upward. If no grounded proof is
+available it follows a random proof and reports the remaining open or cyclic
+statement leaves. The generated `.olean` module and `proof-tree.json` include
+a kernel axiom audit; the command succeeds only when every statement of the
+target submission has a generated theorem depending on background axioms
+only. The first run prepares a pinned local Mathlib cache. Use `--output` to
+choose the artifact folder.
 
 `lax delete` accepts an issue reference or local submission folder, refreshes
 the local database to detect immutable/deleted records and stranded

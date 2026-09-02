@@ -19,6 +19,7 @@ import { printSpec } from "./spec.js";
 import { upgradeCli } from "./upgrade.js";
 import { serveWebsite } from "./website.js";
 import { checkForCliUpdate } from "./update-check.js";
+import { generateProofTree } from "./prooftree.js";
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 checkForCliUpdate(version);
@@ -171,6 +172,21 @@ program
   );
 
 program
+  .command("generate-prooftree")
+  .argument("<submission>", "lax-N submission id")
+  .option("--output <folder>", "output folder (defaults to ./prooftree-lax-N)")
+  .description("compose a kernel-checked proof tree for every statement of a submission")
+  .action(
+    run("lax generate-prooftree", (
+      submission: string,
+      options: { output?: string },
+    ) => {
+      preflight(["git", "lean", "lake", "tar"]);
+      return generateProofTree(submission, { output: options.output });
+    }),
+  );
+
+program
   .command("doctor")
   .description("check local tools, GitHub login, validation runtime, database, and Website renderer")
   .action(run("lax doctor", doctor));
@@ -200,7 +216,7 @@ program
     );
   }));
 
-program.parseAsync(process.argv).catch((error: unknown) => {
+await program.parseAsync(process.argv).catch((error: unknown) => {
   console.error(`lax: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 });
