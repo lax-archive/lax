@@ -7,12 +7,14 @@
     {
       "statement": "A",
       "proof": "proofA",
-      "generated": "Generated.A"
+      "generated": "Generated.A",
+      "assumptions": []
     },
     {
       "statement": "B",
       "proof": "proofB",
-      "generated": "Generated.B"
+      "generated": "Generated.B",
+      "assumptions": ["A"]
     }
   ]
 }

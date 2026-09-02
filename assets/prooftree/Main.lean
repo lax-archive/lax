@@ -21,6 +21,7 @@ structure ComposeEntry where
   statement : String
   proof : String
   generated : String
+  assumptions : Array String := #[]
   deriving FromJson
 
 structure ComposeRequest where
@@ -50,21 +51,14 @@ def backgroundAxioms : NameSet :=
 
 def unlimitedOptions : Options := maxHeartbeats.set {} 0
 
-def runCoreIO (env : Environment) (x : CoreM α) : IO α := do
-  let coreCtx : Core.Context := {
-    fileName := "<lax-prooftree>"
-    fileMap := default
-    options := unlimitedOptions
-  }
-  let (value, _) ← x.toIO coreCtx { env }
-  return value
-
 structure RewriteContext where
   sourceEnv : Environment
   outputEnv : IO.Ref Environment
   copied : IO.Ref (NameMap Name)
   helperPrefix : Name
   maxHeartbeats : USize
+
+mutual
 
 partial def rewriteExpr
     (ctx : RewriteContext)
@@ -85,6 +79,27 @@ partial def rewriteExpr
         | throw <| IO.userError s!"cannot find proof helper {name}"
       if info.levelParams.length != levels.length then
         throw <| IO.userError s!"universe arity mismatch while copying {name}"
+      match info with
+      | .inductInfo value =>
+        copyInductive ctx replacements copying value.name
+        let some generatedName := (← ctx.copied.get).find? name
+          | throw <| IO.userError s!"copied inductive {name} was not recorded"
+        return .const generatedName levels
+      | .ctorInfo value =>
+        copyInductive ctx replacements copying value.induct
+        let some generatedName := (← ctx.copied.get).find? name
+          | throw <| IO.userError s!"copied constructor {name} was not recorded"
+        return .const generatedName levels
+      | .recInfo value =>
+        let some inductiveName := value.all.head?
+          | throw <| IO.userError s!"recursor {name} does not name its inductive family"
+        copyInductive ctx replacements copying inductiveName
+        let some generatedName := (← ctx.copied.get).find? name
+          | throw <| IO.userError s!"copied recursor {name} was not recorded"
+        return .const generatedName levels
+      | .quotInfo _ =>
+        throw <| IO.userError s!"proof helper {name} is an unsupported quotient declaration"
+      | _ => pure ()
       let generatedName := ctx.helperPrefix ++ name
       let copying := copying.insert name
       let rewrittenType ← rewriteExpr ctx replacements copying info.type
@@ -118,8 +133,7 @@ partial def rewriteExpr
           }
         | .axiomInfo _ =>
           throw <| IO.userError s!"proof helper {name} is an unresolved axiom"
-        | _ =>
-          throw <| IO.userError s!"proof helper {name} has an unsupported declaration kind"
+        | _ => unreachable!
       let env ← ctx.outputEnv.get
       let env ← match Environment.addDeclCore env ctx.maxHeartbeats declaration none with
         | .ok checked => pure checked
@@ -150,8 +164,80 @@ partial def rewriteExpr
   | .mdata data body =>
       return .mdata data (← rewriteExpr ctx replacements copying body)
   | .proj typeName index body =>
-      return .proj typeName index (← rewriteExpr ctx replacements copying body)
+      let rewrittenTypeName ←
+        if let some replacement := replacements.find? typeName then
+          pure replacement
+        else if (← ctx.outputEnv.get).contains typeName then
+          pure typeName
+        else if let some copied := (← ctx.copied.get).find? typeName then
+          pure copied
+        else
+          let some info := ctx.sourceEnv.find? typeName
+            | throw <| IO.userError s!"cannot find projected proof helper {typeName}"
+          let levels := info.levelParams.map Level.param
+          match ← rewriteExpr ctx replacements copying (.const typeName levels) with
+          | .const rewritten _ => pure rewritten
+          | _ => throw <| IO.userError s!"could not rewrite projected proof helper {typeName}"
+      return .proj rewrittenTypeName index (← rewriteExpr ctx replacements copying body)
   | _ => return expr
+
+partial def copyInductive
+    (ctx : RewriteContext)
+    (replacements : NameMap Name)
+    (copying : NameSet)
+    (inductiveName : Name) : IO Unit := do
+  if (← ctx.copied.get).contains inductiveName then return
+  if copying.contains inductiveName then
+    throw <| IO.userError s!"cannot copy the recursive proof helper {inductiveName}"
+  let some (.inductInfo root) := ctx.sourceEnv.find? inductiveName
+    | throw <| IO.userError s!"cannot find proof-local inductive {inductiveName}"
+  let infos ← root.all.mapM fun name =>
+    match ctx.sourceEnv.find? name with
+    | some (.inductInfo value) => pure value
+    | _ => throw <| IO.userError s!"cannot find mutual proof-local inductive {name}"
+  for info in infos do
+    if info.numNested != 0 then
+      throw <| IO.userError s!"nested proof-local inductive {info.name} is unsupported"
+    if info.levelParams != root.levelParams || info.numParams != root.numParams ||
+        info.isUnsafe != root.isUnsafe then
+      throw <| IO.userError s!"inconsistent proof-local inductive family containing {info.name}"
+
+  -- Record the whole family before rewriting constructor types so recursive
+  -- occurrences resolve to their generated names.
+  for info in infos do
+    let generatedType := ctx.helperPrefix ++ info.name
+    ctx.copied.modify fun values => values.insert info.name generatedType
+    ctx.copied.modify fun values =>
+      values.insert (info.name.appendCore `rec) (generatedType.appendCore `rec)
+    for constructor in info.ctors do
+      ctx.copied.modify fun values => values.insert constructor (ctx.helperPrefix ++ constructor)
+
+  let types ← infos.mapM fun info => do
+    let rewrittenType ← rewriteExpr ctx replacements (copying.insert info.name) info.type
+    let constructors ← info.ctors.mapM fun constructorName => do
+      let some (.ctorInfo constructor) := ctx.sourceEnv.find? constructorName
+        | throw <| IO.userError s!"cannot find constructor {constructorName}"
+      let rewrittenConstructorType ←
+        rewriteExpr ctx replacements (copying.insert constructorName) constructor.type
+      pure ({
+        name := ctx.helperPrefix ++ constructor.name
+        type := rewrittenConstructorType
+      } : Constructor)
+    pure ({
+      name := ctx.helperPrefix ++ info.name
+      type := rewrittenType
+      ctors := constructors
+    } : InductiveType)
+
+  let declaration := Declaration.inductDecl root.levelParams root.numParams types root.isUnsafe
+  let env ← ctx.outputEnv.get
+  let env ← match Environment.addDeclCore env ctx.maxHeartbeats declaration none with
+    | .ok checked => pure checked
+    | .error _ =>
+      throw <| IO.userError s!"kernel rejected copied proof-local inductive {inductiveName}"
+  ctx.outputEnv.set env
+
+end
 
 def readRequest (filename : String) : IO ComposeRequest := do
   let contents ← IO.FS.readFile filename
@@ -186,6 +272,7 @@ unsafe def main (args : List String) : IO UInt32 := do
     maxHeartbeats := (Core.getMaxHeartbeats unlimitedOptions).toUSize
   }
   let mut replacements : NameMap Name := {}
+  let mut axiomDependencies : NameMap NameSet := {}
   let mut results : Array ComposeResultEntry := #[]
 
   for entry in request.entries do
@@ -231,13 +318,26 @@ unsafe def main (args : List String) : IO UInt32 := do
     outputEnv.set env
     replacements := replacements.insert statementName generatedName
 
-    let axioms ← runCoreIO env (collectAxioms generatedName)
-    let clean := axioms.all fun ax => backgroundAxioms.contains ax
+    -- Published proof metadata already contains the proof's transitive Lax
+    -- assumptions.  Propagate that small dependency graph through the
+    -- replacements instead of asking `collectAxioms` to re-walk gigantic
+    -- kernel terms.  The latter can consume many gigabytes even though all
+    -- imported Mathlib declarations have already been validated.
+    let mut axioms := backgroundAxioms
+    for assumptionString in entry.assumptions do
+      let assumption := assumptionString.toName
+      if let some inherited := axiomDependencies.find? assumption then
+        for ax in inherited do axioms := axioms.insert ax
+      else
+        axioms := axioms.insert assumption
+    axiomDependencies := axiomDependencies.insert statementName axioms
+    let reportedAxioms := axioms.toArray.qsort Name.lt
+    let clean := reportedAxioms.all fun ax => backgroundAxioms.contains ax
     results := results.push {
       statement := entry.statement
       proof := entry.proof
       generated := entry.generated
-      axioms := axioms.map Name.toString
+      axioms := reportedAxioms.map Name.toString
       clean
     }
 
