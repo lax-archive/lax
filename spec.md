@@ -612,10 +612,12 @@ public git repository. After validation, the archive also publishes an
 immutable, content-addressed capture containing the exact package sources,
 generated manifests, and artifacts that the workflow checked.
 
-The source repository is a canonical public
-``https://github.com/<owner>/<repository>`` URL, the commit is a full lowercase
-40-character SHA, and the folder is ``.`` or a relative POSIX path of at most
-32 segments and 512 UTF-8 bytes without empty, ``.``, or ``..`` segments.
+The source repository is a canonical, anonymously fetchable HTTPS URL on
+``github.com``, ``gitlab.com``, ``codeberg.org``, or ``bitbucket.org``. GitHub,
+Codeberg, and Bitbucket paths contain exactly an owner/workspace and repository;
+GitLab paths may include nested groups. The commit is a full lowercase
+40-character SHA, and the folder is ``.`` or a relative POSIX path of at most 32
+segments and 512 UTF-8 bytes without empty, ``.``, or ``..`` segments.
 
 ## Lifecycle
 
@@ -747,7 +749,8 @@ this sense.
 
 ## Build Pipeline
 
-The trusted pipeline fetches the submitted public GitHub commit and a pinned
+The trusted pipeline fetches the submitted public Git commit from a supported
+host and a pinned
 Archive snapshot into an ephemeral GitHub-hosted runner. It copies that
 checkout into fresh workspaces for compilation and derives all dependency
 inputs from the validated lakefiles and Archive records. The local authoring
@@ -1112,8 +1115,9 @@ the regenerated checkpoint.
 
 **lax submit [folder]** derives the (repository, commit, folder) triple from
 the folder's git state — the remote URL, the HEAD commit, the folder's path
-within the repository — and normalizes GitHub SCP or SSH spellings to the
-canonical public ``https://github.com/<owner>/<repository>`` URL. By default
+within the repository — and normalizes the supported providers' SCP or SSH
+clone spellings to credential-free HTTPS URLs, removing a trailing ``.git``.
+URLs containing credentials, ports, queries, or fragments are rejected. By default
 it requires a clean worktree and a HEAD present on ``origin``. Before posting
 the command it reuses a matching full local build or runs ``lax build``.
 ``--allow-dirty`` still submits committed HEAD, excluding local changes, and

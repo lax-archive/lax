@@ -2,7 +2,7 @@
 // runtime/fetch-source.mjs when the custom image died — the stock sandbox
 // image carries no git, and fetching a *validated* canonical URL is a trusted
 // pre-sandbox step anyway). Every check carries over: canonical
-// https://github.com URL narrowing, full 40-hex commit, HOME isolation,
+// supported-host URL narrowing, full 40-hex commit, HOME isolation,
 // https-only git protocol, and the rev-parse assertion that the checkout
 // really is the requested immutable commit. The checkout is then inspected
 // repo-wide: symlinks and non-regular entries are rejected before anything
@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { SourceLocation } from "../../shared/types.js";
+import { validateCommit, validateRepositoryUrl } from "../../shared/validation.js";
 
 export interface FetchedSource {
   repositoryRoot: string;
@@ -32,7 +33,7 @@ export type GitRunner = (args: string[]) => Promise<{ code: number; output: stri
 const MAX_FALLBACK_DEPTH = 8192;
 
 /**
- * Fetch one commit of a public GitHub repository into `destination` with an
+ * Fetch one commit of a public supported repository into `destination` with an
  * isolated git environment: no inherited HOME or git config, https protocol
  * only, no terminal prompts, and a final `rev-parse HEAD` equality assertion.
  */
@@ -42,12 +43,8 @@ export async function fetchGitCheckout(
   destination: string,
   timeoutMs: number,
 ): Promise<void> {
-  if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
-    throw new Error("repository is not a canonical public GitHub URL");
-  }
-  if (!/^[0-9a-f]{40}$/u.test(commit)) {
-    throw new Error("commit must be a full lowercase SHA");
-  }
+  validateRepositoryUrl(repository);
+  validateCommit(commit);
   if (!path.isAbsolute(destination) || destination === "/") {
     throw new Error("destination must be a specific absolute path");
   }

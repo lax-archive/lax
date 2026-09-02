@@ -122,7 +122,7 @@ program
   .option("-f, --force", "submit with no local checks at all — the archive is the only verdict")
   .option("--allow-dirty", "submit committed HEAD while excluding local changes")
   .option("--resume", "reattach to the submit already requested here")
-  .option("--repository <url>", "public HTTPS GitHub repository URL of an explicit source")
+  .option("--repository <url>", "public HTTPS repository URL of an explicit source")
   .option("--commit <sha>", "full commit SHA of an explicit source")
   .option("--folder <path>", "folder relative to the repository root (with --repository)")
   .description("send the pushed commit to the archive as a replaceable draft")

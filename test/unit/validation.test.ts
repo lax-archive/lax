@@ -96,10 +96,14 @@ describe("shared input validation", () => {
     expect(packageNameForSubmission("lax-0")).toBe("Lax0");
   });
 
-  it("accepts only canonical HTTPS GitHub repository URLs", () => {
-    expect(validateRepositoryUrl("https://github.com/alice/repository")).toBe(
+  it("accepts canonical public repository URLs on the four supported hosts", () => {
+    for (const repository of [
       "https://github.com/alice/repository",
-    );
+      "https://gitlab.com/alice/repository",
+      "https://gitlab.com/research/formalization/repository",
+      "https://codeberg.org/alice/repository",
+      "https://bitbucket.org/alice/repository",
+    ]) expect(validateRepositoryUrl(repository)).toBe(repository);
     expect(() => validateRepositoryUrl("git@github.com:alice/repository.git")).toThrow();
     expect(() => validateRepositoryUrl("https://github.com/alice/repository.git")).toThrow();
     expect(() => validateRepositoryUrl("https://github.com/alice/repository?q=1")).toThrow();
@@ -108,6 +112,16 @@ describe("shared input validation", () => {
     expect(() => validateRepositoryUrl("https://github.com/alice/repository#readme")).toThrow();
     expect(() => validateRepositoryUrl("https://github.com/alice%2Frepository/name")).toThrow();
     expect(() => validateRepositoryUrl("https://github.com/alice/repository/extra")).toThrow();
+    expect(() => validateRepositoryUrl("https://example.com/alice/repository")).toThrow(
+      "repository host must be one of",
+    );
+    expect(() => validateRepositoryUrl("https://constructor/alice/repository")).toThrow(
+      "repository host must be one of",
+    );
+    expect(() => validateRepositoryUrl("https://gitlab.com/alice/repository/-/tree/main")).toThrow();
+    expect(() => validateRepositoryUrl("https://GitLab.com/alice/repository")).toThrow(
+      "canonical form",
+    );
     for (const control of ["\n", "\r", "\t", "\u007f", "\u0085"]) {
       expect(() => validateRepositoryUrl(`https://github.com/alice/repository${control}`)).toThrow(
         "control character",
