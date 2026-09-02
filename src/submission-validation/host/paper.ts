@@ -20,9 +20,10 @@ const execFileAsync = promisify(execFile);
  * (TeX Live 2023). */
 export const MIN_LATEXMK_VERSION = "4.77";
 
-/** The directory holding `laxmark.sty` and nothing else, so it can sit on
- * TEXINPUTS without exposing anything beside it. Resolved from this module,
- * which lives at the same depth under `src/` and `dist/`. */
+/** The directory holding the archive's marker packages (`laxmark.sty`, and
+ * `laxreflow.sty` for the derived web view) and nothing else, so it can sit
+ * on TEXINPUTS without exposing anything beside them. Resolved from this
+ * module, which lives at the same depth under `src/` and `dist/`. */
 export function laxmarkDirectory(): string {
   const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "assets", "tex");
   if (!fs.existsSync(path.join(dir, "laxmark.sty"))) {

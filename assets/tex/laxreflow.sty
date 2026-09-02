@@ -1,0 +1,129 @@
+%% laxreflow.sty -- the Lax paper layer's web-view injection package.
+%% Lax-authored, licensed Apache-2.0 (the repository license): it only
+%% *loads* the AGPL ReflowTeX serializer at run time and derives from no
+%% ReflowTeX source (see reflowtex/README.md for the licensing posture).
+%%
+%% The web derivation (paper-web-plan.md) compiles a fresh rewritten copy
+%% of the author's sources with this package injected in front of the
+%% author's \documentclass, the way laxmark.sty is injected on the PDF
+%% path:
+%%
+%%   lualatex -shell-escape -interaction=nonstopmode --jobname=<stem>
+%%     "\RequirePackage{laxreflow}\input{<main>}"
+%%
+%% The explicit --jobname is the -usepretex lesson from paper-plan.md
+%% verbatim: without it \jobname is texput. Two more driver duties: the
+%% job directory must hold the fork's serializer.lua (dofile resolves it
+%% against the cwd) and a pre-created pics/ directory (tikz will not make
+%% its externalization prefix), and it must precede the source directory
+%% on TEXINPUTS so the job's rewritten main wins.
+%%
+%% Installed here, before the author's class -- reimplementing the three
+%% hooks of the ReflowTeX wrapper template without wrapping the document:
+%%   - the luaotfload location precedence fix (texmf first), so the file
+%%     LuaTeX typesets with is the file the encode step serves;
+%%   - the node-list serializer (paragraphs unbroken, displays finished);
+%%   - the shipout walk, which learns the document order of the two;
+%% plus the tikz picture capture, armed only if the author loads tikz,
+%% and the web lowering of \laxmark: a user_defined whatsit at the
+%% current point (user_id 90210, string value "b:<n>"/"e:<n>"), an exact
+%% content-stream position, legal in both modes -- replacing the PDF
+%% path's destination geometry entirely (no boundary rule, no v/h tags,
+%% no coordinates on this target). The author's class, fonts, and
+%% preamble are untouched.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{laxreflow}[2026/09/02 v0.1 Lax reflow extraction hooks]
+\RequirePackage{iftex}
+\ifLuaTeX\else
+  \PackageError{laxreflow}{laxreflow requires LuaTeX}%
+    {The reflow serializer captures LuaTeX node lists; the web derivation
+     always runs lualatex regardless of the manifest engine.}
+\fi
+
+%% The one author-visible key this package adds: \iflaxweb is true on the
+%% web target, and laxmark.sty defines it false on the PDF target, so an
+%% author may guard print-only material (marginalia, a \pageref-bearing
+%% sentence). Optional and additive; see instructions.md.
+\newif\iflaxweb
+\laxwebtrue
+
+%% Prefer texmf fonts over same-named OS fonts, before any font loads
+%% (the wrapper template's location-precedence fix: glyphs are addressed
+%% by the index LuaTeX assigns, so compiling and serving must resolve a
+%% font name to the same file).
+\directlua{
+  if fonts and fonts.names and fonts.names.set_location_precedence then
+    fonts.names.set_location_precedence({'texmf', 'system', 'local'})
+    fonts.names.flush_lookup_cache()
+  end
+}
+
+%% The node-list serializer (the fork's patched copy, resolved from the
+%% job directory exactly as the wrapper template resolves it).
+\directlua{dofile("serializer.lua")}
+
+%% The shipout walk needs each finished page. \ShipoutBox is \chardef'd
+%% by the kernel, so \numexpr yields its number.
+\AddToHook{shipout/before}{\directlua{Serializer.shipout(\the\numexpr\ShipoutBox\relax)}}
+
+%% Picture capture, armed only if the author loads tikz: externalise each
+%% tikzpicture and stamp attribute 902 (the serializer's PIC_ATTR) on its
+%% nodes so the picture node can be joined to its PDF, which the encode
+%% step converts to sanitized SVG.
+\newcount\laxreflowPicCount
+\AddToHook{package/tikz/after}{%
+  \usetikzlibrary{external}%
+  \tikzexternalize[prefix=pics/]%
+  %% The externalization sub-run recompiles the document under the
+  %% picture's jobname, and the stock system call re-inputs the main file
+  %% *without* the pretex injection -- so the sub-run would never load
+  %% this package, never arm tikzexternalize, and solemnly typeset the
+  %% whole document as the "picture". Re-inject the package into the
+  %% sub-run's command line. (The sub-run's serializer writes its own
+  %% output.json; the parent run finishes last and overwrites it.)
+  \tikzset{external/system call={lualatex \tikzexternalcheckshellescape
+    -halt-on-error -interaction=batchmode -jobname "\image"
+    "\string\RequirePackage{laxreflow}\texsource"}}%
+  %% Hook code is a token list executed in place, not a macro body, so the
+  %% \def's parameter is written #1, not ##1.
+  \let\laxreflow@orig\pgfincludeexternalgraphics
+  \def\pgfincludeexternalgraphics#1{%
+    \global\advance\laxreflowPicCount by 1
+    \directlua{Serializer.note_picture(\the\laxreflowPicCount, "\luaescapestring{#1}")}%
+    \begingroup\attribute902=\laxreflowPicCount\relax\laxreflow@orig{#1}\endgroup}}
+
+\newskip\laxreflow@skip
+
+%% The whatsit: node type user_defined, user_id 90210, value "b:12"/"e:12".
+%% type 115 = string-valued ('s'). node.write appends it to the current
+%% list in whatever mode TeX is in; \directlua itself typesets nothing, so
+%% it does not start a paragraph in vertical mode.
+\def\laxreflow@node#1#2{\directlua{
+  local n = node.new("whatsit", "user_defined")
+  n.user_id = 90210
+  n.type = 115
+  n.value = "#1:#2"
+  node.write(n)
+}}
+
+%% A whatsit is zero-size, but in vertical mode it still changes layout:
+%% it ends the vertical list, so the next \addvspace sees \lastskip=0 and
+%% adds its skip instead of merging -- the spike measured \topsep-sized
+%% (~8pt) drift at theorem/proof boundaries without the lift. Lifting the
+%% trailing glue over the whatsit (remove, whatsit, put back) restores
+%% \lastskip; net vertical space is unchanged. Same physics as laxmark.sty.
+\DeclareRobustCommand\laxmark[2]{%
+  \ifvmode
+    \ifdim\lastskip=\z@
+      \laxreflow@node{#1}{#2}%
+    \else
+      \laxreflow@skip\lastskip
+      \vskip-\laxreflow@skip
+      \laxreflow@node{#1}{#2}%
+      \vskip\laxreflow@skip
+    \fi
+  \else
+    \laxreflow@node{#1}{#2}%
+  \fi}
+
+\endinput

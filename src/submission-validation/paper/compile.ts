@@ -37,8 +37,8 @@ export function latexmkArguments(engine: PaperEngine, main: string): string[] {
 }
 
 /**
- * The environment of a compile. `TEXINPUTS` is the directory holding
- * `laxmark.sty` and nothing else, **non-recursive** (`<dir>:`, not `<dir>//:`
+ * The environment of a compile. `TEXINPUTS` is the directory holding the
+ * archive's marker packages and nothing else, **non-recursive** (`<dir>:`, not `<dir>//:`
  * — with `//` an engine can pick up another run's `.bbl`); the trailing colon
  * appends TeX Live's default path. The source date makes pdfTeX and XeTeX
  * byte-reproducible (LuaTeX additionally needs the package's trailer id).

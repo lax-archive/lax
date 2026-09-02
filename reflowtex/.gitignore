@@ -1,0 +1,5 @@
+# The fetched upstream working copy and the pinned Python env — both are
+# reproduced by `npm run reflowtex:fetch` and must never be committed (the
+# checkout is AGPL upstream source; see README.md).
+checkout/
+venv/

@@ -15,7 +15,8 @@
 %%
 %% Ids never enter the PDF -- destination names carry only the number -- so
 %% there is no escaping question, and this directory must contain nothing
-%% but this file: it goes on TEXINPUTS (non-recursively).
+%% but the archive's marker packages (this file, and laxreflow.sty for the
+%% derived web view): it goes on TEXINPUTS (non-recursively).
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesPackage{laxmark}[2026/09/02 v0.3 Lax paper marker destinations]
 \RequirePackage{iftex}
@@ -71,6 +72,13 @@
   \else
     \lax@dest{#1}{#2}{h}%
   \fi}
+
+%% The web derivation's package (laxreflow.sty) defines \iflaxweb as true
+%% so an author may guard print-only material (marginalia, a
+%% \pageref-bearing sentence); on this, the PDF path, it is false. A pure
+%% no-op here: \newif only defines macros and typesets nothing, so the
+%% PDF bytes are untouched.
+\newif\iflaxweb
 
 %% Reproducibility. With SOURCE_DATE_EPOCH + FORCE_SOURCE_DATE, pdfTeX and
 %% xdvipdfmx already produce byte-identical output across runs, but LuaTeX

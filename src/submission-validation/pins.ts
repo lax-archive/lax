@@ -53,6 +53,20 @@ export const PAPER_IMAGE_DIGEST =
   "f25ee2dcd00f58198f918064f4a1c8562410b33e84155bd55b02b419d73d9391";
 export const PAPER_IMAGE = `${PAPER_IMAGE_NAME}@sha256:${PAPER_IMAGE_DIGEST}`;
 
+/**
+ * The ReflowTeX fork behind the paper web view (paper-web-plan.md stage 1):
+ * the node-list serializer and encode pipeline that derive a paper's
+ * reflowable HTML bundle. Consumed at this rev by `reflowtex/fetch.mjs`
+ * (`npm run reflowtex:fetch`), which applies the patches in
+ * `reflowtex/patches/` — AGPL bytes never enter the npm tarball; see
+ * `reflowtex/README.md`. Until the Jan-owned `lax-archive/reflowtex` fork
+ * repo exists, the pin names the upstream repository at the rev the patches
+ * were derived against; fetch.mjs parses these two constants, so this module
+ * stays the single source of truth.
+ */
+export const REFLOWTEX_URL = "https://github.com/radek-p/reflowtex";
+export const REFLOWTEX_REV = "36f8365eed25ece1db38e0059bcbba3c250802e1";
+
 /** Version of the validation runtime layout recorded in reports and captures.
  * The capture layout (concepts|proofs → package/, lib/) is unchanged from the
  * baked-image era, so the version stays 1. */

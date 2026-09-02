@@ -4,8 +4,9 @@
 // pid caps, the workspace watchdog — but from a second image that carries
 // no Lean and mounts none of the Lean runtime. The container sees exactly
 // three things: the job's compile copy of the paper folder (writable, it is
-// where latexmk writes), the directory holding `laxmark.sty` and nothing else
-// (read-only, on TEXINPUTS), and /tmp. The arguments and environment are the
+// where latexmk writes), the directory holding the archive's marker packages
+// (`laxmark.sty`, `laxreflow.sty`) and nothing else (read-only, on
+// TEXINPUTS), and /tmp. The arguments and environment are the
 // ones paper/compile.ts gives every executor; the host path (host/paper.ts)
 // runs the same command with the machine's own latexmk.
 
@@ -24,7 +25,8 @@ export function paperImage(): ContainerImage {
 export const PAPER_CONTAINER_PATHS = {
   /** The compile copy of `paper.folder`; latexmk's working directory. */
   work: "/paper",
-  /** The directory holding `laxmark.sty`, on TEXINPUTS. */
+  /** The directory holding the marker packages (`laxmark.sty`,
+   * `laxreflow.sty`), on TEXINPUTS. */
   tex: "/opt/lax/tex",
 } as const;
 
