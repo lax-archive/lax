@@ -226,24 +226,60 @@ describe("submission workflow wiring", () => {
     // poison every later run (rewrite-plan.md stage 3 execution notes). The
     // static gate ahead of the restore only fetches and parses; it executes
     // nothing, and it writes only into the job dir.
-    const runs = jobs.validate.steps.map((step) => step.run ?? step.uses ?? "");
-    const gate = runs.findIndex((run) => run === "node dist/submission-validation/run.js --gate");
-    const restore = runs.findIndex((run) => run.startsWith("actions/cache/restore"));
-    const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
-    const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
-    const validate = runs.findIndex((run) => run === "node dist/submission-validation/run.js");
+    const steps = jobs.validate.steps;
+    const gate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js --gate");
+    const restore = steps.findIndex(
+      (step) => step.uses?.startsWith("actions/cache/restore") === true && step.with?.key === HOST_CACHE_KEY,
+    );
+    const setup = steps.findIndex((step) => (step.run ?? "").includes("dist/submission-validation/host/setup-vm.js"));
+    const save = steps.findIndex(
+      (step) => step.uses?.startsWith("actions/cache/save") === true && step.with?.key === HOST_CACHE_KEY,
+    );
+    const validate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js");
     expect(gate).toBeGreaterThanOrEqual(0);
     expect(gate).toBeLessThan(restore);
     expect(restore).toBeGreaterThanOrEqual(0);
     expect(restore).toBeLessThan(setup);
     expect(setup).toBeLessThan(save);
     expect(save).toBeLessThan(validate);
-    // The cache identity is the reviewed pins module plus a layout salt.
+    // Two cache identities exist in the job, each keyed by reviewed inputs:
+    // the host store by the pins module plus a layout salt, the reflowtex
+    // encode venv by the hash-pinned requirements lock. Nothing else.
     for (const step of jobs.validate.steps) {
       if (step.uses?.startsWith("actions/cache/") !== true) continue;
-      expect(step.with?.key).toBe(HOST_CACHE_KEY);
-      for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
+      if (step.with?.key === HOST_CACHE_KEY) {
+        for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
+      } else {
+        expect(step.with?.key).toContain("hashFiles('reflowtex/requirements.lock')");
+        expect(step.with?.path).toBe("reflowtex/venv");
+      }
     }
+  });
+
+  it("fetches the pinned reflowtex fork before untrusted submission code, failure-tolerant", () => {
+    // The encode venv and checkout are runner-side prerequisites of the web
+    // derivation; a fetch hiccup must degrade to a `web-toolchain` skip of
+    // the web view, never a failed validation — so every step tolerates
+    // failure. The venv save sits before the lean restore, i.e. before any
+    // submission code can execute, same doctrine as the warm-store cache.
+    const steps = jobs.validate.steps;
+    const restore = steps.find((step) => step.name === "Restore the reflowtex encode venv");
+    const fetch = steps.find((step) => step.name === "Fetch the pinned ReflowTeX fork");
+    const save = steps.find((step) => step.name === "Save the reflowtex encode venv");
+    for (const [name, step] of Object.entries({ restore, fetch, save })) {
+      expect(step, name).toBeDefined();
+      expect(step?.["continue-on-error"], name).toBe(true);
+    }
+    expect(fetch?.run).toContain("npm run reflowtex:fetch");
+    expect(save?.if).toContain("steps.reflowtex-fetch.outcome == 'success'");
+    const gate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js --gate");
+    const leanRestore = steps.findIndex(
+      (step) => step.uses?.startsWith("actions/cache/restore") === true && step.with?.key === HOST_CACHE_KEY,
+    );
+    expect(gate).toBeLessThan(steps.indexOf(restore!));
+    expect(steps.indexOf(restore!)).toBeLessThan(steps.indexOf(fetch!));
+    expect(steps.indexOf(fetch!)).toBeLessThan(steps.indexOf(save!));
+    expect(steps.indexOf(save!)).toBeLessThan(leanRestore);
   });
 
   // -------------------------------------------------------------------------

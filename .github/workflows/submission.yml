@@ -88,6 +88,32 @@ jobs:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
         run: node dist/submission-validation/run.js --gate
+      # The web derivation needs the pinned ReflowTeX checkout and its
+      # hash-pinned encode venv on the runner: the compile runs in the TeX
+      # container, but the encode child runs here, credential-free (an
+      # anonymous public clone at the pins.ts rev — no tokens, trust rule 1
+      # unchanged). Every step tolerates failure: a fetch hiccup must degrade
+      # to a `web-toolchain` skip of the web view inside the validation,
+      # never a failed job. The venv is saved before any submission code
+      # executes, same doctrine as the lean cache below.
+      - name: Restore the reflowtex encode venv
+        id: reflowtex-venv-cache
+        continue-on-error: true
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: reflowtex/venv
+          key: lax-reflowtex-venv-v1-${{ runner.os }}-${{ hashFiles('reflowtex/requirements.lock') }}
+      - name: Fetch the pinned ReflowTeX fork
+        id: reflowtex-fetch
+        continue-on-error: true
+        run: npm run reflowtex:fetch
+      - name: Save the reflowtex encode venv
+        if: steps.reflowtex-venv-cache.outputs.cache-hit != 'true' && steps.reflowtex-fetch.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: reflowtex/venv
+          key: lax-reflowtex-venv-v1-${{ runner.os }}-${{ hashFiles('reflowtex/requirements.lock') }}
       # The pins module is the single home of every value the host setup
       # installs (elan commit, toolchain, mathlib revision), so its hash is
       # the cache identity; the version salt invalidates by hand when the

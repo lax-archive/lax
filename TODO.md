@@ -117,10 +117,9 @@ amendment in spec-notes.md (2026-09-02). What remains:
   github.com click) and enable the new repo for Claude; a session then
   populates its `lax` branch (the `reflowtex/patches/` series as commits,
   provenance README), flips `REFLOWTEX_URL` in `pins.ts`, and retires
-  `patches/`. The validate job also still needs its `reflowtex:fetch`
-  step (CI has one; `submission.yml` does not), until which trusted
-  derivation skips every paper with a `web-toolchain` warning —
-  non-blocking by design, but no web views in production.
+  `patches/`. The validate job's failure-tolerant `reflowtex:fetch` step
+  follows the pin automatically (landed with the docs pass; a fetch
+  hiccup degrades to a `web-toolchain` skip, never a failed validation).
 - **[Jan] Docker smoke**: on a machine with docker, `npm run
   reflowtex:fetch`, then `LAX_SMOKE_CASE=paper-web npm run
   smoke:submission-validation`, and take the luaotfload cold-cache
