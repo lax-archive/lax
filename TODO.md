@@ -178,6 +178,13 @@ plan's order:
   the TeX image digest is not recorded in the report's runtime identity (the
   pin lives in `pins.ts`, so a bump is a reviewed edit and the PDF digest is
   a reproducibility claim for the image at that commit).
+- Reflow spike (paper-web-plan.md stage 0) executed 2026-09-02, verdicts in
+  `spike/paper/reflow/REPORT.md`: GO — markers surface as exact content-stream
+  positions on both the wrapper and the injected unmodified `main.tex`
+  (14/14, `article` and `amsart`, deterministic, reflow proven in-browser);
+  residuals are the display-wrapping phantom line (also a live ~12 pt bug in
+  the shipped `laxmark.sty` PDF path) and the schema's missing marker item
+  kind. Decision on proceeding to stage 1 open (Jan).
 
 ## Admin tool (admin-plan.md — designed, not implemented)
 

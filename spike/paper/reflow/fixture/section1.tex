@@ -1,0 +1,36 @@
+\section{Treewidth}
+
+% lax begin Lax261.Treewidth
+\begin{definition}[Treewidth]
+  A \emph{tree decomposition} of a graph $G = (V, E)$ is a pair
+  $(T, \{X_t\}_{t \in V(T)})$ where $T$ is a tree and each $X_t \subseteq V$
+  is a \emph{bag}, such that
+  \begin{itemize}
+    \item every vertex of $G$ lies in some bag,
+    \item for every edge $uv \in E$ some bag contains both $u$ and $v$, and
+    \item for every $v \in V$ the bags containing $v$ induce a subtree of $T$.
+  \end{itemize}
+  The \emph{width} of the decomposition is $\max_t (|X_t| - 1)$, and the
+  \emph{treewidth} $\tw(G)$ is the minimum width over all tree
+  decompositions of $G$.
+\end{definition}
+% lax end
+
+The subtree condition is the one that makes dynamic programming over a
+decomposition work: it guarantees that the bags containing a fixed vertex
+form a connected region of the tree.
+
+% lax begin Lax261.Treewidth
+\begin{theorem}
+  A graph $G$ satisfies $\tw(G) \le 1$ if and only if $G$ is a forest.
+\end{theorem}
+
+% lax begin Lax261Proofs.Q
+\begin{proof}
+  If $G$ is a forest, take $T = G$ with singleton and edge bags; every bag
+  has size at most two, so the width is at most one.  Conversely, a cycle
+  forces two non-adjacent vertices into one bag, a contradiction.
+\end{proof}
+% lax end
+
+% lax end

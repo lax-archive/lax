@@ -1,0 +1,61 @@
+%% laxweb.sty -- spike counterpart of laxmark.sty for the reflowtex path.
+%%
+%% The rewriter turns `% lax begin <id>` / `% lax end` comments into
+%% \laxmark{b}{<n>} / \laxmark{e}{<n>}. Where laxmark.sty emits a PDF named
+%% destination, this package emits a LuaTeX user_defined whatsit at the
+%% current point (user_id 90210, string value "<b|e>:<n>"), which the
+%% patched reflowtex serializer surfaces in output.json as an exact
+%% content-stream position. Ids never enter the node list; the mark table
+%% maps numbers back to them.
+%%
+%% Vertical mode gets the same glue lift as laxmark.sty: a bare whatsit
+%% ends the vertical list, so the next \addvspace sees \lastskip=0 and adds
+%% its skip instead of merging -- the PDF spike measured ~8pt of drift from
+%% that. Lifting the trailing glue over the whatsit (remove, whatsit, put
+%% back) restores \lastskip. \usepackage[nolift]{laxweb} disables the lift
+%% so the drift is measurable.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{laxweb}[2026/09/02 v0.1 Lax marker whatsits for reflowtex]
+\RequirePackage{iftex}
+\ifLuaTeX\else
+  \PackageError{laxweb}{laxweb requires LuaTeX}{reflowtex is LuaTeX-only.}
+\fi
+
+\newif\iflaxweb@lift
+\laxweb@lifttrue
+\DeclareOption{nolift}{\laxweb@liftfalse}
+\ProcessOptions\relax
+
+\newskip\laxweb@skip
+
+%% The whatsit: node type user_defined, user_id 90210, value "b:12"/"e:12".
+%% type 115 = string-valued ('s'). node.write appends it to the current
+%% list in whatever mode TeX is in; \directlua itself typesets nothing, so
+%% it does not start a paragraph in vertical mode.
+\def\laxweb@node#1#2{\directlua{
+  local n = node.new("whatsit", "user_defined")
+  n.user_id = 90210
+  n.type = 115
+  n.value = "#1:#2"
+  node.write(n)
+}}
+
+\DeclareRobustCommand\laxmark[2]{%
+  \iflaxweb@lift
+    \ifvmode
+      \ifdim\lastskip=\z@
+        \laxweb@node{#1}{#2}%
+      \else
+        \laxweb@skip\lastskip
+        \vskip-\laxweb@skip
+        \laxweb@node{#1}{#2}%
+        \vskip\laxweb@skip
+      \fi
+    \else
+      \laxweb@node{#1}{#2}%
+    \fi
+  \else
+    \laxweb@node{#1}{#2}%
+  \fi}
+
+\endinput

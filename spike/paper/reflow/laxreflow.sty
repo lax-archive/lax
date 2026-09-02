@@ -1,0 +1,45 @@
+%% laxreflow.sty -- spike: transparent reflowtex extraction for an
+%% unmodified author document. Injected before \documentclass exactly as
+%% laxmark.sty is on the PDF path (latexmk -usepretex; here a literal
+%%   lualatex --jobname=<stem> "\RequirePackage{laxreflow}\input{<main>}"
+%% -- the explicit jobname matters for the same reason paper-plan.md
+%% records for -usepretex). Reimplements the three hooks of the reflowtex
+%% wrapper template -- serializer load, shipout walk, tikz picture capture
+%% -- without wrapping the document, and pulls the \laxmark whatsit
+%% lowering in from laxweb.sty. The author's class, fonts and preamble are
+%% untouched.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{laxreflow}[2026/09/02 v0.1 reflowtex hooks as a pretex package]
+\RequirePackage{laxweb}
+
+%% Prefer texmf fonts over same-named OS fonts, before any font loads
+%% (the wrapper template's location-precedence fix).
+\directlua{
+  if fonts and fonts.names and fonts.names.set_location_precedence then
+    fonts.names.set_location_precedence({'texmf', 'system', 'local'})
+    fonts.names.flush_lookup_cache()
+  end
+}
+
+%% The node-list serializer (the spike's patched copy, resolved from the
+%% job directory exactly as the wrapper resolves it).
+\directlua{dofile("serializer.lua")}
+
+%% The shipout walk needs each finished page.
+\AddToHook{shipout/before}{\directlua{Serializer.shipout(\the\numexpr\ShipoutBox\relax)}}
+
+%% Picture capture, armed only if the author loads tikz: externalise each
+%% tikzpicture and stamp attribute 902 (the serializer's PIC_ATTR) on its
+%% nodes so the picture node can be joined to its PDF. Untested here beyond
+%% "the hook arms": the fixture draws nothing and dvisvgm is not installed.
+\newcount\laxreflowPicCount
+\AddToHook{package/tikz/after}{%
+  \usetikzlibrary{external}%
+  \tikzexternalize[prefix=pics/]%
+  \let\laxreflow@orig\pgfincludeexternalgraphics
+  \def\pgfincludeexternalgraphics##1{%
+    \global\advance\laxreflowPicCount by 1
+    \directlua{Serializer.note_picture(\the\laxreflowPicCount, "\luaescapestring{##1}")}%
+    \begingroup\attribute902=\laxreflowPicCount\relax\laxreflow@orig{##1}\endgroup}}
+
+\endinput

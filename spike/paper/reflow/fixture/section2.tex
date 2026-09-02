@@ -1,0 +1,25 @@
+\section{Two displays and a citation of the whole work}
+
+The treewidth of a graph never exceeds its vertex count:
+% lax begin Lax261.MainBound
+\begin{equation}
+  \tw(G) \le |V(G)| - 1.
+  \label{eq:bound}
+\end{equation}
+% lax end
+
+Equality holds for complete graphs, and the two sides of \eqref{eq:bound}
+agree on every clique:
+% lax begin Lax261.CliqueCase
+\begin{align}
+  \tw(K_n) &= n - 1, \\
+  |V(K_n)| - 1 &= n - 1.
+\end{align}
+% lax end
+so the bound is tight.
+
+This paper builds on
+% lax begin lax-42
+the flagship colorings development
+% lax end
+and reuses its conventions throughout.
