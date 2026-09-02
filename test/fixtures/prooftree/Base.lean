@@ -2,6 +2,9 @@ import Concepts
 
 theorem proofA : True := True.intro
 
-theorem helperUsingA : True := A
+structure Wrapper where
+  value : True
+
+theorem helperUsingA : True := (Wrapper.mk A).value
 
 theorem proofB : True := helperUsingA

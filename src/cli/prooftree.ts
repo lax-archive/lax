@@ -206,6 +206,7 @@ export async function generateProofTree(
     statement: proof.conclusion,
     proof: proof.id,
     generated: `${moduleName}.${proof.conclusion}`,
+    assumptions: proof.assumptions,
   }));
   let kernelReport: KernelReport;
   try {
