@@ -11,8 +11,9 @@ Helpers whose transitive axiom set contains a replaced statement are inlined
 and rewritten as well.
 
 This is deliberately a local, best-effort composition tool.  Every declaration
-it emits is nevertheless checked by Lean's kernel, and its final axiom set is
-reported from the checked environment.
+it emits is nevertheless checked by Lean's kernel.  Remaining Lax assumptions
+are propagated from the archive's validated transitive proof metadata, while
+the permitted core axioms are reported conservatively.
 -/
 
 open Lean
