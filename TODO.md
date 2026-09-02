@@ -128,13 +128,20 @@ and the fake-registry test of the two-layer manifest. The smoke case ran
 green locally 2026-09-02 (see the session record below). Remaining, in the
 plan's order:
 
-- **Stage 3, the rehearsal** (Jan; the standing rule before anything
-  Actions-side ships): the scratch-repo drill per `scripts/rehearsal/` with a
-  paper-bearing submission — measure the TeX image pull on the runner (93 s
-  in the spike), confirm the two-layer manifest lands in the scratch ghcr
-  package and `paper.pdf` in the artifact, and that `lax submit` renders a
-  paper finding. `test/workflows/rehearsal-patch.test.ts` already passes
-  against the changed `submission.yml`.
+- **Stage 3: production round trip done 2026-09-02** (`history/
+  paper-roundtrip-20260902.md`): lax-61, a throwaway draft with a
+  one-page paper, validated, published (two-layer ghcr manifest,
+  `paper.pdf` in the artifact, `registryBlob` in the record) and deleted.
+  Validate took 2 m 23 s, of which the TeX image pull was 84 s — on a small
+  submission the pull *is* the critical path, so a layer cache is worth
+  measuring once real papers arrive. Follow-ups it surfaced: `lax submit`
+  says nothing paper-specific on success (no page/mark count — add the row
+  the local build shows); `lax delete` leaves the folder in
+  `~/.lax/submissions.json` and the issue open; ghcr blobs and tags survive
+  a tombstone (known, no GC). Jan: delete the throwaway repository
+  `jan3er/lax-paper-roundtrip-20260902` (`gh auth refresh -h github.com -s
+  delete_repo`, then `gh repo delete … --yes`). The scratch-repo rehearsal
+  was skipped by decision for this change.
 - **Stage 4, website**; **stage 5, `lax serve` + production round trip**;
   **stage 6, docs** (spec-notes amendment, README's second image and
   doctor row, `instructions.md` author section, retiring paper-plan.md into
