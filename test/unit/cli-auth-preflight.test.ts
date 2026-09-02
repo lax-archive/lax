@@ -27,6 +27,7 @@ vi.mock("../../src/cli/build.js", async (importOriginal) => ({
 vi.mock("../../src/cli/manifest.js", () => ({
   issueNumberFromFolder: () => 14,
   submissionIdFromFolder: () => "lax-14",
+  declaresPaper: () => false,
 }));
 vi.mock("../../src/cli/git.js", () => ({
   repositoryRoot: (folder: string) => folder,

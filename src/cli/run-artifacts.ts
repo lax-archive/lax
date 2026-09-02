@@ -27,12 +27,25 @@ const MAX_FINDINGS = 1_000;
 const MESSAGE_LIMIT = 12_000;
 const REPORT_ENTRY = "validation-report.json";
 
+/** The paper facts a successful report's build output records, as far as
+ * the submit report surfaces them: what `lax build`'s paper row says, plus
+ * whether the archive derived the web view and how big the bundle is. */
+export interface RemotePaperFacts {
+  pages: number;
+  marks: number;
+  /** The derived reflow bundle's bytes; absent when none was recorded. */
+  webBytes?: number;
+}
+
 /** What the terminal needs from the report; the rest is the publisher's. */
 export interface RemoteValidationReport {
   ok: boolean;
   warnings: ValidationFinding[];
   violations: ValidationFinding[];
   failure?: ValidationFailure;
+  /** Lifted from a successful report's `buildOutput.paper`; absent when no
+   * paper was recorded — or on reports from before the paper layer. */
+  paper?: RemotePaperFacts;
 }
 
 /**
@@ -171,12 +184,47 @@ export function parseValidationReport(value: unknown): RemoteValidationReport {
       "the validation report mixes an operational failure with submission violations",
     );
   }
+  const paper = report.ok ? paperFacts(report.buildOutput) : undefined;
   return {
     ok: report.ok,
     warnings,
     violations,
     ...(failure === undefined ? {} : { failure }),
+    ...(paper === undefined ? {} : { paper }),
   };
+}
+
+/**
+ * The paper row's numbers, read fail-open: the CLI renders whatever a
+ * well-formed report offers and silently renders nothing for reports that
+ * predate the key or carry it malformed — display data, not the trusted
+ * parse (the publisher re-validates the real artifact independently).
+ */
+function paperFacts(buildOutput: unknown): RemotePaperFacts | undefined {
+  const paper = field(buildOutput, "paper");
+  if (paper === undefined) return undefined;
+  const pages = field(paper, "pdf")?.pages;
+  const marks = (paper as Record<string, unknown>).marks;
+  if (!isCount(pages) || !Array.isArray(marks)) return undefined;
+  const bytes = field(field(paper, "web"), "bundle")?.bytes;
+  return {
+    pages,
+    marks: marks.length,
+    ...(isCount(bytes) ? { webBytes: bytes } : {}),
+  };
+}
+
+/** `value[name]` when both are objects; `undefined` for every other shape. */
+function field(value: unknown, name: string): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const inner = (value as Record<string, unknown>)[name];
+  return typeof inner === "object" && inner !== null
+    ? (inner as Record<string, unknown>)
+    : undefined;
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function validationFailure(value: unknown): ValidationFailure | undefined {

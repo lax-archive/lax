@@ -80,6 +80,11 @@ export function artifactZip(files: Record<string, string>): Uint8Array {
 export interface FakeGitHubState {
   /** Issues served by `GET /repos/:owner/:repo/issues`; seed or grow in tests. */
   issues: unknown[];
+  /** Issue fields updated through `PATCH /repos/:owner/:repo/issues/:n`
+   * (e.g. `lax delete` closing the tracking issue), by issue number. */
+  issuePatches: Map<number, Record<string, unknown>>;
+  /** Status for issue PATCHes instead of applying them, e.g. 403. */
+  issuePatchStatus?: number;
   /** Tokens received by `POST /credentials/revoke`. */
   revoked: string[];
   /** Issue comments by issue number; seed bot comments or read back posts. */
@@ -122,6 +127,7 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
   const requests: RecordedRequest[] = [];
   const state: FakeGitHubState = {
     issues: [],
+    issuePatches: new Map(),
     revoked: [],
     issueComments: new Map(),
     actionsRuns: new Map(),
@@ -186,6 +192,23 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
 
     if (/^GET \/repos\/[^/]+\/[^/]+\/issues$/u.test(route)) {
       return { status: 200, body: state.issues };
+    }
+
+    const issuePatch = /^PATCH \/repos\/[^/]+\/[^/]+\/issues\/([1-9][0-9]*)$/u.exec(route);
+    if (issuePatch !== null) {
+      if (state.issuePatchStatus !== undefined && state.issuePatchStatus !== 200) {
+        return { status: state.issuePatchStatus, body: { message: "Forbidden" } };
+      }
+      const bearer = /^Bearer (.+)$/u.exec(request.authorization ?? "")?.[1];
+      if (![...users.keys()].some((h) => tokenFor(h) === bearer)) {
+        return { status: 401, body: { message: "Bad credentials" } };
+      }
+      const issue = Number(issuePatch[1]);
+      const fields = typeof request.body === "object" && request.body !== null
+        ? (request.body as Record<string, unknown>)
+        : {};
+      state.issuePatches.set(issue, { ...state.issuePatches.get(issue), ...fields });
+      return { status: 200, body: { number: issue, ...fields } };
     }
 
     const comments = /^(GET|POST) \/repos\/[^/]+\/[^/]+\/issues\/([1-9][0-9]*)\/comments$/u.exec(route);

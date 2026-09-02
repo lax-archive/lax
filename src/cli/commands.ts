@@ -41,10 +41,13 @@ import {
   type FollowResult,
 } from "./follow.js";
 import { deriveSubmittedSource, gitAuthorName, repositoryRoot } from "./git.js";
-import { issueNumberFromFolder } from "./manifest.js";
-import { recordSubmission } from "./registry.js";
+import { declaresPaper, issueNumberFromFolder } from "./manifest.js";
+import { forgetSubmissionsById, recordSubmission } from "./registry.js";
 import { renderComment } from "./render.js";
-import { ValidationReportUnavailableError } from "./run-artifacts.js";
+import {
+  ValidationReportUnavailableError,
+  type RemotePaperFacts,
+} from "./run-artifacts.js";
 import {
   ensureEmptyFolder,
   provisionScaffold,
@@ -269,7 +272,10 @@ export async function submitFolder(
   const issue = issueNumberFromFolder(root);
   const id = `lax-${issue}`;
   ui.title(`Submitting ${id}`);
-  const submit = new SubmitReport(id, { local: !force });
+  // The paper row is declared from the manifest, as `lax build` declares
+  // its own: even a forced submit knows up front whether the archive will
+  // be compiling a paper.
+  const submit = new SubmitReport(id, { local: !force, paper: declaresPaper(root) });
   try {
     // Ahead of the local build, which is minutes of Lean: without a usable
     // login there is nothing to submit the result to, and the author should
@@ -357,21 +363,33 @@ export async function resumeSubmit(target: string): Promise<void> {
  * and the failed-validation path has to end the command before the record
  * comment the workflow is still going to post.
  */
-class SubmitReport {
+export class SubmitReport {
   readonly steps = new ui.Steps();
   readonly notes = new ui.Notes();
+  /** Whether the step list carries a "Compiling the paper" row of its own —
+   * declared only when the caller knows the manifest declares one. */
+  readonly paperRow: boolean;
   private archiveOpen = false;
   private archiveSettled = false;
   private publishOpen = false;
+  private paperRowSettled = false;
+  /** The archive's paper facts, when the report carried them but no row was
+   * declared for them (a resume, an explicit-source submit): `succeed()`
+   * hands them to a closing aside instead. */
+  private paperAside?: string;
 
   constructor(
     private readonly id: string,
-    rows: { local: boolean; account?: boolean; source?: boolean },
+    rows: { local: boolean; account?: boolean; source?: boolean; paper?: boolean },
   ) {
+    this.paperRow = rows.paper === true;
     if (rows.account !== false) this.steps.add("account", "Signing in");
     if (rows.source !== false) this.steps.add("source", "Checking your source");
     if (rows.local) this.steps.add("local", "Building on your machine");
     this.steps.add("archive", "Rebuilding in the archive");
+    // Between the archive rows, where the work happens: the paper compiles
+    // inside the validate job, and its facts arrive with the report.
+    if (this.paperRow) this.steps.add("paper", "Compiling the paper");
     this.steps.add("publish", "Writing the public record");
   }
 
@@ -391,6 +409,10 @@ class SubmitReport {
           return;
         }
         this.settleArchive();
+        // A report that never arrived (upload lag, a reattach past the
+        // window) must not leave the paper row spinning under the publish
+        // stage: no facts by now means no facts at all.
+        this.settlePaperRow(undefined, []);
         if (!this.publishOpen) {
           this.publishOpen = true;
           this.steps.begin("publish");
@@ -400,10 +422,12 @@ class SubmitReport {
       onValidationReport: (report) => {
         if (report.ok) {
           this.settleArchive();
+          this.settlePaperRow(report.paper, report.warnings);
           carryWarnings(this.notes, report.warnings);
           return;
         }
         this.steps.settle("archive", { status: "fail" });
+        if (this.paperRow) this.steps.settle("paper", { hidden: true });
         this.steps.settle("publish", { hidden: true });
         this.steps.finish();
         if (report.failure !== undefined) showValidationFailure(report.failure);
@@ -439,8 +463,35 @@ class SubmitReport {
     });
   }
 
+  /**
+   * Close the paper's part of the report with whatever the archive said.
+   * With a declared row, the facts settle it in place — the row the local
+   * build shows, now with the archive's numbers; without one, they wait for
+   * `succeed()`'s aside. No facts hides a declared row rather than letting
+   * it spin (its clock never honestly ran either way: the compile ran
+   * inside the archive row, concurrent with the Lean chain).
+   */
+  private settlePaperRow(
+    facts: RemotePaperFacts | undefined,
+    warnings: readonly ValidationFinding[],
+  ): void {
+    const summary = facts === undefined ? undefined : paperSummary(facts, warnings);
+    if (!this.paperRow) {
+      if (summary !== undefined) this.paperAside = summary;
+      return;
+    }
+    if (this.paperRowSettled) return;
+    this.paperRowSettled = true;
+    if (summary === undefined) {
+      this.steps.settle("paper", { hidden: true });
+      return;
+    }
+    this.steps.settle("paper", { label: "Compiled the paper", detail: summary, time: false });
+  }
+
   succeed(): void {
     this.settleArchive();
+    this.settlePaperRow(undefined, []);
     this.steps.settle("publish", {
       label: "Wrote the public record",
       ...(this.publishOpen ? {} : { time: false as const }),
@@ -448,9 +499,28 @@ class SubmitReport {
     this.steps.finish();
     ui.verdict(`${this.id} is a draft in the archive`);
     ui.link(submissionUrl(this.id));
+    if (this.paperAside !== undefined) ui.aside("Paper", this.paperAside);
     this.notes.print();
     ui.done();
   }
+}
+
+/**
+ * The paper row's answer, in `lax build`'s vocabulary plus the web view's
+ * fate: recorded (`paper.web`, with the bundle's size), skipped (a `web-*`
+ * warning carries the reason into the notes), or — a manifest that opted
+ * out — not mentioned at all, exactly as silent as the derivation was.
+ */
+export function paperSummary(
+  facts: RemotePaperFacts,
+  warnings: readonly ValidationFinding[],
+): string {
+  const counts = `${ui.plural(facts.pages, "page")} · ${ui.plural(facts.marks, "mark")}`;
+  if (facts.webBytes !== undefined) {
+    return `${counts} · web view derived (${(facts.webBytes / (1024 * 1024)).toFixed(1)} MiB)`;
+  }
+  const skipped = warnings.some((warning) => warning.rule.startsWith("web-"));
+  return skipped ? `${counts} · web view skipped` : counts;
 }
 
 /** Warnings do not block anything, so they wait for the notes block. */
@@ -493,7 +563,30 @@ export async function requestDelete(reference: string, yes = false): Promise<num
   } finally {
     steps.finish();
   }
+  // The record is gone; tidy what pointed at it. The registry entry stops
+  // `lax doctor` checking a folder for a submission that no longer exists,
+  // and the tracking issue — which the trusted workflow leaves open, having
+  // no issue-state writes of its own — has served its purpose: the id it
+  // allocated is retired for good. Both are the author's own tidiness, so a
+  // failure here is a note, never a failed delete.
+  for (const root of forgetSubmissionsById(id)) {
+    ui.verbose(`forgot ${root} in the submission registry`);
+  }
+  const tidy = new ui.Notes();
+  try {
+    const github = await client();
+    await github.request("PATCH", `${base}/issues/${issue}`, {
+      state: "closed",
+      state_reason: "completed",
+    });
+  } catch (error) {
+    tidy.add(
+      `The tracking issue could not be closed (${(error as Error).message}).`,
+      `Close ${githubOauthBase()}/${CONTROL_REPOSITORY}/issues/${issue} yourself if you like.`,
+    );
+  }
   ui.verdict(`${id} is gone.`);
+  tidy.print();
   ui.done();
   return 0;
 }
@@ -637,6 +730,7 @@ async function checkLocally(
   if (!outcome.ok) {
     submit.steps.settle("local", { status: "fail" });
     submit.steps.settle("archive", { hidden: true });
+    if (submit.paperRow) submit.steps.settle("paper", { hidden: true });
     submit.steps.settle("publish", { hidden: true });
     submit.steps.finish();
     if (outcome.failure !== undefined) showValidationFailure(outcome.failure);

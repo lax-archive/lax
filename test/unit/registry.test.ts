@@ -8,7 +8,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { doctor } from "../../src/cli/doctor.js";
-import { recordSubmission, registeredSubmissions, registryFile } from "../../src/cli/registry.js";
+import {
+  forgetSubmissionsById,
+  recordSubmission,
+  registeredSubmissions,
+  registryFile,
+} from "../../src/cli/registry.js";
 import { provisionScaffold, scaffoldSubmission } from "../../src/cli/scaffold.js";
 import { markWarmReady, warmDir } from "../../src/submission-validation/host/warmstore.js";
 import { MATHLIB_REV, MATHLIB_URL } from "../../src/submission-validation/pins.js";
@@ -110,6 +115,36 @@ describe("submission registry", () => {
     process.env.LAX_HOME = path.join(home, "missing", "\0bad");
     expect(() => recordSubmission(home)).not.toThrow();
     expect(registeredSubmissions()).toEqual([]);
+  });
+
+  it("forgets the roots of a deleted id, keeping every other entry", () => {
+    // `lax delete` deleted lax-7; its folder stays on disk, the registry
+    // entry goes, unreadable entries are left alone for the read-side prune.
+    const deleted = makeSubmission("was-lax-7", 7);
+    const kept = makeSubmission("still-lax-8", 8);
+    const unreadable = path.join(home, "no-manifest");
+    fs.mkdirSync(unreadable);
+    recordSubmission(deleted);
+    recordSubmission(kept);
+    fs.writeFileSync(
+      registryFile(),
+      JSON.stringify(
+        [...(JSON.parse(fs.readFileSync(registryFile(), "utf8")) as string[]), unreadable],
+        null,
+        1,
+      ),
+    );
+
+    expect(forgetSubmissionsById("lax-7")).toEqual([fs.realpathSync(deleted)]);
+    const remaining = JSON.parse(fs.readFileSync(registryFile(), "utf8")) as string[];
+    expect(remaining.sort()).toEqual([fs.realpathSync(kept), unreadable].sort());
+    expect(fs.existsSync(path.join(deleted, "manifest.yaml"))).toBe(true);
+
+    // Nothing carried the id: the registry file is untouched.
+    expect(forgetSubmissionsById("lax-9")).toEqual([]);
+    expect((JSON.parse(fs.readFileSync(registryFile(), "utf8")) as string[]).sort()).toEqual(
+      [fs.realpathSync(kept), unreadable].sort(),
+    );
   });
 });
 

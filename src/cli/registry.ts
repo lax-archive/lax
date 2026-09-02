@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { laxHome } from "../shared/lax-home.js";
+import { submissionIdFromFolder } from "./manifest.js";
 
 export function registryFile(): string {
   return path.join(laxHome(), "submissions.json");
@@ -41,6 +42,34 @@ export function recordSubmission(root: string): void {
     writeRoots([...roots, canonical].sort());
   } catch {
     // best-effort
+  }
+}
+
+/**
+ * Drop every registered root whose manifest carries this id — `lax delete`
+ * deleted the submission, so `lax doctor` has nothing left to check there.
+ * The folder itself stays; only the registry forgets it. Best-effort like
+ * the rest of the registry, and a root whose manifest cannot be read keeps
+ * its entry (the read-side pruning owns vanished manifests).
+ */
+export function forgetSubmissionsById(id: string): string[] {
+  try {
+    const roots = readRoots();
+    const kept: string[] = [];
+    const dropped: string[] = [];
+    for (const root of roots) {
+      let rootId: string | undefined;
+      try {
+        rootId = submissionIdFromFolder(root);
+      } catch {
+        rootId = undefined;
+      }
+      (rootId === id ? dropped : kept).push(root);
+    }
+    if (dropped.length > 0) writeRoots(kept);
+    return dropped;
+  } catch {
+    return [];
   }
 }
 

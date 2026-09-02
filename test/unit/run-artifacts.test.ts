@@ -145,6 +145,83 @@ describe("validation report artifacts", () => {
       );
     }
   });
+
+  it("lifts the paper facts out of a successful report's build output", () => {
+    const report = parseValidationReportZip(
+      reportZip({
+        reportVersion: 1,
+        ok: true,
+        warnings: [],
+        violations: [],
+        buildOutput: {
+          concepts: [],
+          proofs: [],
+          paper: {
+            folder: "paper",
+            main: "main.tex",
+            engine: "pdflatex",
+            pdf: { digest: "0".repeat(64), bytes: 4321, pages: 6 },
+            pageSizes: [[612, 792]],
+            marks: [{ id: "Lax61.A" }, { id: "Lax61.B" }],
+            web: {
+              format: { tool: "reflowtex", rev: "0".repeat(40), schema: "0".repeat(64) },
+              bundle: { digest: "1".repeat(64), bytes: 123_456 },
+            },
+          },
+        },
+      }),
+    );
+    expect(report.paper).toEqual({ pages: 6, marks: 2, webBytes: 123_456 });
+  });
+
+  it("omits the web bytes when no bundle was recorded, and the whole key without a paper", () => {
+    const withPaper = parseValidationReportZip(
+      reportZip({
+        reportVersion: 1,
+        ok: true,
+        warnings: [{ phase: "paper", rule: "web-derivation", message: "the reflow view was not derived" }],
+        violations: [],
+        buildOutput: {
+          paper: { pdf: { pages: 3 }, marks: [{ id: "Lax61.A" }] },
+        },
+      }),
+    );
+    expect(withPaper.paper).toEqual({ pages: 3, marks: 1 });
+
+    const without = parseValidationReportZip(
+      reportZip({ reportVersion: 1, ok: true, warnings: [], violations: [], buildOutput: {} }),
+    );
+    expect(without.paper).toBeUndefined();
+  });
+
+  it("drops malformed paper facts instead of refusing the report", () => {
+    // Old artifacts predate the key entirely; hostile ones can shape it any
+    // way they like — either way the report still renders, just factless.
+    for (const paper of [
+      "not an object",
+      { pdf: { pages: "six" }, marks: [] },
+      { pdf: { pages: 6 }, marks: "many" },
+      { pdf: {}, marks: [] },
+      { pdf: { pages: -1 }, marks: [] },
+    ]) {
+      const report = parseValidationReportZip(
+        reportZip({ reportVersion: 1, ok: true, warnings: [], violations: [], buildOutput: { paper } }),
+      );
+      expect(report.paper, JSON.stringify(paper)).toBeUndefined();
+      expect(report.ok).toBe(true);
+    }
+    // A hostile bundle size cannot smuggle a non-number into the summary.
+    const badBytes = parseValidationReportZip(
+      reportZip({
+        reportVersion: 1,
+        ok: true,
+        warnings: [],
+        violations: [],
+        buildOutput: { paper: { pdf: { pages: 2 }, marks: [], web: { bundle: { bytes: "big" } } } },
+      }),
+    );
+    expect(badBytes.paper).toEqual({ pages: 2, marks: 0 });
+  });
 });
 
 describe("fetching the report of a run", () => {

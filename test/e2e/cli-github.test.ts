@@ -243,6 +243,94 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     }
   });
 
+  it("tidies the registry and closes the tracking issue after a successful delete", async () => {
+    // The TODO follow-up from the paper round trip: a deleted submission
+    // must not linger in ~/.lax/submissions.json for `lax doctor`, and the
+    // tracking issue — which the trusted workflow leaves open — is closed
+    // by the author's own CLI.
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "lax-delete-"));
+    fs.mkdirSync(path.join(parent, "work"));
+    const folder = fs.realpathSync(path.join(parent, "work"));
+    fs.writeFileSync(path.join(folder, "manifest.yaml"), "id: lax-43\n");
+    const registryFile = path.join(home, "submissions.json");
+    const registered: string[] = fs.existsSync(registryFile)
+      ? (JSON.parse(fs.readFileSync(registryFile, "utf8")) as string[])
+      : [];
+    fs.writeFileSync(registryFile, JSON.stringify([...registered, folder], null, 1));
+    github.state.onComment = (issue, comment) => {
+      if (!comment.body.startsWith("/lax delete")) return;
+      github.state.issueComments.get(issue)!.push({
+        id: comment.id + 500_000,
+        body:
+          "Deleted **lax-43**; the id is permanently retired.\n\n" +
+          resultMarker(comment.id) +
+          "\n" +
+          outcomeMarker("success"),
+        user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
+      });
+    };
+    try {
+      const result = await lax(["delete", folder, "--yes"], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("✓ Deleted");
+      expect(result.stdout).toContain("lax-43 is gone.");
+      expect(result.stderr).toBe("");
+      // The folder's registry entry is dropped — the folder itself stays.
+      const remaining = JSON.parse(fs.readFileSync(registryFile, "utf8")) as string[];
+      expect(remaining).not.toContain(folder);
+      expect(fs.existsSync(path.join(folder, "manifest.yaml"))).toBe(true);
+      // The tracking issue was closed as the author, with a completed reason.
+      expect(github.state.issuePatches.get(43)).toEqual({
+        state: "closed",
+        state_reason: "completed",
+      });
+      const patch = github.requests.find(
+        (request) => request.method === "PATCH" && request.path === "/repos/lax-archive/lax/issues/43",
+      );
+      expect(patch?.authorization).toBe(`Bearer ${tokenFor("alice")}`);
+    } finally {
+      delete github.state.onComment;
+      removeTree(parent);
+    }
+  });
+
+  it("still reports a successful delete when the issue cannot be closed", async () => {
+    github.state.onComment = (issue, comment) => {
+      if (!comment.body.startsWith("/lax delete")) return;
+      github.state.issueComments.get(issue)!.push({
+        id: comment.id + 500_000,
+        body:
+          "Deleted **lax-44**; the id is permanently retired.\n\n" +
+          resultMarker(comment.id) +
+          "\n" +
+          outcomeMarker("success"),
+        user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
+      });
+    };
+    github.state.issuePatchStatus = 403;
+    try {
+      const result = await lax(["delete", "lax-44", "--yes"], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      // The delete itself succeeded; the leftover issue is a note, not a failure.
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("lax-44 is gone.");
+      expect(result.stdout).toContain("! The tracking issue could not be closed");
+      expect(result.stdout).toContain("issues/44");
+    } finally {
+      delete github.state.onComment;
+      delete github.state.issuePatchStatus;
+    }
+  });
+
   it("reattaches an interrupted submit with `lax submit --resume`", async () => {
     // The submit that died: its `/lax submit` comment is on the issue and the
     // workflow has already appended the run correlation to it. Nothing about
@@ -450,6 +538,140 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       expect(result.stdout).not.toContain("was not published");
       expect(result.stderr).toBe("");
     } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces the archive's paper facts on a successful submit", async () => {
+    // The report's build output carries the paper numbers; a resume has no
+    // declared paper row, so they close the report as the Paper aside.
+    const folder = seedSubmit(83, "803", {
+      status: "in_progress",
+      conclusion: null,
+      jobs: [{ name: "Validate", status: "completed", conclusion: "success" }],
+    });
+    github.state.actionsArtifacts.set("803", [
+      {
+        id: 3083,
+        name: "submission-validation-report-83",
+        zip: artifactZip({
+          "validation-report.json": JSON.stringify({
+            reportVersion: 1,
+            ok: true,
+            warnings: [],
+            violations: [],
+            buildOutput: {
+              concepts: [],
+              proofs: [],
+              paper: {
+                folder: "paper",
+                main: "main.tex",
+                engine: "pdflatex",
+                pdf: { digest: "0".repeat(64), bytes: 4321, pages: 2 },
+                pageSizes: [[612, 792]],
+                marks: [{ id: "Lax83.A" }, { id: "Lax83.B" }, { id: "lax-83" }],
+                web: {
+                  format: { tool: "reflowtex", rev: "0".repeat(40), schema: "0".repeat(64) },
+                  bundle: { digest: "1".repeat(64), bytes: 123_456 },
+                },
+              },
+            },
+          }),
+        }),
+      },
+    ]);
+    const finish = setInterval(() => {
+      if (!github.requests.some((request) => request.path === "/artifact-blobs/3083")) return;
+      clearInterval(finish);
+      github.state.actionsRuns.set("803", { status: "completed", conclusion: "success", jobs: [] });
+      github.state.issueComments.get(83)!.push({
+        id: 5083,
+        body: appendWorkflowRun(
+          `Published **lax-83**.\n\n${resultMarker(5001)}`,
+          { id: "803", url: "https://github.com/lax-archive/lax/actions/runs/803" },
+          "success",
+        ),
+        user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
+      });
+    }, 20);
+
+    try {
+      const result = await lax(["submit", "--resume", folder], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("lax-83 is a draft in the archive");
+      expect(result.stdout).toContain("Paper  2 pages · 3 marks · web view derived (0.1 MiB)");
+      expect(result.stderr).toBe("");
+    } finally {
+      clearInterval(finish);
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("says the web view was skipped when the report warns about the derivation", async () => {
+    const folder = seedSubmit(84, "804", {
+      status: "in_progress",
+      conclusion: null,
+      jobs: [{ name: "Validate", status: "completed", conclusion: "success" }],
+    });
+    github.state.actionsArtifacts.set("804", [
+      {
+        id: 3084,
+        name: "submission-validation-report-84",
+        zip: artifactZip({
+          "validation-report.json": JSON.stringify({
+            reportVersion: 1,
+            ok: true,
+            warnings: [
+              {
+                phase: "paper",
+                rule: "web-derivation",
+                message: "the reflow view was not derived: lualatex failed",
+              },
+            ],
+            violations: [],
+            buildOutput: {
+              paper: {
+                pdf: { digest: "0".repeat(64), bytes: 4321, pages: 5 },
+                marks: [{ id: "Lax84.A" }],
+              },
+            },
+          }),
+        }),
+      },
+    ]);
+    const finish = setInterval(() => {
+      if (!github.requests.some((request) => request.path === "/artifact-blobs/3084")) return;
+      clearInterval(finish);
+      github.state.actionsRuns.set("804", { status: "completed", conclusion: "success", jobs: [] });
+      github.state.issueComments.get(84)!.push({
+        id: 5084,
+        body: appendWorkflowRun(
+          `Published **lax-84**.\n\n${resultMarker(5001)}`,
+          { id: "804", url: "https://github.com/lax-archive/lax/actions/runs/804" },
+          "success",
+        ),
+        user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
+      });
+    }, 20);
+
+    try {
+      const result = await lax(["submit", "--resume", folder], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Paper  5 pages · 1 mark · web view skipped");
+      // The reason itself rides the warning notes, as every warning does.
+      expect(result.stdout).toContain("the reflow view was not derived: lualatex failed");
+    } finally {
+      clearInterval(finish);
       fs.rmSync(folder, { recursive: true, force: true });
     }
   });
