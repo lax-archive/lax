@@ -153,6 +153,112 @@ describe("paper marker nesting", () => {
   });
 });
 
+describe("paper marker relocation past blank lines", () => {
+  // An own-line end marker directly followed by a blank line is lowered
+  // *after* the blank line: left in place after an `\end{equation}`-style
+  // display, the whatsit alone in the resumed paragraph forces a glyph-free
+  // line (one \baselineskip — the reflow spike's phantom), while after the
+  // blank line it is typeset in vertical mode, where the package's glue
+  // lift keeps it layout-neutral.
+  it("moves an own-line end emission after a directly following blank line", () => {
+    const { text, marks, problems } = rewriteOne(
+      "\\end{equation}\n% lax end is closed here\n\nEquality holds.\n",
+    );
+    expect(problems).toEqual(["main.tex:2: `lax end` with no open marker"]);
+    // …with an open marker:
+    const good = rewriteOne(
+      "text:\n% lax begin Lax261.A\n\\begin{equation}\n  x\n\\end{equation}\n% lax end\n\nEquality holds.\n",
+    );
+    expect(good.problems).toEqual([]);
+    expect(good.text).toBe(
+      "text:\n\\laxmark{b}{1}%\n\\begin{equation}\n  x\n\\end{equation}\n\n\\laxmark{e}{1}%\nEquality holds.\n",
+    );
+    // the mark table still records the marker comment's own position
+    expect(good.marks).toEqual([{ n: 1, id: "Lax261.A", file: "main.tex", line: 2 }]);
+    expect(text).toContain("% lax end is closed here");
+    expect(marks).toEqual([]);
+  });
+
+  it("moves a run of consecutive own-line ends as one block, order preserved", () => {
+    const { text, problems } = rewriteOne(
+      "% lax begin Lax261.Outer\n% lax begin Lax261.Inner\nx\n% lax end\n% lax end\n\nNext.\n",
+    );
+    expect(problems).toEqual([]);
+    expect(text).toBe(
+      "\\laxmark{b}{1}%\n\\laxmark{b}{2}%\nx\n\n\\laxmark{e}{2}%\n\\laxmark{e}{1}%\nNext.\n",
+    );
+  });
+
+  it("keeps the emission indentation and swaps with a whitespace-only blank line", () => {
+    const { text, problems } = rewriteOne(
+      "x\n% lax begin Lax261.A\ny\n  % lax end\n\t\nNext.\n",
+    );
+    expect(problems).toEqual([]);
+    expect(text).toBe("x\n\\laxmark{b}{1}%\ny\n\t\n  \\laxmark{e}{1}%\nNext.\n");
+  });
+
+  it("relocates across CRLF sources exactly as across LF", () => {
+    const { text, problems } = rewriteOne(
+      "x\r\n% lax begin Lax261.A\r\ny\r\n% lax end\r\n\r\nNext.\r\n",
+    );
+    expect(problems).toEqual([]);
+    expect(text).toBe("x\n\\laxmark{b}{1}%\ny\n\n\\laxmark{e}{1}%\nNext.\n");
+  });
+
+  it("relocates before a blank last line but never past end of file", () => {
+    // `…% lax end\n\n` — the file ends with a real blank line: relocate.
+    const blank = rewriteOne("% lax begin Lax261.A\nx\n% lax end\n\n");
+    expect(blank.problems).toEqual([]);
+    expect(blank.text).toBe("\\laxmark{b}{1}%\nx\n\n\\laxmark{e}{1}%\n");
+    // `…% lax end\n` — the trailing split element is the newline artifact,
+    // not a blank line: stay put.
+    const newline = rewriteOne("% lax begin Lax261.A\nx\n% lax end\n");
+    expect(newline.problems).toEqual([]);
+    expect(newline.text).toBe("\\laxmark{b}{1}%\nx\n\\laxmark{e}{1}%\n");
+    // no trailing newline at all: the marker is the last line, stay put.
+    const eof = rewriteOne("% lax begin Lax261.A\nx\n% lax end");
+    expect(eof.problems).toEqual([]);
+    expect(eof.text).toBe("\\laxmark{b}{1}%\nx\n\\laxmark{e}{1}%");
+  });
+
+  it("leaves inline ends, ends without a blank line, and begin markers in place", () => {
+    // inline (text before the marker comment) — even before a blank line
+    const inline = rewriteOne("x % lax begin Lax261.A\ny % lax end\n\nNext.\n");
+    expect(inline.problems).toEqual([]);
+    expect(inline.text).toBe("x \\laxmark{b}{1}%\ny \\laxmark{e}{1}%\n\nNext.\n");
+    // own-line end with text on the next line (the continuation case)
+    const contin = rewriteOne("% lax begin Lax261.A\nx\n% lax end\nNext.\n");
+    expect(contin.problems).toEqual([]);
+    expect(contin.text).toBe("\\laxmark{b}{1}%\nx\n\\laxmark{e}{1}%\nNext.\n");
+    // a begin marker before a blank line never moves
+    const begin = rewriteOne("x\n% lax begin Lax261.A\n\ny\n% lax end\nz\n");
+    expect(begin.problems).toEqual([]);
+    expect(begin.text).toBe("x\n\\laxmark{b}{1}%\n\ny\n\\laxmark{e}{1}%\nz\n");
+  });
+
+  it("does not move an end whose run is broken by a begin marker line", () => {
+    // e1 then b2 then blank: relocating e1 alone would reorder it past b2,
+    // and b2 never moves — so nothing moves.
+    const { text, problems } = rewriteOne(
+      "% lax begin Lax261.A\nx\n% lax end\n% lax begin Lax261.B\n\ny\n% lax end\n",
+    );
+    expect(problems).toEqual([]);
+    expect(text).toBe(
+      "\\laxmark{b}{1}%\nx\n\\laxmark{e}{1}%\n\\laxmark{b}{2}%\n\ny\n\\laxmark{e}{2}%\n",
+    );
+  });
+
+  it("relocates independently per blank line when ends alternate with blanks", () => {
+    const { text, problems } = rewriteOne(
+      "% lax begin Lax261.A\n% lax begin Lax261.B\nx\n% lax end\n\n% lax end\n\nNext.\n",
+    );
+    expect(problems).toEqual([]);
+    expect(text).toBe(
+      "\\laxmark{b}{1}%\n\\laxmark{b}{2}%\nx\n\n\\laxmark{e}{2}%\n\n\\laxmark{e}{1}%\nNext.\n",
+    );
+  });
+});
+
 describe("paper marker numbering", () => {
   it("normalizes CRLF before rewriting", () => {
     const { text, marks, problems } = rewriteOne("a\r\n% lax begin Lax261.A\r\nb\r% lax end\r\n");

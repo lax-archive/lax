@@ -54,8 +54,14 @@ if (!withFork) {
 // each capture site: mark 1 inline inside a paragraph (horizontal mode),
 // mark 2 wrapping a theorem between paragraphs (vertical mode — the whatsits
 // sit in the page's vertical list), mark 3 wrapping a display with the end
-// marker directly after \end{equation} and a blank line after it (the
-// glyphless-resumed-paragraph hoist; without it e3 silently vanishes).
+// marker directly after \end{equation} and a blank line after it — which the
+// rewriter lowers after the blank line, so e3 is a genuine vertical-mode
+// stream item (the phantom-line fix; the author's paragraph resumes empty
+// and is discarded exactly as in their own build) — and mark 4 wrapping a
+// display with \section directly after the end marker, no blank line: the
+// whatsit stays in the resumed paragraph, \section's \par turns it into a
+// glyphless capture, and the serializer hoist must surface e4 (without the
+// hoist it silently vanishes).
 
 const MAIN_TEX = `\\documentclass{article}
 
@@ -96,7 +102,15 @@ The treewidth of a graph never exceeds its vertex count:
 \\end{equation}
 % lax end
 
-Equality holds for complete graphs.
+Equality holds for complete graphs:
+% lax begin Lax261.TightCase
+\\begin{equation}
+  \\tw(K_n) = n - 1.
+\\end{equation}
+% lax end
+\\section{Conclusion}
+
+A closing remark ends the document.
 `;
 
 const TIKZ_MAIN_TEX = `\\documentclass{article}
@@ -122,8 +136,10 @@ after it, the text continues.
 // glyph-only body gate dropped it from the content stream — every
 // standalone figure vanished from the web view (the has_ink fix). The
 // markers land on both sides of the picture: b1 in vertical mode (a
-// stream item), e1 inside the picture's paragraph (\\laxmark directly
-// after \\end{tikzpicture}, before the blank line).
+// stream item), e1 inside the picture's paragraph — inline after
+// \\end{tikzpicture}, which pins the whatsit inside the ink-bearing
+// capture (an own-line end before the blank line would relocate past it
+// into vertical mode and leave the hoist guard unexercised).
 const STANDALONE_TIKZ_TEX = `\\documentclass{article}
 
 \\usepackage{fontspec}
@@ -138,8 +154,7 @@ Text before the figure.
 \\begin{tikzpicture}
   \\draw[->] (0,0) -- (2,1);
   \\node[draw, circle] at (3,0.5) {$x$};
-\\end{tikzpicture}
-% lax end
+\\end{tikzpicture} % lax end
 
 Text after the figure.
 
@@ -335,13 +350,13 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
     }
   });
 
-  it("captures every marker at its exact stream position across all three sites", () => {
+  it("captures every marker at its exact stream position across all four sites", () => {
     const jobDir = compileInjected({ "main.tex": MAIN_TEX, "body.tex": BODY_TEX });
     const found = streamMarkers(readOutput(jobDir));
 
     // Document order, one b and one e per table mark.
     expect(found.map((f) => [f.side, f.n])).toEqual([
-      ["b", 1], ["e", 1], ["b", 2], ["e", 2], ["b", 3], ["e", 3],
+      ["b", 1], ["e", 1], ["b", 2], ["e", 2], ["b", 3], ["e", 3], ["b", 4], ["e", 4],
     ]);
 
     const at = (side: string, n: number): MarkerInstance => found.find((f) => f.side === side && f.n === n)!;
@@ -363,14 +378,27 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
     expect(at("e", 2).before.endsWith("forest.")).toBe(true);
     expect(at("e", 2).after.startsWith("The treewidth")).toBe(true);
 
-    // Site 3 — the glyphless-resumed-paragraph hoist: the end marker sits
-    // alone in the paragraph TeX resumes after \end{equation}, which the
-    // walk skips; without the hoist e3 vanishes from the stream.
+    // Site 3 — an end marker on its own line after \end{equation} with a
+    // blank line after it: the rewriter lowers it past the blank line, so
+    // the whatsit is typeset in vertical mode and reaches the stream as a
+    // real item (and the paragraph TeX resumes after the display is empty
+    // and discarded, exactly as in the author's own build — the phantom
+    // line the unrelocated form used to add).
     expect(at("b", 3).at).toBe("paragraph");
     expect(at("b", 3).before.endsWith("vertex count:")).toBe(true);
     expect(at("e", 3).at).toBe("stream");
     expect(at("e", 3).before).toBe("(display)");
     expect(at("e", 3).after.startsWith("Equality holds")).toBe(true);
+
+    // Site 4 — the glyphless-resumed-paragraph hoist: \section directly
+    // after the end marker (no blank line, so the rewriter leaves it in
+    // place) \par-s the resumed paragraph with nothing but the whatsit in
+    // it; the walk skips that capture, and without the hoist e4 vanishes.
+    expect(at("b", 4).at).toBe("paragraph");
+    expect(at("b", 4).before.endsWith("complete graphs:")).toBe(true);
+    expect(at("e", 4).at).toBe("stream");
+    expect(at("e", 4).before).toBe("(display)");
+    expect(at("e", 4).after.startsWith("2 Conclusion")).toBe(true);
   });
 
   it("is byte-deterministic across fresh runs, for output.json and the encoded nodelist.pb", () => {
@@ -388,11 +416,14 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
     expect(encodedFirst.pb.equals(encodedSecond.pb)).toBe(true);
     expect(encodedFirst.stats.pb_sha256).toBe(encodedSecond.stats.pb_sha256);
 
-    // Both marker forms reached the wire: b1/e1 and b3 inside referenced
-    // paragraphs, e3 also inside the (unreferenced) glyphless capture; the
-    // vertical-mode pair and the hoisted e3 as stream items.
-    expect(encodedFirst.stats.node_markers).toEqual([["b", 1], ["e", 1], ["b", 3], ["e", 3]]);
-    expect(encodedFirst.stats.stream_markers).toEqual([["b", 2], ["e", 2], ["e", 3]]);
+    // Both marker forms reached the wire: b1/e1, b3 and b4 inside referenced
+    // paragraphs, e4 also inside the (unreferenced) glyphless capture the
+    // hoist surfaces; the vertical-mode pair, the relocated e3, and the
+    // hoisted e4 as stream items. e3 sits in no paragraph at all: the
+    // rewriter's blank-line relocation typesets it in vertical mode and the
+    // resumed paragraph after its display is empty and discarded.
+    expect(encodedFirst.stats.node_markers).toEqual([["b", 1], ["e", 1], ["b", 3], ["b", 4], ["e", 4]]);
+    expect(encodedFirst.stats.stream_markers).toEqual([["b", 2], ["e", 2], ["e", 3], ["e", 4]]);
   });
 
   it("carries a tikz picture end to end through dvisvgm into sanitized SVG in the blob", (context) => {

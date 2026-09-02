@@ -12,7 +12,10 @@
 // newline exactly as the original comment did, so the token stream TeX sees
 // is unchanged apart from one robust, zero-size whatsit that the injected
 // `laxmark.sty` turns into a PDF named destination carrying only the number.
-// Ids never enter the PDF; the mark table maps numbers back to them.
+// One placement exception keeps that whatsit layout-neutral: an own-line end
+// marker directly followed by a blank line is lowered after the blank line
+// (see relocateEndsPastBlankLines). Ids never enter the PDF; the mark table
+// maps numbers back to them.
 
 import { PLACEHOLDER_SUBMISSION_ID, SUBMISSION_ID_PATTERN } from "../../shared/constants.js";
 import {
@@ -51,6 +54,9 @@ export function rewriteMarkers(files: readonly TexFile[]): RewriteResult {
   for (const file of files) {
     const lines = file.text.replace(/\r\n?/gu, "\n").split("\n");
     const stack: Array<{ n: number; id: string; line: number }> = [];
+    /** Output lines holding an own-line end emission — nothing but whitespace
+     * before the marker comment — which the blank-line pass below may move. */
+    const ownLineEnd: boolean[] = [];
     const out = lines.map((line, index) => {
       const where = `${file.path}:${index + 1}`;
       const at = firstCommentIndex(line);
@@ -83,14 +89,54 @@ export function rewriteMarkers(files: readonly TexFile[]): RewriteResult {
             `${open.id} (${file.path}:${open.line})`,
         );
       }
+      ownLineEnd[index] = /^[ \t]*$/u.test(line.slice(0, at));
       return `${line.slice(0, at)}\\laxmark{e}{${open.n}}%`;
     });
     for (const open of stack) {
       problems.push(`${file.path}:${open.line}: marker ${open.id} is never closed in this file`);
     }
+    relocateEndsPastBlankLines(out, ownLineEnd);
     rewritten.push({ path: file.path, text: out.join("\n") });
   }
   return { rewritten, marks, problems };
+}
+
+/**
+ * Lower an own-line `% lax end` that a blank line directly follows *after*
+ * that blank line, in vertical mode, where the package's glue lift keeps the
+ * whatsit layout-neutral. Left in place, the paragraph TeX resumes after an
+ * `\end{equation}`-style display would hold nothing but the whatsit: TeX
+ * discards an *empty* resumed segment but not one holding a whatsit, so a
+ * glyph-free line materializes and the next paragraph drops one
+ * `\baselineskip`. A run of consecutive such lines moves as one block (order
+ * preserved — nested ranges close in sequence); the blank line itself moves
+ * up in exchange, so line count and every other line are unchanged. Begin
+ * markers, inline (mid-line) markers, and end markers not followed by a
+ * blank line stay exactly where the marker comment was, and the mark table
+ * always keeps the comment's own `file:line`.
+ */
+function relocateEndsPastBlankLines(out: string[], ownLineEnd: readonly boolean[]): void {
+  for (let index = 0; index < out.length; ) {
+    if (ownLineEnd[index] !== true) {
+      index += 1;
+      continue;
+    }
+    let last = index;
+    while (ownLineEnd[last + 1] === true) last += 1;
+    const after = last + 1;
+    // A relocatable run ends at a whitespace-only line — a real one: with a
+    // trailing newline the final split element is an artifact, not a line.
+    const blankFollows =
+      after < out.length &&
+      /^[ \t]*$/u.test(out[after]!) &&
+      (after < out.length - 1 || out[after] !== "");
+    if (blankFollows) {
+      const emissions = out.slice(index, after);
+      out[index] = out[after]!;
+      for (const [offset, emission] of emissions.entries()) out[index + 1 + offset] = emission;
+    }
+    index = after + 1;
+  }
 }
 
 /**
