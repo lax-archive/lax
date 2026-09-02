@@ -17,6 +17,7 @@ const PHASE_LABEL = new Map<string, string>([
   ["replay", "kernel replay"],
   ["inspect", "statements"],
   ["dialect", "dialect"],
+  ["paper", "paper"],
   ["emit", "output"],
 ]);
 

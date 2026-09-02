@@ -66,6 +66,10 @@ jobs:
     needs: route
     if: needs.route.outputs.operation == 'validate'
     runs-on: ubuntu-latest
+    # Every phase has its own cap (config.ts) and the pipeline never waits
+    # on anything unbounded; this is the backstop for a hung runner, well
+    # above the longest observed validation (~30 min) plus a cold image pull.
+    timeout-minutes: 180
     permissions:
       contents: read
     steps:
@@ -141,7 +145,9 @@ jobs:
           path: .build/submission-validation/validation-report.json
           if-no-files-found: warn
           retention-days: 90
-      - name: Preserve the report, generated build output, capture, and profile
+      # paper.pdf is present exactly when the submission declares a paper: the
+      # publisher hashes it against the digest the build output records.
+      - name: Preserve the report, generated build output, capture, paper, and profile
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -151,6 +157,7 @@ jobs:
             .build/submission-validation/validation-profile.json
             .build/submission-validation/generated-build-output.json
             .build/submission-validation/capture.tar
+            .build/submission-validation/paper.pdf
           if-no-files-found: warn
           retention-days: 90
 
@@ -202,6 +209,7 @@ jobs:
           VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
           GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
+          VALIDATION_PAPER_PATH: ${{ github.workspace }}/.build/submission-validation/paper.pdf
         run: node dist/workflows/submission.js prepare-submit
       - name: Mint lax-database token
         if: steps.prepare-submit.outputs.should_publish == 'true'
@@ -239,6 +247,7 @@ jobs:
           VALIDATION_REPORT_PATH: ${{ github.workspace }}/.build/submission-validation/validation-report.json
           GENERATED_BUILD_OUTPUT_PATH: ${{ github.workspace }}/.build/submission-validation/generated-build-output.json
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
+          VALIDATION_PAPER_PATH: ${{ github.workspace }}/.build/submission-validation/paper.pdf
         run: node dist/workflows/submission.js publish-submit
 
   # Keep the shorter publish branch after the validation branch in declaration

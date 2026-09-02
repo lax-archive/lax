@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,8 +7,10 @@ import type { CaptureManifest, ValidationReport } from "../../src/submission-val
 import {
   CAPTURE_FILENAME,
   GENERATED_BUILD_OUTPUT_FILENAME,
+  PAPER_FILENAME,
   resetValidationOutputs,
   VALIDATION_REPORT_FILENAME,
+  type ValidationOutcome,
   writeValidationOutputs,
 } from "../../src/submission-validation/outputs.js";
 
@@ -62,6 +65,40 @@ describe("submission validation outputs", () => {
     expect(fs.existsSync(path.join(directory, GENERATED_BUILD_OUTPUT_FILENAME))).toBe(false);
   });
 
+  it("copies a recorded paper beside the capture, bound by its digest, and keeps the path out of the report", () => {
+    const directory = temporaryDirectory();
+    const pdf = Buffer.from("%PDF-1.7 fixture");
+    const outcome = paperOutcome(pdf);
+    fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+
+    writeValidationOutputs(directory, outcome);
+
+    expect(fs.readFileSync(path.join(directory, PAPER_FILENAME))).toEqual(pdf);
+    const { paperPdfPath, ...report } = outcome;
+    expect(readJson(path.join(directory, VALIDATION_REPORT_FILENAME))).toEqual(report);
+    expect(readJson(path.join(directory, VALIDATION_REPORT_FILENAME))).not.toHaveProperty("paperPdfPath");
+    expect(fs.existsSync(paperPdfPath!)).toBe(true);
+
+    // A stale paper.pdf never survives into a run that records none.
+    resetValidationOutputs(directory);
+    expect(fs.existsSync(path.join(directory, PAPER_FILENAME))).toBe(false);
+  });
+
+  it("refuses a paper that does not match its recorded digest, and a paper without its PDF", () => {
+    const directory = temporaryDirectory();
+    fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+    const tampered = paperOutcome(Buffer.from("%PDF-1.7 fixture"));
+    fs.writeFileSync(tampered.paperPdfPath!, "%PDF-1.7 other bytes");
+    expect(() => writeValidationOutputs(directory, tampered)).toThrow("does not match the digest");
+    expect(fs.existsSync(path.join(directory, VALIDATION_REPORT_FILENAME))).toBe(false);
+    expect(fs.existsSync(path.join(directory, PAPER_FILENAME))).toBe(false);
+
+    const { paperPdfPath, ...withoutPdf } = paperOutcome(Buffer.from("%PDF-1.7 fixture"));
+    expect(() => writeValidationOutputs(directory, withoutPdf)).toThrow("recorded a paper without its PDF");
+    const strayPdf: ValidationOutcome = { ...successfulReport(), paperPdfPath };
+    expect(() => writeValidationOutputs(directory, strayPdf)).toThrow("a PDF without a paper");
+  });
+
   it("rejects database-owned fields in the generated payload", () => {
     const directory = temporaryDirectory();
     const report = successfulReport();
@@ -109,6 +146,23 @@ function successfulReport(): ValidationReport {
     },
     capture,
   };
+}
+
+/** A successful outcome whose build output records `pdf` as its paper. */
+function paperOutcome(pdf: Buffer): ValidationOutcome {
+  const report = successfulReport();
+  const pdfPath = path.join(temporaryDirectory(), "main.pdf");
+  fs.writeFileSync(pdfPath, pdf);
+  report.buildOutput!.inputs.manifest.paper = { folder: "paper", main: "main.tex", engine: "pdflatex" };
+  report.buildOutput!.paper = {
+    folder: "paper",
+    main: "main.tex",
+    engine: "pdflatex",
+    pdf: { digest: createHash("sha256").update(pdf).digest("hex"), bytes: pdf.length, pages: 1 },
+    pageSizes: [[612, 792]],
+    marks: [],
+  };
+  return { ...report, paperPdfPath: pdfPath };
 }
 
 function baseReport(): Omit<ValidationReport, "ok"> {

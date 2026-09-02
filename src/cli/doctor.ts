@@ -11,10 +11,15 @@ import { elanHome, toolchainBinDir } from "../submission-validation/host/leanenv
 import { run } from "../submission-validation/host/proc.js";
 import { installElan } from "../submission-validation/host/setup.js";
 import { ensureLocalWarm, warmDir, warmReady } from "../submission-validation/host/warmstore.js";
+import {
+  engineAvailable,
+  MIN_LATEXMK_VERSION,
+  probeLatexmkAsync,
+} from "../submission-validation/host/paper.js";
 import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../submission-validation/pins.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, updateDatabaseQuietly } from "./database.js";
-import { submissionIdFromFolder } from "./manifest.js";
+import { declaresPaper, submissionIdFromFolder } from "./manifest.js";
 import { registeredSubmissions } from "./registry.js";
 import * as ui from "./ui.js";
 import { websiteRendererIsReady } from "./website-renderer.js";
@@ -306,6 +311,7 @@ export async function doctor(opts: { dry?: boolean } = {}): Promise<number> {
   steps.add("lax", "Lax");
   steps.add("lean", "Lean");
   steps.add("git", "Git");
+  steps.add("latex", "LaTeX");
   steps.add("account", "Account");
   steps.add("archive", "Archive");
   steps.add("mathlib", "Mathlib");
@@ -340,6 +346,9 @@ export async function doctor(opts: { dry?: boolean } = {}): Promise<number> {
       })(),
       (async () => {
         settle("git", await toolCheck("git", "Git", /^git version (\S+)/u));
+      })(),
+      (async () => {
+        settle("latex", await latexCheck(submissions.some((submission) => declaresPaper(submission.root))));
       })(),
       (async () => {
         // The row's own detail while it provisions something, with its clock
@@ -518,6 +527,46 @@ async function toolCheck(tool: string, label: string, shorten?: RegExp): Promise
   }
   const short = shorten === undefined ? version : (shorten.exec(version)?.[1] ?? version);
   return { label, status: "ok", detail: short, fact: short };
+}
+
+/**
+ * TeX for the paper layer: latexmk recent enough to inject the marker package
+ * (`-usepretex`, 4.77+) and whichever engines answer. Optional — only a
+ * submission with a paper needs it, and the archive compiles papers in its
+ * own TeX Live regardless — so a missing TeX is a note only when a registered
+ * submission on this machine would use it. Doctor never installs TeX.
+ */
+async function latexCheck(needed: boolean): Promise<Check> {
+  const label = "LaTeX";
+  const optional = "only a submission with a paper needs it; the archive compiles papers itself";
+  const latexmk = await probeLatexmkAsync();
+  if (latexmk === undefined) {
+    return needed
+      ? { label, status: "warn", detail: "latexmk not found", more: ["a submission here declares a paper"], fix: [installHint("latexmk")] }
+      : { label, status: "ok", detail: `not installed · ${optional}` };
+  }
+  if (!latexmk.supported) {
+    return {
+      label,
+      status: needed ? "warn" : "ok",
+      detail: `latexmk ${latexmk.version} is older than ${MIN_LATEXMK_VERSION} · ${optional}`,
+      fix: [installHint("latexmk")],
+    };
+  }
+  const engines = (
+    await Promise.all(
+      ["pdflatex", "lualatex", "xelatex"].map(async (engine) => ((await engineAvailable(engine)) ? engine : undefined)),
+    )
+  ).filter((engine): engine is string => engine !== undefined);
+  if (engines.length === 0) {
+    return { label, status: needed ? "warn" : "ok", detail: `latexmk ${latexmk.version}, no TeX engine`, fix: [installHint("latexmk")] };
+  }
+  return {
+    label,
+    status: "ok",
+    detail: `latexmk ${latexmk.version} · ${engines.join(", ")}`,
+    fact: `latexmk ${latexmk.version}`,
+  };
 }
 
 /** Run `limit` of `items` at a time — a long registry should not put a
@@ -956,5 +1005,7 @@ export function installHint(tool: string): string {
   if (tool === "npm") return "npm ships with Node.js 20 or newer — https://nodejs.org";
   if (tool === "elan" || tool === "lake")
     return "install elan (ships lake) — https://leanprover-community.github.io/get_started.html";
+  if (tool === "latexmk")
+    return "install TeX Live with latexmk (Debian/Ubuntu: `apt install texlive-latex-recommended latexmk`; macOS: MacTeX)";
   return `install ${tool} and make it available on PATH`;
 }

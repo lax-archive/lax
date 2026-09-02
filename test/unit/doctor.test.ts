@@ -241,7 +241,7 @@ describe("lax doctor", () => {
     const lines = printed(log);
     // Lax and Lean stand in for the checks behind them — offline, Lean is the
     // elan row, since that is the link of the chain that broke.
-    const order = ["Lax", "elan", "Git", "Account", "Archive", "Mathlib", "Disk"];
+    const order = ["Lax", "elan", "Git", "LaTeX", "Account", "Archive", "Mathlib", "Disk"];
     const positions = order
       .map((label) => lines.findIndex((line) => line === row(lines, label)))
       // `Disk` is best-effort and reports nothing on a mount it cannot stat.
@@ -266,6 +266,30 @@ describe("lax doctor", () => {
     for (const label of ["Platform", "Node", "npm", "Website renderer"]) {
       expect(row(lines, label)).toBeUndefined();
     }
+  });
+
+  it("treats a missing TeX as a fact until a submission here declares a paper", async () => {
+    // Only a submission with a paper needs TeX, and the archive compiles the
+    // paper itself either way: with nothing on PATH the row is a plain fact…
+    process.env.PATH = path.join(home, "nothing-here");
+    const { log } = quiet();
+    await doctor();
+    const lines = printed(log);
+    expect(row(lines, "LaTeX")).toMatch(/^ {2}✓ LaTeX {15}not installed · only a submission with a paper needs it/u);
+
+    // …and a note with the install hint once a registered folder would use it.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-doctor-paper-"));
+    seeded.push(root);
+    fs.writeFileSync(
+      path.join(root, "manifest.yaml"),
+      "specVersion: \"1\"\nid: lax-77\ntitle: Paper\npaper:\n  folder: paper\n  main: main.tex\n",
+    );
+    recordSubmission(root);
+    log.mockClear();
+    await doctor();
+    const declaredLines = printed(log);
+    expect(row(declaredLines, "LaTeX")).toMatch(/^ {2}! LaTeX {15}latexmk not found$/u);
+    expect(declaredLines.some((line) => /→ install TeX Live with latexmk/u.test(line))).toBe(true);
   });
 
   it("splits a broken sub-check back out of its group, with its own fix", async () => {

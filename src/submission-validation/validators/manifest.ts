@@ -1,7 +1,13 @@
 import { parse } from "yaml";
-import type { SubmissionManifest, ValidationRuntimeIdentity } from "../contracts.js";
+import type { PaperManifest, SubmissionManifest, ValidationRuntimeIdentity } from "../contracts.js";
 import type { FindingCollector } from "../findings.js";
-import { normalizeSubmissionId, normalizeTitle } from "../../shared/validation.js";
+import {
+  normalizeSubmissionId,
+  normalizeTitle,
+  PAPER_ENGINES,
+  validateFolder,
+  validatePaperMain,
+} from "../../shared/validation.js";
 
 const MANIFEST_KEYS = new Set([
   "specVersion",
@@ -12,7 +18,8 @@ const MANIFEST_KEYS = new Set([
   "authors",
   "bibEntries",
 ]);
-const OPTIONAL_MANIFEST_KEYS = new Set(["supersedes"]);
+const OPTIONAL_MANIFEST_KEYS = new Set(["supersedes", "paper"]);
+const PAPER_KEYS = new Set(["folder", "main", "engine"]);
 const AUTHOR_KEYS = new Set(["name", "orcid", "github"]);
 
 export function validateManifest(
@@ -112,6 +119,9 @@ export function validateManifest(
     }
   }
 
+  let paper: PaperManifest | undefined;
+  if ("paper" in value) paper = validatePaperBlock(value.paper, findings);
+
   const authors = [] as SubmissionManifest["authors"];
   if (!Array.isArray(value.authors) || value.authors.length > 100) {
     findings.violate("manifest", "manifest.yaml: authors must be a list of at most 100 entries");
@@ -160,7 +170,58 @@ export function validateManifest(
     authors,
     bibEntries,
     ...(supersedes === undefined ? {} : { supersedes }),
+    ...(paper === undefined ? {} : { paper }),
   };
+}
+
+/**
+ * The optional `paper` block (paper-plan.md, "Manifest"): a folder inside the
+ * submission, an entry file inside that folder, and an engine — the three
+ * choices an author also carries to arXiv. Shape only; that the folder and
+ * file exist is the static gate's check, with the tree in hand.
+ */
+function validatePaperBlock(value: unknown, findings: FindingCollector): PaperManifest | undefined {
+  if (!plainObject(value)) {
+    findings.violate("manifest", "manifest.yaml: `paper` must be a mapping with `folder`, `main`, and optionally `engine`");
+    return undefined;
+  }
+  let ok = true;
+  for (const key of Object.keys(value)) {
+    if (!PAPER_KEYS.has(key)) {
+      findings.violate("manifest", `manifest.yaml: paper: unknown key \`${key}\``);
+      ok = false;
+    }
+  }
+  let folder: string | undefined;
+  if (!("folder" in value)) findings.violate("manifest", "manifest.yaml: paper: missing key `folder`");
+  else {
+    try {
+      folder = validateFolder(value.folder);
+    } catch (error) {
+      findings.violate("manifest", `manifest.yaml: paper.${(error as Error).message}`);
+    }
+  }
+  let main: string | undefined;
+  if (!("main" in value)) findings.violate("manifest", "manifest.yaml: paper: missing key `main`");
+  else {
+    try {
+      main = validatePaperMain(value.main);
+    } catch (error) {
+      findings.violate("manifest", `manifest.yaml: ${(error as Error).message}`);
+    }
+  }
+  let engine: PaperManifest["engine"] = "pdflatex";
+  if ("engine" in value) {
+    const raw = value.engine;
+    if (typeof raw === "string" && (PAPER_ENGINES as readonly string[]).includes(raw)) {
+      engine = raw as PaperManifest["engine"];
+    } else {
+      findings.violate("manifest", `manifest.yaml: paper.engine must be one of ${PAPER_ENGINES.join(", ")}`);
+      ok = false;
+    }
+  }
+  if (!ok || folder === undefined || main === undefined) return undefined;
+  return { folder, main, engine };
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {

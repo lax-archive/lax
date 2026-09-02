@@ -18,6 +18,7 @@ export type ValidationPhase =
   | "compile-proofs"
   | "replay"
   | "inspect"
+  | "paper"
   | "emit";
 
 export type ValidationScope = "both" | "concepts" | "proofs";
@@ -61,6 +62,82 @@ export interface SubmissionManifest {
   bibEntries: string[];
   /** The registered submission this one replaces as its single successor. */
   supersedes?: string;
+  /** The LaTeX document the archive compiles and shows beside the cards. */
+  paper?: PaperManifest;
+}
+
+export type PaperEngine = "pdflatex" | "lualatex" | "xelatex";
+
+/** The manifest's `paper` block: where the document lives and how it is
+ * compiled. The vocabulary mirrors arXiv's 00README (compiler, entry file). */
+export interface PaperManifest {
+  /** Relative to the submission root; `.` for the root itself. */
+  folder: string;
+  /** Relative to `folder`; a plain `.tex` filename or a contained path. */
+  main: string;
+  engine: PaperEngine;
+}
+
+/** One numbered marker the rewriter emitted, in document order. */
+export interface PaperMarkTableEntry {
+  n: number;
+  id: string;
+  /** Where the `% lax begin` line was, for findings. */
+  file: string;
+  line: number;
+}
+
+/** What the static gate settles about a declared paper before any TeX runs:
+ * the rewritten sources and the numbered mark table. Ids are checked for
+ * shape only here; whether they name a card is the paper phase's join. */
+export interface StaticPaper {
+  manifest: PaperManifest;
+  /** Every regular file under `paper.folder`, relative to it, POSIX-separated. */
+  files: string[];
+  /** The `.tex` files in rewrite order (main first, then the rest sorted). */
+  texFiles: string[];
+  /** Rewritten `.tex` texts by relative path — markers replaced by `\laxmark`. */
+  rewritten: Map<string, string>;
+  marks: PaperMarkTableEntry[];
+}
+
+/** A point in PDF user space: 1-based page, points from the bottom-left
+ * corner, and the TeX mode the marker was typeset in (`v` between
+ * paragraphs, `h` inside a line) — geometry alone cannot tell a vertical-mode
+ * destination from an inline one pushed to a line start. */
+export interface PaperMarkPoint {
+  page: number;
+  x: number;
+  y: number;
+  mode: "v" | "h";
+}
+
+export interface PaperMark {
+  id: string;
+  kind: "concept" | "proof";
+  begin: PaperMarkPoint;
+  end: PaperMarkPoint;
+}
+
+export interface PaperPdf {
+  digest: string;
+  bytes: number;
+  pages: number;
+  /** Digest-addressed ghcr blob of the PDF layer; absent in local builds,
+   * which write `paper.pdf` beside `build-output.json` instead. */
+  registryBlob?: string;
+}
+
+/** The `paper` key of `build-output.json`, present iff the manifest declares
+ * a paper. `marks` keep mark-number (document) order. */
+export interface PaperOutput {
+  folder: string;
+  main: string;
+  engine: PaperEngine;
+  pdf: PaperPdf;
+  /** `[width, height]` per page, in points. */
+  pageSizes: Array<[number, number]>;
+  marks: PaperMark[];
 }
 
 export interface GitRequire {
@@ -96,6 +173,8 @@ export interface StaticResult {
   abstract?: string;
   concepts?: StaticPackage;
   proofs?: StaticPackage;
+  /** Present iff the manifest declares a paper and its static checks passed. */
+  paper?: StaticPaper;
 }
 
 export interface ArchiveSourceRecord {
@@ -147,6 +226,12 @@ export interface PublishedCapture extends CaptureManifest {
    * Tags never appear here: they are mutable and only for discoverability. */
   registryBlob: string;
 }
+
+/** A canonical Lean name: dot-separated identifiers, no «» escapes. The
+ * shape every concept, proof, and statement id in a build output has, and
+ * hence the shape of every paper mark id. */
+export const LEAN_NAME_PATTERN =
+  /^(?:[\p{L}_][\p{L}\p{N}\p{M}_']*)(?:\.(?:[\p{L}_][\p{L}\p{N}\p{M}_']*))*$/u;
 
 const CAPTURE_BLOB_PATTERN =
   /^ghcr\.io\/([a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+)@sha256:([0-9a-f]{64})$/u;
@@ -251,6 +336,7 @@ export interface BuildOutputPayload {
   concepts: ConceptEntry[];
   proofs: ProofEntry[];
   capture: CaptureManifest;
+  paper?: PaperOutput;
 }
 
 export interface ValidationReport {

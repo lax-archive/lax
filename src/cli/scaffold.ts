@@ -58,7 +58,9 @@ export function scaffoldSubmission(
   );
   write("abstract.md", "TODO: describe this submission.\n");
   write("LICENSE", fs.readFileSync(asset("apache-2.0.txt"), "utf8"));
-  write(".gitignore", "build-output.json\nlake-manifest.json\n.lake/\n");
+  // paper.pdf: the compiled paper `lax build` writes beside build-output.json
+  // once a manifest declares one — generated, like the rest of the list.
+  write(".gitignore", "build-output.json\npaper.pdf\nlake-manifest.json\n.lake/\n");
   write("concepts/lean-toolchain", `${runtime.leanToolchain}\n`);
   write(
     "concepts/lakefile.toml",

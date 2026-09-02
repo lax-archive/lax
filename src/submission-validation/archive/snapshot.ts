@@ -61,6 +61,23 @@ export class ArchiveSnapshot {
     return [...new Set(statements)].sort();
   }
 
+  /** The concept and proof ids a record's build output offers cards for —
+   * what a dependent's paper may mark. Read leniently, like `statements`. */
+  cardIds(record: ArchiveSourceRecord): { concepts: string[]; proofs: string[] } {
+    const ids = (value: unknown): string[] => {
+      const entries = Array.isArray(value) ? value : [];
+      const result: string[] = [];
+      for (const entry of entries) {
+        if (isObject(entry) && typeof entry.id === "string") result.push(entry.id);
+      }
+      return [...new Set(result)].sort();
+    };
+    return {
+      concepts: ids(record.buildOutput?.concepts),
+      proofs: ids(record.buildOutput?.proofs),
+    };
+  }
+
   capture(record: ArchiveSourceRecord): PublishedCapture | undefined {
     const value = record.buildOutput?.capture;
     if (!isObject(value) || typeof value.registryBlob !== "string") return undefined;

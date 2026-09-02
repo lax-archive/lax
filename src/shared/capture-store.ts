@@ -25,6 +25,12 @@ const UPLOAD_TIMEOUT_MS = 60 * 60_000;
 const EMPTY_CONFIG = Buffer.from("{}", "utf8");
 const EMPTY_CONFIG_DIGEST = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 export const CAPTURE_MEDIA_TYPE = "application/vnd.lax.capture.v1+tar";
+/** The compiled paper, a second layer of the same artifact manifest
+ * (paper-plan.md, "Storage"): one manifest keeps both blobs alive together,
+ * and a consumer fetches the PDF alone by its digest without touching the
+ * capture tar. */
+export const PAPER_MEDIA_TYPE = "application/vnd.lax.paper.v1+pdf";
+const MAX_PAPER_BYTES = 25 * 1024 * 1024;
 const REPOSITORY_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u;
 
 /**
@@ -99,6 +105,20 @@ export function captureTag(source: SourceLocation, manifest: CaptureManifest): s
  * Every registry response is untrusted input: only exact expected status
  * codes are accepted and all parsed bodies are bounded.
  */
+/** The compiled paper the publisher is asked to push beside the capture. */
+export interface PaperBlobInput {
+  pdfPath: string;
+  /** The sha256 hex the validated build output records for the PDF. */
+  digest: string;
+  bytes: number;
+}
+
+export interface PromotedArtifacts {
+  capture: PublishedCapture;
+  /** The PDF layer's digest-addressed reference, when a paper was pushed. */
+  paperBlob?: string;
+}
+
 export class GhcrCaptureStore {
   constructor(
     private readonly token: string,
@@ -115,7 +135,8 @@ export class GhcrCaptureStore {
     source: SourceLocation,
     manifest: CaptureManifest,
     capturePath: string,
-  ): Promise<PublishedCapture> {
+    paper?: PaperBlobInput,
+  ): Promise<PromotedArtifacts> {
     validateSubmissionId(id);
     if (source.commit !== manifest.sourceCommit) {
       throw new ValidationError("capture source commit does not match the publication source");
@@ -129,10 +150,26 @@ export class GhcrCaptureStore {
     if (sha256File(capturePath) !== manifest.digest) {
       throw new ValidationError("capture.tar digest does not match the validated capture manifest");
     }
+    let paperLayer: { digest: string; size: number } | undefined;
+    if (paper !== undefined) {
+      const paperStat = fs.lstatSync(paper.pdfPath);
+      if (!paperStat.isFile() || paperStat.size <= 0 || paperStat.size > MAX_PAPER_BYTES) {
+        throw new ValidationError("paper.pdf must be a non-empty regular file no larger than 25 MiB");
+      }
+      if (paperStat.size !== paper.bytes || sha256File(paper.pdfPath) !== paper.digest) {
+        throw new ValidationError("paper.pdf does not match the digest the validated build output records");
+      }
+      paperLayer = { digest: `sha256:${paper.digest}`, size: paperStat.size };
+    }
     const digest = `sha256:${manifest.digest}`;
     const bearer = await this.exchangeToken();
     await this.ensureBlob(bearer, digest, stat.size, () =>
       Readable.toWeb(fs.createReadStream(capturePath)) as unknown as BodyInit);
+    if (paperLayer !== undefined) {
+      const layer = paperLayer;
+      await this.ensureBlob(bearer, layer.digest, layer.size, () =>
+        Readable.toWeb(fs.createReadStream(paper!.pdfPath)) as unknown as BodyInit);
+    }
     await this.ensureBlob(bearer, EMPTY_CONFIG_DIGEST, EMPTY_CONFIG.length, () =>
       EMPTY_CONFIG as unknown as BodyInit);
     await this.putManifest(bearer, captureTag(source, manifest), {
@@ -144,7 +181,10 @@ export class GhcrCaptureStore {
         digest: EMPTY_CONFIG_DIGEST,
         size: EMPTY_CONFIG.length,
       },
-      layers: [{ mediaType: CAPTURE_MEDIA_TYPE, digest, size: stat.size }],
+      layers: [
+        { mediaType: CAPTURE_MEDIA_TYPE, digest, size: stat.size },
+        ...(paperLayer === undefined ? [] : [{ mediaType: PAPER_MEDIA_TYPE, digest: paperLayer.digest, size: paperLayer.size }]),
+      ],
       // Discoverability and GC metadata only; consumers trust none of it.
       annotations: {
         "org.opencontainers.image.revision": manifest.sourceCommit,
@@ -155,7 +195,10 @@ export class GhcrCaptureStore {
         "archive.lax.mathlib-commit": manifest.mathlibCommit,
       },
     });
-    return { ...manifest, registryBlob: `ghcr.io/${this.repository}@${digest}` };
+    return {
+      capture: { ...manifest, registryBlob: `ghcr.io/${this.repository}@${digest}` },
+      ...(paperLayer === undefined ? {} : { paperBlob: `ghcr.io/${this.repository}@${paperLayer.digest}` }),
+    };
   }
 
   /** ghcr's token endpoint trades the Actions GITHUB_TOKEN (Basic auth, any

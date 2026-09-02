@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { formatProfile, type Span } from "../shared/profile.js";
@@ -7,7 +7,16 @@ import type { ValidationReport } from "./contracts.js";
 export const VALIDATION_REPORT_FILENAME = "validation-report.json";
 export const GENERATED_BUILD_OUTPUT_FILENAME = "generated-build-output.json";
 export const CAPTURE_FILENAME = "capture.tar";
+/** The compiled paper, present exactly when the build output records one. */
+export const PAPER_FILENAME = "paper.pdf";
 export const VALIDATION_PROFILE_FILENAME = "validation-profile.json";
+
+/** What the pipeline hands back beyond the report: files still inside the
+ * job directory that must leave it before it is removed. */
+export interface ValidationOutcome extends ValidationReport {
+  /** The compiled paper, when the build output records one. */
+  paperPdfPath?: string;
+}
 
 const MAX_PROFILE_BYTES = 4 * 1024 * 1024;
 const MAX_PROFILE_STAGES = 16;
@@ -26,6 +35,7 @@ export function resetValidationOutputs(
     VALIDATION_REPORT_FILENAME,
     GENERATED_BUILD_OUTPUT_FILENAME,
     CAPTURE_FILENAME,
+    PAPER_FILENAME,
     ...(opts.keepProfile === true ? [] : [VALIDATION_PROFILE_FILENAME]),
   ];
   for (const filename of filenames) {
@@ -102,7 +112,10 @@ function readProfile(filename: string): RecordedProfile {
  * constructs record.json and the final build-output.json with its id and issue
  * binding after re-reading the current database state.
  */
-export function writeValidationOutputs(outputDir: string, report: ValidationReport): void {
+export function writeValidationOutputs(outputDir: string, outcome: ValidationOutcome): void {
+  // The PDF path is the job's, not the report's: the serialized report keeps
+  // exactly the shape parseSuccessfulValidationArtifacts accepts.
+  const { paperPdfPath, ...report } = outcome;
   if (!report.ok) {
     atomicWriteJson(path.join(outputDir, VALIDATION_REPORT_FILENAME), report);
     return;
@@ -126,6 +139,19 @@ export function writeValidationOutputs(outputDir: string, report: ValidationRepo
     throw new Error("successful full validation produced no capture.tar");
   }
   if (!captureStat.isFile()) throw new Error("validation capture must be a regular file");
+  // The paper travels beside the capture, bound by the digest the build
+  // output records — present exactly when a paper was recorded.
+  const paper = report.buildOutput.paper;
+  if ((paper === undefined) !== (paperPdfPath === undefined)) {
+    throw new Error("successful full validation recorded a paper without its PDF, or a PDF without a paper");
+  }
+  if (paper !== undefined && paperPdfPath !== undefined) {
+    const bytes = fs.readFileSync(paperPdfPath);
+    if (bytes.length !== paper.pdf.bytes || createHash("sha256").update(bytes).digest("hex") !== paper.pdf.digest) {
+      throw new Error("the compiled paper does not match the digest its build output records");
+    }
+    fs.writeFileSync(path.join(outputDir, PAPER_FILENAME), bytes, { mode: 0o600 });
+  }
 
   // Write the report last. Consumers treat its presence as the indication that
   // the complete output set was persisted successfully.

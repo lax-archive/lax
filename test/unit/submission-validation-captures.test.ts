@@ -95,6 +95,7 @@ function fakeRunner(jobDir: string, blob: Buffer): ValidationRunner {
       throw new Error(`unexpected invocation ${invocation.label}`);
     },
     async verifyRuntime(): Promise<void> {},
+    async verifyImage(): Promise<void> {},
   };
 }
 

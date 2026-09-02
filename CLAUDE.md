@@ -37,8 +37,14 @@ prefer them over inferring intent from the current code.
 - **rewrite.md / rewrite-plan.md** — the rework charter (see above).
 - **paper-plan.md** — the paper layer (LaTeX documents with comment
   markers, compiled by the archive, shown beside concept/proof cards):
-  planned and spiked 2026-09-02, not implemented. Throwaway spike material
-  in `spike/paper/` (its `REPORT.md` files hold the measured verdicts).
+  planned and spiked 2026-09-02; stages 1 (contract), 2 (host path), and
+  3 (trusted path: `pins.ts` TeX image, `paper/container.ts`, the phase in
+  `pipeline.ts`, the PDF layer in `capture-store.ts`, `paper.pdf` in the
+  validate artifact) implemented the same day
+  (`src/submission-validation/paper/`, `host/paper.ts`,
+  `assets/tex/laxmark.sty`); the stage-3 rehearsal and stages 4–6 are
+  open — see TODO.md. Throwaway spike material in `spike/paper/` (its
+  `REPORT.md` files hold the measured verdicts).
 - **one-axiom-plan.md** — the old one-statement-per-concept design. The
   bound was lifted on 2026-08-06 (a concept declares any number of
   statements; see the spec-notes entry), and the plan document was deleted
@@ -108,7 +114,9 @@ watchdog; the container is a stock digest-pinned image
 (`src/submission-validation/pins.ts` — the single home of all pins) with
 the VM-installed toolchain and warm mathlib workspace bind-mounted
 read-only (`host/setup.ts` provisions them, `sandbox/layout.ts` resolves
-them). Database writes go through the GitHub API with a non-forced ref
+them). A declared paper compiles in a second digest-pinned image (a full
+TeX Live, `PAPER_IMAGE` in the same pins module) through the same runner,
+with none of the Lean mounts, concurrently with the Lean chain. Database writes go through the GitHub API with a non-forced ref
 update (compare-and-swap) plus re-validation on retry; dependency captures
 are pushed as digest-addressed OCI artifacts to ghcr
 (`ghcr.io/<owner>/lax-captures`, `src/shared/capture-store.ts`) before the

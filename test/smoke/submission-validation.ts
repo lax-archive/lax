@@ -7,6 +7,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,6 +41,8 @@ interface SmokeFixture {
   name: string;
   id: string;
   files?: Record<string, string>;
+  /** Extra manifest.yaml keys (a `paper:` block). */
+  manifestExtra?: string;
   check(report: ValidationReport, jobRoot: string): void;
 }
 
@@ -71,7 +74,7 @@ try {
     fs.mkdirSync(sourceRoot, { recursive: true });
     fs.mkdirSync(archiveRoot, { recursive: true });
     fs.mkdirSync(jobRoot, { recursive: true });
-    writeFixture(sourceRoot, fixture.id, runtime, fixture.files ?? {});
+    writeFixture(sourceRoot, fixture.id, runtime, fixture.files ?? {}, fixture.manifestExtra ?? "");
     execFileSync("git", ["init", "--quiet", sourceRoot]);
     execFileSync("git", ["-C", sourceRoot, "add", "."]);
     execFileSync("git", [
@@ -198,6 +201,37 @@ function fixtures(): SmokeFixture[] {
       },
     },
     {
+      // The paper layer's trusted path: the pinned TeX Live image pulled on
+      // demand (5.5 GB — the slow case), latexmk in the bare container beside
+      // the Lean chain, destinations read back, ids resolved against Inspect,
+      // the PDF handed out and its sources captured under paper/.
+      name: "paper",
+      id: "lax-44",
+      files: paperFiles(),
+      manifestExtra: "paper:\n  folder: paper\n  main: main.tex\n",
+      check(report, jobRoot) {
+        assertSuccessful(report);
+        const paper = report.buildOutput!.paper;
+        assert(paper !== undefined, "the paper was not recorded");
+        assert.deepEqual(
+          paper.marks.map((mark) => [mark.id, mark.kind]),
+          [["Lax44.Claim", "concept"], ["Lax44Proofs.claim", "proof"]],
+          JSON.stringify(paper.marks, null, 2),
+        );
+        assert.equal(paper.pdf.pages, 1);
+        const pdfPath = (report as { paperPdfPath?: string }).paperPdfPath;
+        assert(pdfPath !== undefined && pdfPath.startsWith(jobRoot), "the PDF did not come out of the job directory");
+        const bytes = fs.readFileSync(pdfPath);
+        assert.equal(bytes.length, paper.pdf.bytes);
+        assert.equal(createHash("sha256").update(bytes).digest("hex"), paper.pdf.digest);
+        assert.deepEqual(
+          report.capture!.files.filter((file) => file.path.startsWith("paper/")).map((file) => file.path),
+          ["paper/main.tex"],
+          "the paper sources were not captured",
+        );
+      },
+    },
+    {
       name: "authored-reserved-name",
       id: "lax-41",
       files: authoredReservedNameFiles(),
@@ -226,6 +260,7 @@ function writeFixture(
   id: string,
   pins: RuntimePins,
   files: Record<string, string>,
+  manifestExtra = "",
 ): void {
   const concepts = packageNameForSubmission(id);
   const proofs = `${concepts}Proofs`;
@@ -238,11 +273,12 @@ function writeFixture(
     "manifest.yaml",
     `specVersion: "1"\nid: ${id}\nleanVersion: ${pins.leanVersion}\n` +
       `mathlibVersion: ${pins.mathlibCommit}\ntitle: Smoke submission ${id}\n` +
-      "authors:\n  - name: Lax Smoke\n    github: lax-archive\nbibEntries: []\n",
+      "authors:\n  - name: Lax Smoke\n    github: lax-archive\nbibEntries: []\n" +
+      manifestExtra,
   );
   write("abstract.md", `End-to-end submission validation smoke test for ${id}.\n`);
   write("LICENSE", fs.readFileSync(new URL("../../assets/apache-2.0.txt", import.meta.url), "utf8"));
-  write(".gitignore", "build-output.json\nlake-manifest.json\n.lake/\n");
+  write(".gitignore", "build-output.json\npaper.pdf\nlake-manifest.json\n.lake/\n");
   write("concepts/lean-toolchain", `${pins.leanToolchain}\n`);
   write("concepts/lakefile.toml", lakefile(concepts, pins));
   write(`concepts/${concepts}.lean`, "");
@@ -331,6 +367,47 @@ ${conceptModule(
   "Immutable target",
   "namespace Lax43.Target\n/-- The archived claim. -/\naxiom archived_claim : True\nend Lax43.Target\n",
 )}`,
+  };
+}
+
+function paperFiles(): Record<string, string> {
+  return {
+    "concepts/Lax44.lean": "import Lax44.Claim\n",
+    "concepts/Lax44/Claim.lean": conceptModule(
+      "A claim",
+      "namespace Lax44.Claim\n/-- the claim -/\naxiom holds : 0 = 0\nend Lax44.Claim\n",
+    ),
+    "proofs/Lax44Proofs.lean": "import Lax44Proofs.Basic\n",
+    "proofs/Lax44Proofs/Basic.lean": `import Lax44.Claim
+
+namespace Lax44Proofs
+
+/--
+---
+conclusion: Lax44.Claim.holds
+---
+by reflexivity
+-/
+theorem claim : 0 = 0 := rfl
+
+end Lax44Proofs
+`,
+    "paper/main.tex": `\\documentclass{article}
+\\usepackage{amsthm}
+\\newtheorem{theorem}{Theorem}
+\\begin{document}
+% lax begin Lax44.Claim
+\\begin{theorem}
+  $0 = 0$.
+\\end{theorem}
+% lax end
+% lax begin Lax44Proofs.claim
+\\begin{proof}
+  By reflexivity.
+\\end{proof}
+% lax end
+\\end{document}
+`,
   };
 }
 

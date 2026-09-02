@@ -241,6 +241,7 @@ describe("prepare-submit entry point", () => {
       VALIDATION_REPORT_PATH: path.join(directory, "validation-report.json"),
       GENERATED_BUILD_OUTPUT_PATH: path.join(directory, "generated-build-output.json"),
       VALIDATION_CAPTURE_PATH: path.join(directory, "capture.tar"),
+      VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
       // Env-poisoning canary: the preflight job holds no database credential;
       // if this value ever leaves the process something read the wrong env.
       LAX_DATABASE_TOKEN: canary,
@@ -255,6 +256,51 @@ describe("prepare-submit entry point", () => {
       expect(request.authorization).toBe("Bearer workflow-token");
       expect(`${request.url} ${request.body}`).not.toContain(canary);
     }
+  });
+
+  it("hashes a recorded paper from the validate artifact before anything is minted", async () => {
+    const texts = initialFiles("lax-42", { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z");
+    const directory = workDirectory();
+    const captureBytes = Buffer.from("lax capture fixture bytes");
+    const pdf = Buffer.from("%PDF-1.7 fixture paper");
+    const artifacts = successfulArtifacts();
+    const digest = createHash("sha256").update(captureBytes).digest("hex");
+    artifacts.report.capture.digest = digest;
+    const paperManifest = { folder: "paper", main: "main.tex", engine: "pdflatex" as const };
+    for (const output of [artifacts.buildOutput, artifacts.report.buildOutput]) {
+      output.capture.digest = digest;
+      output.inputs.manifest.paper = paperManifest;
+      output.paper = {
+        ...paperManifest,
+        pdf: { digest: createHash("sha256").update(pdf).digest("hex"), bytes: pdf.length, pages: 1 },
+        pageSizes: [[612, 792]],
+        marks: [],
+      };
+    }
+    fs.writeFileSync(path.join(directory, "validation-report.json"), JSON.stringify(artifacts.report));
+    fs.writeFileSync(path.join(directory, "generated-build-output.json"), JSON.stringify(artifacts.buildOutput));
+    fs.writeFileSync(path.join(directory, "capture.tar"), captureBytes);
+    const outputFile = path.join(directory, "github-output");
+    stubWorkflowEnv({
+      GITHUB_OUTPUT: outputFile,
+      PUBLISH_REQUEST: encode(submitRequest(fileDigests(texts))),
+      VALIDATION_REPORT_PATH: path.join(directory, "validation-report.json"),
+      GENERATED_BUILD_OUTPUT_PATH: path.join(directory, "generated-build-output.json"),
+      VALIDATION_CAPTURE_PATH: path.join(directory, "capture.tar"),
+      VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
+    });
+    installIssueFetch({ comments: [], reactions: [] }, texts);
+
+    // The recorded bytes: ready.
+    fs.writeFileSync(path.join(directory, "paper.pdf"), pdf);
+    await prepareSubmit();
+    expect(fs.readFileSync(outputFile, "utf8")).toMatch(/should_publish<<[^\n]+\ntrue\n/u);
+    // The wrong bytes under the right name: refused before any state is read.
+    fs.writeFileSync(path.join(directory, "paper.pdf"), "%PDF-1.7 some other paper");
+    await expect(prepareSubmit()).rejects.toThrow("recorded size");
+    // Recorded but not in the artifact: refused.
+    fs.rmSync(path.join(directory, "paper.pdf"));
+    await expect(prepareSubmit()).rejects.toThrow("validation paper is missing");
   });
 });
 

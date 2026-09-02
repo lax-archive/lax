@@ -16,6 +16,7 @@ import { packageNameForSubmission } from "../../src/submission-validation/contra
 import {
   validateSubmissionOnHost,
   type HostValidationOptions,
+  type HostValidationReport,
 } from "../../src/submission-validation/host/pipeline.js";
 import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
 import type { Profiler } from "../../src/shared/profile.js";
@@ -55,6 +56,7 @@ export function makeHostSubmission(
   id: string,
   files: Record<string, string> = {},
   stableBase?: string,
+  options: { manifestExtra?: string } = {},
 ): string {
   const runtime = hostValidationRuntime();
   const root = stableBase === undefined ? tmpDir("lax-sub-") : path.join(stableBase, id);
@@ -77,14 +79,15 @@ export function makeHostSubmission(
     "manifest.yaml",
     `specVersion: "1"\nid: ${id}\nleanVersion: ${runtime.leanVersion}\n` +
       `mathlibVersion: ${runtime.mathlibCommit}\ntitle: Host pipeline test\n` +
-      "authors:\n  - name: Alice Example\n    github: alice\nbibEntries: []\n",
+      "authors:\n  - name: Alice Example\n    github: alice\nbibEntries: []\n" +
+      (options.manifestExtra ?? ""),
   );
   write("abstract.md", "A host-pipeline test submission.\n");
   write(
     "LICENSE",
     fs.readFileSync(new URL("../../assets/apache-2.0.txt", import.meta.url), "utf8"),
   );
-  write(".gitignore", "build-output.json\nlake-manifest.json\n.lake/\n");
+  write(".gitignore", "build-output.json\npaper.pdf\nlake-manifest.json\n.lake/\n");
   write("concepts/lean-toolchain", `${runtime.leanToolchain}\n`);
   write("concepts/lakefile.toml", lakefile(concepts, false));
   write(`concepts/${concepts}.lean`, "");
@@ -127,7 +130,7 @@ export async function buildOnHost(
     /** Use this job dir so the test can inspect what the build materialized. */
     jobDir?: string;
   } = {},
-): Promise<ValidationReport> {
+): Promise<HostValidationReport> {
   const commit = fs.existsSync(path.join(root, ".git")) ? git(root, "rev-parse", "HEAD") : gitInitCommit(root);
   const request: ValidationRequest = {
     requestVersion: 1,
@@ -162,4 +165,125 @@ export function rules(report: ValidationReport): Set<string> {
 /** Every violation message of a report, joined for a single `toContain`. */
 export function messages(report: ValidationReport): string {
   return report.violations.map((violation) => `[${violation.rule}] ${violation.message}`).join("\n");
+}
+
+/**
+ * A concept+proof submission with a paper: two concepts, two proofs, and a
+ * `paper/` folder whose `main.tex` marks a block (vertical mode), an inline
+ * phrase (horizontal mode), a nested pair, a proof, and — through `\input` —
+ * a marker in a second file. The markers in `extraTex` are appended to the
+ * document body so a test can add a trap without rewriting the fixture.
+ */
+export function makePaperSubmission(
+  id: string,
+  options: { extraTex?: string; manifestExtra?: string } = {},
+): string {
+  const concepts = packageNameForSubmission(id);
+  const proofs = `${concepts}Proofs`;
+  return makeHostSubmission(
+    id,
+    {
+      [`concepts/${concepts}.lean`]: `import ${concepts}.Zero\nimport ${concepts}.One\n`,
+      [`concepts/${concepts}/Zero.lean`]: `/-!
+---
+title: Zero equals zero
+type: theorem
+---
+The trivial claim.
+-/
+
+namespace ${concepts}.Zero
+
+/-- zero equals zero -/
+axiom zeroEq : 0 = 0
+
+end ${concepts}.Zero
+`,
+      [`concepts/${concepts}/One.lean`]: `/-!
+---
+title: One equals one
+type: theorem
+---
+The other trivial claim.
+-/
+
+namespace ${concepts}.One
+
+/-- one equals one -/
+axiom oneEq : 1 = 1
+
+end ${concepts}.One
+`,
+      [`proofs/${proofs}.lean`]: `import ${proofs}.Basic\n`,
+      [`proofs/${proofs}/Basic.lean`]: `import ${concepts}.Zero
+import ${concepts}.One
+
+namespace ${proofs}
+
+/--
+---
+conclusion: ${concepts}.Zero.zeroEq
+---
+by rfl
+-/
+theorem zero_eq : 0 = 0 := rfl
+
+/--
+---
+conclusion: ${concepts}.One.oneEq
+assumptions:
+  - ${concepts}.Zero.zeroEq
+---
+uses the other statement
+-/
+theorem one_eq : 1 = 1 := by
+  have h := ${concepts}.Zero.zeroEq
+  rfl
+
+end ${proofs}
+`,
+      "paper/main.tex": `\\documentclass{article}
+\\usepackage{amsmath}
+\\usepackage{amsthm}
+\\usepackage{hyperref}
+\\newtheorem{theorem}{Theorem}
+\\title{A paper-layer fixture}
+\\author{A. Author}
+\\date{}
+\\begin{document}
+\\maketitle
+
+We use the standard notion of
+% lax begin ${concepts}.One
+one being equal to one
+% lax end
+as everyone does; 100\\% of the markers in this file are real.
+
+% lax begin ${concepts}.Zero
+\\begin{theorem}
+  \\label{thm:zero}
+  $0 = 0$.
+\\end{theorem}
+
+% lax begin ${proofs}.zero_eq
+\\begin{proof}
+  By reflexivity.
+\\end{proof}
+% lax end ${proofs}.zero_eq
+% lax end
+
+\\input{section}
+${options.extraTex ?? ""}
+\\end{document}
+`,
+      "paper/section.tex": `\\section{A second file}
+
+% lax begin ${proofs}.one_eq
+The second proof also holds by reflexivity, after touching the assumption.
+% lax end
+`,
+    },
+    undefined,
+    { manifestExtra: `paper:\n  folder: paper\n  main: main.tex\n${options.manifestExtra ?? ""}` },
+  );
 }

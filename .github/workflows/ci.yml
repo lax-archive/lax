@@ -50,6 +50,15 @@ jobs:
             ~/.lax/warm
             ~/.lax/tools
           key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      # The paper-layer e2e (test/e2e/host-paper.test.ts) compiles a small
+      # fixture with the host latexmk, the way `lax build` does on an author's
+      # machine; it skips itself without one, so the install is what makes the
+      # test run here. A minimal TeX Live: the fixture needs amsmath/amsthm/
+      # hyperref (texlive-latex-base) and etoolbox (texlive-latex-recommended).
+      - name: Install a small TeX Live for the paper e2e
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends texlive-latex-base texlive-latex-recommended latexmk
       - run: npm test
 
   # `npm run check` cannot see the container-only seam: it builds on the host,

@@ -50,11 +50,18 @@ export class SubmitPublisher {
     return { kind: "ready", request };
   }
 
+  /**
+   * `paperPdfPath` is the compiled paper from the validate artifact, required
+   * exactly when the build output records one; the caller has already hashed
+   * it against the recorded digest (readSuccessfulArtifacts), and promote()
+   * hashes it again before the push.
+   */
   async publish(
     untrustedRequest: PublishRequest,
     artifacts: SuccessfulValidationArtifacts,
     capturePath: string,
     run: WorkflowRunRef,
+    paperPdfPath?: string,
   ): Promise<SubmitPublishResult> {
     if (this.captureStore === undefined) throw new Error("submit publisher has no capture store");
     const ready = await this.preflight(untrustedRequest, artifacts);
@@ -69,13 +76,23 @@ export class SubmitPublisher {
     // commit fails afterwards, the pushed artifact is orphaned garbage,
     // never inconsistency, and a retry re-pushes the identical bytes onto
     // the same content address (idempotent).
-    const publishedCapture = await this.captureStore.promote(
+    const paper = artifacts.buildOutput.paper;
+    if ((paper === undefined) !== (paperPdfPath === undefined)) {
+      throw new ValidationError("the validated build output records a paper exactly when a paper.pdf is supplied");
+    }
+    const promoted = await this.captureStore.promote(
       request.id,
       artifacts.report.request.source,
       artifacts.report.capture,
       capturePath,
+      paper === undefined || paperPdfPath === undefined
+        ? undefined
+        : { pdfPath: paperPdfPath, digest: paper.pdf.digest, bytes: paper.pdf.bytes },
     );
-    const changes = constructSubmitChanges(request, current, artifacts.buildOutput, publishedCapture);
+    if ((paper === undefined) !== (promoted.paperBlob === undefined)) {
+      throw new ValidationError("the capture store did not push the paper layer it was asked for");
+    }
+    const changes = constructSubmitChanges(request, current, artifacts.buildOutput, promoted.capture, promoted.paperBlob);
     const archiveCommit = await this.archive.writeFiles({
       id: request.id,
       changes,
@@ -208,6 +225,7 @@ function constructSubmitChanges(
   current: LoadedSubmission,
   payload: BuildOutputPayload,
   publishedCapture: PublishedCapture,
+  paperBlob: string | undefined,
 ): ArchiveChanges {
   if (request.command?.action !== "submit") throw new ValidationError("submit command is missing");
   const record = {
@@ -227,6 +245,9 @@ function constructSubmitChanges(
     concepts: payload.concepts,
     proofs: payload.proofs,
     capture: publishedCapture,
+    ...(payload.paper === undefined || paperBlob === undefined
+      ? {}
+      : { paper: { ...payload.paper, pdf: { ...payload.paper.pdf, registryBlob: paperBlob } } }),
   };
   const changes: ArchiveChanges = {
     "record.json": `${JSON.stringify(record, null, 2)}\n`,

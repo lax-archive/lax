@@ -40,6 +40,26 @@ export function submissionIdFromFolder(folder: string): string {
 }
 
 /**
+ * Whether a submission folder's manifest declares a paper — decided from the
+ * raw YAML before a build, so the step list can show the row up front. The
+ * block's shape is the validator's business; this only asks whether it is
+ * there at all, and an unreadable manifest simply has none.
+ */
+export function declaresPaper(folder: string): boolean {
+  try {
+    const value = parse(fs.readFileSync(path.join(path.resolve(folder), "manifest.yaml"), "utf8"), {
+      maxAliasCount: 0,
+      merge: false,
+      uniqueKeys: true,
+    }) as unknown;
+    return value !== null && typeof value === "object" && !Array.isArray(value) &&
+      (value as Record<string, unknown>).paper !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The issue number behind a submission folder, for the commands that post to
  * the archive.
  *

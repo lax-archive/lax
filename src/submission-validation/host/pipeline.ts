@@ -18,8 +18,11 @@ import path from "node:path";
 import type { ArchiveSnapshot } from "../archive/snapshot.js";
 import { capturePackage, describeLocalCapture } from "../captures/seal.js";
 import { DEFAULT_LIMITS, type ValidationLimits } from "../config.js";
+import { FindingCollector } from "../findings.js";
 import type {
+  InspectionResult,
   ModuleInventory,
+  PaperOutput,
   ResolutionResult,
   StaticResult,
   ValidationFinding,
@@ -27,6 +30,8 @@ import type {
   ValidationRequest,
   ValidationScope,
 } from "../contracts.js";
+import { joinPaperMarks } from "../paper/join.js";
+import { capturePaperSources, runPaperPhase, type CompiledPaper, type PaperPhaseResult } from "../paper/phase.js";
 import { emitBuildOutput } from "../phases/emit.js";
 import { judgeInspection } from "../phases/inspect.js";
 import { parseInspectorReport } from "../phases/inspect-runner.js";
@@ -38,6 +43,7 @@ import type { FetchedSource } from "../source/fetch.js";
 import { Profiler } from "../../shared/profile.js";
 import { inspectorBinary } from "./inspector.js";
 import { hostLeanEnv, lakeBinary, lakePathEnv, packageLibDir, type LeanEnv } from "./leanenv.js";
+import { commitTimestamp, engineAvailable, hostPaperCompiler, MIN_LATEXMK_VERSION, probeLatexmkAsync } from "./paper.js";
 import { run } from "./proc.js";
 import {
   ensureLocalWarm,
@@ -61,8 +67,10 @@ export interface HostValidationOptions {
    * violation message instead.
    */
   echo?: boolean;
-  /** Local presentation hook, mirroring ValidationOptions.onPhase. */
-  onPhase?: (event: { name: string; state: "start" | "complete"; durationMs?: number }) => void;
+  /** Local presentation hook, mirroring ValidationOptions.onPhase. `ok` is
+   * set on completion of the phases that settle out of order (the paper,
+   * which runs beside the Lean chain) so a row can close on its own answer. */
+  onPhase?: (event: { name: string; state: "start" | "complete"; durationMs?: number; ok?: boolean }) => void;
   /**
    * What a phase found, for the row it settles. `onPhase` says only that a
    * stage happened; the author's step list wants the answer next to it — which
@@ -85,7 +93,13 @@ interface HostState {
   warnings: ValidationFinding[];
   violations: ValidationFinding[];
   dependencies: ResolutionResult["all"];
-  phase<T>(name: string, operation: () => Promise<T> | T): Promise<T>;
+  phase<T>(name: string, operation: () => Promise<T> | T, judge?: (result: T) => boolean): Promise<T>;
+}
+
+/** The host report, plus what the caller must copy out of the job directory
+ * before it is removed: the compiled paper, when there is one. */
+export interface HostValidationReport extends ValidationReport {
+  paperPdfPath?: string;
 }
 
 /** Run the full local validation pipeline on the host toolchain. */
@@ -93,7 +107,7 @@ export async function validateSubmissionOnHost(
   request: ValidationRequest,
   jobDir: string,
   options: HostValidationOptions,
-): Promise<ValidationReport> {
+): Promise<HostValidationReport> {
   const runtime = hostValidationRuntime();
   const limits = DEFAULT_LIMITS;
   const profiler = options.profiler ?? new Profiler();
@@ -113,13 +127,21 @@ export async function validateSubmissionOnHost(
     warnings,
     violations,
     dependencies: [],
-    phase: async <T>(name: string, operation: () => Promise<T> | T): Promise<T> => {
+    phase: async <T>(name: string, operation: () => Promise<T> | T, judge?: (result: T) => boolean): Promise<T> => {
       options.onPhase?.({ name, state: "start" });
       const started = performance.now();
+      let ok: boolean | undefined;
       try {
-        return await profiler.span(name, async () => operation());
+        const result = await profiler.span(name, async () => operation());
+        ok = judge?.(result);
+        return result;
       } finally {
-        options.onPhase?.({ name, state: "complete", durationMs: performance.now() - started });
+        options.onPhase?.({
+          name,
+          state: "complete",
+          durationMs: performance.now() - started,
+          ...(ok === undefined ? {} : { ok }),
+        });
       }
     },
   };
@@ -164,193 +186,318 @@ export async function validateSubmissionOnHost(
   );
   if (resolution.findings.failed) return report(false);
 
-  let warmWs: string | undefined;
-  try {
-    warmWs = await state.phase("warm store", () =>
-      ensureLocalWarm({ fromSource: options.fromSource, echo }));
-  } catch (error) {
-    return fail("provision", "warm-store", error);
-  }
-  if (warmWs === undefined) {
-    violations.push({
-      phase: "provision",
-      rule: "warm-store",
-      message:
-        "the shared mathlib environment could not be built (see the transcript above); " +
-        "fix the cause (network, disk) and rerun `lax build`",
-    });
-    return report(false);
-  }
-  const warm = warmWs;
+  // The paper compiles beside the Lean chain: nothing in the TeX work depends
+  // on Lean (the rewriter emits numbers, compile and extraction work on
+  // numbers only), so it starts now and is joined before Emit. Whatever Lean
+  // does, the promise is awaited before this function returns, so both
+  // findings reach the author and the job directory outlives latexmk.
+  const paperRun =
+    staticCheck.result.paper !== undefined && scope === "both"
+      ? startPaperPhase(state, staticCheck.result, options)
+      : undefined;
 
-  fs.mkdirSync(state.captureRoot, { recursive: true, mode: 0o700 });
-  const kinds: Array<"concepts" | "proofs"> =
-    scope === "concepts" ? ["concepts"] : ["concepts", "proofs"];
-  for (const kind of kinds) {
-    // The concept package is built under every scope: even a proofs-only run
-    // inspects its environment for the statements the proofs may assume.
-    const failurePhase = kind === "concepts" ? "compile-concepts" : "compile-proofs";
-    const staticPackage = staticCheck.result[kind]!;
-    const pkgDir = path.join(state.fetched.submissionRoot, kind);
-    try {
-      await state.phase(`provision ${kind}`, () => {
-        seedOverrides(warm, pkgDir);
-        seedManifest(warm, pkgDir, hostDependencies(kind, staticCheck.result, resolution.result));
-      });
-    } catch (error) {
-      return fail(failurePhase, "provision", error);
-    }
-    if (echo) console.log(`\n== lake build (${kind}) ==`);
-    const build = await state.phase(`compile ${kind}`, () =>
-      run(lakeBinary(), ["build"], pkgDir, {
-        echo,
-        env: { LAKE_ARTIFACT_CACHE: "false", LEAN_NUM_THREADS: "4", PATH: lakePathEnv() },
-        maxOutputBytes: limits.maxOutputBytes,
-      }));
-    if (build.code !== 0) {
-      violations.push({
-        phase: failurePhase,
-        rule: "build",
-        message:
-          `\`lake build\` failed in ${kind}/ (exit ${build.code})` +
-          (echo ? "" : `:\n${build.output.trim()}`),
-      });
-      return report(false);
-    }
-    const materialized = await state.phase(`materialize oleans (${kind})`, () =>
-      materializeOwnOleans(staticPackage.inventory, pkgDir, failurePhase, state));
-    if (!materialized) return report(false);
-    try {
-      await state.phase(`capture ${kind}`, () => capturePackage(
-        kind,
-        state.fetched.submissionRoot,
-        packageLibDir(pkgDir),
-        fs.readFileSync(path.join(pkgDir, "lake-manifest.json"), "utf8"),
-        staticPackage.inventory,
-        state.captureRoot,
-      ));
-    } catch (error) {
-      return fail(failurePhase, "capture", error);
-    }
+  const lean = await runLeanChain();
+  const paper = paperRun === undefined ? undefined : await paperRun;
+  if (paper !== undefined) {
+    warnings.push(...paper.findings.warnings);
+    violations.push(...paper.findings.violations);
   }
-
-  // Dependency lib dirs come from the packages lake built in-workspace: a
-  // git-type manifest entry is cloned to `<pkgDir>/.lake/packages/<name>` and
-  // the package (at its subDir) builds into `<clone>/<subDir>/.lake/build/
-  // lib/lean` — layout verified empirically at the pinned v4.30.0. Lake only
-  // builds the dependency modules the package imports, so absent lib dirs
-  // (a dependency nothing imported) are filtered like before.
-  const dependencyLibDirs = (kind: "concepts" | "proofs"): string[] =>
-    dependencyClosure(kind, resolution.result)
-      .map((dependency) => packageLibDir(path.join(
-        state.fetched.submissionRoot,
-        kind,
-        ".lake",
-        "packages",
-        dependency.packageName,
-        dependencySubDir(dependency),
-      )))
-      .filter((directory) => fs.existsSync(directory));
-  const leanEnvFor = (kind: "concepts" | "proofs"): LeanEnv => hostLeanEnv(
-    kind === "proofs"
-      ? [path.join(state.captureRoot, "proofs", "lib"), path.join(state.captureRoot, "concepts", "lib")]
-      : [path.join(state.captureRoot, "concepts", "lib")],
-    dependencyLibDirs(kind),
-    warm,
-    limits.leanThreads,
-  );
-
-  if (options.replay === true) {
-    // Mirror the trusted stage scoping: concepts replay under every scope but
-    // `proofs`, proofs replay under every scope but `concepts`.
-    const replayKinds = kinds.filter((kind) => !(scope === "proofs" && kind === "concepts"));
-    for (const kind of replayKinds) {
-      const inventory = staticCheck.result[kind]!.inventory;
-      const leanEnv = leanEnvFor(kind);
-      const cwd = path.join(state.captureRoot, kind, "package");
-      const result = await state.phase(`replay ${kind}`, () =>
-        leanEnv.exec(leanEnv.leancheckerBin, [inventory.rootModule], cwd));
-      if (result.code !== 0) {
-        violations.push({
-          phase: "replay",
-          rule: "kernel-replay",
-          message: `leanchecker failed for package ${inventory.packageName}:\n${result.output.trim()}`,
-        });
-        return report(false);
-      }
-    }
-  }
-
-  let inspectorBin: string;
-  try {
-    inspectorBin = await state.phase("inspector binary", () =>
-      inspectorBinary({
-        echo,
-        // Half a minute of lake with nothing else to show for it, once per
-        // inspector source change. Say so on the row rather than let it read
-        // as a hang.
-        onBuild: () => options.onDetail?.("inspector binary", "building the inspector"),
-      }));
-  } catch (error) {
-    return fail("inspect", "inspector", error);
-  }
-  const inspect = async (kind: "concepts" | "proofs") => {
-    const inventory = staticCheck.result[kind]!.inventory;
-    const outputDir = path.join(jobDir, "checks", `inspect-${kind}`);
-    fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
-    const reportPath = path.join(outputDir, "report.json");
-    const leanEnv = leanEnvFor(kind);
-    const cwd = path.join(state.captureRoot, kind, "package");
-    const result = await leanEnv.exec(
-      inspectorBin,
-      [reportPath, inventory.rootModule, ...inventory.modules],
-      cwd,
-    );
-    if (result.code !== 0) {
-      throw new Error(
-        `inspector failed for package ${inventory.packageName} (exit ${result.code}):\n${result.output.trim()}`,
-      );
-    }
-    const stat = fs.lstatSync(reportPath);
-    if (!stat.isFile() || stat.size > 32 * 1024 * 1024)
-      throw new Error(`${kind} inspector report is missing or oversized`);
-    return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown);
-  };
-  let conceptReport;
-  let proofReport;
-  try {
-    conceptReport = await state.phase("inspect concepts", () => inspect("concepts"));
-    proofReport = scope === "concepts" ? undefined : await state.phase("inspect proofs", () => inspect("proofs"));
-  } catch (error) {
-    return fail("inspect", "inspector", error);
-  }
-  const inspection = await state.phase("judge inspection", () => judgeInspection(
-    conceptReport,
-    proofReport,
-    staticCheck.result.concepts!.inventory,
-    scope === "concepts" ? undefined : staticCheck.result.proofs!.inventory,
-    resolution.result,
-    scope,
-  ));
-  warnings.push(...inspection.findings.warnings);
-  violations.push(...inspection.findings.violations);
-  if (inspection.findings.failed) return report(false);
-
-  if (scope !== "both") return report(true);
+  if (isReport(lean)) return paper?.findings.failed === true ? { ...lean, ok: false } : lean;
+  if (paper?.findings.failed === true) return report(false);
 
   try {
+    const paperOutput = paper?.compiled === undefined
+      ? undefined
+      : await state.phase("resolve marks", () => resolveMarks(paper.compiled!, staticCheck.result, resolution.result, options.local.archive, lean.inspection, state));
+    if (paperOutput === "failed") return report(false);
+    if (staticCheck.result.paper !== undefined && scope === "both") {
+      capturePaperSources(staticCheck.result.paper, state.fetched.submissionRoot, state.captureRoot);
+    }
     const capture = await state.phase("emit", () =>
       describeLocalCapture(state.captureRoot, request.source.commit, runtime));
     const buildOutput = emitBuildOutput(
       state.fetched.submissionRoot,
       staticCheck.result,
-      inspection.result,
+      lean.inspection,
       capture,
+      paperOutput,
     );
-    return { ...report(true), buildOutput, capture };
+    return {
+      ...report(true),
+      buildOutput,
+      capture,
+      ...(paper?.compiled === undefined ? {} : { paperPdfPath: paper.compiled.pdfPath }),
+    };
   } catch (error) {
     return fail("emit", "emit", error);
   }
+
+  /** Provision, compile, capture, replay, inspect, judge — everything Lean.
+   * Returns the report to hand back when the chain stops early (a failure,
+   * or a partial scope), else the inspection Emit needs. */
+  async function runLeanChain(): Promise<ValidationReport | { inspection: InspectionResult }> {
+    let warmWs: string | undefined;
+    try {
+      warmWs = await state.phase("warm store", () =>
+        ensureLocalWarm({ fromSource: options.fromSource, echo }));
+    } catch (error) {
+      return fail("provision", "warm-store", error);
+    }
+    if (warmWs === undefined) {
+      violations.push({
+        phase: "provision",
+        rule: "warm-store",
+        message:
+          "the shared mathlib environment could not be built (see the transcript above); " +
+          "fix the cause (network, disk) and rerun `lax build`",
+      });
+      return report(false);
+    }
+    const warm = warmWs;
+
+    fs.mkdirSync(state.captureRoot, { recursive: true, mode: 0o700 });
+    const kinds: Array<"concepts" | "proofs"> =
+      scope === "concepts" ? ["concepts"] : ["concepts", "proofs"];
+    for (const kind of kinds) {
+      // The concept package is built under every scope: even a proofs-only run
+      // inspects its environment for the statements the proofs may assume.
+      const failurePhase = kind === "concepts" ? "compile-concepts" : "compile-proofs";
+      const staticPackage = staticCheck.result[kind]!;
+      const pkgDir = path.join(state.fetched.submissionRoot, kind);
+      try {
+        await state.phase(`provision ${kind}`, () => {
+          seedOverrides(warm, pkgDir);
+          seedManifest(warm, pkgDir, hostDependencies(kind, staticCheck.result, resolution.result));
+        });
+      } catch (error) {
+        return fail(failurePhase, "provision", error);
+      }
+      if (echo) console.log(`\n== lake build (${kind}) ==`);
+      const build = await state.phase(`compile ${kind}`, () =>
+        run(lakeBinary(), ["build"], pkgDir, {
+          echo,
+          env: { LAKE_ARTIFACT_CACHE: "false", LEAN_NUM_THREADS: "4", PATH: lakePathEnv() },
+          maxOutputBytes: limits.maxOutputBytes,
+        }));
+      if (build.code !== 0) {
+        violations.push({
+          phase: failurePhase,
+          rule: "build",
+          message:
+            `\`lake build\` failed in ${kind}/ (exit ${build.code})` +
+            (echo ? "" : `:\n${build.output.trim()}`),
+        });
+        return report(false);
+      }
+      const materialized = await state.phase(`materialize oleans (${kind})`, () =>
+        materializeOwnOleans(staticPackage.inventory, pkgDir, failurePhase, state));
+      if (!materialized) return report(false);
+      try {
+        await state.phase(`capture ${kind}`, () => capturePackage(
+          kind,
+          state.fetched.submissionRoot,
+          packageLibDir(pkgDir),
+          fs.readFileSync(path.join(pkgDir, "lake-manifest.json"), "utf8"),
+          staticPackage.inventory,
+          state.captureRoot,
+        ));
+      } catch (error) {
+        return fail(failurePhase, "capture", error);
+      }
+    }
+
+    // Dependency lib dirs come from the packages lake built in-workspace: a
+    // git-type manifest entry is cloned to `<pkgDir>/.lake/packages/<name>` and
+    // the package (at its subDir) builds into `<clone>/<subDir>/.lake/build/
+    // lib/lean` — layout verified empirically at the pinned v4.30.0. Lake only
+    // builds the dependency modules the package imports, so absent lib dirs
+    // (a dependency nothing imported) are filtered like before.
+    const dependencyLibDirs = (kind: "concepts" | "proofs"): string[] =>
+      dependencyClosure(kind, resolution.result)
+        .map((dependency) => packageLibDir(path.join(
+          state.fetched.submissionRoot,
+          kind,
+          ".lake",
+          "packages",
+          dependency.packageName,
+          dependencySubDir(dependency),
+        )))
+        .filter((directory) => fs.existsSync(directory));
+    const leanEnvFor = (kind: "concepts" | "proofs"): LeanEnv => hostLeanEnv(
+      kind === "proofs"
+        ? [path.join(state.captureRoot, "proofs", "lib"), path.join(state.captureRoot, "concepts", "lib")]
+        : [path.join(state.captureRoot, "concepts", "lib")],
+      dependencyLibDirs(kind),
+      warm,
+      limits.leanThreads,
+    );
+
+    if (options.replay === true) {
+      // Mirror the trusted stage scoping: concepts replay under every scope but
+      // `proofs`, proofs replay under every scope but `concepts`.
+      const replayKinds = kinds.filter((kind) => !(scope === "proofs" && kind === "concepts"));
+      for (const kind of replayKinds) {
+        const inventory = staticCheck.result[kind]!.inventory;
+        const leanEnv = leanEnvFor(kind);
+        const cwd = path.join(state.captureRoot, kind, "package");
+        const result = await state.phase(`replay ${kind}`, () =>
+          leanEnv.exec(leanEnv.leancheckerBin, [inventory.rootModule], cwd));
+        if (result.code !== 0) {
+          violations.push({
+            phase: "replay",
+            rule: "kernel-replay",
+            message: `leanchecker failed for package ${inventory.packageName}:\n${result.output.trim()}`,
+          });
+          return report(false);
+        }
+      }
+    }
+
+    let inspectorBin: string;
+    try {
+      inspectorBin = await state.phase("inspector binary", () =>
+        inspectorBinary({
+          echo,
+          // Half a minute of lake with nothing else to show for it, once per
+          // inspector source change. Say so on the row rather than let it read
+          // as a hang.
+          onBuild: () => options.onDetail?.("inspector binary", "building the inspector"),
+        }));
+    } catch (error) {
+      return fail("inspect", "inspector", error);
+    }
+    const inspect = async (kind: "concepts" | "proofs") => {
+      const inventory = staticCheck.result[kind]!.inventory;
+      const outputDir = path.join(jobDir, "checks", `inspect-${kind}`);
+      fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
+      const reportPath = path.join(outputDir, "report.json");
+      const leanEnv = leanEnvFor(kind);
+      const cwd = path.join(state.captureRoot, kind, "package");
+      const result = await leanEnv.exec(
+        inspectorBin,
+        [reportPath, inventory.rootModule, ...inventory.modules],
+        cwd,
+      );
+      if (result.code !== 0) {
+        throw new Error(
+          `inspector failed for package ${inventory.packageName} (exit ${result.code}):\n${result.output.trim()}`,
+        );
+      }
+      const stat = fs.lstatSync(reportPath);
+      if (!stat.isFile() || stat.size > 32 * 1024 * 1024)
+        throw new Error(`${kind} inspector report is missing or oversized`);
+      return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown);
+    };
+    let conceptReport;
+    let proofReport;
+    try {
+      conceptReport = await state.phase("inspect concepts", () => inspect("concepts"));
+      proofReport = scope === "concepts" ? undefined : await state.phase("inspect proofs", () => inspect("proofs"));
+    } catch (error) {
+      return fail("inspect", "inspector", error);
+    }
+    const inspection = await state.phase("judge inspection", () => judgeInspection(
+      conceptReport,
+      proofReport,
+      staticCheck.result.concepts!.inventory,
+      scope === "concepts" ? undefined : staticCheck.result.proofs!.inventory,
+      resolution.result,
+      scope,
+    ));
+    warnings.push(...inspection.findings.warnings);
+    violations.push(...inspection.findings.violations);
+    if (inspection.findings.failed) return report(false);
+
+    if (scope !== "both") return report(true);
+    return { inspection: inspection.result };
+  }
+}
+
+function isReport(value: ValidationReport | { inspection: InspectionResult }): value is ValidationReport {
+  return "reportVersion" in value;
+}
+
+/**
+ * The independent piece of the paper phase on the host: latexmk from PATH.
+ * No latexmk (or one too old to inject the marker package, or a missing
+ * engine) skips the phase with a warning and omits `paper` from the build
+ * output; Lean validation is unaffected. Local is a preview, the archive's
+ * compile is the authority.
+ */
+async function startPaperPhase(
+  state: HostState,
+  staticResult: StaticResult,
+  options: HostValidationOptions,
+): Promise<PaperPhaseResult> {
+  const paper = staticResult.paper!;
+  return state.phase(
+    "paper",
+    async (): Promise<PaperPhaseResult> => {
+      const skipped = (reason: string): PaperPhaseResult => {
+        const findings = new FindingCollector("paper");
+        findings.warn(
+          "latexmk-missing",
+          `${reason}; the paper was not compiled on this machine (the archive compiles it in its own TeX Live) — ` +
+            "install TeX Live with latexmk to preview it locally",
+        );
+        options.onDetail?.("paper", `skipped: ${reason}`);
+        return { findings };
+      };
+      const latexmk = await probeLatexmkAsync();
+      if (latexmk === undefined) return skipped("latexmk is not installed");
+      if (!latexmk.supported) return skipped(`latexmk ${latexmk.version} is older than ${MIN_LATEXMK_VERSION}`);
+      if (!(await engineAvailable(paper.manifest.engine))) return skipped(`${paper.manifest.engine} is not installed`);
+      let sourceDateEpoch: number;
+      try {
+        sourceDateEpoch = commitTimestamp(state.fetched.repositoryRoot, state.request.source.commit);
+      } catch (error) {
+        const findings = new FindingCollector("paper");
+        findings.violate("source-date", error instanceof Error ? error.message : String(error));
+        return { findings };
+      }
+      let result: PaperPhaseResult;
+      try {
+        result = await runPaperPhase({
+          paper,
+          submissionRoot: state.fetched.submissionRoot,
+          jobDir: state.jobDir,
+          sourceDateEpoch,
+          limits: state.limits,
+          compile: hostPaperCompiler({ echo: state.echo, maxOutputBytes: state.limits.maxOutputBytes }),
+        });
+      } catch (error) {
+        // Anything the phase did not turn into a finding itself (a copy that
+        // failed, a missing laxmark.sty) is still this row's answer, not a
+        // crash that takes the Lean findings with it.
+        const findings = new FindingCollector("paper");
+        findings.violate("paper", error instanceof Error ? error.message : String(error));
+        return { findings };
+      }
+      if (result.compiled !== undefined) {
+        options.onDetail?.(
+          "paper",
+          `${result.compiled.pages} ${result.compiled.pages === 1 ? "page" : "pages"} · ` +
+            `${result.compiled.located.length} ${result.compiled.located.length === 1 ? "mark" : "marks"}`,
+        );
+      }
+      return result;
+    },
+    (result) => !result.findings.failed,
+  );
+}
+
+/** The join piece (paper/join.ts); its problems are this pipeline's findings. */
+function resolveMarks(
+  compiled: CompiledPaper,
+  staticResult: StaticResult,
+  resolution: ResolutionResult,
+  archive: ArchiveSnapshot,
+  inspection: InspectionResult,
+  state: HostState,
+): PaperOutput | "failed" {
+  const joined = joinPaperMarks(compiled, staticResult, resolution, archive, inspection);
+  for (const problem of joined.problems) state.violations.push({ phase: "paper", rule: "mark-id", message: problem });
+  return joined.output ?? "failed";
 }
 
 /** The manifest entries a package build needs: the proof package's own

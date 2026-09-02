@@ -227,6 +227,37 @@ export function validateFolder(raw: unknown): string {
   return segments.join("/");
 }
 
+/** The engines a paper may be compiled with; the manifest's default is the first. */
+export const PAPER_ENGINES = ["pdflatex", "lualatex", "xelatex"] as const;
+
+const PAPER_MAIN_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
+
+/**
+ * A paper's entry file, relative to `paper.folder`: a contained relative path
+ * whose every segment is plain ASCII (letters, digits, `._-`) and whose last
+ * ends in `.tex`. TeX receives the name on a command line and derives the job
+ * name from its stem, so the spelling is kept conservative on purpose.
+ */
+export function validatePaperMain(raw: unknown): string {
+  if (typeof raw !== "string") throw new ValidationError("paper.main must be a string");
+  if (raw.length > 256) throw new ValidationError("paper.main must be at most 256 characters");
+  const segments = raw.split("/");
+  if (
+    raw === "" ||
+    segments.length > 8 ||
+    segments.some((segment) => !PAPER_MAIN_SEGMENT.test(segment) || segment === "." || segment === "..")
+  ) {
+    throw new ValidationError(
+      "paper.main must be a relative path of plain segments (letters, digits, `._-`) without . or ..",
+    );
+  }
+  const basename = segments[segments.length - 1]!;
+  if (!basename.endsWith(".tex") || basename === ".tex") {
+    throw new ValidationError("paper.main must name a `.tex` file");
+  }
+  return raw;
+}
+
 export function validateSource(value: unknown): SourceLocation {
   if (!isObject(value)) throw new ValidationError("submit argument must be a JSON object");
   const problems = new ValidationCollector();

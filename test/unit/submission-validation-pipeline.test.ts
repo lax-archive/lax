@@ -15,7 +15,8 @@ import type {
   ContainerResult,
   ValidationRunner,
 } from "../../src/submission-validation/sandbox/container.js";
-import { emptyArchive, gitInitCommit, makeHostSubmission } from "../support/host.js";
+import { PAPER_IMAGE } from "../../src/submission-validation/pins.js";
+import { emptyArchive, gitInitCommit, makeHostSubmission, makePaperSubmission } from "../support/host.js";
 import { cleanupTemporary, request, temporary } from "../support/submission-validation.js";
 
 afterEach(cleanupTemporary);
@@ -36,6 +37,9 @@ function recordingRunner(runtimeFailure?: string): RecordingRunner {
     async verifyRuntime(): Promise<void> {
       calls.push("verify-runtime");
       if (runtimeFailure !== undefined) throw new Error(runtimeFailure);
+    },
+    async verifyImage(image): Promise<void> {
+      calls.push(`verify-image ${image.image}`);
     },
   };
 }
@@ -110,5 +114,64 @@ describe("trusted validation pipeline preparation", () => {
     // Neither run pays for the runtime once the submission is already refused.
     expect(gateRunner.calls).toEqual([]);
     expect(fullRunner.calls).toEqual([]);
+  });
+
+  it("starts a declared paper before the runtime is verified and joins its findings into a runtime failure", async () => {
+    // The paper needs no Lean, so its container work overlaps the Lean chain
+    // from right after resolution; whatever the Lean side does, the report
+    // carries both findings and the job directory outlives the compile.
+    const root = makePaperSubmission("lax-1");
+    const commit = gitInitCommit(root);
+    const jobDir = path.join(temporary("lax-pipeline-job-"), "work");
+    fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
+    const runner = recordingRunner("docker is unavailable");
+    const phases: string[] = [];
+    const base = request("lax-1");
+    const report = await validateSubmission({ ...base, source: { ...base.source, commit } }, jobDir, {
+      local: { fetched: { repositoryRoot: root, submissionRoot: root }, archive: emptyArchive() },
+      runner,
+      onPhase: (event) => {
+        if (event.state === "start") phases.push(event.name);
+      },
+    });
+
+    expect(phases).toEqual(["static validation", "dependency resolution", "paper", "validation runtime"]);
+    // The TeX image is asked for by its own pin, never through the Lean
+    // runtime, and before its container starts; the Lean runtime check runs
+    // concurrently, so its position among the three is not fixed.
+    expect([...runner.calls].sort()).toEqual([`verify-image ${PAPER_IMAGE}`, "paper-compile", "verify-runtime"].sort());
+    expect(runner.calls.indexOf(`verify-image ${PAPER_IMAGE}`)).toBeLessThan(runner.calls.indexOf("paper-compile"));
+    expect(report.ok).toBe(false);
+    expect(report.violations).toEqual([
+      { phase: "provision", rule: "runtime", message: expect.stringContaining("docker is unavailable") },
+      { phase: "paper", rule: "runtime", message: expect.stringContaining("unexpected container invocation paper-compile") },
+    ]);
+    // The compile copy was made in the job directory, rewritten, never in the author's tree.
+    expect(fs.readFileSync(path.join(jobDir, "paper", "src", "main.tex"), "latin1")).toContain("\\laxmark{");
+    expect(fs.readFileSync(path.join(root, "paper", "main.tex"), "utf8")).toContain("% lax begin");
+  });
+
+  it("leaves the paper alone in the gate and when the scope is not both", async () => {
+    const root = makePaperSubmission("lax-1");
+    const commit = gitInitCommit(root);
+    const base = request("lax-1");
+    const validateWith = async (options: { gate?: boolean; scope?: "concepts" }) => {
+      const runner = recordingRunner("docker is unavailable");
+      const jobDir = path.join(temporary("lax-pipeline-job-"), "work");
+      fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
+      const report = await validateSubmission({ ...base, source: { ...base.source, commit } }, jobDir, {
+        local: { fetched: { repositoryRoot: root, submissionRoot: root }, archive: emptyArchive() },
+        runner,
+        ...(options.gate === true ? { stopAfter: "resolution" as const } : {}),
+        ...(options.scope === undefined ? {} : { scope: options.scope }),
+      });
+      return { report, runner };
+    };
+    const gated = await validateWith({ gate: true });
+    expect(gated.report.ok).toBe(true);
+    expect(gated.runner.calls).toEqual([]);
+    const concepts = await validateWith({ scope: "concepts" });
+    expect(concepts.runner.calls).toEqual(["verify-runtime"]);
+    expect(concepts.report.violations.map((violation) => violation.phase)).toEqual(["provision"]);
   });
 });

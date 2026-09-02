@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,7 +16,7 @@ import { formatProfile, Profiler } from "../shared/profile.js";
 import { databaseDirectory } from "./database.js";
 import { groupFindings } from "./findings.js";
 import { deriveLocalSource, repositoryRoot } from "./git.js";
-import { submissionIdFromFolder } from "./manifest.js";
+import { declaresPaper, submissionIdFromFolder } from "./manifest.js";
 import { recordSubmission } from "./registry.js";
 import * as ui from "./ui.js";
 import type { SourceLocation } from "../shared/types.js";
@@ -73,7 +74,11 @@ const ROW_OF_PHASE = new Map<string, string>([
   ["inspect concepts", "statements"],
   ["inspect proofs", "statements"],
   ["judge inspection", "statements"],
+  ["resolve marks", "statements"],
   ["emit", "statements"],
+  // The one row that settles out of order: the paper compiles beside the
+  // Lean chain and closes on its own answer (`ok` on its complete event).
+  ["paper", "paper"],
 ]);
 
 const ROW_LABEL = new Map<string, string>([
@@ -84,6 +89,7 @@ const ROW_LABEL = new Map<string, string>([
   ["proofs", "Compiled proofs"],
   ["replay", "Replayed the kernel proofs"],
   ["statements", "Inspected the statements"],
+  ["paper", "Compiled the paper"],
 ]);
 
 /** What each row says while it is still running. */
@@ -95,6 +101,7 @@ const ROW_RUNNING = new Map<string, string>([
   ["proofs", "Compiling proofs"],
   ["replay", "Replaying the kernel proofs"],
   ["statements", "Inspecting the statements"],
+  ["paper", "Compiling the paper"],
 ]);
 
 /**
@@ -138,6 +145,10 @@ export async function buildSubmission(
   // this machine has no warm store yet: otherwise the phase is a lookup, and a
   // row that flashes past says nothing.
   const rows = ["layout", "dependencies"];
+  // The paper row sits where its phase starts — right after resolution —
+  // and stays open while the Lean rows below it come and go.
+  const paperRow = scope === "both" && declaresPaper(submissionRoot);
+  if (paperRow) rows.push("paper");
   if (!warmReady(warmDir())) rows.push("mathlib");
   rows.push("concepts");
   if (scope !== "concepts") rows.push("proofs");
@@ -151,9 +162,11 @@ export async function buildSubmission(
   }
   const details = new Map<string, string>();
   let current: string | undefined;
+  /** The paper row's own lifecycle, outside the monotonic `enter` walk. */
+  let paperState: "pending" | "running" | "settled" = "pending";
   /** Settle every row up to and including `row`, and open the next one. */
   const enter = (row: string): void => {
-    if (row === current) return;
+    if (row === current || row === "paper") return;
     if (current !== undefined) settle(current, "ok");
     current = row;
     options.embed?.(ROW_RUNNING.get(row)?.toLowerCase() ?? row);
@@ -190,8 +203,27 @@ export async function buildSubmission(
         steps?.detail(row, detail);
       },
       onPhase: (event) => {
-        if (event.state !== "start") return;
         const row = ROW_OF_PHASE.get(event.name);
+        if (row === "paper") {
+          if (!paperRow) return;
+          if (event.state === "start") {
+            paperState = "running";
+            steps?.begin("paper");
+            return;
+          }
+          paperState = "settled";
+          // Skipped (no latexmk) is a note, not a failure: the archive
+          // compiles the paper regardless, and Lean validation stands.
+          const skipped = details.get("paper")?.startsWith("skipped:") === true;
+          const status = event.ok === false ? "fail" : skipped ? "warn" : "ok";
+          steps?.settle("paper", {
+            status,
+            ...(status === "ok" ? { label: ROW_LABEL.get("paper")! } : status === "warn" ? { label: "Paper not compiled here" } : {}),
+            ...(details.has("paper") ? { detail: details.get("paper")! } : {}),
+          });
+          return;
+        }
+        if (event.state !== "start") return;
         if (row !== undefined && rows.includes(row)) enter(row);
       },
     });
@@ -214,7 +246,9 @@ export async function buildSubmission(
     }
     if (current !== undefined) settle(current, outcome.ok ? "ok" : "fail");
     // Rows the run never reached: hide them rather than leave them spinning.
+    // The paper row settles on its own event, or never started at all.
     for (const row of rows.slice(current === undefined ? 0 : rows.indexOf(current) + 1)) {
+      if (row === "paper" && paperState !== "pending") continue;
       steps?.settle(row, { hidden: true });
     }
     if (!outcome.ok) {
@@ -247,6 +281,18 @@ export async function buildSubmission(
       fs.writeFileSync(staging, `${JSON.stringify(output, null, 2)}\n`);
       fs.renameSync(staging, filename);
       ui.verbose(`wrote ${filename}`);
+      // The compiled paper lives beside it, bound by the digest the output
+      // records; a build without one (no paper, or none compiled here)
+      // leaves no stale PDF behind to disagree with the output.
+      const pdf = path.join(submissionRoot, "paper.pdf");
+      if (report.paperPdfPath !== undefined) {
+        const pdfStaging = `${pdf}.${process.pid}.tmp`;
+        fs.copyFileSync(report.paperPdfPath, pdfStaging);
+        fs.renameSync(pdfStaging, pdf);
+        ui.verbose(`wrote ${pdf}`);
+      } else {
+        fs.rmSync(pdf, { force: true });
+      }
     }
     if (steps !== undefined) {
       const total = steps.total();
@@ -316,6 +362,13 @@ export function hasCurrentLocalBuild(
     ) as Record<string, unknown>;
     const validation = value.localValidation as Record<string, unknown> | undefined;
     const builtSource = validation?.source as Record<string, unknown> | undefined;
+    // A recorded paper binds paper.pdf by digest: a missing or edited PDF is
+    // not the build the output describes.
+    const paper = value.paper as { pdf?: { digest?: unknown } } | undefined;
+    if (paper !== undefined) {
+      const pdf = fs.readFileSync(path.join(path.resolve(folder), "paper.pdf"));
+      if (createHash("sha256").update(pdf).digest("hex") !== paper.pdf?.digest) return false;
+    }
     return (
       value.id === submissionIdFromFolder(folder) &&
       validation?.version === 1 &&

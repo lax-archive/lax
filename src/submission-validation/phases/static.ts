@@ -1,9 +1,17 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { StaticResult, ValidationRequest, ValidationRuntimeIdentity } from "../contracts.js";
+import { PAPER_CAPS } from "../config.js";
+import type {
+  PaperManifest,
+  StaticPaper,
+  StaticResult,
+  ValidationRequest,
+  ValidationRuntimeIdentity,
+} from "../contracts.js";
 import { packageNameForSubmission } from "../contracts.js";
 import { FindingCollector } from "../findings.js";
+import { rewriteMarkers, texRewriteOrder } from "../paper/rewrite.js";
 import { validateLakefile } from "../validators/lakefile.js";
 import { isAcceptedLicense } from "../validators/license.js";
 import { validateManifest } from "../validators/manifest.js";
@@ -42,7 +50,8 @@ export function runStaticValidation(
       findings.violate("license", "LICENSE does not match the canonical Apache License 2.0 text");
   }
 
-  checkTrackedFiles(root, findings);
+  checkTrackedFiles(root, findings, result.manifest?.paper !== undefined);
+  if (result.manifest?.paper !== undefined) result.paper = checkPaper(root, result.manifest.paper, findings);
   const packageId = packageNameForSubmission(request.id);
   for (const kind of ["concepts", "proofs"] as const) {
     const packageName = kind === "concepts" ? packageId : `${packageId}Proofs`;
@@ -81,7 +90,99 @@ export function runStaticValidation(
   return { result, findings };
 }
 
-function checkTrackedFiles(root: string, findings: FindingCollector): void {
+/**
+ * The paper's static gate (paper-plan.md, "Pipeline placement"): everything
+ * about a declared paper that needs no TeX — the folder is a plain directory
+ * inside the submission, the entry file a regular file inside it, the folder
+ * within its caps, and every marker well-formed and balanced. The rewritten
+ * texts and the mark table come out of it, so the paper phase never parses a
+ * marker again. A typo here costs seconds, not a compile.
+ */
+function checkPaper(root: string, paper: PaperManifest, findings: FindingCollector): StaticPaper | undefined {
+  const rootReal = fs.realpathSync(root);
+  const folder = path.resolve(rootReal, paper.folder);
+  if (folder !== rootReal && !folder.startsWith(`${rootReal}${path.sep}`)) {
+    findings.violate("paper", `manifest.yaml: paper.folder ${paper.folder} escapes the submission`);
+    return undefined;
+  }
+  let folderReal: string;
+  try {
+    folderReal = fs.realpathSync(folder);
+  } catch {
+    findings.violate("paper", `paper folder ${paper.folder} does not exist`);
+    return undefined;
+  }
+  if (folderReal !== folder || !fs.statSync(folderReal).isDirectory()) {
+    findings.violate("paper", `paper folder ${paper.folder} must be a plain directory and may not traverse a symlink`);
+    return undefined;
+  }
+
+  // Everything under the folder goes into the compile copy, so everything
+  // under it counts — except the build's own leftovers when the folder is
+  // the submission root, and the version-control and Lake trees, which are
+  // never part of a paper.
+  const files: string[] = [];
+  let bytes = 0;
+  let ok = true;
+  const walk = (relative: string): void => {
+    const directory = relative === "" ? folderReal : path.join(folderReal, relative);
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const relativeEntry = relative === "" ? entry.name : `${relative}/${entry.name}`;
+      if (entry.isSymbolicLink()) {
+        findings.violate("paper", `paper folder contains a symlink, which is not accepted: ${relativeEntry}`);
+        ok = false;
+        continue;
+      }
+      if (entry.isDirectory()) {
+        if (entry.name === ".git" || entry.name === ".lake") continue;
+        walk(relativeEntry);
+        continue;
+      }
+      if (!entry.isFile()) {
+        findings.violate("paper", `paper folder contains a non-regular entry: ${relativeEntry}`);
+        ok = false;
+        continue;
+      }
+      if (relative === "" && folderReal === rootReal && (entry.name === "build-output.json" || entry.name === "paper.pdf")) continue;
+      files.push(relativeEntry);
+      bytes += fs.statSync(path.join(folderReal, relativeEntry)).size;
+    }
+  };
+  walk("");
+  if (files.length > PAPER_CAPS.folderFiles) {
+    findings.violate("paper", `paper folder holds more than ${PAPER_CAPS.folderFiles} files`);
+    ok = false;
+  }
+  if (bytes > PAPER_CAPS.folderBytes) {
+    findings.violate("paper", `paper folder exceeds ${formatBytes(PAPER_CAPS.folderBytes)}`);
+    ok = false;
+  }
+  if (!files.includes(paper.main)) {
+    findings.violate("paper", `paper entry file ${paper.main} is not a regular file under ${paper.folder}`);
+    ok = false;
+  }
+  if (!ok) return undefined;
+  files.sort();
+
+  // Binary-transparent: `.tex` files are decoded and re-encoded as latin1,
+  // so a non-UTF-8 source (an old paper under inputenc) survives byte for
+  // byte; the markers and their replacements are ASCII.
+  const texFiles = texRewriteOrder(paper.main, files);
+  const rewrite = rewriteMarkers(
+    texFiles.map((file) => ({ path: file, text: fs.readFileSync(path.join(folderReal, file), "latin1") })),
+  );
+  for (const problem of rewrite.problems) findings.violate("paper-markers", `${paper.folder === "." ? "" : `${paper.folder}/`}${problem}`);
+  if (rewrite.problems.length > 0) return undefined;
+  return {
+    manifest: paper,
+    files,
+    texFiles,
+    rewritten: new Map(rewrite.rewritten.map((file) => [file.path, file.text])),
+    marks: rewrite.marks,
+  };
+}
+
+function checkTrackedFiles(root: string, findings: FindingCollector, paperDeclared: boolean): void {
   try {
     const output = execFileSync("git", ["-C", root, "ls-files", "--", "."], {
       stdio: ["ignore", "pipe", "ignore"],
@@ -108,6 +209,9 @@ function checkTrackedFiles(root: string, findings: FindingCollector): void {
             "corrupt reproducibility, so it must stay gitignored",
         );
       } else if (basename === "build-output.json" || basename === "lake-manifest.json") {
+        findings.violate("generated-files", `generated file must not be committed: ${filename}`);
+      } else if (paperDeclared && filename === "paper.pdf") {
+        // the local build writes the compiled paper beside build-output.json
         findings.violate("generated-files", `generated file must not be committed: ${filename}`);
       } else if (filename.split("/").includes(".lake")) {
         findings.violate("generated-files", `.lake content must not be committed: ${filename}`);

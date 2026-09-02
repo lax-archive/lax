@@ -60,7 +60,7 @@ export async function publishLocalCapture(
   const manifest = { ...report.capture, digest: sha256File(tarPath) };
   const store = new GhcrCaptureStore("fake-registry-credential", CAPTURES_REPOSITORY);
   const source = report.request.source;
-  const published = await store.promote(id, source, manifest, tarPath);
+  const { capture: published } = await store.promote(id, source, manifest, tarPath);
   return { id, source, report, published };
 }
 

@@ -102,15 +102,51 @@ history/go-live.md). Still owed:
   every hand-added entry). Narrow the check to the warm-closure names, and
   say what deleting costs (a re-clone) when a `LaxN` entry is involved.
 
-## Paper layer (paper-plan.md — planned 2026-09-02, not implemented)
+## Paper layer (paper-plan.md — stages 1–3 implemented 2026-09-02)
 
 A submission may carry a LaTeX document that the archive compiles itself;
 authors mark passages with bare `% lax begin <id>` / `% lax end` comments,
 and the website shows the PDF beside cards for the marked concepts and
-proofs. The plan fixes the marker grammar, the `paper`
-shape in `build-output.json`, and storage (a second layer of the capture
-manifest in ghcr). Stage 0 is a spike (three engines, pdf.js extraction,
-two-column highlight, determinism, image-pull timing) that gates the rest.
+proofs. Done: the contract (manifest key, marker grammar and rewriter,
+static gate, `paper` payload parsers); the host path (`lax build` compiles
+with the host latexmk and `assets/tex/laxmark.sty`, extracts the
+destinations with pdf.js, resolves the ids, writes `paper.pdf` beside
+`build-output.json`; doctor's LaTeX row; the host e2e, for which CI installs
+a small TeX Live); and the trusted path — `PAPER_IMAGE_*` in `pins.ts`
+(`texlive/texlive:TL2025-historic`, pulled on demand), `ContainerRunner`'s
+per-image `verifyImage` and bare foreign-image invocations (no Lean mounts,
+the image's own PATH), `paper/container.ts` behind the `PaperCompiler`
+seam, the phase in `pipeline.ts` started before the runtime check and
+joined once whatever the Lean side does, the shared `paper/join.ts`, the
+PDF as a second layer of the capture's OCI manifest
+(`GhcrCaptureStore.promote` → `{ capture, paperBlob }`), `registryBlob`
+filled by the publisher, `paper.pdf` in the validate artifact with the
+credential-free hash in `readSuccessfulArtifacts`, `resetValidationOutputs`,
+the validate job's `timeout-minutes: 180`, the original paper sources under
+`paper/` in the capture tar (both paths), the `paper` docker smoke fixture,
+and the fake-registry test of the two-layer manifest. The smoke case ran
+green locally 2026-09-02 (see the session record below). Remaining, in the
+plan's order:
+
+- **Stage 3, the rehearsal** (Jan; the standing rule before anything
+  Actions-side ships): the scratch-repo drill per `scripts/rehearsal/` with a
+  paper-bearing submission — measure the TeX image pull on the runner (93 s
+  in the spike), confirm the two-layer manifest lands in the scratch ghcr
+  package and `paper.pdf` in the artifact, and that `lax submit` renders a
+  paper finding. `test/workflows/rehearsal-patch.test.ts` already passes
+  against the changed `submission.yml`.
+- **Stage 4, website**; **stage 5, `lax serve` + production round trip**;
+  **stage 6, docs** (spec-notes amendment, README's second image and
+  doctor row, `instructions.md` author section, retiring paper-plan.md into
+  `history/`).
+- Known limits to carry: pdf.js (`pdfjs-dist` 5.6, the last line that still
+  runs on Node 20.19) pulls `@napi-rs/canvas` as an optional native
+  dependency the extractor never loads; the paper container runs under the
+  Lean memory/cpu caps (16 GB / 4 cpus — TeX needs a few hundred MB; a
+  smaller per-invocation cap is a knob if the shared runner ever feels it);
+  the TeX image digest is not recorded in the report's runtime identity (the
+  pin lives in `pins.ts`, so a bump is a reviewed edit and the PDF digest is
+  a reproducibility claim for the image at that commit).
 
 ## Admin tool (admin-plan.md — designed, not implemented)
 

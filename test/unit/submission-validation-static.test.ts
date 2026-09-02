@@ -350,3 +350,233 @@ describe("submission static validation retained from main", () => {
     expect(accepted.findings.violations).toEqual([]);
   });
 });
+
+const PAPER_BLOCK = "paper:\n  folder: paper\n  main: main.tex\n";
+
+describe("paper static validation", () => {
+  it("accepts a paper block and defaults the engine to pdflatex", () => {
+    const findings = new FindingCollector("static");
+    const parsed = validateManifest(manifest("lax-261") + PAPER_BLOCK, "lax-261", RUNTIME, findings);
+    expect(findings.violations).toEqual([]);
+    expect(parsed?.paper).toEqual({ folder: "paper", main: "main.tex", engine: "pdflatex" });
+
+    const lua = new FindingCollector("static");
+    const explicit = validateManifest(
+      manifest("lax-261") + "paper:\n  folder: .\n  main: src/paper.tex\n  engine: lualatex\n",
+      "lax-261",
+      RUNTIME,
+      lua,
+    );
+    expect(lua.violations).toEqual([]);
+    expect(explicit?.paper).toEqual({ folder: ".", main: "src/paper.tex", engine: "lualatex" });
+
+    const absent = new FindingCollector("static");
+    const without = validateManifest(manifest("lax-261"), "lax-261", RUNTIME, absent);
+    expect(without !== undefined && "paper" in without).toBe(false);
+  });
+
+  it("rejects malformed paper blocks", () => {
+    for (const [block, expected] of [
+      ["paper:\n  folder: paper\n  main: main.tex\n  shell: true\n", "paper: unknown key `shell`"],
+      ["paper:\n  folder: paper\n", "paper: missing key `main`"],
+      ["paper:\n  main: main.tex\n", "paper: missing key `folder`"],
+      ["paper:\n  folder: paper\n  main: main.tex\n  engine: latex\n", "paper.engine must be one of pdflatex, lualatex, xelatex"],
+      ["paper:\n  folder: paper\n  main: main.pdf\n", "paper.main must name a `.tex` file"],
+      ["paper:\n  folder: paper\n  main: ../main.tex\n", "paper.main must be a relative path of plain segments"],
+      ["paper:\n  folder: paper\n  main: 12\n", "paper.main must be a string"],
+      ["paper:\n  folder: ../elsewhere\n  main: main.tex\n", "paper.folder must contain"],
+      ["paper:\n  folder: /abs\n  main: main.tex\n", "paper.folder must be a relative POSIX path"],
+      ["paper: yes\n", "`paper` must be a mapping"],
+    ] as const) {
+      const findings = new FindingCollector("static");
+      const parsed = validateManifest(manifest("lax-261") + block, "lax-261", RUNTIME, findings);
+      expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(expected);
+      expect(parsed?.paper).toBeUndefined();
+    }
+  });
+
+  it("rewrites a declared paper's markers and hands out the mark table", () => {
+    const root = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
+      "paper/main.tex":
+        "\\documentclass{article}\n\\begin{document}\n" +
+        "% lax begin Lax261.Treewidth\n" +
+        "A definition.\n" +
+        "  % lax begin Lax261.Nested\n" +
+        "Nested text.\n" +
+        "  % lax end\n" +
+        "% lax end Lax261.Treewidth\n" +
+        "An inline claim. % lax begin Lax261Proofs.Q\nProof sketch.\\\\% lax end\n" +
+        "\\input{section}\n\\end{document}\n",
+      "paper/section.tex": "\\section{More}\n% lax begin Lax261.Section\nText.\n% lax end\n",
+      "paper/aux.tex": "% no markers, 100\\% plain\n",
+      "paper/refs.bib": "@misc{x, title={X}}\n",
+    });
+    initializeGit(root);
+
+    const check = runStaticValidation(request("lax-261"), root, RUNTIME);
+    expect(check.findings.violations).toEqual([]);
+    const paper = check.result.paper!;
+    expect(paper.manifest).toEqual({ folder: "paper", main: "main.tex", engine: "pdflatex" });
+    expect(paper.files).toEqual(["aux.tex", "main.tex", "refs.bib", "section.tex"]);
+    // the entry file first, then the rest by path — so numbering does not
+    // depend on the directory listing
+    expect(paper.texFiles).toEqual(["main.tex", "aux.tex", "section.tex"]);
+    expect(paper.marks).toEqual([
+      { n: 1, id: "Lax261.Treewidth", file: "main.tex", line: 3 },
+      { n: 2, id: "Lax261.Nested", file: "main.tex", line: 5 },
+      { n: 3, id: "Lax261Proofs.Q", file: "main.tex", line: 9 },
+      { n: 4, id: "Lax261.Section", file: "section.tex", line: 2 },
+    ]);
+    const main = paper.rewritten.get("main.tex")!;
+    expect(main).toContain("\\laxmark{b}{1}%\nA definition.\n  \\laxmark{b}{2}%\nNested text.\n  \\laxmark{e}{2}%\n\\laxmark{e}{1}%\n");
+    expect(main).toContain("An inline claim. \\laxmark{b}{3}%\nProof sketch.\\\\\\laxmark{e}{3}%\n");
+    expect(main).not.toContain("% lax");
+    expect(paper.rewritten.get("section.tex")).toBe("\\section{More}\n\\laxmark{b}{4}%\nText.\n\\laxmark{e}{4}%\n");
+    expect(paper.rewritten.get("aux.tex")).toBe("% no markers, 100\\% plain\n");
+    expect(paper.rewritten.has("refs.bib")).toBe(false);
+  });
+
+  it("takes the submission root as the paper folder, leaving out the build's own outputs", () => {
+    const root = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + "paper:\n  folder: .\n  main: main.tex\n",
+      "main.tex": "\\documentclass{article}\\begin{document}x\\end{document}\n",
+    });
+    initializeGit(root);
+    // the local build leaves these beside the sources; they are never part of the compile copy
+    writeFile(root, "build-output.json", "{}\n");
+    writeFile(root, "paper.pdf", "%PDF-1.5\n");
+    writeFile(root, "concepts/.lake/package-overrides.json", "{}\n");
+
+    const check = runStaticValidation(request("lax-261"), root, RUNTIME);
+    expect(check.findings.violations).toEqual([]);
+    const files = check.result.paper!.files;
+    expect(files).toContain("main.tex");
+    expect(files).toContain("manifest.yaml");
+    expect(files).toContain("concepts/lakefile.toml");
+    expect(files).not.toContain("build-output.json");
+    expect(files).not.toContain("paper.pdf");
+    expect(files.some((file) => file.startsWith(".git/") || file.includes("/.lake/"))).toBe(false);
+    expect(check.result.paper!.texFiles).toEqual(["main.tex"]);
+  });
+
+  it("rejects a committed paper.pdf only when a paper is declared", () => {
+    const declared = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
+      "paper/main.tex": "x\n",
+      "paper.pdf": "%PDF-1.5\n",
+    });
+    initializeGit(declared);
+    const rejected = runStaticValidation(request("lax-261"), declared, RUNTIME);
+    const generated = rejected.findings.violations.filter((finding) => finding.rule === "generated-files");
+    expect(generated.map((finding) => finding.message)).toEqual(["generated file must not be committed: paper.pdf"]);
+
+    const undeclared = makeSubmission("lax-261", undefined, { "paper.pdf": "%PDF-1.5\n" });
+    initializeGit(undeclared);
+    expect(runStaticValidation(request("lax-261"), undeclared, RUNTIME).findings.violations).toEqual([]);
+  });
+
+  it("rejects a missing folder, a missing entry file, and symlinks", () => {
+    const missingFolder = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
+    });
+    initializeGit(missingFolder);
+    const noFolder = runStaticValidation(request("lax-261"), missingFolder, RUNTIME);
+    expect(noFolder.findings.violations).toEqual([
+      { phase: "static", rule: "paper", message: "paper folder paper does not exist" },
+    ]);
+    expect(noFolder.result.paper).toBeUndefined();
+
+    const missingMain = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
+      "paper/other.tex": "x\n",
+      "paper/main.tex/.keep": "",
+    });
+    initializeGit(missingMain);
+    const noMain = runStaticValidation(request("lax-261"), missingMain, RUNTIME);
+    expect(noMain.findings.violations.map((finding) => [finding.rule, finding.message])).toEqual([
+      ["paper", "paper entry file main.tex is not a regular file under paper"],
+    ]);
+
+    const linked = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
+      "paper/main.tex": "x\n",
+      "shared/fig.pdf": "%PDF-1.5\n",
+    });
+    fs.symlinkSync(path.join("..", "shared", "fig.pdf"), path.join(linked, "paper", "fig.pdf"));
+    initializeGit(linked);
+    const symlinked = runStaticValidation(request("lax-261"), linked, RUNTIME);
+    expect(symlinked.findings.violations.map((finding) => finding.message)).toEqual([
+      "paper folder contains a symlink, which is not accepted: fig.pdf",
+    ]);
+
+    const linkedFolder = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
+      "elsewhere/main.tex": "x\n",
+    });
+    fs.symlinkSync("elsewhere", path.join(linkedFolder, "paper"));
+    initializeGit(linkedFolder);
+    const viaLink = runStaticValidation(request("lax-261"), linkedFolder, RUNTIME);
+    expect(viaLink.findings.violations.map((finding) => finding.message)).toEqual([
+      "paper folder paper must be a plain directory and may not traverse a symlink",
+    ]);
+  });
+
+  it("turns marker problems into paper-markers violations naming the file", () => {
+    const root = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
+      "paper/main.tex": "\\begin{document}\n% lax begin Lax261.Open\n\\input{section}\n\\end{document}\n",
+      "paper/section.tex": "% lax stop\n% lax end\n",
+    });
+    initializeGit(root);
+    const check = runStaticValidation(request("lax-261"), root, RUNTIME);
+    expect(check.result.paper).toBeUndefined();
+    expect(check.findings.violations.map((finding) => [finding.rule, finding.message])).toEqual([
+      ["paper-markers", "paper/main.tex:2: marker Lax261.Open is never closed in this file"],
+      ["paper-markers", "paper/section.tex:1: a `% lax` comment must be `% lax begin <id>` or `% lax end`"],
+      ["paper-markers", "paper/section.tex:2: `lax end` with no open marker"],
+    ]);
+  });
+
+  it("rewrites a marker inside verbatim textually and leaves the verdict to the PDF", () => {
+    // the static gate knows nothing about TeX environments: the marker is
+    // rewritten like any other, and the missing destination is the paper
+    // phase's finding
+    const root = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
+      "paper/main.tex":
+        "\\begin{document}\n\\begin{verbatim}\n% lax begin Lax261.Treewidth\ncode\n% lax end\n\\end{verbatim}\n\\end{document}\n",
+    });
+    initializeGit(root);
+    const check = runStaticValidation(request("lax-261"), root, RUNTIME);
+    expect(check.findings.violations).toEqual([]);
+    expect(check.result.paper!.marks).toEqual([{ n: 1, id: "Lax261.Treewidth", file: "main.tex", line: 3 }]);
+    expect(check.result.paper!.rewritten.get("main.tex")).toBe(
+      "\\begin{document}\n\\begin{verbatim}\n\\laxmark{b}{1}%\ncode\n\\laxmark{e}{1}%\n\\end{verbatim}\n\\end{document}\n",
+    );
+  });
+
+  it("reads .tex sources as latin1 so non-UTF-8 bytes survive the rewrite", () => {
+    const root = makeSubmission("lax-261", undefined, {
+      "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
+    });
+    const bytes = Buffer.concat([
+      Buffer.from("% lax begin Lax261.Treewidth\nCaf", "latin1"),
+      Buffer.from([0xe9]),
+      Buffer.from("\n% lax end\n", "latin1"),
+    ]);
+    fs.mkdirSync(path.join(root, "paper"));
+    fs.writeFileSync(path.join(root, "paper", "main.tex"), bytes);
+    initializeGit(root);
+    const check = runStaticValidation(request("lax-261"), root, RUNTIME);
+    expect(check.findings.violations).toEqual([]);
+    const rewritten = Buffer.from(check.result.paper!.rewritten.get("main.tex")!, "latin1");
+    expect(rewritten).toEqual(
+      Buffer.concat([
+        Buffer.from("\\laxmark{b}{1}%\nCaf", "latin1"),
+        Buffer.from([0xe9]),
+        Buffer.from("\n\\laxmark{e}{1}%\n", "latin1"),
+      ]),
+    );
+  });
+});

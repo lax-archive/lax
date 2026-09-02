@@ -52,8 +52,10 @@ describe("ghcr capture promotion", () => {
     const registry = fakeRegistry();
     const store = new GhcrCaptureStore("job-token", REPOSITORY);
     await expect(store.promote("lax-42", SOURCE, fixture.manifest, fixture.path)).resolves.toEqual({
-      ...fixture.manifest,
-      registryBlob: `ghcr.io/${REPOSITORY}@sha256:${fixture.manifest.digest}`,
+      capture: {
+        ...fixture.manifest,
+        registryBlob: `ghcr.io/${REPOSITORY}@sha256:${fixture.manifest.digest}`,
+      },
     });
 
     const token = registry.calls.find((call) => call.url.startsWith("https://ghcr.io/token"));
@@ -84,6 +86,44 @@ describe("ghcr capture promotion", () => {
     expect(manifest.annotations["archive.lax.submission"]).toBe("lax-42");
   });
 
+  it("pushes a paper as a second layer of the same manifest and returns its own reference", async () => {
+    const fixture = captureFixture();
+    const pdf = Buffer.from("%PDF-1.7 paper fixture bytes");
+    const pdfPath = path.join(temporary("lax-paper-fixture-"), "paper.pdf");
+    fs.writeFileSync(pdfPath, pdf);
+    const pdfDigest = createHash("sha256").update(pdf).digest("hex");
+    const registry = fakeRegistry();
+    const store = new GhcrCaptureStore("job-token", REPOSITORY);
+    await expect(
+      store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, { pdfPath, digest: pdfDigest, bytes: pdf.length }),
+    ).resolves.toEqual({
+      capture: { ...fixture.manifest, registryBlob: `ghcr.io/${REPOSITORY}@sha256:${fixture.manifest.digest}` },
+      paperBlob: `ghcr.io/${REPOSITORY}@sha256:${pdfDigest}`,
+    });
+    const uploads = registry.calls.filter((call) => call.method === "PUT" && call.url.includes("/blobs/uploads/"));
+    expect(uploads.map((call) => new URL(call.url).searchParams.get("digest")).sort()).toEqual([
+      EMPTY_CONFIG_DIGEST,
+      `sha256:${fixture.manifest.digest}`,
+      `sha256:${pdfDigest}`,
+    ].sort());
+    // One manifest keeps both blobs alive together; the PDF is its own layer
+    // with its own media type, so a consumer fetches it without the tar.
+    const manifestPuts = registry.calls.filter((call) => call.method === "PUT" && call.url.includes("/manifests/"));
+    expect(manifestPuts).toHaveLength(1);
+    const manifest = JSON.parse(manifestPuts[0]!.body!) as Record<string, any>;
+    expect(manifest.layers).toEqual([
+      { mediaType: "application/vnd.lax.capture.v1+tar", digest: `sha256:${fixture.manifest.digest}`, size: fixture.size },
+      { mediaType: "application/vnd.lax.paper.v1+pdf", digest: `sha256:${pdfDigest}`, size: pdf.length },
+    ]);
+    // Every push is preceded by the publisher's own hash of the bytes.
+    await expect(
+      store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, { pdfPath, digest: "0".repeat(64), bytes: pdf.length }),
+    ).rejects.toThrow("paper.pdf does not match the digest");
+    await expect(
+      store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, { pdfPath, digest: pdfDigest, bytes: pdf.length + 1 }),
+    ).rejects.toThrow("paper.pdf does not match the digest");
+  });
+
   it("re-pushes idempotently: existing blobs are not uploaded again but the tag is still pointed", async () => {
     const fixture = captureFixture();
     const registry = fakeRegistry();
@@ -91,7 +131,7 @@ describe("ghcr capture promotion", () => {
     registry.blobs.set(EMPTY_CONFIG_DIGEST, "");
     const store = new GhcrCaptureStore("job-token", REPOSITORY);
     await expect(store.promote("lax-42", SOURCE, fixture.manifest, fixture.path)).resolves.toMatchObject({
-      registryBlob: `ghcr.io/${REPOSITORY}@sha256:${fixture.manifest.digest}`,
+      capture: { registryBlob: `ghcr.io/${REPOSITORY}@sha256:${fixture.manifest.digest}` },
     });
     expect(registry.calls.some((call) => call.method === "POST")).toBe(false);
     expect(registry.calls.some((call) => call.method === "PUT" && call.url.includes("/blobs/uploads/"))).toBe(false);

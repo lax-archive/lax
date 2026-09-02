@@ -22,7 +22,26 @@ export interface ValidationLimits {
   cpuCount: number;
   leanThreads: number;
   pids: number;
+  /** Wall clock for one latexmk run of a declared paper. */
+  paperCompileTimeoutMs: number;
+  /** Wall clock for the pdf.js destination read of the compiled PDF. */
+  paperExtractTimeoutMs: number;
+  /** How much of a failed compile's transcript a finding carries. */
+  paperLogTailChars: number;
 }
+
+/**
+ * Size caps of the paper layer, shared by the static gate (folder), the
+ * paper phase (PDF), and the trusted artifact parser (recorded shape) —
+ * one home so the parser can never accept what the phase would refuse.
+ */
+export const PAPER_CAPS = {
+  folderBytes: 50 * 1024 * 1024,
+  folderFiles: 2_000,
+  pdfBytes: 25 * 1024 * 1024,
+  pages: 500,
+  marks: 10_000,
+} as const;
 
 export const DEFAULT_LIMITS: ValidationLimits = {
   fetchTimeoutMs: 10 * 60_000,
@@ -41,6 +60,9 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   // Replay and Inspect must also never run concurrently with each other.
   leanThreads: 2,
   pids: 1_024,
+  paperCompileTimeoutMs: 10 * 60_000,
+  paperExtractTimeoutMs: 2 * 60_000,
+  paperLogTailChars: 12_000,
 };
 
 /**

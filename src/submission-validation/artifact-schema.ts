@@ -3,18 +3,26 @@ import type { SourceLocation } from "../shared/types.js";
 import {
   isObject,
   normalizeTitle,
+  PAPER_ENGINES,
   requireExactKeys,
   validateCommit,
+  validateFolder,
+  validatePaperMain,
   validateSource,
   validateSubmissionId,
   ValidationError,
 } from "../shared/validation.js";
+import { PAPER_CAPS } from "./config.js";
 import type {
   AnnotationSection,
   BuildOutputPayload,
   CaptureManifest,
   CapturedFile,
   ConceptEntry,
+  PaperManifest,
+  PaperMark,
+  PaperMarkPoint,
+  PaperOutput,
   PublishedCapture,
   ResolvedDependency,
   StatementEntry,
@@ -26,17 +34,18 @@ import type {
   ValidationRuntimeIdentity,
 } from "./contracts.js";
 import {
+  LEAN_NAME_PATTERN,
   parseCaptureBlobReference,
   submissionIdForPackage,
   validationRequestFromUnknown,
 } from "./contracts.js";
+import { markIdKind, markIdProblem } from "./paper/rewrite.js";
 
 const MAX_CAPTURE_FILES = 100_000;
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ENTRIES = 100_000;
 const MAX_DEPENDENCIES = 10_000;
 const MAX_FINDINGS = 10_000;
-const LEAN_NAME = /^(?:[\p{L}_][\p{L}\p{N}\p{M}_']*)(?:\.(?:[\p{L}_][\p{L}\p{N}\p{M}_']*))*$/u;
 const PHASES = new Set([
   "source",
   "static",
@@ -46,6 +55,7 @@ const PHASES = new Set([
   "compile-proofs",
   "replay",
   "inspect",
+  "paper",
   "emit",
 ]);
 
@@ -245,6 +255,7 @@ function parseBuildOutputPayload(
   request: ValidationRequest,
   runtime: ValidationRuntimeIdentity,
 ): BuildOutputPayload {
+  if (!isObject(value)) throw new ValidationError("generated build output must be an object");
   const object = exactObject(value, [
     "inputs",
     "requiredByConcepts",
@@ -252,9 +263,16 @@ function parseBuildOutputPayload(
     "concepts",
     "proofs",
     "capture",
+    ...(value.paper === undefined ? [] : ["paper"]),
   ], "generated build output");
   const inputs = exactObject(object.inputs, ["manifest", "abstract"], "generated build output inputs");
   const manifest = parseManifest(inputs.manifest, request.id, runtime);
+  if ((manifest.paper !== undefined) !== (object.paper !== undefined)) {
+    throw new ValidationError("generated build output must carry a paper exactly when the manifest declares one");
+  }
+  // The validate job records the PDF's digest and size; only the publisher
+  // adds the registry address, after pushing the bytes (stage 3).
+  const paper = object.paper === undefined ? undefined : parsePaperOutput(object.paper, manifest.paper!, false);
   const abstract = text(inputs.abstract, "generated abstract", 1024 * 1024, true);
   if (abstract.trim() === "") throw new ValidationError("generated abstract must not be empty");
   const concepts = boundedArray(object.concepts, "generated concepts", MAX_ENTRIES)
@@ -270,7 +288,92 @@ function parseBuildOutputPayload(
     concepts,
     proofs,
     capture: parseCaptureManifest(object.capture, false),
+    ...(paper === undefined ? {} : { paper }),
   };
+}
+
+/**
+ * The `paper` key of a build output (paper-plan.md, "Recorded shape"),
+ * parsed fail-closed against the manifest block it must repeat. `published`
+ * demands the digest-addressed registry blob a database record carries;
+ * the validate artifact must not have one yet.
+ */
+export function parsePaperOutput(value: unknown, manifest: PaperManifest, published: boolean): PaperOutput {
+  const object = exactObject(value, ["folder", "main", "engine", "pdf", "pageSizes", "marks"], "generated paper");
+  const folder = validateFolder(object.folder);
+  const main = validatePaperMain(object.main);
+  const engine = object.engine;
+  if (typeof engine !== "string" || !(PAPER_ENGINES as readonly string[]).includes(engine)) {
+    throw new ValidationError("generated paper engine is invalid");
+  }
+  if (folder !== manifest.folder || main !== manifest.main || engine !== manifest.engine) {
+    throw new ValidationError("generated paper does not repeat the manifest's paper block");
+  }
+  const pdf = exactObject(object.pdf, ["digest", "bytes", "pages", ...(published ? ["registryBlob"] : [])], "generated paper pdf");
+  const digest = sha256(pdf.digest, "generated paper pdf digest");
+  const bytes = positiveInteger(pdf.bytes, "generated paper pdf bytes");
+  if (bytes > PAPER_CAPS.pdfBytes) throw new ValidationError(`generated paper pdf exceeds ${PAPER_CAPS.pdfBytes} bytes`);
+  const pages = positiveInteger(pdf.pages, "generated paper pdf pages");
+  if (pages > PAPER_CAPS.pages) throw new ValidationError(`generated paper pdf exceeds ${PAPER_CAPS.pages} pages`);
+  let registryBlob: string | undefined;
+  if (published) {
+    if (typeof pdf.registryBlob !== "string") throw new ValidationError("published paper registryBlob must be a string");
+    const reference = parseCaptureBlobReference(pdf.registryBlob);
+    if (reference === undefined) throw new ValidationError("published paper registryBlob is not a ghcr digest reference");
+    if (reference.digest !== digest) throw new ValidationError("published paper registryBlob digest does not match the pdf digest");
+    registryBlob = pdf.registryBlob;
+  }
+  const pageSizes = boundedArray(object.pageSizes, "generated paper pageSizes", PAPER_CAPS.pages).map((size, index) => {
+    const label = `generated paper page size ${index + 1}`;
+    if (!Array.isArray(size) || size.length !== 2) throw new ValidationError(`${label} must be a [width, height] pair`);
+    return [coordinate(size[0], `${label} width`, true), coordinate(size[1], `${label} height`, true)] as [number, number];
+  });
+  if (pageSizes.length !== pages) throw new ValidationError("generated paper pageSizes must have one entry per page");
+  const marks = boundedArray(object.marks, "generated paper marks", PAPER_CAPS.marks)
+    .map((entry, index) => parsePaperMark(entry, index, pages));
+  return {
+    folder,
+    main,
+    engine: engine as PaperOutput["engine"],
+    pdf: { digest, bytes, pages, ...(registryBlob === undefined ? {} : { registryBlob }) },
+    pageSizes,
+    marks,
+  };
+}
+
+function parsePaperMark(value: unknown, index: number, pages: number): PaperMark {
+  const label = `generated paper mark ${index + 1}`;
+  const object = exactObject(value, ["id", "kind", "begin", "end"], label);
+  const id = identifier(object.id, `${label} id`, 2_048);
+  const shape = markIdProblem(id);
+  if (shape !== undefined) throw new ValidationError(`${label} id: ${shape}`);
+  const kind = object.kind;
+  if (kind !== "concept" && kind !== "proof") throw new ValidationError(`${label} kind is invalid`);
+  if (kind !== markIdKind(id)) throw new ValidationError(`${label} kind does not match its id`);
+  return {
+    id,
+    kind,
+    begin: parsePaperPoint(object.begin, `${label} begin`, pages),
+    end: parsePaperPoint(object.end, `${label} end`, pages),
+  };
+}
+
+function parsePaperPoint(value: unknown, label: string, pages: number): PaperMarkPoint {
+  const object = exactObject(value, ["page", "x", "y", "mode"], label);
+  const page = positiveInteger(object.page, `${label} page`);
+  if (page > pages) throw new ValidationError(`${label} page is beyond the last page`);
+  const mode = object.mode;
+  if (mode !== "v" && mode !== "h") throw new ValidationError(`${label} mode is invalid`);
+  return { page, x: coordinate(object.x, `${label} x`, false), y: coordinate(object.y, `${label} y`, false), mode };
+}
+
+/** A PDF user-space number: finite, and for a page size strictly positive. */
+function coordinate(value: unknown, label: string, positive: boolean): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) > 1e6) {
+    throw new ValidationError(`${label} must be a finite number`);
+  }
+  if (positive && value <= 0) throw new ValidationError(`${label} must be positive`);
+  return value;
 }
 
 function parseManifest(
@@ -288,6 +391,7 @@ function parseManifest(
     "authors",
     "bibEntries",
     ...(value.supersedes === undefined ? [] : ["supersedes"]),
+    ...(value.paper === undefined ? [] : ["paper"]),
   ], "generated manifest");
   if (object.specVersion !== "1" || object.id !== expectedId) {
     throw new ValidationError("generated manifest identity is invalid");
@@ -309,6 +413,19 @@ function parseManifest(
       throw new ValidationError("generated manifest cannot supersede its own submission");
     }
   }
+  let paper: PaperManifest | undefined;
+  if (object.paper !== undefined) {
+    const block = exactObject(object.paper, ["folder", "main", "engine"], "generated manifest paper");
+    const engine = block.engine;
+    if (typeof engine !== "string" || !(PAPER_ENGINES as readonly string[]).includes(engine)) {
+      throw new ValidationError("generated manifest paper engine is invalid");
+    }
+    paper = {
+      folder: validateFolder(block.folder),
+      main: validatePaperMain(block.main),
+      engine: engine as PaperManifest["engine"],
+    };
+  }
   return {
     specVersion: "1",
     id: expectedId,
@@ -318,6 +435,7 @@ function parseManifest(
     authors,
     bibEntries: stringArray(object.bibEntries, "generated manifest bibEntries", 1_000, 16 * 1024, true),
     ...(supersedes === undefined ? {} : { supersedes }),
+    ...(paper === undefined ? {} : { paper }),
   };
 }
 
@@ -501,7 +619,7 @@ function requireUnique(values: string[], label: string): void {
 
 function identifier(value: unknown, label: string, maxBytes: number): string {
   const result = nonemptyText(value, label, maxBytes, false);
-  if (!LEAN_NAME.test(result)) throw new ValidationError(`${label} must be a canonical Lean name`);
+  if (!LEAN_NAME_PATTERN.test(result)) throw new ValidationError(`${label} must be a canonical Lean name`);
   return result;
 }
 

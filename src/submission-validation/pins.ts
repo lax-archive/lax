@@ -38,6 +38,21 @@ export const VALIDATION_IMAGE_DIGEST =
 /** The digest-pinned reference docker pulls and runs. */
 export const VALIDATION_IMAGE = `${VALIDATION_IMAGE_NAME}@sha256:${VALIDATION_IMAGE_DIGEST}`;
 
+/**
+ * The image a declared paper is compiled in (paper-plan.md, "Trusted
+ * compile"): a full historic TeX Live, so every package an author's own
+ * build knows is present and the text layer gets real fonts. Pulled on
+ * demand, only for paper-bearing submissions — measured at 93 s on a hosted
+ * runner (5.49 GB). It carries no Lean and mounts none of the Lean runtime;
+ * the marker package rides in read-only from `assets/tex/`.
+ */
+export const PAPER_IMAGE_NAME = "texlive/texlive:TL2025-historic";
+/** Manifest digest of PAPER_IMAGE_NAME (a single-platform manifest — resolve
+ * a new one with `docker manifest inspect` on a pin bump). */
+export const PAPER_IMAGE_DIGEST =
+  "f25ee2dcd00f58198f918064f4a1c8562410b33e84155bd55b02b419d73d9391";
+export const PAPER_IMAGE = `${PAPER_IMAGE_NAME}@sha256:${PAPER_IMAGE_DIGEST}`;
+
 /** Version of the validation runtime layout recorded in reports and captures.
  * The capture layout (concepts|proofs → package/, lib/) is unchanged from the
  * baked-image era, so the version stays 1. */

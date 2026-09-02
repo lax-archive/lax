@@ -5,8 +5,10 @@ import { materializeDependencyCaptures } from "./captures/materialize.js";
 import { capturePackage, describeLocalCapture, sealCapture } from "./captures/seal.js";
 import { configuredRuntime, DEFAULT_LIMITS, type ValidationLimits } from "./config.js";
 import type {
+  PaperOutput,
   ResolvedDependency,
   ResolutionResult,
+  StaticPaper,
   StaticResult,
   ValidationFinding,
   ValidationReport,
@@ -14,7 +16,13 @@ import type {
   ValidationRuntimeIdentity,
   ValidationScope,
 } from "./contracts.js";
+import { commitTimestamp, laxmarkDirectory } from "./host/paper.js";
 import { warmDir } from "./host/warmstore.js";
+import { FindingCollector } from "./findings.js";
+import type { ValidationOutcome } from "./outputs.js";
+import { containerPaperCompiler } from "./paper/container.js";
+import { joinPaperMarks } from "./paper/join.js";
+import { capturePaperSources, runPaperPhase, type PaperPhaseResult } from "./paper/phase.js";
 import { compileConcepts, compileProofs } from "./phases/compile.js";
 import { emitBuildOutput } from "./phases/emit.js";
 import { judgeInspection } from "./phases/inspect.js";
@@ -74,6 +82,14 @@ interface ReportState {
   dependencies: ResolvedDependency[];
   warnings: ValidationFinding[];
   violations: ValidationFinding[];
+  /**
+   * The paper's independent piece, running beside the Lean chain from right
+   * after resolution (paper-plan.md, "Pipeline placement"). Never rejects.
+   * Joined exactly once — by joinPaper — whatever the Lean side does, so
+   * both findings reach the author and the job directory outlives latexmk.
+   */
+  paperRun?: Promise<PaperPhaseResult>;
+  paperJoined?: PaperPhaseResult;
 }
 
 interface PreparedValidation extends ReportState {
@@ -83,6 +99,7 @@ interface PreparedValidation extends ReportState {
   runner: ValidationRunner;
   scope: ValidationScope;
   fetched: FetchedSource;
+  archive: ArchiveSnapshot;
   staticResult: StaticResult;
   resolution: ResolutionResult;
   dependencyRoot: string;
@@ -105,16 +122,24 @@ export async function validateSubmission(
   request: ValidationRequest,
   jobDir: string,
   options: ValidationOptions = {},
-): Promise<ValidationReport> {
+): Promise<ValidationOutcome> {
   const prepared = await prepareValidation(request, jobDir, options);
   if ("report" in prepared) return prepared.report;
   const state = prepared.state;
   // The gate stops here: nothing has compiled, so a passing report carries
   // only what fetch, static validation, and resolution collected.
   if (options.stopAfter === "resolution") return report(state, true);
+  const outcome = await leanStages(state);
+  // A Lean failure still waits for the paper: its findings belong in the
+  // same report, and its container must be gone before the job directory is.
+  await joinPaper(state);
+  return outcome.ok ? outcome : report(state, false);
+}
+
+async function leanStages(state: PreparedValidation): Promise<ValidationOutcome> {
   const compileFailure = await compileStage(state);
   if (compileFailure !== undefined) return compileFailure;
-  if (options.replay !== false) {
+  if (state.options.replay !== false) {
     const replayFailure = await replayStage(state);
     if (replayFailure !== undefined) return replayFailure;
   }
@@ -230,7 +255,7 @@ async function replayStage(state: CompiledValidation): Promise<ValidationReport 
   }
 }
 
-async function inspectStage(state: CompiledValidation): Promise<ValidationReport> {
+async function inspectStage(state: CompiledValidation): Promise<ValidationOutcome> {
   let conceptReport;
   let proofReport;
   try {
@@ -272,7 +297,24 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationReport
 
   if (state.scope !== "both") return report(state, true);
 
+  // The join: the paper's marks need the ids Inspect just produced.
+  const paper = await joinPaper(state);
+  if (paper?.findings.failed === true) return report(state, false);
+
   try {
+    let paperOutput: PaperOutput | undefined;
+    if (paper !== undefined) {
+      // The trusted path never skips a declared paper; a result with neither
+      // a compiled PDF nor a violation is a pipeline bug.
+      if (paper.compiled === undefined) throw new Error("the paper phase produced neither a PDF nor a finding");
+      const compiled = paper.compiled;
+      const joined = await state.phase("resolve marks", () =>
+        joinPaperMarks(compiled, state.staticResult, state.resolution, state.archive, inspection.result));
+      for (const problem of joined.problems) state.violations.push({ phase: "paper", rule: "mark-id", message: problem });
+      if (joined.output === undefined) return report(state, false);
+      paperOutput = joined.output;
+      capturePaperSources(state.staticResult.paper!, state.fetched.submissionRoot, state.captureRoot);
+    }
     const capture = await state.phase("emit", async () =>
       state.options.sealCapture === false
         ? describeLocalCapture(state.captureRoot, state.request.source.commit, state.runtime)
@@ -289,11 +331,69 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationReport
       state.staticResult,
       inspection.result,
       capture,
+      paperOutput,
     );
-    return { ...report(state, true), buildOutput, capture };
+    return {
+      ...report(state, true),
+      buildOutput,
+      capture,
+      ...(paper?.compiled === undefined ? {} : { paperPdfPath: paper.compiled.pdfPath }),
+    };
   } catch (error) {
     return fail(state, "emit", "emit", error);
   }
+}
+
+/** Await the paper once and fold its findings into the report state. */
+async function joinPaper(state: ReportState): Promise<PaperPhaseResult | undefined> {
+  if (state.paperRun === undefined) return undefined;
+  if (state.paperJoined === undefined) {
+    state.paperJoined = await state.paperRun;
+    state.warnings.push(...state.paperJoined.findings.warnings);
+    state.violations.push(...state.paperJoined.findings.violations);
+  }
+  return state.paperJoined;
+}
+
+/**
+ * Start the paper's independent piece: copy and rewrite, pull the TeX image,
+ * compile, read the destinations back, count-check. Everything the phase
+ * does not turn into a finding itself — a missing laxmark.sty, an image that
+ * will not pull, a workspace over its cap — becomes one here, so the promise
+ * never rejects while nothing is awaiting it.
+ */
+function startPaperPhase(
+  paper: StaticPaper,
+  state: {
+    request: ValidationRequest;
+    fetched: FetchedSource;
+    jobDir: string;
+    limits: ValidationLimits;
+    runner: ValidationRunner;
+    phase: PreparedValidation["phase"];
+  },
+): Promise<PaperPhaseResult> {
+  const asFinding = (error: unknown): PaperPhaseResult => {
+    const findings = new FindingCollector("paper");
+    findings.violate("runtime", safeError(error));
+    return { findings };
+  };
+  return state
+    .phase("paper", async (): Promise<PaperPhaseResult> => {
+      try {
+        return await runPaperPhase({
+          paper,
+          submissionRoot: state.fetched.submissionRoot,
+          jobDir: state.jobDir,
+          sourceDateEpoch: commitTimestamp(state.fetched.repositoryRoot, state.request.source.commit),
+          limits: state.limits,
+          compile: containerPaperCompiler(state.runner, state.limits, laxmarkDirectory()),
+        });
+      } catch (error) {
+        return asFinding(error);
+      }
+    })
+    .catch(asFinding);
 }
 
 async function prepareValidation(
@@ -357,11 +457,20 @@ async function prepareValidation(
   // runtime available costs an image pull and a provisioned host, which
   // spec.md's Static → Resolution → Provision order spends only on a
   // submission that has already passed the millisecond-level phases.
+  let paperRun: Promise<PaperPhaseResult> | undefined;
   if (options.stopAfter !== "resolution") {
+    // The paper needs no Lean, so it starts here — before the runtime is even
+    // verified — and overlaps the whole Lean chain.
+    if (staticCheck.result.paper !== undefined && scope === "both") {
+      paperRun = startPaperPhase(staticCheck.result.paper, { request, fetched, jobDir, limits, runner, phase });
+    }
     try {
       await phase("validation runtime", () => runner.verifyRuntime());
     } catch (error) {
-      return { report: fail(base(), "provision", "runtime", error) };
+      const state = { ...base(), paperRun };
+      state.violations.push({ phase: "provision", rule: "runtime", message: safeError(error) });
+      await joinPaper(state);
+      return { report: report(state, false) };
     }
   }
 
@@ -374,6 +483,7 @@ async function prepareValidation(
       runner,
       scope,
       fetched,
+      archive,
       staticResult: staticCheck.result,
       resolution: resolution.result,
       dependencyRoot: path.join(jobDir, "dependencies"),
@@ -382,6 +492,7 @@ async function prepareValidation(
       warmWs: warmDir(),
       captureRoot: path.join(jobDir, "capture"),
       phase,
+      ...(paperRun === undefined ? {} : { paperRun }),
     },
   };
 }
@@ -403,8 +514,8 @@ function report(state: ReportState, ok: boolean): ValidationReport {
     request: state.request,
     runtime: state.runtime,
     dependencies: state.dependencies,
-    warnings: state.warnings,
-    violations: state.violations,
+    warnings: [...state.warnings],
+    violations: [...state.violations],
   };
 }
 

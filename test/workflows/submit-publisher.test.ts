@@ -11,6 +11,7 @@ import {
 import type { PublisherArchive, PublisherControl } from "../../src/shared/publisher.js";
 import type { PublishRequest } from "../../src/shared/types.js";
 import { SubmitPublisher, type SubmitCaptureStore } from "../../src/shared/submit-publisher.js";
+import { parsePaperOutput, type SuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
 import type { PublishedCapture, ResolvedDependency } from "../../src/submission-validation/contracts.js";
 import {
   successfulArtifacts,
@@ -26,6 +27,23 @@ const run = {
   id: "123456789",
   url: "https://github.com/lax-archive/lax/actions/runs/123456789",
 };
+
+/** Successful artifacts whose build output records a compiled paper. */
+function paperArtifacts(): SuccessfulValidationArtifacts {
+  const artifacts = successfulArtifacts();
+  const paperManifest = { folder: "paper", main: "main.tex", engine: "pdflatex" as const };
+  const paper = {
+    ...paperManifest,
+    pdf: { digest: "7".repeat(64), bytes: 4321, pages: 1 },
+    pageSizes: [[612, 792]] as Array<[number, number]>,
+    marks: [],
+  };
+  for (const output of [artifacts.buildOutput, artifacts.report.buildOutput]) {
+    output.inputs.manifest.paper = paperManifest;
+    output.paper = structuredClone(paper);
+  }
+  return artifacts;
+}
 
 describe("trusted submit publisher", () => {
   it("promotes the capture and commits exactly record.json and build-output.json", async () => {
@@ -53,12 +71,51 @@ describe("trusted submit publisher", () => {
       TEST_SOURCE,
       TEST_CAPTURE,
       "/capture.tar",
+      undefined,
     );
     // Ordering invariant: the ghcr push completes before the database CAS
     // commit that references the blob digest.
     expect(harness.captureStore.promote.mock.invocationCallOrder[0]!).toBeLessThan(
       harness.writeFiles.mock.invocationCallOrder[0]!,
     );
+    expect(parsed.buildOutput).not.toHaveProperty("paper");
+  });
+
+  it("pushes a recorded paper beside the capture and binds its layer into the record", async () => {
+    const current = loaded();
+    const harness = submitHarness(new Map([["lax-42", current]]));
+    const artifacts = paperArtifacts();
+    const result = await harness.publisher.publish(request(current), artifacts, "/capture.tar", run, "/paper.pdf");
+    expect(result).toMatchObject({ kind: "committed" });
+    expect(harness.captureStore.promote).toHaveBeenCalledExactlyOnceWith(
+      "lax-42",
+      TEST_SOURCE,
+      TEST_CAPTURE,
+      "/capture.tar",
+      { pdfPath: "/paper.pdf", digest: "7".repeat(64), bytes: 4321 },
+    );
+    const combined = { ...current.texts, ...harness.changes } as Record<string, string>;
+    const parsed = parseArchiveFiles("lax-42", combined);
+    const paper = (parsed.buildOutput as unknown as { paper: Record<string, unknown> }).paper;
+    expect(paper).toEqual({
+      ...artifacts.buildOutput.paper,
+      pdf: { ...artifacts.buildOutput.paper!.pdf, registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"7".repeat(64)}` },
+    });
+    // The record's paper parses as a published one: registryBlob required and
+    // bound to the pdf digest.
+    expect(() => parsePaperOutput(paper, artifacts.buildOutput.inputs.manifest.paper!, true)).not.toThrow();
+  });
+
+  it("refuses a paper without its PDF and a PDF without a paper before anything is pushed", async () => {
+    const current = loaded();
+    const withoutPdf = submitHarness(new Map([["lax-42", current]]));
+    await expect(withoutPdf.publisher.publish(request(current), paperArtifacts(), "/capture.tar", run))
+      .rejects.toThrow("records a paper exactly when a paper.pdf is supplied");
+    expect(withoutPdf.captureStore.promote).not.toHaveBeenCalled();
+    const strayPdf = submitHarness(new Map([["lax-42", current]]));
+    await expect(strayPdf.publisher.publish(request(current), successfulArtifacts(), "/capture.tar", run, "/paper.pdf"))
+      .rejects.toThrow("records a paper exactly when a paper.pdf is supplied");
+    expect(strayPdf.captureStore.promote).not.toHaveBeenCalled();
   });
 
   it("ignores owner-list digest changes but rechecks current numeric ownership", async () => {
@@ -227,7 +284,10 @@ function submitHarness(
     registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`,
   };
   const captureStore = {
-    promote: vi.fn().mockResolvedValue(publishedCapture),
+    promote: vi.fn(async (_id, _source, _manifest, _capturePath, paper) => ({
+      capture: publishedCapture,
+      ...(paper === undefined ? {} : { paperBlob: `ghcr.io/lax-archive/lax-captures@sha256:${paper.digest}` }),
+    })),
   } satisfies SubmitCaptureStore;
   return {
     publisher: new SubmitPublisher(control, archive, captureStore, repositoryId),

@@ -305,6 +305,7 @@ export async function publishSubmit(): Promise<void> {
       artifacts,
       requiredEnv("VALIDATION_CAPTURE_PATH"),
       workflowRun(),
+      artifacts.buildOutput.paper === undefined ? undefined : requiredEnv("VALIDATION_PAPER_PATH"),
     );
     if (result.kind === "no-op") return;
     archiveCommit = result.archiveCommit;
@@ -533,6 +534,28 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
   // here was the redundant third verification; rewrite-plan.md cut it.)
   if (sha256File(capturePath) !== artifacts.report.capture.digest) {
     throw new ValidationError("validation capture digest does not match its report");
+  }
+  // The compiled paper travels in the same artifact, present exactly when
+  // the build output records one, and is hashed against the recorded digest
+  // here — credential-free — before anything is minted.
+  const paperPath = requiredEnv("VALIDATION_PAPER_PATH");
+  const paper = artifacts.buildOutput.paper;
+  let paperStat: fs.Stats | undefined;
+  try {
+    paperStat = fs.lstatSync(paperPath);
+  } catch {
+    paperStat = undefined;
+  }
+  if (paper === undefined) {
+    if (paperStat !== undefined) throw new ValidationError("validation artifact carries a paper.pdf its build output does not record");
+    return artifacts;
+  }
+  if (paperStat === undefined) throw new ValidationError("validation paper is missing");
+  if (!paperStat.isFile() || paperStat.size !== paper.pdf.bytes) {
+    throw new ValidationError("validation paper must be a regular file of the recorded size");
+  }
+  if (sha256File(paperPath) !== paper.pdf.digest) {
+    throw new ValidationError("validation paper digest does not match its build output");
   }
   return artifacts;
 }

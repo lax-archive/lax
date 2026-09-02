@@ -14,6 +14,13 @@ export interface ContainerMount {
   writable?: boolean;
 }
 
+/** A digest-pinned image the runner may start containers from. */
+export interface ContainerImage {
+  /** The `name@sha256:…` reference docker pulls and runs. */
+  image: string;
+  imageDigest: string;
+}
+
 export interface ContainerInvocation {
   label: string;
   args: string[];
@@ -21,6 +28,13 @@ export interface ContainerInvocation {
   workdir?: string;
   network?: boolean;
   env?: Record<string, string>;
+  /**
+   * Run in this image instead of the Lean runtime image. Such a container
+   * gets none of the Lean runtime mounts and keeps the image's own PATH —
+   * the TeX Live image compiling a paper is the one user. The image must
+   * have passed verifyImage() first.
+   */
+  image?: ContainerImage;
   timeoutMs: number;
   maxOutputBytes: number;
 }
@@ -40,7 +54,11 @@ export interface ContainerResult {
  */
 export interface ValidationRunner {
   run(invocation: ContainerInvocation): Promise<ContainerResult>;
+  /** The Lean runtime: the stock image plus the VM-side mounts. */
   verifyRuntime(): Promise<void>;
+  /** Make one more digest-pinned image available (pull on demand) and
+   * assert its identity, so an invocation may name it. */
+  verifyImage(image: ContainerImage): Promise<void>;
 }
 
 /**
@@ -60,6 +78,9 @@ export class ContainerRunner implements ValidationRunner {
     private layout?: RuntimeLayout,
   ) {}
 
+  /** Digests verifyImage has asserted, so run() can refuse an unverified image. */
+  private readonly verifiedImages = new Set<string>();
+
   /** Time one container invocation, so the profile prices container startup. */
   private timed<T>(label: string, operation: () => Promise<T>): Promise<T> {
     if (this.profiler === undefined) return operation();
@@ -67,17 +88,27 @@ export class ContainerRunner implements ValidationRunner {
   }
 
   /**
-   * Make the runtime available and assert its identity: the stock image must
-   * carry the pinned digest (`docker pull ref@sha256:…` verifies the content
-   * cryptographically; the follow-up inspect asserts the local store really
-   * holds that digest), and the VM-side mount sources must exist
+   * Make the Lean runtime available and assert its identity: the stock image
+   * must carry the pinned digest, and the VM-side mount sources must exist
    * (sandbox/layout.ts fails with a pointer at the host setup when they
    * don't).
    */
   async verifyRuntime(): Promise<void> {
+    await this.verifyImage(this.runtime);
+    this.layout ??= await ensureRuntimeLayout();
+  }
+
+  /**
+   * Pull an image when the local store lacks it and assert the pinned
+   * identity: `docker pull ref@sha256:…` verifies the content
+   * cryptographically, and the follow-up inspect asserts the local store
+   * really holds that digest. Every image the runner ever starts — the Lean
+   * runtime and the TeX Live image alike — passes through here first.
+   */
+  async verifyImage(image: ContainerImage): Promise<void> {
     const inspectImage = (): Promise<ProcessResult> => runProcess(
       "docker",
-      ["image", "inspect", "--format", "{{json .RepoDigests}}", this.runtime.image],
+      ["image", "inspect", "--format", "{{json .RepoDigests}}", image.image],
       60_000,
       64 * 1024,
     );
@@ -85,7 +116,7 @@ export class ContainerRunner implements ValidationRunner {
     if (inspected.code !== 0) {
       const pull = await this.timed("image-pull", () => runProcess(
         "docker",
-        ["pull", "--quiet", this.runtime.image],
+        ["pull", "--quiet", image.image],
         10 * 60_000,
         256 * 1024,
       ));
@@ -107,12 +138,12 @@ export class ContainerRunner implements ValidationRunner {
       !Array.isArray(repoDigests) ||
       !repoDigests.some(
         (digest) =>
-          typeof digest === "string" && digest.endsWith(`@sha256:${this.runtime.imageDigest}`),
+          typeof digest === "string" && digest.endsWith(`@sha256:${image.imageDigest}`),
       )
     ) {
       throw new Error("validation image does not carry the pinned digest");
     }
-    this.layout ??= await ensureRuntimeLayout();
+    this.verifiedImages.add(image.imageDigest);
   }
 
   /** The read-only mounts that stand in for the deleted custom image's baked
@@ -129,8 +160,19 @@ export class ContainerRunner implements ValidationRunner {
 
   async run(invocation: ContainerInvocation): Promise<ContainerResult> {
     const layout = this.layout;
-    if (layout === undefined) {
-      throw new Error("validation runtime layout is unavailable; verifyRuntime() must succeed first");
+    let runtimeMounts: ContainerMount[];
+    if (invocation.image !== undefined) {
+      // A foreign image stands alone: nothing of the Lean runtime is mounted
+      // into it, and it must have been pulled and identity-checked first.
+      if (!this.verifiedImages.has(invocation.image.imageDigest)) {
+        throw new Error(`container image ${invocation.image.image} is unverified; verifyImage() must succeed first`);
+      }
+      runtimeMounts = [];
+    } else {
+      if (layout === undefined) {
+        throw new Error("validation runtime layout is unavailable; verifyRuntime() must succeed first");
+      }
+      runtimeMounts = this.runtimeMounts(layout);
     }
     assertWorkspaceWithinLimit(this.workspaceRoot, this.limits);
     const name = `lax-validation-${safeLabel(invocation.label)}-${randomUUID().slice(0, 12)}`;
@@ -150,7 +192,7 @@ export class ContainerRunner implements ValidationRunner {
     if (process.getuid !== undefined && process.getgid !== undefined) {
       args.push(`--user=${process.getuid()}:${process.getgid()}`);
     }
-    for (const mount of [...this.runtimeMounts(layout), ...(invocation.mounts ?? [])]) {
+    for (const mount of [...runtimeMounts, ...(invocation.mounts ?? [])]) {
       const source = path.resolve(mount.source);
       if (!fs.existsSync(source)) throw new Error(`container mount does not exist: ${source}`);
       if (!path.isAbsolute(mount.target)) throw new Error("container mount targets must be absolute");
@@ -160,18 +202,25 @@ export class ContainerRunner implements ValidationRunner {
       );
     }
     if (invocation.workdir !== undefined) args.push(`--workdir=${invocation.workdir}`);
-    // Commands resolve through the mounted toolchain first; the stock image
-    // itself only contributes node, tar, and the base system. The runner owns
-    // PATH — invocations cannot override it.
+    // The runner owns PATH — invocations cannot set it. In the Lean runtime
+    // commands resolve through the mounted toolchain first; the stock image
+    // itself only contributes node, tar, and the base system. A foreign image
+    // has no mounted toolchain, so its own PATH (TeX Live's bin directory,
+    // baked into the image) stands.
+    if (invocation.env !== undefined && "PATH" in invocation.env) {
+      throw new Error("container invocations cannot set PATH");
+    }
     const environment = {
       ...invocation.env,
-      PATH: `${RUNTIME_PATHS.leanBin}:/usr/local/bin:/usr/bin:/bin`,
+      ...(invocation.image === undefined
+        ? { PATH: `${RUNTIME_PATHS.leanBin}:/usr/local/bin:/usr/bin:/bin` }
+        : {}),
     };
     for (const [key, value] of Object.entries(environment).sort(([a], [b]) => a.localeCompare(b))) {
       if (!/^[A-Z][A-Z0-9_]*$/u.test(key)) throw new Error(`invalid container environment name: ${key}`);
       args.push("--env", `${key}=${value}`);
     }
-    args.push(this.runtime.image, ...invocation.args);
+    args.push((invocation.image ?? this.runtime).image, ...invocation.args);
     const result = await this.timed(invocation.label, async () => {
       // Peak-memory profiling of the container's cgroup, attributed to the
       // span `timed` just opened on this task. Started only when profiling

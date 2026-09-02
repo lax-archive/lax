@@ -277,6 +277,26 @@ job's step summary. The profile is diagnostics only; nothing that
 authenticates a publication reads it. Independent local findings are reported
 once in a phase-grouped summary instead of as separate errors.
 
+A submission may declare a paper (`paper:` in `manifest.yaml` — folder,
+entry file, engine) whose `.tex` files mark passages with `% lax begin <id>`
+/ `% lax end` comments naming a concept or a proof. `lax build` copies the
+folder into the job directory, rewrites the markers into `\laxmark` calls,
+compiles with the host `latexmk` and the shipped `assets/tex/laxmark.sty`
+(injected through `-usepretex`, never touching the author's files), reads
+the resulting PDF named destinations back with pdf.js, checks that every
+marker left exactly one begin and one end, resolves the ids against the
+inspected concepts and proofs and the directly required packages' records,
+and records the result under `paper` in `build-output.json` — the PDF's
+digest, size, and page count, the page sizes, and every mark's begin and
+end point (page, PDF coordinates, TeX mode). The PDF itself is written to
+`paper.pdf` beside `build-output.json`, bound by the digest. The paper
+compiles beside the Lean chain and closes its own row; with no `latexmk`
+(4.77 or later) on the machine the row is a note and `paper` is omitted.
+The author-facing contract is in `instructions.md`, the design in
+`paper-plan.md` (stages 1 and 2 are implemented; the trusted compile in a
+pinned TeX Live image, the PDF layer in the capture store, and the website
+viewer are the remaining stages).
+
 `lax delete` accepts an issue reference or local submission folder, refreshes
 the local database to detect immutable/deleted records and stranded
 dependents, and asks for a typed confirmation; scripts must pass `--yes`.
@@ -293,7 +313,11 @@ touching your shell profile), the pinned toolchain under it, the warm mathlib
 workspace under `~/.lax/warm`, and the database clone. The store is the one
 check that can run for tens of minutes and download gigabytes, so it comes
 last, behind the toolchain that builds it, and says on its own line whether it
-is building or sealing. `lax doctor --dry` is the
+is building or sealing. A `LaTeX` row reports `latexmk` and the TeX
+engines, as a fact when absent — only a submission with a paper needs them,
+and the archive compiles papers itself — and as a note with the install
+hint once a registered submission on the machine declares a paper; doctor
+never installs TeX. `lax doctor --dry` is the
 same report with none of that: it installs nothing, refreshes neither the
 database clone nor the login, writes nothing at all, and names each gap it
 declined to close. It still exits 1 on a ✗, so it works as a check in a script. `lax print spec`

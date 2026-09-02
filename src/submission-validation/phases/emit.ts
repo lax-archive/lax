@@ -4,6 +4,7 @@ import type {
   BuildOutputPayload,
   CaptureManifest,
   InspectionResult,
+  PaperOutput,
   StaticResult,
 } from "../contracts.js";
 
@@ -12,6 +13,7 @@ export function emitBuildOutput(
   staticResult: StaticResult,
   inspection: InspectionResult,
   capture: CaptureManifest,
+  paper?: PaperOutput,
 ): BuildOutputPayload {
   if (
     staticResult.manifest === undefined ||
@@ -19,6 +21,12 @@ export function emitBuildOutput(
     staticResult.concepts === undefined ||
     staticResult.proofs === undefined
   ) throw new Error("cannot emit build output from an incomplete static result");
+  // A paper result without a declaration is a pipeline bug. The converse is
+  // legitimate locally: a host without latexmk skips the compile and omits
+  // the key; the trusted parser is where "declared implies present" holds.
+  if (paper !== undefined && staticResult.manifest.paper === undefined) {
+    throw new Error("cannot emit build output: a paper result for a manifest that declares none");
+  }
   const concepts = inspection.concepts.map((concept) => ({
     ...concept,
     sourceText: boundedSource(path.join(sourceRoot, concept.path)),
@@ -39,6 +47,7 @@ export function emitBuildOutput(
       .map((proof) => ({ ...proof, assumptions: [...proof.assumptions].sort() }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     capture,
+    ...(paper === undefined ? {} : { paper }),
   };
 }
 

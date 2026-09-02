@@ -97,6 +97,7 @@ describe("validation runtime boundaries retained from main", () => {
         return { code: 0, output: "", timedOut: false };
       },
       verifyRuntime: async () => {},
+      verifyImage: async () => {},
     };
     const inventory: ModuleInventory = {
       packageName: "Lax9",
@@ -146,6 +147,7 @@ describe("validation runtime boundaries retained from main", () => {
         return { code: 0, output: "", timedOut: false };
       },
       verifyRuntime: async () => {},
+      verifyImage: async () => {},
     };
 
     await compileConcepts({
@@ -292,6 +294,7 @@ describe("validation runtime boundaries retained from main", () => {
         return { code: 0, output: "", timedOut: false };
       },
       verifyRuntime: async () => {},
+      verifyImage: async () => {},
     };
 
     await replayPackage(
@@ -430,6 +433,44 @@ describe("validation runtime boundaries retained from main", () => {
     ).rejects.toThrow("invalid container environment name");
   });
 
+  it("runs a foreign image bare: verified first, no Lean mounts, the image's own PATH", async () => {
+    const source = temporary("lax-container-paper-");
+    const record = path.join(temporary("lax-container-bin-"), "arguments.txt");
+    const texImage = { image: `texlive/texlive:TL2025-historic@sha256:${"7".repeat(64)}`, imageDigest: "7".repeat(64) };
+    installDockerRecorder(record, { repoDigests: [`texlive/texlive@sha256:${"7".repeat(64)}`] });
+    const runner = new ContainerRunner(RUNTIME, DEFAULT_LIMITS, source, undefined, fakeLayout());
+    const invocation: ContainerInvocation = {
+      label: "paper-compile",
+      image: texImage,
+      args: ["latexmk", "-pdf", "main.tex"],
+      mounts: [{ source, target: "/paper", writable: true }],
+      workdir: "/paper",
+      env: { HOME: "/tmp" },
+      timeoutMs: 5_000,
+      maxOutputBytes: 64 * 1024,
+    };
+    // Unverified images never start, whatever the Lean runtime's state.
+    await expect(runner.run(invocation)).rejects.toThrow("verifyImage");
+    // A foreign image needs no Lean runtime layout, only its own verification.
+    await runner.verifyImage(texImage);
+    // A wrong digest is refused even after a successful pull.
+    await expect(runner.verifyImage({ ...texImage, imageDigest: "8".repeat(64) }))
+      .rejects.toThrow("does not carry the pinned digest");
+
+    expect((await runner.run(invocation)).code).toBe(0);
+    const args = fs.readFileSync(record, "utf8").trim().split("\n");
+    expect(args).toEqual(expect.arrayContaining([
+      "run", "--read-only", "--cap-drop=ALL", "--network=none", "--workdir=/paper", "--env", "HOME=/tmp",
+      texImage.image, "latexmk", "-pdf", "main.tex",
+    ]));
+    expect(args).not.toContain(RUNTIME.image);
+    expect(args.some((argument) => argument.startsWith("PATH="))).toBe(false);
+    const binds = args.filter((argument) => argument.startsWith("type=bind"));
+    expect(binds).toEqual([`type=bind,src=${path.resolve(source)},dst=/paper`]);
+    // The runner owns PATH in every image.
+    await expect(runner.run({ ...invocation, env: { PATH: "/evil" } })).rejects.toThrow("cannot set PATH");
+  });
+
   it("refuses to run before the runtime layout is verified", async () => {
     const runner = new ContainerRunner(RUNTIME, DEFAULT_LIMITS, temporary("lax-unverified-"));
     await expect(
@@ -475,13 +516,18 @@ describe("validation runtime boundaries retained from main", () => {
   });
 });
 
-function installDockerRecorder(record: string): void {
+/** A docker that records the arguments of every `run` and, when told which
+ * digests the local store holds, answers `image inspect` with them. */
+function installDockerRecorder(record: string, options: { repoDigests?: string[] } = {}): void {
   const directory = path.dirname(record);
   const executable = path.join(directory, "docker");
+  const inspect = options.repoDigests === undefined
+    ? ""
+    : `if [ "$1" = "image" ]; then printf '%s\\n' '${JSON.stringify(options.repoDigests)}'; exit 0; fi\n`;
   fs.writeFileSync(
     executable,
     `#!/bin/sh
-for argument in "$@"; do printf '%s\\n' "$argument"; done > "${record}"
+${inspect}for argument in "$@"; do printf '%s\\n' "$argument"; done > "${record}"
 exit 0
 `,
     { mode: 0o700 },

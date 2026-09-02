@@ -1,8 +1,10 @@
 # Paper layer — plan
 
-Status: proposed, 2026-09-02. Nothing implemented. Design decisions from the
-discussion that produced this plan are fixed unless Jan revisits them; the
-stage order and the caps are suggestions.
+Status: proposed 2026-09-02; stages 1 (contract), 2 (host path), and 3
+(trusted path, except the scratch-repo rehearsal) were implemented the same
+day — see TODO.md for what remains and the deviations noted there. Design decisions from the discussion that produced this plan
+are fixed unless Jan revisits them; the stage order and the caps are
+suggestions.
 
 ## What this adds
 
