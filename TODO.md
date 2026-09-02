@@ -102,6 +102,16 @@ history/go-live.md). Still owed:
   every hand-added entry). Narrow the check to the warm-closure names, and
   say what deleting costs (a re-clone) when a `LaxN` entry is involved.
 
+## Paper layer (paper-plan.md — planned 2026-09-02, not implemented)
+
+A submission may carry a LaTeX document that the archive compiles itself;
+authors mark passages with bare `% lax begin <id>` / `% lax end` comments,
+and the website shows the PDF beside cards for the marked concepts and
+proofs. The plan fixes the marker grammar, the `paper`
+shape in `build-output.json`, and storage (a second layer of the capture
+manifest in ghcr). Stage 0 is a spike (three engines, pdf.js extraction,
+two-column highlight, determinism, image-pull timing) that gates the rest.
+
 ## Admin tool (admin-plan.md — designed, not implemented)
 
 Maintainer-only operations: `/lax admin <verb>` issue commands

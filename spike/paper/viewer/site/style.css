@@ -1,0 +1,67 @@
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #f2f1ee;
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: #23211d;
+}
+header {
+  padding: 12px 24px;
+  background: #fff;
+  border-bottom: 1px solid #ddd9d2;
+}
+header h1 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+header p { margin: 0; font-size: 12px; color: #6d675e; }
+
+#doc {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 24px;
+}
+#pages { position: relative; flex: 0 0 auto; }
+#margin { position: relative; flex: 0 0 320px; width: 320px; }
+
+.page {
+  position: relative;
+  margin: 0 0 24px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+}
+.page canvas { display: block; }
+.page .textLayer { --scale-factor: 1; }
+.hl-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.hl {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+}
+.hl.active { outline: 1px solid rgba(0,0,0,.45); }
+
+.card {
+  position: absolute;
+  left: 0;
+  width: 320px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid #ddd9d2;
+  border-left: 4px solid var(--c, #999);
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08);
+  cursor: pointer;
+  font-size: 12px;
+}
+.card b { display: block; font-size: 13px; }
+.card .meta { color: #6d675e; font-size: 11px; margin-top: 2px; }
+.card .body { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px dotted #ddd9d2; }
+.card.expanded { box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+.card.expanded .body { display: block; }
+.card .body code { font-size: 11px; word-break: break-word; }

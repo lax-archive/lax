@@ -35,8 +35,14 @@ prefer them over inferring intent from the current code.
 - **TODO.md** — the canonical list of next steps, and *only* next steps:
   history belongs in `history/` or git, not here. Keep it updated.
 - **rewrite.md / rewrite-plan.md** — the rework charter (see above).
-- **one-axiom-plan.md** — the implemented one-statement-per-concept design;
-  scheduled to be relaxed (multiple statements) per rewrite.md.
+- **paper-plan.md** — the paper layer (LaTeX documents with comment
+  markers, compiled by the archive, shown beside concept/proof cards):
+  planned and spiked 2026-09-02, not implemented. Throwaway spike material
+  in `spike/paper/` (its `REPORT.md` files hold the measured verdicts).
+- **one-axiom-plan.md** — the old one-statement-per-concept design. The
+  bound was lifted on 2026-08-06 (a concept declares any number of
+  statements; see the spec-notes entry), and the plan document was deleted
+  in `edf2e70`; it survives only in git history.
 - **README.md** — user-facing status, trust model, and command table.
 - **instructions.md** — the author-facing guide to creating a submission.
 - **history/** — closed records, kept for their lessons and never a plan:

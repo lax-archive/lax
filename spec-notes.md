@@ -822,7 +822,7 @@ claim-concept (exactly one, and the concept *is* that claim). The
 corollary ⇒ exactly one, definition ⇒ zero) was proposed in the plan but
 deliberately dropped on Jan's call: `type` stays free prose-level
 metadata, and nothing mechanical hangs off it. Full rationale in
-[one-axiom-plan.md](one-axiom-plan.md); the
+one-axiom-plan.md (deleted in `edf2e70`, in git history only); the
 2026-07-27 survey of `~/git/lax-submissions` found all 28 existing
 concept modules already conform, so there is no migration. Spec
 touchpoint: Concept packages, "The statements of a concept are the

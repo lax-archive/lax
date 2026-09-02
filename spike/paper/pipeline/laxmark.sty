@@ -1,0 +1,74 @@
+%% laxmark.sty -- Lax paper layer, injected marker package (spike).
+%%
+%% Injected by the archive with latexmk's
+%%   -usepretex -pretex='\RequirePackage{laxmark}' -jobname=%A
+%% and never referenced by the author's sources.  \laxmark{<b|e>}{<n>} emits a
+%% PDF named destination "lax.<n>.<b|e>" at the current point.  It must be a
+%% zero-size whatsit that is legal in both vertical and horizontal mode and
+%% changes no layout; in particular it must NOT be hyperref's \hypertarget,
+%% which boxes the destination and starts a paragraph.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{laxmark}[2026/09/02 v0.2 Lax paper marker destinations]
+\RequirePackage{iftex}
+
+\newskip\lax@skip
+
+%% \lax@dest{<b|e>}{<n>} -- the raw engine primitive, a whatsit.
+\ifPDFTeX
+  % pdfTeX: \pdfdest is a whatsit.  \relax terminates the optional
+  % "zoom <number>" keyword scan after xyz.
+  \def\lax@dest#1#2{\pdfdest name{lax.#2.#1} xyz\relax}
+\else
+  \ifLuaTeX
+    % LuaTeX >= 0.85 renamed \pdfdest to "\pdfextension dest".
+    \def\lax@dest#1#2{\pdfextension dest name{lax.#2.#1} xyz\relax}
+  \else
+    \ifXeTeX
+      % XeTeX goes through xdvipdfmx specials.  @thispage/@xpos/@ypos are
+      % resolved by the driver when the special is shipped out.
+      \def\lax@dest#1#2{%
+        \special{pdf:dest (lax.#2.#1) [@thispage /XYZ @xpos @ypos null]}}
+    \else
+      \PackageError{laxmark}{Unsupported TeX engine}%
+        {laxmark supports pdfTeX, LuaTeX and XeTeX only.}
+      \def\lax@dest#1#2{}
+    \fi
+  \fi
+\fi
+
+%% A whatsit is zero-size, but in vertical mode it still changes layout: it
+%% ends the vertical list, so the *next* \addvspace (every LaTeX list,
+%% theorem, figure and sectioning command starts with one) sees \lastskip=0
+%% and can no longer merge with the glue the *previous* environment left
+%% behind.  The two skips then add up instead of overlapping -- e.g. an
+%% \end{theorem} followed by a marker followed by \begin{proof} gains ~8pt.
+%% So in vertical mode we lift the trailing glue over the whatsit: remove it,
+%% emit the destination, put it back.  Net vertical space is unchanged and
+%% \lastskip is again what it was.  (\vskip-\lastskip rather than \unskip,
+%% for the same reason LaTeX's own \addvspace does: \unskip cannot reach
+%% material the page builder has already moved to the current page.)
+\DeclareRobustCommand\laxmark[2]{%
+  \ifvmode
+    \ifdim\lastskip=\z@
+      \lax@dest{#1}{#2}%
+    \else
+      \lax@skip\lastskip
+      \vskip-\lax@skip
+      \lax@dest{#1}{#2}%
+      \vskip\lax@skip
+    \fi
+  \else
+    \lax@dest{#1}{#2}%
+  \fi}
+
+%% Reproducibility.  With SOURCE_DATE_EPOCH + FORCE_SOURCE_DATE, pdfTeX and
+%% xdvipdfmx already produce byte-identical output across runs, but LuaTeX
+%% still seeds the /ID trailer from a random source; a non-empty
+%% \pdfvariable trailerid makes it deterministic.  (An *empty* value does
+%% not: LuaTeX falls back to the random ID.)  This could equally live in the
+%% -pretex string; it sits here so the archive injects one thing.
+\ifLuaTeX
+  \pdfvariable trailerid{lax}
+\fi
+
+\endinput

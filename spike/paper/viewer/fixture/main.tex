@@ -1,0 +1,126 @@
+\documentclass[twocolumn]{article}
+\usepackage{amsmath,amssymb,amsthm}
+
+\makeatletter
+% Plain marker as in paper-plan.md, plus a mode-tagged twin (spike addition:
+% \ifvmode tells the extractor whether the destination was emitted in
+% vertical mode -- between blocks -- or inside a line).
+\newcommand\laxmark[2]{%
+  \pdfdest name{lax.#2.#1} xyz\relax
+  \ifvmode\pdfdest name{lax.#2.#1.v} xyz\relax
+  \else\pdfdest name{lax.#2.#1.h} xyz\relax\fi}
+\makeatother
+
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+
+\newcommand{\fillerA}{The study of structural graph parameters has a long
+history, and the notion of tree decompositions in particular occupies a
+central place in it. A graph that admits a decomposition whose bags are
+uniformly small behaves, for many algorithmic purposes, almost like a tree,
+and a great number of problems that are intractable in general become
+solvable in linear time on such inputs. We recall the basic notions here,
+fix the notation used throughout, and state the results that the remainder
+of this note develops in detail.}
+
+\newcommand{\fillerB}{Throughout, all graphs are finite, simple and
+undirected. For a graph $G$ we write $V(G)$ for its vertex set and $E(G)$
+for its edge set, and we abbreviate $|V(G)|$ by $n$ whenever the graph is
+clear from the context. A separation of $G$ is a pair of vertex sets whose
+union is $V(G)$ and between which there is no edge outside their
+intersection; the order of a separation is the size of that intersection.
+Separations of small order are the basic building blocks of every
+decomposition considered below.}
+
+\newcommand{\fillerC}{It is worth emphasising that none of the arguments in
+this section depend on the particular representation chosen for the
+decomposition. Any of the usual encodings, whether by a tree with labelled
+nodes, by a nested family of separations, or by a linear order on the
+vertices with a bounded window, can be translated into any other with only
+a constant factor loss in the width. We fix one of them for concreteness
+and note in passing where the translation would matter.}
+
+\begin{document}
+
+\title{A Spike Paper on Decompositions}
+\author{Lax Viewer Spike}
+\date{}
+\maketitle
+
+\section{Introduction}
+
+\fillerA
+
+\fillerB
+
+\laxmark{b}{1}%
+\begin{definition}[Tree decomposition]
+A \emph{tree decomposition} of a graph $G$ is a pair $(T,\mathcal{B})$
+consisting of a tree $T$ and a family
+\laxmark{b}{5}%
+$\mathcal{B} = (B_t)_{t \in V(T)}$ of subsets of $V(G)$, called the bags of
+the decomposition, such that every vertex and every edge is covered and the
+bags containing any fixed vertex form a connected subtree of $T$\laxmark{e}{5}%
+.
+The width of the decomposition is the largest bag size minus one.
+\end{definition}
+\laxmark{e}{1}%
+
+\fillerC
+
+We now turn to the parameter itself. The minimum width of \laxmark{b}{2}%
+a tree decomposition \laxmark{e}{2}%
+of a graph is one of the most
+thoroughly studied quantities in structural graph theory, and it is the
+quantity that the whole of this note is concerned with.
+
+\fillerA
+
+\section{A range that crosses a page}
+
+\laxmark{b}{3}%
+\fillerB
+\fillerC
+\laxmark{e}{3}%
+
+\fillerA
+
+\section{A range that crosses a column}
+
+\fillerB
+
+\begin{theorem}
+Every graph that admits a decomposition of width at most $k$ also admits
+one of width at most $k$ in which the underlying tree has at most $n$
+nodes, and such a decomposition can be computed in linear time from the
+given one.
+\end{theorem}
+
+\fillerC
+
+\laxmark{b}{4}%
+\fillerA
+\fillerB
+\laxmark{e}{4}%
+
+\fillerC
+
+\fillerA
+
+\section{Closing remarks}
+
+The next range starts at a forced line break, so that its begin marker is
+the first thing on its line and its destination lands on the column's left
+edge -- exactly where a vertical-mode marker would land too.\\
+\laxmark{b}{6}%
+This whole line and the next few words belong to the passage, which ends
+right here\laxmark{e}{6}%
+, and the sentence carries on afterwards without interruption.
+
+\fillerB
+
+\fillerC
+
+\fillerA
+
+\end{document}

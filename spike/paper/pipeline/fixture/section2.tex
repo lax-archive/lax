@@ -1,0 +1,18 @@
+\section{A second input file}
+
+This section lives in \texttt{section2.tex} and is pulled in with
+\verb|\input|.  Its markers must get numbers that continue the numbering of
+\texttt{main.tex}, because the rewriter walks main first and the remaining
+\texttt{.tex} files in sorted order.
+
+% lax begin Lax42.Colorings
+\begin{definition}[Proper coloring]
+  A \emph{proper $k$-coloring} of $G = (V, E)$ is a map
+  $c \colon V \to \{1, \dots, k\}$ with $c(u) \neq c(v)$ for every edge
+  $uv \in E$.  The chromatic number $\chi(G)$ is the least $k$ for which a
+  proper $k$-coloring exists.
+\end{definition}
+% lax end
+
+Combining this with Theorem~\ref{thm:forest} gives $\chi(G) \le 2$ for every
+graph of treewidth at most one, as recorded in \cite{robertson1986graph}.

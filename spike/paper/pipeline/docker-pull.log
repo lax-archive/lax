@@ -1,0 +1,48 @@
+TL2025-historic: Pulling from texlive/texlive
+b2fa13ec5034: Pulling fs layer
+e25db2f6001d: Pulling fs layer
+7fc4e0944e45: Pulling fs layer
+4f4fb700ef54: Pulling fs layer
+82bcabf172ae: Pulling fs layer
+95bc6eb6ba24: Pulling fs layer
+0e97c3171a7f: Pulling fs layer
+c0ea6283a5c7: Pulling fs layer
+755e39d6a44b: Pulling fs layer
+4f4fb700ef54: Waiting
+82bcabf172ae: Waiting
+95bc6eb6ba24: Waiting
+c0ea6283a5c7: Waiting
+0e97c3171a7f: Waiting
+755e39d6a44b: Waiting
+7fc4e0944e45: Verifying Checksum
+7fc4e0944e45: Download complete
+4f4fb700ef54: Verifying Checksum
+4f4fb700ef54: Download complete
+82bcabf172ae: Verifying Checksum
+82bcabf172ae: Download complete
+b2fa13ec5034: Verifying Checksum
+b2fa13ec5034: Download complete
+0e97c3171a7f: Verifying Checksum
+0e97c3171a7f: Download complete
+b2fa13ec5034: Pull complete
+c0ea6283a5c7: Verifying Checksum
+c0ea6283a5c7: Download complete
+755e39d6a44b: Verifying Checksum
+755e39d6a44b: Download complete
+e25db2f6001d: Verifying Checksum
+e25db2f6001d: Download complete
+e25db2f6001d: Pull complete
+7fc4e0944e45: Pull complete
+4f4fb700ef54: Pull complete
+82bcabf172ae: Pull complete
+95bc6eb6ba24: Verifying Checksum
+95bc6eb6ba24: Download complete
+95bc6eb6ba24: Pull complete
+0e97c3171a7f: Pull complete
+c0ea6283a5c7: Pull complete
+755e39d6a44b: Pull complete
+Digest: sha256:f25ee2dcd00f58198f918064f4a1c8562410b33e84155bd55b02b419d73d9391
+Status: Downloaded newer image for texlive/texlive:TL2025-historic
+docker.io/texlive/texlive:TL2025-historic
+PULL_WALL_SECONDS=409.80
+exit=0

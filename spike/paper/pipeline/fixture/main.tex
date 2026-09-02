@@ -1,0 +1,174 @@
+\documentclass{article}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{hyperref}
+
+\newtheorem{theorem}{Theorem}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+
+\title{Treewidth and Colorings: a Lax paper-layer fixture}
+\author{A. Author}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+  A small but realistic paper used to exercise the Lax marker rewriter,
+  the injected \texttt{laxmark} package, and the pdf.js destination
+  extractor.  It cites \cite{robertson1986graph} and
+  \cite{courcelle1990monadic}.
+\end{abstract}
+
+\section{Introduction}
+
+Graph decompositions are the standard tool for algorithmic meta-theorems;
+see \cite{robertson1986graph}.  In this paper we recall the notion of
+treewidth and prove a small statement about it.
+
+We use the standard notion of
+% lax begin Lax42.Colorings
+proper vertex colorings
+% lax end
+as introduced in \cite{courcelle1990monadic}, and we will not repeat the
+definition here.
+
+\section{Treewidth}
+
+% lax begin Lax261.Treewidth
+\begin{definition}[Treewidth]
+  A \emph{tree decomposition} of a graph $G = (V, E)$ is a pair
+  $(T, \{X_t\}_{t \in V(T)})$ where $T$ is a tree and each $X_t \subseteq V$
+  is a \emph{bag}, such that
+  \begin{itemize}
+    \item every vertex of $G$ lies in some bag,
+    \item for every edge $uv \in E$ some bag contains both $u$ and $v$, and
+    \item for every $v \in V$ the set $\{t : v \in X_t\}$ induces a subtree
+      of $T$.
+  \end{itemize}
+  The \emph{width} of the decomposition is
+  \[
+    \max_{t \in V(T)} \left( |X_t| - 1 \right),
+  \]
+  and the \emph{treewidth} $\operatorname{tw}(G)$ is the minimum width over
+  all tree decompositions of $G$.
+\end{definition}
+% lax end Lax261.Treewidth
+
+The subtree condition is the one that makes dynamic programming over a
+decomposition work: it guarantees that the bags containing a fixed vertex
+form a connected region of the tree.
+
+\section{A theorem with a proof}
+
+% lax begin Lax261.Treewidth
+\begin{theorem}
+  \label{thm:forest}
+  A graph $G$ satisfies $\operatorname{tw}(G) \le 1$ if and only if $G$ is
+  a forest.
+\end{theorem}
+
+% lax begin Lax261Proofs.thm3
+\begin{proof}
+  If $G$ is a forest, take $T = G$ with $X_t = \{t\} \cup \{p(t)\}$ for a
+  fixed rooting; every bag has size at most two, so the width is at most
+  one.  Conversely, suppose $\operatorname{tw}(G) \le 1$ and let $C$ be a
+  cycle in $G$.  Every bag has size at most two, and by the subtree
+  condition the bags meeting $C$ form a subtree, which forces two
+  non-adjacent vertices of $C$ to share a bag, a contradiction.
+\end{proof}
+% lax end
+
+% lax end
+
+\section{A marker that spans a page break}
+
+% lax begin Lax261Proofs.longproof
+The passage below is deliberately long so that its closing marker lands on
+a later page than its opening marker.  The rewriter does not know or care
+about pagination; only the extractor observes that the two destinations
+resolve to different page indices.
+
+Padding paragraph one.  The subtree condition is the one that makes dynamic
+programming over a decomposition work, because it guarantees that the bags
+containing a fixed vertex form a connected region of the tree, and therefore
+a bottom-up traversal can maintain a table indexed by the intersection of a
+bag with a partial solution without ever revisiting a vertex it has already
+forgotten.  This is the standard argument and we repeat it only to consume
+vertical space.
+
+Padding paragraph two.  The subtree condition is the one that makes dynamic
+programming over a decomposition work, because it guarantees that the bags
+containing a fixed vertex form a connected region of the tree, and therefore
+a bottom-up traversal can maintain a table indexed by the intersection of a
+bag with a partial solution without ever revisiting a vertex it has already
+forgotten.  This is the standard argument and we repeat it only to consume
+vertical space.
+
+Padding paragraph three.  The subtree condition is the one that makes dynamic
+programming over a decomposition work, because it guarantees that the bags
+containing a fixed vertex form a connected region of the tree, and therefore
+a bottom-up traversal can maintain a table indexed by the intersection of a
+bag with a partial solution without ever revisiting a vertex it has already
+forgotten.  This is the standard argument and we repeat it only to consume
+vertical space.
+
+Padding paragraph four.  The subtree condition is the one that makes dynamic
+programming over a decomposition work, because it guarantees that the bags
+containing a fixed vertex form a connected region of the tree, and therefore
+a bottom-up traversal can maintain a table indexed by the intersection of a
+bag with a partial solution without ever revisiting a vertex it has already
+forgotten.  This is the standard argument and we repeat it only to consume
+vertical space.
+
+Padding paragraph five.  The subtree condition is the one that makes dynamic
+programming over a decomposition work, because it guarantees that the bags
+containing a fixed vertex form a connected region of the tree, and therefore
+a bottom-up traversal can maintain a table indexed by the intersection of a
+bag with a partial solution without ever revisiting a vertex it has already
+forgotten.  This is the standard argument and we repeat it only to consume
+vertical space.
+
+Padding paragraph six.  The subtree condition is the one that makes dynamic
+programming over a decomposition work, because it guarantees that the bags
+containing a fixed vertex form a connected region of the tree, and therefore
+a bottom-up traversal can maintain a table indexed by the intersection of a
+bag with a partial solution without ever revisiting a vertex it has already
+forgotten.  This is the standard argument and we repeat it only to consume
+vertical space.
+
+Padding paragraph seven.  The subtree condition is the one that makes dynamic
+programming over a decomposition work, because it guarantees that the bags
+containing a fixed vertex form a connected region of the tree, and therefore
+a bottom-up traversal can maintain a table indexed by the intersection of a
+bag with a partial solution without ever revisiting a vertex it has already
+forgotten.  This is the standard argument and we repeat it only to consume
+vertical space.
+
+And here the long passage ends.
+% lax end
+
+\section{A verbatim trap}
+
+The following block must survive verbatim.  The rewriter does not detect
+verbatim environments; the count check downstream is what catches this.
+
+\begin{verbatim}
+% lax begin Trap
+this text is inside a verbatim block
+% lax end
+\end{verbatim}
+
+An escaped percent sign is not a comment at all: 100\% of the markers in
+this file are real, and the rewriter must leave that line alone because the
+percent is preceded by an odd number of backslashes.
+
+\input{section2}
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\end{document}

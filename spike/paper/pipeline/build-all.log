@@ -1,0 +1,861 @@
+==================================================================
+== pdflatex
+==================================================================
+--- compile pdflatex/run1 (rewritten, -pretex)
+--- compile pdflatex/run2 (rewritten, -pretex)
+--- compile pdflatex/plain (author build, no rewrite, no pretex)
+
+-- bibliography
+Running 'bibtex  "main.aux"'
+main.bbl written: 2 \bibitem entries
+undefined citations in main.log: 0
+citations resolved: yes (numbered bibliography present)
+
+-- determinism
+f4c4ee188200c966476a0f230c64e4aa3263c88b1d2a9c880f3a3f282bf9eca6  /home/jan/git/lax/spike/paper/pipeline/out/pdflatex/run1/main.pdf
+f4c4ee188200c966476a0f230c64e4aa3263c88b1d2a9c880f3a3f282bf9eca6  /home/jan/git/lax/spike/paper/pipeline/out/pdflatex/run2/main.pdf
+byte-identical: YES
+
+-- layout diff (rewritten vs author build)
+pages: rewritten=4 plain=4
+pdftotext -layout: DIFFERS
+--- /home/jan/git/lax/spike/paper/pipeline/out/pdflatex/plain.txt	2026-09-02 11:13:45.600911551 +0200
++++ /home/jan/git/lax/spike/paper/pipeline/out/pdflatex/run1.txt	2026-09-02 11:13:45.568912169 +0200
+@@ -109,9 +109,9 @@
+ The following block must survive verbatim. The rewriter does not detect ver-
+ batim environments; the count check downstream is what catches this.
+ 
+-% lax begin Trap
++\laxmark{b}{6}%
+ this text is inside a verbatim block
+-% lax end
++\laxmark{e}{6}%
+ 
+     An escaped percent sign is not a comment at all: 100% of the markers in
+ this file are real, and the rewriter must leave that line alone because the percent
+
+-- extract
+{
+  "pdf": "/home/jan/git/lax/spike/paper/pipeline/out/pdflatex/run1/main.pdf",
+  "pages": 4,
+  "pageViews": [
+    [
+      0,
+      0,
+      612,
+      792
+    ],
+    [
+      0,
+      0,
+      612,
+      792
+    ],
+    [
+      0,
+      0,
+      612,
+      792
+    ],
+    [
+      0,
+      0,
+      612,
+      792
+    ]
+  ],
+  "destinationsTotal": 29,
+  "laxDestinations": [
+    {
+      "name": "lax.1.b",
+      "n": 1,
+      "kind": "b",
+      "page": 1,
+      "x": 285.51,
+      "y": 400.55,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.1.e",
+      "n": 1,
+      "kind": "e",
+      "page": 1,
+      "x": 389.84,
+      "y": 400.55,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.2.b",
+      "n": 2,
+      "kind": "b",
+      "page": 1,
+      "x": 133.77,
+      "y": 355.65,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.2.e",
+      "n": 2,
+      "kind": "e",
+      "page": 1,
+      "x": 133.77,
+      "y": 180.24,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.3.b",
+      "n": 3,
+      "kind": "b",
+      "page": 2,
+      "x": 133.77,
+      "y": 654.45,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.3.e",
+      "n": 3,
+      "kind": "e",
+      "page": 2,
+      "x": 133.77,
+      "y": 565.73,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.4.b",
+      "n": 4,
+      "kind": "b",
+      "page": 2,
+      "x": 133.77,
+      "y": 632.92,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.4.e",
+      "n": 4,
+      "kind": "e",
+      "page": 2,
+      "x": 133.77,
+      "y": 565.73,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.5.b",
+      "n": 5,
+      "kind": "b",
+      "page": 2,
+      "x": 133.77,
+      "y": 531.93,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.5.e",
+      "n": 5,
+      "kind": "e",
+      "page": 3,
+      "x": 293.64,
+      "y": 477.91,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.7.b",
+      "n": 7,
+      "kind": "b",
+      "page": 3,
+      "x": 133.77,
+      "y": 238.92,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.7.e",
+      "n": 7,
+      "kind": "e",
+      "page": 3,
+      "x": 133.77,
+      "y": 194.53,
+      "destType": "XYZ"
+    }
+  ],
+  "marks": [
+    {
+      "id": "Lax42.Colorings",
+      "n": 1,
+      "begin": {
+        "page": 1,
+        "x": 285.51,
+        "y": 400.55
+      },
+      "end": {
+        "page": 1,
+        "x": 389.84,
+        "y": 400.55
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261.Treewidth",
+      "n": 2,
+      "begin": {
+        "page": 1,
+        "x": 133.77,
+        "y": 355.65
+      },
+      "end": {
+        "page": 1,
+        "x": 133.77,
+        "y": 180.24
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261.Treewidth",
+      "n": 3,
+      "begin": {
+        "page": 2,
+        "x": 133.77,
+        "y": 654.45
+      },
+      "end": {
+        "page": 2,
+        "x": 133.77,
+        "y": 565.73
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261Proofs.thm3",
+      "n": 4,
+      "begin": {
+        "page": 2,
+        "x": 133.77,
+        "y": 632.92
+      },
+      "end": {
+        "page": 2,
+        "x": 133.77,
+        "y": 565.73
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261Proofs.longproof",
+      "n": 5,
+      "begin": {
+        "page": 2,
+        "x": 133.77,
+        "y": 531.93
+      },
+      "end": {
+        "page": 3,
+        "x": 293.64,
+        "y": 477.91
+      },
+      "spansPage": true
+    },
+    {
+      "id": "Lax42.Colorings",
+      "n": 7,
+      "begin": {
+        "page": 3,
+        "x": 133.77,
+        "y": 238.92
+      },
+      "end": {
+        "page": 3,
+        "x": 133.77,
+        "y": 194.53
+      },
+      "spansPage": false
+    }
+  ],
+  "ok": false,
+  "problems": [
+    "mark 6 (Trap): missing begin and end destination in the PDF - the marker landed in verbatim, listings, or a moving argument",
+    "destination count 12 != 2 x 7 marks in the table"
+  ]
+}
+
+pages: 4   dests total: 29   lax dests: 12
+mark table: 7 marks -> expected 14 destinations
+   1 Lax42.Colorings          b p1 (285.51, 400.55)  e p1 (389.84, 400.55)
+   2 Lax261.Treewidth         b p1 (133.77, 355.65)  e p1 (133.77, 180.24)
+   3 Lax261.Treewidth         b p2 (133.77, 654.45)  e p2 (133.77, 565.73)
+   4 Lax261Proofs.thm3        b p2 (133.77, 632.92)  e p2 (133.77, 565.73)
+   5 Lax261Proofs.longproof   b p2 (133.77, 531.93)  e p3 (293.64, 477.91)   [spans page break]
+   7 Lax42.Colorings          b p3 (133.77, 238.92)  e p3 (133.77, 194.53)
+COUNT CHECK FAILED:
+  - mark 6 (Trap): missing begin and end destination in the PDF - the marker landed in verbatim, listings, or a moving argument
+  - destination count 12 != 2 x 7 marks in the table
+==================================================================
+== lualatex
+==================================================================
+--- compile lualatex/run1 (rewritten, -pretex)
+--- compile lualatex/run2 (rewritten, -pretex)
+--- compile lualatex/plain (author build, no rewrite, no pretex)
+
+-- bibliography
+Running 'bibtex  "main.aux"'
+main.bbl written: 2 \bibitem entries
+undefined citations in main.log: 0
+citations resolved: yes (numbered bibliography present)
+
+-- determinism
+39c87aec02bce734a7749d0f5428d4f80c5188e8d406640163e98dda8602eba8  /home/jan/git/lax/spike/paper/pipeline/out/lualatex/run1/main.pdf
+39c87aec02bce734a7749d0f5428d4f80c5188e8d406640163e98dda8602eba8  /home/jan/git/lax/spike/paper/pipeline/out/lualatex/run2/main.pdf
+byte-identical: YES
+
+-- layout diff (rewritten vs author build)
+pages: rewritten=4 plain=4
+pdftotext -layout: DIFFERS
+--- /home/jan/git/lax/spike/paper/pipeline/out/lualatex/plain.txt	2026-09-02 11:13:57.362683585 +0200
++++ /home/jan/git/lax/spike/paper/pipeline/out/lualatex/run1.txt	2026-09-02 11:13:57.323684344 +0200
+@@ -110,9 +110,9 @@
+ The following block must survive verbatim. The rewriter does not detect ver-
+ batim environments; the count check downstream is what catches this.
+ 
+-% lax begin Trap
++\laxmark{b}{6}%
+ this text is inside a verbatim block
+-% lax end
++\laxmark{e}{6}%
+ 
+     An escaped percent sign is not a comment at all: 100% of the markers in
+ this file are real, and the rewriter must leave that line alone because the percent
+
+-- extract
+{
+  "pdf": "/home/jan/git/lax/spike/paper/pipeline/out/lualatex/run1/main.pdf",
+  "pages": 4,
+  "pageViews": [
+    [
+      0,
+      0,
+      612,
+      792
+    ],
+    [
+      0,
+      0,
+      612,
+      792
+    ],
+    [
+      0,
+      0,
+      612,
+      792
+    ],
+    [
+      0,
+      0,
+      612,
+      792
+    ]
+  ],
+  "destinationsTotal": 29,
+  "laxDestinations": [
+    {
+      "name": "lax.1.b",
+      "n": 1,
+      "kind": "b",
+      "page": 1,
+      "x": 285.51,
+      "y": 400.55,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.1.e",
+      "n": 1,
+      "kind": "e",
+      "page": 1,
+      "x": 389.84,
+      "y": 400.55,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.2.b",
+      "n": 2,
+      "kind": "b",
+      "page": 1,
+      "x": 133.77,
+      "y": 355.65,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.2.e",
+      "n": 2,
+      "kind": "e",
+      "page": 1,
+      "x": 133.77,
+      "y": 180.24,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.3.b",
+      "n": 3,
+      "kind": "b",
+      "page": 2,
+      "x": 133.77,
+      "y": 654.31,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.3.e",
+      "n": 3,
+      "kind": "e",
+      "page": 2,
+      "x": 133.77,
+      "y": 565.6,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.4.b",
+      "n": 4,
+      "kind": "b",
+      "page": 2,
+      "x": 133.77,
+      "y": 632.79,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.4.e",
+      "n": 4,
+      "kind": "e",
+      "page": 2,
+      "x": 133.77,
+      "y": 565.6,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.5.b",
+      "n": 5,
+      "kind": "b",
+      "page": 2,
+      "x": 133.77,
+      "y": 531.8,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.5.e",
+      "n": 5,
+      "kind": "e",
+      "page": 3,
+      "x": 293.64,
+      "y": 477.91,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.7.b",
+      "n": 7,
+      "kind": "b",
+      "page": 3,
+      "x": 133.77,
+      "y": 238.92,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.7.e",
+      "n": 7,
+      "kind": "e",
+      "page": 3,
+      "x": 133.77,
+      "y": 194.53,
+      "destType": "XYZ"
+    }
+  ],
+  "marks": [
+    {
+      "id": "Lax42.Colorings",
+      "n": 1,
+      "begin": {
+        "page": 1,
+        "x": 285.51,
+        "y": 400.55
+      },
+      "end": {
+        "page": 1,
+        "x": 389.84,
+        "y": 400.55
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261.Treewidth",
+      "n": 2,
+      "begin": {
+        "page": 1,
+        "x": 133.77,
+        "y": 355.65
+      },
+      "end": {
+        "page": 1,
+        "x": 133.77,
+        "y": 180.24
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261.Treewidth",
+      "n": 3,
+      "begin": {
+        "page": 2,
+        "x": 133.77,
+        "y": 654.31
+      },
+      "end": {
+        "page": 2,
+        "x": 133.77,
+        "y": 565.6
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261Proofs.thm3",
+      "n": 4,
+      "begin": {
+        "page": 2,
+        "x": 133.77,
+        "y": 632.79
+      },
+      "end": {
+        "page": 2,
+        "x": 133.77,
+        "y": 565.6
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261Proofs.longproof",
+      "n": 5,
+      "begin": {
+        "page": 2,
+        "x": 133.77,
+        "y": 531.8
+      },
+      "end": {
+        "page": 3,
+        "x": 293.64,
+        "y": 477.91
+      },
+      "spansPage": true
+    },
+    {
+      "id": "Lax42.Colorings",
+      "n": 7,
+      "begin": {
+        "page": 3,
+        "x": 133.77,
+        "y": 238.92
+      },
+      "end": {
+        "page": 3,
+        "x": 133.77,
+        "y": 194.53
+      },
+      "spansPage": false
+    }
+  ],
+  "ok": false,
+  "problems": [
+    "mark 6 (Trap): missing begin and end destination in the PDF - the marker landed in verbatim, listings, or a moving argument",
+    "destination count 12 != 2 x 7 marks in the table"
+  ]
+}
+
+pages: 4   dests total: 29   lax dests: 12
+mark table: 7 marks -> expected 14 destinations
+   1 Lax42.Colorings          b p1 (285.51, 400.55)  e p1 (389.84, 400.55)
+   2 Lax261.Treewidth         b p1 (133.77, 355.65)  e p1 (133.77, 180.24)
+   3 Lax261.Treewidth         b p2 (133.77, 654.31)  e p2 (133.77, 565.6)
+   4 Lax261Proofs.thm3        b p2 (133.77, 632.79)  e p2 (133.77, 565.6)
+   5 Lax261Proofs.longproof   b p2 (133.77, 531.8)  e p3 (293.64, 477.91)   [spans page break]
+   7 Lax42.Colorings          b p3 (133.77, 238.92)  e p3 (133.77, 194.53)
+COUNT CHECK FAILED:
+  - mark 6 (Trap): missing begin and end destination in the PDF - the marker landed in verbatim, listings, or a moving argument
+  - destination count 12 != 2 x 7 marks in the table
+==================================================================
+== xelatex
+==================================================================
+--- compile xelatex/run1 (rewritten, -pretex)
+--- compile xelatex/run2 (rewritten, -pretex)
+--- compile xelatex/plain (author build, no rewrite, no pretex)
+
+-- bibliography
+Running 'bibtex  "main.aux"'
+main.bbl written: 2 \bibitem entries
+undefined citations in main.log: 0
+citations resolved: yes (numbered bibliography present)
+
+-- determinism
+9acba32020ca79b163d2a26c80961fcedf6d41c881220f8def2e028fa4a4f376  /home/jan/git/lax/spike/paper/pipeline/out/xelatex/run1/main.pdf
+9acba32020ca79b163d2a26c80961fcedf6d41c881220f8def2e028fa4a4f376  /home/jan/git/lax/spike/paper/pipeline/out/xelatex/run2/main.pdf
+byte-identical: YES
+
+-- layout diff (rewritten vs author build)
+pages: rewritten=4 plain=4
+pdftotext -layout: DIFFERS
+--- /home/jan/git/lax/spike/paper/pipeline/out/xelatex/plain.txt	2026-09-02 11:14:57.285500693 +0200
++++ /home/jan/git/lax/spike/paper/pipeline/out/xelatex/run1.txt	2026-09-02 11:14:57.264501113 +0200
+@@ -110,9 +110,9 @@
+ The following block must survive verbatim. The rewriter does not detect ver-
+ batim environments; the count check downstream is what catches this.
+ 
+-% lax begin Trap
++\laxmark{b}{6}%
+ this text is inside a verbatim block
+-% lax end
++\laxmark{e}{6}%
+ 
+     An escaped percent sign is not a comment at all: 100% of the markers in
+ this file are real, and the rewriter must leave that line alone because the percent
+
+-- extract
+{
+  "pdf": "/home/jan/git/lax/spike/paper/pipeline/out/xelatex/run1/main.pdf",
+  "pages": 4,
+  "pageViews": [
+    [
+      0,
+      0,
+      612,
+      792
+    ],
+    [
+      0,
+      0,
+      612,
+      792
+    ],
+    [
+      0,
+      0,
+      612,
+      792
+    ],
+    [
+      0,
+      0,
+      612,
+      792
+    ]
+  ],
+  "destinationsTotal": 29,
+  "laxDestinations": [
+    {
+      "name": "lax.1.b",
+      "n": 1,
+      "kind": "b",
+      "page": 1,
+      "x": 285.5,
+      "y": 399.7,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.1.e",
+      "n": 1,
+      "kind": "e",
+      "page": 1,
+      "x": 389.83,
+      "y": 399.7,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.2.b",
+      "n": 2,
+      "kind": "b",
+      "page": 1,
+      "x": 133.77,
+      "y": 354.7,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.2.e",
+      "n": 2,
+      "kind": "e",
+      "page": 1,
+      "x": 133.77,
+      "y": 179.36,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.3.b",
+      "n": 3,
+      "kind": "b",
+      "page": 2,
+      "x": 133.77,
+      "y": 654.37,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.3.e",
+      "n": 3,
+      "kind": "e",
+      "page": 2,
+      "x": 133.77,
+      "y": 565.53,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.4.b",
+      "n": 4,
+      "kind": "b",
+      "page": 2,
+      "x": 133.77,
+      "y": 632.83,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.4.e",
+      "n": 4,
+      "kind": "e",
+      "page": 2,
+      "x": 133.77,
+      "y": 565.53,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.5.b",
+      "n": 5,
+      "kind": "b",
+      "page": 2,
+      "x": 133.77,
+      "y": 531.73,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.5.e",
+      "n": 5,
+      "kind": "e",
+      "page": 3,
+      "x": 293.63,
+      "y": 477.91,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.7.b",
+      "n": 7,
+      "kind": "b",
+      "page": 3,
+      "x": 133.77,
+      "y": 238.75,
+      "destType": "XYZ"
+    },
+    {
+      "name": "lax.7.e",
+      "n": 7,
+      "kind": "e",
+      "page": 3,
+      "x": 133.77,
+      "y": 194.47,
+      "destType": "XYZ"
+    }
+  ],
+  "marks": [
+    {
+      "id": "Lax42.Colorings",
+      "n": 1,
+      "begin": {
+        "page": 1,
+        "x": 285.5,
+        "y": 399.7
+      },
+      "end": {
+        "page": 1,
+        "x": 389.83,
+        "y": 399.7
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261.Treewidth",
+      "n": 2,
+      "begin": {
+        "page": 1,
+        "x": 133.77,
+        "y": 354.7
+      },
+      "end": {
+        "page": 1,
+        "x": 133.77,
+        "y": 179.36
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261.Treewidth",
+      "n": 3,
+      "begin": {
+        "page": 2,
+        "x": 133.77,
+        "y": 654.37
+      },
+      "end": {
+        "page": 2,
+        "x": 133.77,
+        "y": 565.53
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261Proofs.thm3",
+      "n": 4,
+      "begin": {
+        "page": 2,
+        "x": 133.77,
+        "y": 632.83
+      },
+      "end": {
+        "page": 2,
+        "x": 133.77,
+        "y": 565.53
+      },
+      "spansPage": false
+    },
+    {
+      "id": "Lax261Proofs.longproof",
+      "n": 5,
+      "begin": {
+        "page": 2,
+        "x": 133.77,
+        "y": 531.73
+      },
+      "end": {
+        "page": 3,
+        "x": 293.63,
+        "y": 477.91
+      },
+      "spansPage": true
+    },
+    {
+      "id": "Lax42.Colorings",
+      "n": 7,
+      "begin": {
+        "page": 3,
+        "x": 133.77,
+        "y": 238.75
+      },
+      "end": {
+        "page": 3,
+        "x": 133.77,
+        "y": 194.47
+      },
+      "spansPage": false
+    }
+  ],
+  "ok": false,
+  "problems": [
+    "mark 6 (Trap): missing begin and end destination in the PDF - the marker landed in verbatim, listings, or a moving argument",
+    "destination count 12 != 2 x 7 marks in the table"
+  ]
+}
+
+pages: 4   dests total: 29   lax dests: 12
+mark table: 7 marks -> expected 14 destinations
+   1 Lax42.Colorings          b p1 (285.5, 399.7)  e p1 (389.83, 399.7)
+   2 Lax261.Treewidth         b p1 (133.77, 354.7)  e p1 (133.77, 179.36)
+   3 Lax261.Treewidth         b p2 (133.77, 654.37)  e p2 (133.77, 565.53)
+   4 Lax261Proofs.thm3        b p2 (133.77, 632.83)  e p2 (133.77, 565.53)
+   5 Lax261Proofs.longproof   b p2 (133.77, 531.73)  e p3 (293.63, 477.91)   [spans page break]
+   7 Lax42.Colorings          b p3 (133.77, 238.75)  e p3 (133.77, 194.47)
+COUNT CHECK FAILED:
+  - mark 6 (Trap): missing begin and end destination in the PDF - the marker landed in verbatim, listings, or a moving argument
+  - destination count 12 != 2 x 7 marks in the table
