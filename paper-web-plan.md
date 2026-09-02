@@ -127,10 +127,15 @@ manifest change, not a footnote:
   the encode step sanitizes (see the fork).
 - **What leaves the container**, enumerated and bounded: `output.json`
   (read through a size-capped reader — a chapter-scale document produces
-  tens of MB), `pics/*.pdf` (externalized tikz pictures), and the font
-  files the run actually used, exported into the job directory (the
-  serializer's font table names files inside the image; the host encode
-  needs the bytes). Nothing else.
+  tens of MB), the externalized tikz pictures (converted to SVG
+  in-image, sanitizer still applied host-side), and the font files the
+  run actually used — **including legacy Type1 outlines (`.pfb`) for
+  8-bit math faces**, which the conversion consumes as its *only*
+  outline source so a missed export fails loudly instead of being
+  masked by a host tree (stage 3's `REFLOWTEX_PFB_DIR`; without it,
+  every math-bearing paper would lose its web view on the TeX-less
+  Validate host). Nothing else; count, byte, and timeout caps on the
+  export.
 - **Serializer fork.** Our fork of ReflowTeX (serializer + encode) adds:
   the marker branches the spike validated (**three** sites, not two —
   inside paragraphs, in the shipout walk between them, and the
@@ -309,6 +314,12 @@ not just the file set, since blocks are embedded.
 - The pdf.js view remains as the "as printed" surface and the fallback
   for records without a bundle (or gated by schema). Layout of the two
   surfaces is a page decision, cheap to change.
+- **Attribution footer** (Jan, 2026-09-02): the reflow surface ends in a
+  small, muted-gray notice — "Rendered with ReflowTeX — free software
+  under AGPL-3.0-or-later" — linking the ReflowTeX repository (upstream
+  until the `lax-archive` fork exists), modeled on the transducer
+  book's own footer; rendered only when the reflow surface is, plain
+  anchor, CSP untouched.
 - **Fixture.** lax-website cannot run lax's pipeline: stage 2's host path
   generates a committed bundle fixture once (regenerated on schema
   change), the way sitegen fixtures work today.
@@ -403,15 +414,34 @@ Owner flags: **[Jan]** marks steps agents must flag and never attempt.
   submission, overlapped with the Lean chain; bundle bytes on ghcr and
   up to the embed budget inline per page.
 
-## Open questions (Jan)
+## Decisions (2026-09-02 — Jan delegated gate authority to the session)
 
-- Confirm the licensing home: `lax-archive/reflowtex` fork repo +
-  workflow fetch (recommended above), and the viewer vendored unminified
-  in lax-website.
-- Oracle tolerance: how much furniture divergence before skipping.
-- Whether the digest stance should be upgraded to a reproducibility
-  claim in a later stage (pin the full encode stack) or stay a content
-  address.
+The former open questions, resolved under that authority:
+
+- **Licensing home confirmed**: `lax-archive/reflowtex` fork repo +
+  workflow fetch at the pin; the viewer vendored unminified in
+  lax-website with its AGPL license. Interim state — the workflow
+  fetches upstream at `REFLOWTEX_REV` — stays functional until the fork
+  exists. Creating the fork was attempted from the session and refused
+  (repository allowlist blocks the fork call; org repo creation returns
+  403 "Resource not accessible by integration"), so it stays a
+  one-click Jan step: fork `radek-p/reflowtex` into `lax-archive` on
+  github.com and enable the new repo for Claude; a session then
+  populates the `lax` branch (patches applied, provenance README) and
+  flips `REFLOWTEX_URL` in `pins.ts`.
+- **Oracle tolerance confirmed** at the shipped default: 0.98 token-LCS
+  (`paperWebOracleSimilarity` in `config.ts`).
+- **Digest stance confirmed**: content address now; the reproducibility
+  upgrade (pin the encode stack end to end) stays a deferred, additive
+  tightening.
+- **Rehearsal-before-merge upheld**: the standing scratch-repo-rehearsal
+  rule is deliberately *not* waived — the trusted path touches
+  `submission.yml`, the publisher, and the capture store. Execution
+  needs credentials the session lacks and remains with Jan, alongside
+  the other environment-blocked steps: the docker smoke run and pinned-
+  image cold-cache measure (no docker in the session container), the
+  renderer npm release (no npm auth), the production round trips
+  (interactive `lax login`), and the throwaway-repo deletion.
 
 ## Spike results (2026-09-02)
 
