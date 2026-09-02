@@ -109,8 +109,8 @@ Additional Rules:
 
 - **License.** The file ``LICENSE`` in the submission root folder must contain
   an accepted license, matched against the canonical text after whitespace
-  normalization. One optional final line is ignored and is intended for a
-  copyright notice. For the MVP we accept exactly one license: the **Apache
+  normalization. One optional final line of the form ``Copyright YYYY[-YYYY]
+  NAME`` is ignored. For the MVP we accept exactly one license: the **Apache
   License 2.0**, the license of Lean and mathlib.
 
 - **Abstract.** ``abstract.md`` must be non-empty. It is rendered as markdown,
@@ -151,17 +151,16 @@ following rules.
   tuple with a required ``name`` (display name) and optional ``orcid`` and
   ``github`` identifiers. Used for credit only, not rights-management.
 
-- ``bibEntries``: a possibly empty list of strings containing BibTeX text as
-  it would appear in a ``.bib`` file. Entries are size-checked, but their
-  BibTeX structure is not parsed by validation.
+- ``bibEntries``: a possibly empty list of strings. Each string contains one
+  or more structurally complete BibTeX entries, as in a ``.bib`` file.
 
 Additional Rules:
 - ``specVersion``, ``leanVersion``, ``mathlibVersion``: must match the
   archive environment for now. ``leanVersion`` holds the version tag
   (``v4.30.0``); the full toolchain name (``leanprover/lean4:v4.30.0``)
   appears only in the ``lean-toolchain`` files.
-- Scalar version, id, and title values are normalized to strings before these
-  checks; author and bibliography fields must be actual strings.
+- All scalar manifest fields are YAML strings, not numbers or other scalar
+  types.
 - No keys beyond the ones listed here are allowed.
 
 Example:

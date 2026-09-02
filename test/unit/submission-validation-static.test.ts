@@ -30,6 +30,9 @@ describe("submission static validation retained from main", () => {
     );
     expect(isAcceptedLicense(canonical)).toBe(true);
     expect(isAcceptedLicense(canonical.replace(/\n/gu, "\n\n") + "\nCopyright 2026 Alice\n")).toBe(true);
+    expect(isAcceptedLicense(canonical + "\nCopyright 2020-2026 Alice Example\n")).toBe(true);
+    expect(isAcceptedLicense(canonical + "\nThis arbitrary trailing line used to be accepted\n")).toBe(false);
+    expect(isAcceptedLicense(canonical + "\nCopyright Alice\n")).toBe(false);
     expect(isAcceptedLicense(canonical.replace("Apache License", "Apache Licence"))).toBe(false);
     expect(isAcceptedLicense("MIT License\n")).toBe(false);
   });
@@ -129,6 +132,51 @@ describe("submission static validation retained from main", () => {
 
     expect(findings.violations).toEqual([]);
     expect(parsed?.authors).toEqual([]);
+  });
+
+  it("requires manifest string fields to be YAML strings", () => {
+    for (const [field, value] of [
+      ["specVersion", "1"],
+      ["id", "261"],
+      ["leanVersion", "430"],
+      ["mathlibVersion", "1234"],
+      ["title", "261"],
+    ]) {
+      const findings = new FindingCollector("static");
+      const content = manifest("lax-261").replace(new RegExp(`^${field}:.*$`, "mu"), `${field}: ${value}`);
+      validateManifest(content, "lax-261", RUNTIME, findings);
+      expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(
+        `\`${field}\` must be a string`,
+      );
+    }
+  });
+
+  it("accepts one or more complete BibTeX entries per bibliography string", () => {
+    const valid = manifest("lax-261").replace(
+      "bibEntries: []",
+      `bibEntries:\n  - |\n      @article{first,\n        title = {A {Nested} Title},\n        year = 2026\n      }\n      @string{journal = "Journal of Tests"}\n      @misc(second, title = journal # " Supplement")`,
+    );
+    const accepted = new FindingCollector("static");
+    expect(validateManifest(valid, "lax-261", RUNTIME, accepted)?.bibEntries).toHaveLength(1);
+    expect(accepted.violations).toEqual([]);
+
+    for (const entry of [
+      "not BibTeX",
+      "@article{missing-comma}",
+      "@article{key, title = {unclosed}",
+      "@article{key, title}",
+    ]) {
+      const findings = new FindingCollector("static");
+      validateManifest(
+        manifest("lax-261").replace("bibEntries: []", `bibEntries:\n  - ${JSON.stringify(entry)}`),
+        "lax-261",
+        RUNTIME,
+        findings,
+      );
+      expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(
+        "complete BibTeX entries",
+      );
+    }
   });
 
   it("accepts concept and proof lakefiles and warns about proof-package dependencies", () => {
