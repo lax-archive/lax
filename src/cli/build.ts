@@ -287,7 +287,10 @@ export async function buildSubmission(
       ui.verbose(`wrote ${filename}`);
       // The compiled paper lives beside it, bound by the digest the output
       // records; a build without one (no paper, or none compiled here)
-      // leaves no stale PDF behind to disagree with the output.
+      // leaves no stale PDF behind to disagree with the output. The derived
+      // web bundle follows the same rule — and since `lax build` does not
+      // derive the web view by default (paper-web-plan.md, "CLI"), the
+      // removal branch is the one an author normally sees.
       const pdf = path.join(submissionRoot, "paper.pdf");
       if (report.paperPdfPath !== undefined) {
         const pdfStaging = `${pdf}.${process.pid}.tmp`;
@@ -296,6 +299,15 @@ export async function buildSubmission(
         ui.verbose(`wrote ${pdf}`);
       } else {
         fs.rmSync(pdf, { force: true });
+      }
+      const webTar = path.join(submissionRoot, "paper-web.tar");
+      if (report.paperWebPath !== undefined) {
+        const webStaging = `${webTar}.${process.pid}.tmp`;
+        fs.copyFileSync(report.paperWebPath, webStaging);
+        fs.renameSync(webStaging, webTar);
+        ui.verbose(`wrote ${webTar}`);
+      } else {
+        fs.rmSync(webTar, { force: true });
       }
     }
     if (steps !== undefined) {
@@ -382,11 +394,18 @@ export function hasCurrentLocalBuild(
     const validation = value.localValidation as Record<string, unknown> | undefined;
     const builtSource = validation?.source as Record<string, unknown> | undefined;
     // A recorded paper binds paper.pdf by digest: a missing or edited PDF is
-    // not the build the output describes.
-    const paper = value.paper as { pdf?: { digest?: unknown } } | undefined;
+    // not the build the output describes. A recorded web view binds
+    // paper-web.tar the same way.
+    const paper = value.paper as
+      | { pdf?: { digest?: unknown }; web?: { bundle?: { digest?: unknown } } }
+      | undefined;
     if (paper !== undefined) {
       const pdf = fs.readFileSync(path.join(path.resolve(folder), "paper.pdf"));
       if (createHash("sha256").update(pdf).digest("hex") !== paper.pdf?.digest) return false;
+      if (paper.web !== undefined) {
+        const bundle = fs.readFileSync(path.join(path.resolve(folder), "paper-web.tar"));
+        if (createHash("sha256").update(bundle).digest("hex") !== paper.web.bundle?.digest) return false;
+      }
     }
     return (
       value.id === submissionIdFromFolder(folder) &&

@@ -488,6 +488,28 @@ describe("CI workflow wiring", () => {
     expect(cacheSteps).toBe(2);
   });
 
+  it("equips the check job for the paper web e2es before the test step", () => {
+    // paper-web-plan.md stage 2: the reflow e2es need lualatex (+ tikz), a
+    // dvisvgm with the mutool PDF backend, fontspec's Latin Modern OTFs, and
+    // the hash-pinned encode venv from `reflowtex:fetch` — installed before
+    // `npm test`, with the venv cached on the lock so warm runs stay fast.
+    const runs = ciJobs.check.steps.map((step) => step.run ?? step.uses ?? "");
+    const tex = runs.findIndex((run) => run.includes("texlive-luatex"));
+    const fetch = runs.findIndex((run) => run.includes("npm run reflowtex:fetch"));
+    const test = runs.indexOf("npm test");
+    expect(tex).toBeGreaterThanOrEqual(0);
+    for (const piece of ["texlive-pictures", "dvisvgm", "mupdf-tools", "fonts-lmodern", "latexmk"]) {
+      expect(runs[tex]).toContain(piece);
+    }
+    expect(fetch).toBeGreaterThan(tex);
+    expect(test).toBeGreaterThan(fetch);
+    // the fork e2es gate on the reference clone; the fetch step exports it
+    expect(runs[fetch]).toContain("LAX_REFLOWTEX_SOURCE");
+    const venvCache = ciJobs.check.steps.find((step) => step.with?.path === "reflowtex/venv");
+    expect(venvCache?.uses?.startsWith("actions/cache")).toBe(true);
+    expect(venvCache?.with?.key).toContain("hashFiles('reflowtex/requirements.lock')");
+  });
+
   it("keeps the test seams out of the smoke job", () => {
     // The smoke asserts the real pins (it refuses to start with LAX_MATHLIB_*
     // set); a seam leaking into CI would turn the gate into a fake-mathlib

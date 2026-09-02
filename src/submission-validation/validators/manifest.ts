@@ -19,7 +19,7 @@ const MANIFEST_KEYS = new Set([
   "bibEntries",
 ]);
 const OPTIONAL_MANIFEST_KEYS = new Set(["supersedes", "paper"]);
-const PAPER_KEYS = new Set(["folder", "main", "engine"]);
+const PAPER_KEYS = new Set(["folder", "main", "engine", "web"]);
 const AUTHOR_KEYS = new Set(["name", "orcid", "github"]);
 
 export function validateManifest(
@@ -220,8 +220,20 @@ function validatePaperBlock(value: unknown, findings: FindingCollector): PaperMa
       ok = false;
     }
   }
+  // The derived web view's opt-out (paper-web-plan.md, "Author-facing
+  // contract"): a boolean, default true. `web: false` means the reflow
+  // derivation is not attempted at all — no warning either.
+  let web: boolean | undefined;
+  if ("web" in value) {
+    if (typeof value.web === "boolean") {
+      web = value.web;
+    } else {
+      findings.violate("manifest", "manifest.yaml: paper.web must be true or false");
+      ok = false;
+    }
+  }
   if (!ok || folder === undefined || main === undefined) return undefined;
-  return { folder, main, engine };
+  return { folder, main, engine, ...(web === undefined ? {} : { web }) };
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {

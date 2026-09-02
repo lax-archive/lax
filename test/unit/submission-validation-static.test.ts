@@ -375,12 +375,42 @@ describe("paper static validation", () => {
     expect(without !== undefined && "paper" in without).toBe(false);
   });
 
+  it("accepts the web opt-out key and keeps it out of the block when unwritten", () => {
+    // `paper.web: false` opts the submission out of the derived web view
+    // (paper-web-plan.md, "Author-facing contract"); `true` restates the
+    // default; absence means default (the key is simply not carried).
+    const optedOut = new FindingCollector("static");
+    const parsed = validateManifest(
+      manifest("lax-261") + "paper:\n  folder: paper\n  main: main.tex\n  web: false\n",
+      "lax-261",
+      RUNTIME,
+      optedOut,
+    );
+    expect(optedOut.violations).toEqual([]);
+    expect(parsed?.paper).toEqual({ folder: "paper", main: "main.tex", engine: "pdflatex", web: false });
+
+    const restated = new FindingCollector("static");
+    const explicit = validateManifest(
+      manifest("lax-261") + "paper:\n  folder: paper\n  main: main.tex\n  web: true\n",
+      "lax-261",
+      RUNTIME,
+      restated,
+    );
+    expect(restated.violations).toEqual([]);
+    expect(explicit?.paper).toEqual({ folder: "paper", main: "main.tex", engine: "pdflatex", web: true });
+
+    const unwritten = new FindingCollector("static");
+    const defaulted = validateManifest(manifest("lax-261") + PAPER_BLOCK, "lax-261", RUNTIME, unwritten);
+    expect(defaulted?.paper !== undefined && "web" in defaulted.paper).toBe(false);
+  });
+
   it("rejects malformed paper blocks", () => {
     for (const [block, expected] of [
       ["paper:\n  folder: paper\n  main: main.tex\n  shell: true\n", "paper: unknown key `shell`"],
       ["paper:\n  folder: paper\n", "paper: missing key `main`"],
       ["paper:\n  main: main.tex\n", "paper: missing key `folder`"],
       ["paper:\n  folder: paper\n  main: main.tex\n  engine: latex\n", "paper.engine must be one of pdflatex, lualatex, xelatex"],
+      ["paper:\n  folder: paper\n  main: main.tex\n  web: never\n", "paper.web must be true or false"],
       ["paper:\n  folder: paper\n  main: main.pdf\n", "paper.main must name a `.tex` file"],
       ["paper:\n  folder: paper\n  main: ../main.tex\n", "paper.main must be a relative path of plain segments"],
       ["paper:\n  folder: paper\n  main: 12\n", "paper.main must be a string"],

@@ -26,6 +26,7 @@
     "workflow": "tsx src/workflows/submission.ts",
     "page-builder:fetch": "tsx src/cli/deployment/fetch-page-builder.ts",
     "reflowtex:fetch": "node reflowtex/fetch.mjs",
+    "paper-web:fixture": "tsx scripts/paper-web-fixture/generate.ts",
     "page-builder:package": "tsx src/cli/deployment/package.ts",
     "page-builder:verify": "tsx src/cli/deployment/verify.ts"
   },

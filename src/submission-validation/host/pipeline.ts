@@ -40,6 +40,7 @@ import {
 } from "../failures.js";
 import { joinPaperMarks } from "../paper/join.js";
 import { capturePaperSources, runPaperPhase, type CompiledPaper, type PaperPhaseResult } from "../paper/phase.js";
+import type { WebDeriver } from "../paper/web.js";
 import { emitBuildOutput } from "../phases/emit.js";
 import { judgeInspection } from "../phases/inspect.js";
 import { parseInspectorReport } from "../phases/inspect-runner.js";
@@ -87,6 +88,14 @@ export interface HostValidationOptions {
   onDetail?: (phase: string, detail: string) => void;
   /** Collects the span tree; the caller owns it (see ValidationOptions). */
   profiler?: Profiler;
+  /**
+   * The paper web derivation seam (paper-web-plan.md), mirroring the
+   * runner/compiler seams: tests and fixture generation inject
+   * `hostWebDeriver` (or a fake) here. Absent — the `lax build` default —
+   * means no derived view is attempted; the archive-side derivation is the
+   * trusted path's job.
+   */
+  webDeriver?: WebDeriver;
 }
 
 interface HostState {
@@ -106,9 +115,11 @@ interface HostState {
 }
 
 /** The host report, plus what the caller must copy out of the job directory
- * before it is removed: the compiled paper, when there is one. */
+ * before it is removed: the compiled paper and its derived web bundle, when
+ * there are any. */
 export interface HostValidationReport extends ValidationReport {
   paperPdfPath?: string;
+  paperWebPath?: string;
 }
 
 /** Run the full local validation pipeline on the host toolchain. */
@@ -257,6 +268,7 @@ export async function validateSubmissionOnHost(
       buildOutput,
       capture,
       ...(paper?.compiled === undefined ? {} : { paperPdfPath: paper.compiled.pdfPath }),
+      ...(paper?.compiled?.web === undefined ? {} : { paperWebPath: paper.compiled.web.bundlePath }),
     };
   } catch (error) {
     return fail("emit", "emit", error);
@@ -519,6 +531,10 @@ async function startPaperPhase(
           sourceDateEpoch,
           limits: state.limits,
           compile: hostPaperCompiler({ echo: state.echo, maxOutputBytes: state.limits.maxOutputBytes }),
+          // Absent by default: `lax build` never derives the web view on its
+          // own (paper-web-plan.md, "CLI") — tests and fixture generation
+          // inject a deriver here.
+          ...(options.webDeriver === undefined ? {} : { deriveWeb: options.webDeriver }),
         });
       } catch (error) {
         // Anything the phase did not turn into a finding itself (a copy that

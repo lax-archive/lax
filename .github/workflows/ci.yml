@@ -50,15 +50,42 @@ jobs:
             ~/.lax/warm
             ~/.lax/tools
           key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
-      # The paper-layer e2e (test/e2e/host-paper.test.ts) compiles a small
-      # fixture with the host latexmk, the way `lax build` does on an author's
-      # machine; it skips itself without one, so the install is what makes the
-      # test run here. A minimal TeX Live: the fixture needs amsmath/amsthm/
-      # hyperref (texlive-latex-base) and etoolbox (texlive-latex-recommended).
-      - name: Install a small TeX Live for the paper e2e
+      # The paper-layer e2es compile small fixtures with the host latexmk, the
+      # way `lax build` does on an author's machine; they skip themselves
+      # without one, so the install is what makes them run here. Beyond the
+      # pdflatex set (test/e2e/host-paper.test.ts: amsmath/amsthm/hyperref in
+      # texlive-latex-base, etoolbox in texlive-latex-recommended), the web
+      # derivation e2es (test/e2e/reflowtex-fork.test.ts and
+      # test/e2e/paper-web.test.ts) need lualatex + luaotfload
+      # (texlive-luatex), fontspec's Latin Modern OTFs (fonts-lmodern +
+      # texlive-fonts-recommended), tikz (texlive-pictures), and dvisvgm with
+      # the mutool PDF backend (Ubuntu 24.04's dvisvgm refuses its
+      # Ghostscript, so mupdf-tools is required) — the set the reflow spike
+      # measured at 313 MB / ~38 s.
+      - name: Install TeX Live for the paper e2es
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends texlive-latex-base texlive-latex-recommended latexmk
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-base texlive-latex-recommended latexmk \
+            texlive-luatex texlive-fonts-recommended fonts-lmodern \
+            texlive-pictures dvisvgm mupdf-tools
+      # The reflowtex fork e2es gate on a reference clone of the pinned
+      # upstream (LAX_REFLOWTEX_SOURCE) and fetch from it in their beforeAll;
+      # the venv install is hash-pinned (requirements.lock) and cached on the
+      # lock, so a warm run only re-clones and re-patches (~seconds). The
+      # fetch runs here too so a cold venv is built on its own log line.
+      - name: Restore the reflowtex encode venv
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: reflowtex/venv
+          key: lax-reflowtex-venv-v1-${{ runner.os }}-${{ hashFiles('reflowtex/requirements.lock') }}
+      - name: Fetch the pinned ReflowTeX fork
+        run: |
+          rev="$(node -p "require('fs').readFileSync('src/submission-validation/pins.ts','utf8').match(/REFLOWTEX_REV = \"([0-9a-f]{40})\"/)[1]")"
+          git clone --quiet https://github.com/radek-p/reflowtex "$RUNNER_TEMP/reflowtex-upstream"
+          git -C "$RUNNER_TEMP/reflowtex-upstream" fetch --quiet origin "$rev"
+          echo "LAX_REFLOWTEX_SOURCE=$RUNNER_TEMP/reflowtex-upstream" >> "$GITHUB_ENV"
+          npm run reflowtex:fetch
       - run: npm test
 
   # `npm run check` cannot see the container-only seam: it builds on the host,

@@ -421,4 +421,132 @@ describe("paper build output", () => {
       parseSuccessfulValidationArtifacts(badManifestBlock.report, badManifestBlock.buildOutput, validationRequest(), TEST_RUNTIME),
     ).toThrow("generated manifest paper must contain exactly");
   });
+
+  // ── the derived web view (paper-web-plan.md, "Recorded shape") ───────────
+
+  const WEB_DIGEST = "7".repeat(64);
+  const WEB_BLOB = `ghcr.io/lax-archive/lax-captures@sha256:${WEB_DIGEST}`;
+
+  function webOutput(): NonNullable<PaperOutput["web"]> {
+    return {
+      format: { tool: "reflowtex", rev: "b".repeat(40), schema: "5".repeat(64) },
+      bundle: { digest: WEB_DIGEST, bytes: 711_168 },
+    };
+  }
+
+  it("accepts `web` in both branches, old shapes without it, and blob equality when published", () => {
+    // pre-web records keep parsing — the conditional-key idiom
+    expect(parsePaperOutput(paperOutput(), PAPER_MANIFEST, false).web).toBeUndefined();
+
+    const withWeb = { ...paperOutput(), web: webOutput() };
+    expect(parsePaperOutput(withWeb, PAPER_MANIFEST, false)).toEqual(withWeb);
+
+    const published = {
+      ...paperOutput(),
+      pdf: { ...paperOutput().pdf, registryBlob: BLOB },
+      web: { ...webOutput(), bundle: { ...webOutput().bundle, registryBlob: WEB_BLOB } },
+    };
+    expect(parsePaperOutput(published, PAPER_MANIFEST, true)).toEqual(published);
+
+    // published requires the bundle blob; the validate branch must not have it
+    expect(() =>
+      parsePaperOutput({ ...published, web: webOutput() }, PAPER_MANIFEST, true),
+    ).toThrow("generated paper web bundle must contain exactly");
+    expect(() =>
+      parsePaperOutput({ ...paperOutput(), web: published.web }, PAPER_MANIFEST, false),
+    ).toThrow("generated paper web bundle must contain exactly");
+
+    for (const [registryBlob, expected] of [
+      [`ghcr.io/lax-archive/lax-captures@sha256:${"9".repeat(64)}`, "does not match the bundle digest"],
+      ["ghcr.io/lax-archive/lax-captures:web-tag", "not a ghcr digest reference"],
+      [`docker.io/lax-archive/lax-captures@sha256:${WEB_DIGEST}`, "not a ghcr digest reference"],
+      [42, "registryBlob must be a string"],
+    ] as const) {
+      expect(() =>
+        parsePaperOutput(
+          {
+            ...published,
+            web: { ...webOutput(), bundle: { ...webOutput().bundle, registryBlob } },
+          },
+          PAPER_MANIFEST,
+          true,
+        ),
+      ).toThrow(expected);
+    }
+  });
+
+  it("rejects malformed web formats, bundles, and the over-cap bundle", () => {
+    const mutated = (mutate: (web: Record<string, unknown>) => void): unknown => {
+      const value = structuredClone({ ...paperOutput(), web: webOutput() }) as unknown as Record<string, unknown>;
+      mutate(value.web as Record<string, unknown>);
+      return value;
+    };
+    expect(() =>
+      parsePaperOutput(mutated((web) => { (web.format as Record<string, unknown>).tool = ""; }), PAPER_MANIFEST, false),
+    ).toThrow("generated paper web format tool must not be empty");
+    expect(() =>
+      parsePaperOutput(mutated((web) => { (web.format as Record<string, unknown>).rev = "main"; }), PAPER_MANIFEST, false),
+    ).toThrow("commit");
+    expect(() =>
+      parsePaperOutput(mutated((web) => { (web.format as Record<string, unknown>).schema = "sha256:abc"; }), PAPER_MANIFEST, false),
+    ).toThrow("generated paper web format schema must be a lowercase SHA-256 digest");
+    expect(() =>
+      parsePaperOutput(mutated((web) => { (web.bundle as Record<string, unknown>).digest = `sha256:${WEB_DIGEST}`; }), PAPER_MANIFEST, false),
+    ).toThrow("generated paper web bundle digest must be a lowercase SHA-256 digest");
+    expect(() =>
+      parsePaperOutput(mutated((web) => { (web.bundle as Record<string, unknown>).bytes = PAPER_CAPS.webBundleBytes + 1; }), PAPER_MANIFEST, false),
+    ).toThrow(`generated paper web bundle exceeds ${PAPER_CAPS.webBundleBytes} bytes`);
+    expect(() =>
+      parsePaperOutput(mutated((web) => { (web.bundle as Record<string, unknown>).bytes = 0; }), PAPER_MANIFEST, false),
+    ).toThrow("generated paper web bundle bytes must be a positive integer");
+    expect(() =>
+      parsePaperOutput(mutated((web) => { web.extra = 1; }), PAPER_MANIFEST, false),
+    ).toThrow("generated paper web must contain exactly");
+    expect(() =>
+      parsePaperOutput(mutated((web) => { (web.format as Record<string, unknown>).extra = 1; }), PAPER_MANIFEST, false),
+    ).toThrow("generated paper web format must contain exactly");
+  });
+
+  it("honors the manifest's `web: false` opt-out fail-closed", () => {
+    const optedOut: PaperManifest = { ...PAPER_MANIFEST, web: false };
+    // an opted-out record must not carry a derived view…
+    expect(() =>
+      parsePaperOutput({ ...paperOutput(), web: webOutput() }, optedOut, false),
+    ).toThrow("generated paper carries a web view the manifest opted out of");
+    // …but parses fine without one, and `web: true` changes nothing.
+    expect(parsePaperOutput(paperOutput(), optedOut, false).web).toBeUndefined();
+    expect(
+      parsePaperOutput({ ...paperOutput(), web: webOutput() }, { ...PAPER_MANIFEST, web: true }, false).web,
+    ).toEqual(webOutput());
+  });
+
+  it("threads the manifest's paper.web key through the successful artifact set", () => {
+    const fixture = successfulArtifacts();
+    fixture.buildOutput.inputs.manifest.paper = { ...PAPER_MANIFEST, web: false };
+    fixture.buildOutput.paper = paperOutput();
+    expect(
+      parseSuccessfulValidationArtifacts(fixture.report, fixture.buildOutput, validationRequest(), TEST_RUNTIME),
+    ).toEqual(fixture);
+
+    const derived = successfulArtifacts();
+    derived.buildOutput.inputs.manifest.paper = { ...PAPER_MANIFEST };
+    derived.buildOutput.paper = { ...paperOutput(), web: webOutput() };
+    expect(
+      parseSuccessfulValidationArtifacts(derived.report, derived.buildOutput, validationRequest(), TEST_RUNTIME),
+    ).toEqual(derived);
+
+    const contradiction = successfulArtifacts();
+    contradiction.buildOutput.inputs.manifest.paper = { ...PAPER_MANIFEST, web: false };
+    contradiction.buildOutput.paper = { ...paperOutput(), web: webOutput() };
+    expect(() =>
+      parseSuccessfulValidationArtifacts(contradiction.report, contradiction.buildOutput, validationRequest(), TEST_RUNTIME),
+    ).toThrow("carries a web view the manifest opted out of");
+
+    const badKey = successfulArtifacts();
+    badKey.buildOutput.inputs.manifest.paper = { ...PAPER_MANIFEST, web: "no" as unknown as boolean };
+    badKey.buildOutput.paper = paperOutput();
+    expect(() =>
+      parseSuccessfulValidationArtifacts(badKey.report, badKey.buildOutput, validationRequest(), TEST_RUNTIME),
+    ).toThrow("generated manifest paper web must be a boolean");
+  });
 });

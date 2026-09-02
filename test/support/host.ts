@@ -129,6 +129,8 @@ export async function buildOnHost(
     repository?: string;
     /** Use this job dir so the test can inspect what the build materialized. */
     jobDir?: string;
+    /** The paper web derivation seam — absent, like `lax build`'s default. */
+    webDeriver?: HostValidationOptions["webDeriver"];
   } = {},
 ): Promise<HostValidationReport> {
   const commit = fs.existsSync(path.join(root, ".git")) ? git(root, "rev-parse", "HEAD") : gitInitCommit(root);
@@ -153,6 +155,7 @@ export async function buildOnHost(
     replay: options.replay,
     scope: options.scope,
     profiler: options.profiler,
+    webDeriver: options.webDeriver,
   });
 }
 

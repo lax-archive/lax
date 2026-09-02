@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PaperMarkPoint, PaperMarkTableEntry } from "../contracts.js";
 import { run } from "../host/proc.js";
-import type { ExtractedDestination, ExtractedPdf } from "./extract-destinations.js";
+import type { ExtractedDestination, ExtractedPdf, ExtractedTextItem } from "./extract-destinations.js";
 
 /** A mark located in the PDF, before its id is resolved to a card. */
 export interface LocatedMark {
@@ -32,8 +32,28 @@ export interface ExtractionOptions {
  * fails or prints something that is not its contract — that is a broken
  * installation or a PDF pdf.js cannot open, not an author finding. */
 export async function extractPdf(pdfPath: string, options: ExtractionOptions): Promise<ExtractedPdf> {
+  return extractorRun(pdfPath, options, false);
+}
+
+/** Like extractPdf, but the child also emits each page's text items — the
+ * PDF side of the web derivation's oracle (paper-web-plan.md). A separate
+ * run on purpose: the destination path's output stays byte-identical. */
+export async function extractPdfText(
+  pdfPath: string,
+  options: ExtractionOptions,
+): Promise<ExtractedTextItem[][]> {
+  const extracted = await extractorRun(pdfPath, options, true);
+  if (extracted.text === undefined) throw new Error("the PDF reader printed no text pages");
+  return extracted.text;
+}
+
+async function extractorRun(
+  pdfPath: string,
+  options: ExtractionOptions,
+  withText: boolean,
+): Promise<ExtractedPdf> {
   const { command, args } = extractorCommand();
-  const result = await run(command, [...args, pdfPath], path.dirname(pdfPath), {
+  const result = await run(command, [...args, ...(withText ? ["--text"] : []), pdfPath], path.dirname(pdfPath), {
     timeoutMs: options.timeoutMs,
     maxOutputBytes: options.maxOutputBytes,
   });
@@ -47,7 +67,7 @@ export async function extractPdf(pdfPath: string, options: ExtractionOptions): P
   } catch {
     throw new Error("the PDF reader printed no result");
   }
-  return parseExtracted(value);
+  return parseExtracted(value, withText);
 }
 
 /**
@@ -64,7 +84,7 @@ function extractorCommand(): { command: string; args: string[] } {
   return { command: process.execPath, args: [tsx, source] };
 }
 
-function parseExtracted(value: unknown): ExtractedPdf {
+function parseExtracted(value: unknown, withText = false): ExtractedPdf {
   if (value === null || typeof value !== "object") throw new Error("the PDF reader printed no result");
   const object = value as Record<string, unknown>;
   const pages = object.pages;
@@ -92,7 +112,20 @@ function parseExtracted(value: unknown): ExtractedPdf {
     return { name: d.name, n: d.n as number, kind: d.kind, mode: d.mode, page: d.page as number, x: d.x, y: d.y };
   });
   const unknown = Array.isArray(object.unknown) ? object.unknown.filter((name): name is string => typeof name === "string") : [];
-  return { pages: pages as number, pageSizes: sizes, destinations, unknown };
+  let text: ExtractedTextItem[][] | undefined;
+  if (withText) {
+    if (!Array.isArray(object.text) || object.text.length !== pages) throw new Error("PDF reader: invalid text pages");
+    text = object.text.map((page) => {
+      if (!Array.isArray(page)) throw new Error("PDF reader: invalid text page");
+      return page.map((item): ExtractedTextItem => {
+        if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== "string" || (item[1] !== 0 && item[1] !== 1)) {
+          throw new Error("PDF reader: invalid text item");
+        }
+        return [item[0], item[1]];
+      });
+    });
+  }
+  return { pages: pages as number, pageSizes: sizes, destinations, unknown, ...(text === undefined ? {} : { text }) };
 }
 
 /**

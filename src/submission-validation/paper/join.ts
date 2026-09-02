@@ -52,6 +52,17 @@ export function joinPaperMarks(
       pdf: { digest: compiled.digest, bytes: compiled.bytes, pages: compiled.pages },
       pageSizes: compiled.pageSizes,
       marks: resolved.marks,
+      // The derived web view rides along when the derivation succeeded
+      // (paper-web-plan.md, "Recorded shape"); the join itself stays
+      // milliseconds and adds nothing to it.
+      ...(compiled.web === undefined
+        ? {}
+        : {
+            web: {
+              format: compiled.web.format,
+              bundle: { digest: compiled.web.digest, bytes: compiled.web.bytes },
+            },
+          }),
     },
     problems: [],
   };

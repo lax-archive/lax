@@ -9,6 +9,9 @@ export const GENERATED_BUILD_OUTPUT_FILENAME = "generated-build-output.json";
 export const CAPTURE_FILENAME = "capture.tar";
 /** The compiled paper, present exactly when the build output records one. */
 export const PAPER_FILENAME = "paper.pdf";
+/** The derived web bundle, present exactly when the build output records
+ * `paper.web` (paper-web-plan.md, "Storage"). */
+export const PAPER_WEB_FILENAME = "paper-web.tar";
 export const VALIDATION_PROFILE_FILENAME = "validation-profile.json";
 
 /** What the pipeline hands back beyond the report: files still inside the
@@ -16,6 +19,8 @@ export const VALIDATION_PROFILE_FILENAME = "validation-profile.json";
 export interface ValidationOutcome extends ValidationReport {
   /** The compiled paper, when the build output records one. */
   paperPdfPath?: string;
+  /** The derived web bundle, when the build output records one. */
+  paperWebPath?: string;
 }
 
 const MAX_PROFILE_BYTES = 4 * 1024 * 1024;
@@ -36,6 +41,7 @@ export function resetValidationOutputs(
     GENERATED_BUILD_OUTPUT_FILENAME,
     CAPTURE_FILENAME,
     PAPER_FILENAME,
+    PAPER_WEB_FILENAME,
     ...(opts.keepProfile === true ? [] : [VALIDATION_PROFILE_FILENAME]),
   ];
   for (const filename of filenames) {
@@ -113,9 +119,9 @@ function readProfile(filename: string): RecordedProfile {
  * binding after re-reading the current database state.
  */
 export function writeValidationOutputs(outputDir: string, outcome: ValidationOutcome): void {
-  // The PDF path is the job's, not the report's: the serialized report keeps
-  // exactly the shape parseSuccessfulValidationArtifacts accepts.
-  const { paperPdfPath, ...report } = outcome;
+  // The PDF and bundle paths are the job's, not the report's: the serialized
+  // report keeps exactly the shape parseSuccessfulValidationArtifacts accepts.
+  const { paperPdfPath, paperWebPath, ...report } = outcome;
   if (!report.ok) {
     if (report.failure !== undefined && report.violations.length > 0) {
       throw new Error("a validation report cannot contain both an operational failure and submission violations");
@@ -160,6 +166,19 @@ export function writeValidationOutputs(outputDir: string, outcome: ValidationOut
       throw new Error("the compiled paper does not match the digest its build output records");
     }
     fs.writeFileSync(path.join(outputDir, PAPER_FILENAME), bytes, { mode: 0o600 });
+  }
+  // The derived web bundle travels the same way, bound by its recorded
+  // content address — present exactly when `paper.web` was recorded.
+  const web = paper?.web;
+  if ((web === undefined) !== (paperWebPath === undefined)) {
+    throw new Error("successful full validation recorded a web view without its bundle, or a bundle without a web view");
+  }
+  if (web !== undefined && paperWebPath !== undefined) {
+    const bytes = fs.readFileSync(paperWebPath);
+    if (bytes.length !== web.bundle.bytes || createHash("sha256").update(bytes).digest("hex") !== web.bundle.digest) {
+      throw new Error("the derived web bundle does not match the digest its build output records");
+    }
+    fs.writeFileSync(path.join(outputDir, PAPER_WEB_FILENAME), bytes, { mode: 0o600 });
   }
 
   // Write the report last. Consumers treat its presence as the indication that

@@ -28,6 +28,15 @@ export interface ValidationLimits {
   paperExtractTimeoutMs: number;
   /** How much of a failed compile's transcript a finding carries. */
   paperLogTailChars: number;
+  /** Wall clock for the web derivation's encode child (paper-web-plan.md). */
+  paperWebEncodeTimeoutMs: number;
+  /** Cap on the serializer's `output.json` (and the encode child's stream
+   * report) — a chapter-scale document produces tens of MB. */
+  paperWebOutputJsonBytes: number;
+  /** The oracle's token-LCS similarity floor: below it the web view is
+   * skipped with the first divergence location (paper-web-plan.md, "The
+   * oracle"). */
+  paperWebOracleSimilarity: number;
 }
 
 /**
@@ -41,6 +50,8 @@ export const PAPER_CAPS = {
   pdfBytes: 25 * 1024 * 1024,
   pages: 500,
   marks: 10_000,
+  /** The derived web bundle tar (paper-web-plan.md, "Caps, named"). */
+  webBundleBytes: 25 * 1024 * 1024,
 } as const;
 
 export const DEFAULT_LIMITS: ValidationLimits = {
@@ -63,6 +74,9 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   paperCompileTimeoutMs: 10 * 60_000,
   paperExtractTimeoutMs: 2 * 60_000,
   paperLogTailChars: 12_000,
+  paperWebEncodeTimeoutMs: 5 * 60_000,
+  paperWebOutputJsonBytes: 64 * 1024 * 1024,
+  paperWebOracleSimilarity: 0.98,
 };
 
 /**

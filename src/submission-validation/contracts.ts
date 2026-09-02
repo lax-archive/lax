@@ -91,6 +91,10 @@ export interface PaperManifest {
   /** Relative to `folder`; a plain `.tex` filename or a contained path. */
   main: string;
   engine: PaperEngine;
+  /** The derived web view's opt-out (paper-web-plan.md, "Author-facing
+   * contract"): `false` means the reflow derivation is not attempted at all.
+   * Absent means true — the derived view is on by default. */
+  web?: boolean;
 }
 
 /** One numbered marker the rewriter emitted, in document order. */
@@ -148,6 +152,36 @@ export interface PaperPdf {
   registryBlob?: string;
 }
 
+/** The pinned deriver that produced a web bundle (paper-web-plan.md,
+ * "Recorded shape"): the fork identity and the sha256 of the exact
+ * `latex.proto` text bundled — the site build's schema gate keys on it. */
+export interface PaperWebFormat {
+  tool: string;
+  /** The reflowtex fork commit (`REFLOWTEX_REV` at derivation time). */
+  rev: string;
+  /** sha256 of the bundled `schema/latex.proto` bytes, bare hex. */
+  schema: string;
+}
+
+/** The derived web bundle: a content address, not a reproducibility claim
+ * (the deliberate opposite of the PDF digest — see the plan's digest
+ * stance). A re-derivation may produce a new digest. */
+export interface PaperWebBundle {
+  digest: string;
+  bytes: number;
+  /** Digest-addressed ghcr blob of the web layer; published records only. */
+  registryBlob?: string;
+}
+
+/** The `paper.web` key of `build-output.json`, present iff the reflow
+ * derivation succeeded. Deliberately absent: block lists, font maps, and
+ * any web-side mark coordinates — markers ride inside the blobs as stream
+ * nodes and the existing `marks` table stays the single truth. */
+export interface PaperWebOutput {
+  format: PaperWebFormat;
+  bundle: PaperWebBundle;
+}
+
 /** The `paper` key of `build-output.json`, present iff the manifest declares
  * a paper. `marks` keep mark-number (document) order. */
 export interface PaperOutput {
@@ -158,6 +192,8 @@ export interface PaperOutput {
   /** `[width, height]` per page, in points. */
   pageSizes: Array<[number, number]>;
   marks: PaperMark[];
+  /** Present iff the web derivation succeeded; never required. */
+  web?: PaperWebOutput;
 }
 
 export interface GitRequire {

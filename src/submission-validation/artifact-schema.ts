@@ -23,6 +23,7 @@ import type {
   PaperMark,
   PaperMarkPoint,
   PaperOutput,
+  PaperWebOutput,
   PublishedCapture,
   ResolvedDependency,
   StatementEntry,
@@ -294,12 +295,24 @@ function parseBuildOutputPayload(
 
 /**
  * The `paper` key of a build output (paper-plan.md, "Recorded shape"),
- * parsed fail-closed against the manifest block it must repeat. `published`
- * demands the digest-addressed registry blob a database record carries;
- * the validate artifact must not have one yet.
+ * parsed fail-closed against the manifest block it must repeat — the repeat
+ * check covers folder/main/engine only, never the manifest's `web` opt-out
+ * (which gates the *derivation*, not the record shape). `published` demands
+ * the digest-addressed registry blobs a database record carries; the
+ * validate artifact must not have them yet. `web` is optional in both
+ * branches (the conditional-key idiom), so pre-web records keep parsing.
  */
 export function parsePaperOutput(value: unknown, manifest: PaperManifest, published: boolean): PaperOutput {
-  const object = exactObject(value, ["folder", "main", "engine", "pdf", "pageSizes", "marks"], "generated paper");
+  if (!isObject(value)) throw new ValidationError("generated paper must be an object");
+  const object = exactObject(value, [
+    "folder",
+    "main",
+    "engine",
+    "pdf",
+    "pageSizes",
+    "marks",
+    ...(value.web === undefined ? [] : ["web"]),
+  ], "generated paper");
   const folder = validateFolder(object.folder);
   const main = validatePaperMain(object.main);
   const engine = object.engine;
@@ -308,6 +321,9 @@ export function parsePaperOutput(value: unknown, manifest: PaperManifest, publis
   }
   if (folder !== manifest.folder || main !== manifest.main || engine !== manifest.engine) {
     throw new ValidationError("generated paper does not repeat the manifest's paper block");
+  }
+  if (object.web !== undefined && manifest.web === false) {
+    throw new ValidationError("generated paper carries a web view the manifest opted out of");
   }
   const pdf = exactObject(object.pdf, ["digest", "bytes", "pages", ...(published ? ["registryBlob"] : [])], "generated paper pdf");
   const digest = sha256(pdf.digest, "generated paper pdf digest");
@@ -331,6 +347,7 @@ export function parsePaperOutput(value: unknown, manifest: PaperManifest, publis
   if (pageSizes.length !== pages) throw new ValidationError("generated paper pageSizes must have one entry per page");
   const marks = boundedArray(object.marks, "generated paper marks", PAPER_CAPS.marks)
     .map((entry, index) => parsePaperMark(entry, index, pages));
+  const web = object.web === undefined ? undefined : parsePaperWeb(object.web, published);
   return {
     folder,
     main,
@@ -338,6 +355,50 @@ export function parsePaperOutput(value: unknown, manifest: PaperManifest, publis
     pdf: { digest, bytes, pages, ...(registryBlob === undefined ? {} : { registryBlob }) },
     pageSizes,
     marks,
+    ...(web === undefined ? {} : { web }),
+  };
+}
+
+/**
+ * The `paper.web` key (paper-web-plan.md, "Recorded shape"): the format pin
+ * of the deriver and the bundle's content address. Digests are bare 64-hex
+ * like every recorded digest; the `sha256:` prefix appears only inside the
+ * OCI registryBlob address, which the published branch requires to carry
+ * exactly the bundle digest.
+ */
+function parsePaperWeb(value: unknown, published: boolean): PaperWebOutput {
+  const object = exactObject(value, ["format", "bundle"], "generated paper web");
+  const format = exactObject(object.format, ["tool", "rev", "schema"], "generated paper web format");
+  const tool = nonemptyText(format.tool, "generated paper web format tool", 64, false);
+  const rev = validateCommit(format.rev);
+  const schema = sha256(format.schema, "generated paper web format schema");
+  const bundle = exactObject(
+    object.bundle,
+    ["digest", "bytes", ...(published ? ["registryBlob"] : [])],
+    "generated paper web bundle",
+  );
+  const digest = sha256(bundle.digest, "generated paper web bundle digest");
+  const bytes = positiveInteger(bundle.bytes, "generated paper web bundle bytes");
+  if (bytes > PAPER_CAPS.webBundleBytes) {
+    throw new ValidationError(`generated paper web bundle exceeds ${PAPER_CAPS.webBundleBytes} bytes`);
+  }
+  let registryBlob: string | undefined;
+  if (published) {
+    if (typeof bundle.registryBlob !== "string") {
+      throw new ValidationError("published paper web registryBlob must be a string");
+    }
+    const reference = parseCaptureBlobReference(bundle.registryBlob);
+    if (reference === undefined) {
+      throw new ValidationError("published paper web registryBlob is not a ghcr digest reference");
+    }
+    if (reference.digest !== digest) {
+      throw new ValidationError("published paper web registryBlob digest does not match the bundle digest");
+    }
+    registryBlob = bundle.registryBlob;
+  }
+  return {
+    format: { tool, rev, schema },
+    bundle: { digest, bytes, ...(registryBlob === undefined ? {} : { registryBlob }) },
   };
 }
 
@@ -417,15 +478,25 @@ function parseManifest(
   }
   let paper: PaperManifest | undefined;
   if (object.paper !== undefined) {
-    const block = exactObject(object.paper, ["folder", "main", "engine"], "generated manifest paper");
+    if (!isObject(object.paper)) throw new ValidationError("generated manifest paper must be an object");
+    const block = exactObject(object.paper, [
+      "folder",
+      "main",
+      "engine",
+      ...(object.paper.web === undefined ? [] : ["web"]),
+    ], "generated manifest paper");
     const engine = block.engine;
     if (typeof engine !== "string" || !(PAPER_ENGINES as readonly string[]).includes(engine)) {
       throw new ValidationError("generated manifest paper engine is invalid");
+    }
+    if (block.web !== undefined && typeof block.web !== "boolean") {
+      throw new ValidationError("generated manifest paper web must be a boolean");
     }
     paper = {
       folder: validateFolder(block.folder),
       main: validatePaperMain(block.main),
       engine: engine as PaperManifest["engine"],
+      ...(block.web === undefined ? {} : { web: block.web }),
     };
   }
   return {

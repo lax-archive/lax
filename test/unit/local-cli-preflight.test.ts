@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -251,6 +252,53 @@ describe("local command preflights", () => {
     );
     expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(true);
     expect(hasCurrentLocalBuild(root, source, "c".repeat(40))).toBe(false);
+  });
+
+  it("binds a recorded paper to paper.pdf and a recorded web view to paper-web.tar by digest", () => {
+    const root = temporary("lax-submission-");
+    fs.writeFileSync(path.join(root, "manifest.yaml"), "id: lax-7\n");
+    const source = {
+      repository: "https://github.com/alice/example",
+      commit: "a".repeat(40),
+      folder: ".",
+    };
+    const pdf = Buffer.from("%PDF-1.7 fixture");
+    const bundle = Buffer.from("a deterministic tar stand-in");
+    const digestOf = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
+    const write = (web: boolean): void => {
+      fs.writeFileSync(
+        path.join(root, "build-output.json"),
+        JSON.stringify({
+          id: "lax-7",
+          paper: {
+            pdf: { digest: digestOf(pdf) },
+            ...(web ? { web: { bundle: { digest: digestOf(bundle) } } } : {}),
+          },
+          localValidation: {
+            version: 1,
+            source,
+            archiveSha: "b".repeat(40),
+            runtimeImageDigest: hostValidationRuntime().imageDigest,
+          },
+        }),
+      );
+    };
+
+    write(false);
+    fs.writeFileSync(path.join(root, "paper.pdf"), pdf);
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(true);
+
+    // a recorded web view without its tar, or with edited bytes, is stale
+    write(true);
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
+    fs.writeFileSync(path.join(root, "paper-web.tar"), "tampered");
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
+    fs.writeFileSync(path.join(root, "paper-web.tar"), bundle);
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(true);
+
+    // the PDF check still stands beside it
+    fs.writeFileSync(path.join(root, "paper.pdf"), "edited");
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
   });
 
   it("rejects a build-output produced before a pin bump", () => {

@@ -8,6 +8,7 @@ import {
   CAPTURE_FILENAME,
   GENERATED_BUILD_OUTPUT_FILENAME,
   PAPER_FILENAME,
+  PAPER_WEB_FILENAME,
   resetValidationOutputs,
   VALIDATION_REPORT_FILENAME,
   type ValidationOutcome,
@@ -138,6 +139,44 @@ describe("submission validation outputs", () => {
     expect(() => writeValidationOutputs(directory, strayPdf)).toThrow("a PDF without a paper");
   });
 
+  it("copies a recorded web bundle bound by its digest, and resets it with the rest", () => {
+    const directory = temporaryDirectory();
+    const bundle = Buffer.from("a deterministic tar stand-in");
+    const outcome = webOutcome(bundle);
+    fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+
+    writeValidationOutputs(directory, outcome);
+
+    expect(fs.readFileSync(path.join(directory, PAPER_WEB_FILENAME))).toEqual(bundle);
+    const { paperPdfPath, paperWebPath, ...report } = outcome;
+    expect(readJson(path.join(directory, VALIDATION_REPORT_FILENAME))).toEqual(report);
+    expect(readJson(path.join(directory, VALIDATION_REPORT_FILENAME))).not.toHaveProperty("paperWebPath");
+    expect(fs.existsSync(paperWebPath!)).toBe(true);
+
+    // A stale paper-web.tar never survives into a run that records none.
+    resetValidationOutputs(directory);
+    expect(fs.existsSync(path.join(directory, PAPER_WEB_FILENAME))).toBe(false);
+  });
+
+  it("refuses a tampered bundle, a web view without its tar, and a tar without a web view", () => {
+    const directory = temporaryDirectory();
+    fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+    const tampered = webOutcome(Buffer.from("the sealed bundle"));
+    fs.writeFileSync(tampered.paperWebPath!, "other bytes entirely");
+    expect(() => writeValidationOutputs(directory, tampered)).toThrow(
+      "the derived web bundle does not match the digest its build output records",
+    );
+    expect(fs.existsSync(path.join(directory, VALIDATION_REPORT_FILENAME))).toBe(false);
+    expect(fs.existsSync(path.join(directory, PAPER_WEB_FILENAME))).toBe(false);
+
+    const { paperWebPath, ...withoutTar } = webOutcome(Buffer.from("the sealed bundle"));
+    expect(() => writeValidationOutputs(directory, withoutTar)).toThrow(
+      "recorded a web view without its bundle",
+    );
+    const strayTar: ValidationOutcome = { ...paperOutcome(Buffer.from("%PDF-1.7 fixture")), paperWebPath };
+    expect(() => writeValidationOutputs(directory, strayTar)).toThrow("a bundle without a web view");
+  });
+
   it("rejects database-owned fields in the generated payload", () => {
     const directory = temporaryDirectory();
     const report = successfulReport();
@@ -202,6 +241,19 @@ function paperOutcome(pdf: Buffer): ValidationOutcome {
     marks: [],
   };
   return { ...report, paperPdfPath: pdfPath };
+}
+
+/** A paper outcome whose build output additionally records a derived web
+ * view, with `bundle` as the sealed tar. */
+function webOutcome(bundle: Buffer): ValidationOutcome {
+  const outcome = paperOutcome(Buffer.from("%PDF-1.7 fixture"));
+  const bundlePath = path.join(temporaryDirectory(), "paper-web.tar");
+  fs.writeFileSync(bundlePath, bundle);
+  outcome.buildOutput!.paper!.web = {
+    format: { tool: "reflowtex", rev: "a".repeat(40), schema: "b".repeat(64) },
+    bundle: { digest: createHash("sha256").update(bundle).digest("hex"), bytes: bundle.length },
+  };
+  return { ...outcome, paperWebPath: bundlePath };
 }
 
 function baseReport(): Omit<ValidationReport, "ok"> {

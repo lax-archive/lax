@@ -39,6 +39,9 @@ describe.skipIf(!withTex)("host pipeline with a paper (real latexmk, fake mathli
     expect(report.warnings).toEqual([]);
     const paper = report.buildOutput!.paper!;
     expect(paper).toMatchObject({ folder: "paper", main: "main.tex", engine: "pdflatex" });
+    // no injected web deriver — `lax build`'s default derives no web view
+    expect(paper.web).toBeUndefined();
+    expect(report.paperWebPath).toBeUndefined();
     expect(paper.pdf.pages).toBeGreaterThanOrEqual(1);
     expect(paper.pageSizes).toHaveLength(paper.pdf.pages);
     expect(paper.pageSizes[0]![0]).toBeGreaterThan(500);

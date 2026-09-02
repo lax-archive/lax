@@ -14,6 +14,7 @@ import type { StaticPaper } from "../contracts.js";
 import { FindingCollector } from "../findings.js";
 import { latexmkArguments, logTail, paperPdfName } from "./compile.js";
 import { extractPdf, matchDestinations, type LocatedMark } from "./extract.js";
+import type { DerivedWebBundle, WebDeriver } from "./web.js";
 
 /** Runs latexmk with `args` in `cwd` — the working copy of the paper folder.
  * The executor owns the environment (paperCompileEnvironment in compile.ts
@@ -33,6 +34,15 @@ export interface PaperPhaseInput {
   sourceDateEpoch: number;
   limits: ValidationLimits;
   compile: PaperCompiler;
+  /**
+   * The web derivation seam (paper-web-plan.md): absent means no derived
+   * view is attempted at all — `lax build`'s default. When present it runs
+   * after a successful PDF compile, on its own fresh copy, and is
+   * **non-blocking by construction**: a deriver reports warnings only, and
+   * anything it throws becomes one; the PDF path never notices. The
+   * manifest's `paper.web: false` opt-out disables it silently.
+   */
+  deriveWeb?: WebDeriver;
 }
 
 export interface CompiledPaper {
@@ -44,6 +54,8 @@ export interface CompiledPaper {
   pageSizes: Array<[number, number]>;
   /** Marks located in the PDF, in mark-number order, ids unresolved. */
   located: LocatedMark[];
+  /** The derived web bundle, when a deriver ran and succeeded. */
+  web?: DerivedWebBundle;
 }
 
 export interface PaperPhaseResult {
@@ -106,14 +118,46 @@ export async function runPaperPhase(input: PaperPhaseInput): Promise<PaperPhaseR
   for (const problem of matched.problems) findings.violate("marks", problem);
   if (matched.problems.length > 0) return { findings };
 
+  // The digest is taken before any derivation runs: outputs.ts re-hashes
+  // the PDF against it at write time, so a derivation that touched the PDF
+  // (it must not — it compiles a fresh copy of its own) would be caught,
+  // never silently recorded.
+  const digest = sha256File(pdfPath);
+
+  // The web derivation, after the PDF path settled and on its own fresh
+  // copy: `paper.web: false` means not attempted (no warning either), and
+  // every failure — the deriver's own or a thrown one — is a warning; the
+  // PDF result above is already sealed either way.
+  let web: DerivedWebBundle | undefined;
+  if (input.deriveWeb !== undefined && paper.manifest.web !== false) {
+    try {
+      const derived = await input.deriveWeb({
+        paper,
+        submissionRoot: input.submissionRoot,
+        jobDir: input.jobDir,
+        sourceDateEpoch: input.sourceDateEpoch,
+        limits: input.limits,
+        pdfPath,
+      });
+      for (const warning of derived.warnings) findings.warn(warning.rule, warning.message);
+      web = derived.web;
+    } catch (error) {
+      findings.warn(
+        "web-derivation",
+        `the reflow view was not derived: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   return {
     compiled: {
       pdfPath,
-      digest: sha256File(pdfPath),
+      digest,
       bytes,
       pages: extracted.pages,
       pageSizes: extracted.pageSizes,
       located: matched.marks,
+      ...(web === undefined ? {} : { web }),
     },
     findings,
   };
@@ -121,8 +165,9 @@ export async function runPaperPhase(input: PaperPhaseInput): Promise<PaperPhaseR
 
 /** The compile copy: every file of the folder, `.tex` files in their
  * rewritten form (re-encoded as they were decoded, latin1 — see the static
- * gate), everything else byte for byte. Never the author's tree. */
-function copyPaperFolder(paper: StaticPaper, folder: string, destination: string): void {
+ * gate), everything else byte for byte. Never the author's tree. Exported
+ * for the web derivation, which makes a second, fresh copy of its own. */
+export function copyPaperFolder(paper: StaticPaper, folder: string, destination: string): void {
   fs.rmSync(destination, { recursive: true, force: true });
   for (const file of paper.files) {
     const target = path.join(destination, ...file.split("/"));
