@@ -117,6 +117,35 @@ after it, the text continues.
 \\end{document}
 `;
 
+// A figure in its own paragraph (blank lines around the tikzpicture): the
+// capture holds an externalised picture and no glyph at any depth, so the
+// glyph-only body gate dropped it from the content stream — every
+// standalone figure vanished from the web view (the has_ink fix). The
+// markers land on both sides of the picture: b1 in vertical mode (a
+// stream item), e1 inside the picture's paragraph (\\laxmark directly
+// after \\end{tikzpicture}, before the blank line).
+const STANDALONE_TIKZ_TEX = `\\documentclass{article}
+
+\\usepackage{fontspec}
+\\setmainfont{Latin Modern Roman}
+\\usepackage{tikz}
+
+\\begin{document}
+
+Text before the figure.
+
+% lax begin Lax261.Figure
+\\begin{tikzpicture}
+  \\draw[->] (0,0) -- (2,1);
+  \\node[draw, circle] at (3,0.5) {$x$};
+\\end{tikzpicture}
+% lax end
+
+Text after the figure.
+
+\\end{document}
+`;
+
 /** Write rewritten sources + the fork serializer into a fresh job dir and run
  * the plan's injection command. The job dir leads TEXINPUTS (it is the cwd's
  * `.`), assets/tex supplies laxreflow.sty, the trailing colon keeps TeX
@@ -177,6 +206,7 @@ interface EncodeStats {
   pb_sha256: string;
   node_markers: Array<[string, number]>;
   stream_markers: Array<[string, number]>;
+  stream_paragraphs: number[];
   picture_nodes: number;
   pictures: Array<{ svg: string; vb_w: number; vb_h: number }>;
   converted: number;
@@ -399,6 +429,69 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
     for (const forbidden of ["<script", "onload", "javascript:", "http://", "https://", "<foreignObject"]) {
       expect(picture.svg).not.toContain(forbidden);
     }
+  });
+
+  it("references a standalone-picture paragraph as body content and keeps it through the pb", (context) => {
+    context.skip(!hasDvisvgm, "dvisvgm not found");
+    const jobDir = compileInjected({ "main.tex": STANDALONE_TIKZ_TEX });
+    expect(fs.existsSync(path.join(jobDir, "pics", "main-figure0.pdf"))).toBe(true);
+    const data = readOutput(jobDir);
+
+    // Exactly one capture bears the picture — and no glyph at any depth,
+    // which is what made the glyph-only gate drop it.
+    const flatten = (nodes: RawNode[], out: RawNode[] = []): RawNode[] => {
+      for (const node of nodes) {
+        out.push(node);
+        if (node.children) flatten(node.children, out);
+        if (node.replace) flatten(node.replace, out);
+      }
+      return out;
+    };
+    const pictureParas = data.paragraphs
+      .map((paragraph, index) => ({ ref: index + 1, nodes: flatten(paragraph.nodes) }))
+      .filter(({ nodes }) => nodes.some((node) => node.type === "picture"));
+    expect(pictureParas).toHaveLength(1);
+    const { ref, nodes } = pictureParas[0]!;
+    expect(nodes.some((node) => node.type === "glyph")).toBe(false);
+
+    // The walk references it as body content between its text neighbours;
+    // before the has_ink gate the paragraph — and every standalone figure —
+    // silently vanished from the content stream.
+    const refs = data.content.filter((item) => item.kind === "paragraph").map((item) => item.para as number);
+    const at = refs.indexOf(ref);
+    expect(at).toBeGreaterThan(0);
+    expect(paragraphText(data, refs[at - 1]!)).toBe("Text before the figure.");
+    expect(paragraphText(data, refs[at + 1]!)).toBe("Text after the figure.");
+
+    // e1 rides inside the referenced paragraph after its picture (the
+    // marker-hoist branch must not claim an ink-bearing capture); b1, in
+    // vertical mode, is a stream item.
+    const eIndex = nodes.findIndex((node) => node.type === "marker" && node.side === "e" && node.n === 1);
+    expect(eIndex).toBeGreaterThan(nodes.findIndex((node) => node.type === "picture"));
+    const found = streamMarkers(data);
+    expect(found.map((f) => [f.side, f.n, f.at])).toEqual([["b", 1, "stream"], ["e", 1, "paragraph"]]);
+
+    // The wire form agrees: the pb's content stream references the picture
+    // paragraph, and its sanitized SVG payload made it across.
+    const statsFile = path.join(jobDir, "encode-stats.json");
+    const result = spawnSync(
+      venvPython,
+      [encodeDriver, "--checkout", checkoutDir, "--build", jobDir, "--fonts", path.join(jobDir, "fonts"), "--stats", statsFile],
+      { encoding: "utf8" },
+    );
+    if (result.status !== 0 && /To process PDF files/u.test(result.stdout + result.stderr)) {
+      console.warn("reflowtex-fork: dvisvgm has no usable PDF backend (install mupdf-tools) — skipping the encode half");
+      context.skip();
+    }
+    expect(result.status, `encode driver failed:\n${result.stdout}\n${result.stderr}`).toBe(0);
+    const stats = JSON.parse(fs.readFileSync(statsFile, "utf8")) as EncodeStats;
+    expect(stats.stream_paragraphs).toContain(ref);
+    expect(stats.node_markers).toEqual([["e", 1]]);
+    expect(stats.stream_markers).toEqual([["b", 1]]);
+    expect(stats.converted).toBe(1);
+    expect(stats.picture_nodes).toBe(1);
+    expect(stats.pictures).toHaveLength(1);
+    expect(stats.pictures[0]!.svg).toMatch(/<(?:path|g|use)\b/u);
   });
 
   it("consumes a pre-converted SVG beside the picture PDF without any dvisvgm, sanitizer still applied", () => {

@@ -68,9 +68,12 @@ def main() -> None:
     for para in doc.paragraphs:
         walk(para.nodes)
     stream_markers: list[list] = []
+    stream_paragraphs: list[int] = []
     for item in doc.content:
         if item.kind == L.ItemKind.Value("marker"):
             stream_markers.append([item.side, item.n])
+        if item.kind == L.ItemKind.Value("paragraph"):
+            stream_paragraphs.append(item.para)
         if item.HasField("box"):
             walk(item.box.children)
 
@@ -79,6 +82,7 @@ def main() -> None:
         "pb_sha256": hashlib.sha256(blob).hexdigest(),
         "node_markers": node_markers,
         "stream_markers": stream_markers,
+        "stream_paragraphs": stream_paragraphs,
         "picture_nodes": picture_nodes,
         "pictures": [{"svg": p.svg, "vb_w": p.vb_w, "vb_h": p.vb_h} for p in doc.pictures],
         "converted": n_pictures,

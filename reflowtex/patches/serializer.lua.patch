@@ -17,12 +17,18 @@ REPORT.md), productionized verbatim in shape:
 Plus last_flow(): the walk's display-spacing questions ("what did the
 stream just emit") look through trailing marker items, so markers never
 perturb below/abovedisplayskip restoration.
+And has_ink (was upstream's has_glyphs): the walk's body gate counts
+pictures as ink, because a paragraph that is only an externalised
+tikzpicture bears no glyph at any depth — the glyph-only gate (upstream
+has the same one) silently drops every standalone figure from the content
+stream. Captures with neither glyphs nor pictures still take the
+marker-hoist branch (site 3).
 
 Marker identity: user_defined whatsit, user_id 90210, string value
 "b:<n>" / "e:<n>" (laxreflow.sty is the writer; ids never enter the list).
 
 diff --git a/src/extract/serializer.lua b/src/extract/serializer.lua
-index 6b50860..7f7ce38 100644
+index 6b50860..a7663cd 100644
 --- a/src/extract/serializer.lua
 +++ b/src/extract/serializer.lua
 @@ -129,6 +129,18 @@ local CITETGT_ATTR = 904  -- glyphs of a bibliography label [n]
@@ -57,7 +63,32 @@ index 6b50860..7f7ce38 100644
          elseif t == "whatsit" and n.stack ~= nil and n.command ~= nil then
              -- pdf_colorstack whatsit: update colour state; nothing to emit
              -- (the resolved colour is baked into glyph/rule nodes).
-@@ -517,6 +535,15 @@ local function emit_vspace(sp)
+@@ -500,13 +518,19 @@ local content   = {}
+ local seen_para = {}
+ 
+ -- amsmath leaves an empty paragraph behind after an alignment (a zero-content
+--- fire that exists only to close the display group). It has no glyphs, so it
++-- fire that exists only to close the display group). It has no ink, so it
+ -- would render as an empty line; skip such paragraphs entirely.
+-local function has_glyphs(nodes)
++-- lax: was has_glyphs, and gating body emission on glyphs alone silently
++-- dropped every paragraph whose only ink is an externalised picture (a
++-- standalone tikzpicture between blank lines is exactly that: an hlist
++-- holding one picture rule, no glyph at any depth). Body content is
++-- anything bearing glyphs OR pictures; a capture with neither still takes
++-- the marker-hoist branch below.
++local function has_ink(nodes)
+     for _, n in ipairs(nodes) do
+-        if n.type == "glyph" then return true end
+-        if n.children and has_glyphs(n.children) then return true end
+-        if n.replace and has_glyphs(n.replace) then return true end
++        if n.type == "glyph" or n.type == "picture" then return true end
++        if n.children and has_ink(n.children) then return true end
++        if n.replace and has_ink(n.replace) then return true end
+     end
+     return false
+ end
+@@ -517,6 +541,15 @@ local function emit_vspace(sp)
      end
  end
  
@@ -73,15 +104,18 @@ index 6b50860..7f7ce38 100644
  -- The band of the most recent paragraph; displays inherit it.
  local cur_band = { indent = 0, width = 0 }
  
-@@ -531,6 +558,7 @@ local function walk_page(head, pending)
+@@ -529,8 +562,9 @@ local function walk_page(head, pending)
+                 cur_band.indent = all_paragraphs[p].indent
+                 cur_band.width  = all_paragraphs[p].width
              end
-             if p and not seen_para[p] and has_glyphs(all_paragraphs[p].nodes) then
+-            if p and not seen_para[p] and has_glyphs(all_paragraphs[p].nodes) then
++            if p and not seen_para[p] and has_ink(all_paragraphs[p].nodes) then
                  seen_para[p] = true
 +                local lf = last_flow()   -- lax: look through marker items
                  if not pending.body_seen then
                      -- First body line on this page: the glue above it is page
                      -- furniture — the top margin, the running header, and \headsep —
-@@ -544,10 +572,10 @@ local function walk_page(head, pending)
+@@ -544,10 +578,10 @@ local function walk_page(head, pending)
                      -- furniture. In the reflowed (pageless) output the display and
                      -- this paragraph are adjacent, so restore that skip — TeX's own
                      -- parameter, not a guessed constant — or they abut too tightly.
@@ -95,12 +129,12 @@ index 6b50860..7f7ce38 100644
                      -- Abutting a display, keep TeX's full glue: above/belowdisplayskip
                      -- carries the display's spacing.
                      emit_vspace(pending.sp)
-@@ -559,24 +587,43 @@ local function walk_page(head, pending)
+@@ -559,24 +593,43 @@ local function walk_page(head, pending)
                  end
                  content[#content + 1] = { kind = "paragraph", para = p }
              end
-+            if p and not seen_para[p] and not has_glyphs(all_paragraphs[p].nodes) then
-+                -- lax: a glyphless paragraph capture is skipped, but a
++            if p and not seen_para[p] and not has_ink(all_paragraphs[p].nodes) then
++                -- lax: an inkless paragraph capture is skipped, but a
 +                -- marker whatsit inside it (e.g. `\end{equation}` directly
 +                -- followed by the end marker and then a blank line — the resumed
 +                -- paragraph holds only the whatsit) must not vanish with it:
@@ -142,7 +176,7 @@ index 6b50860..7f7ce38 100644
              end
              pending.body_seen = true
              pending.sp = 0
-@@ -616,6 +663,14 @@ local function walk_page(head, pending)
+@@ -616,6 +669,14 @@ local function walk_page(head, pending)
              end
          elseif t == "kern" then
              pending.sp = (pending.sp or 0) + (n.kern or 0)
