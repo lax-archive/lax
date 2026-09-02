@@ -230,7 +230,7 @@ export class Publisher {
           this.archive,
           claim,
           request.id,
-          current.files.ownerList.owners,
+          request.actor,
           current.snapshot,
         )),
       );
@@ -253,17 +253,17 @@ export class Publisher {
 
 /**
  * Trust rule 2 for a supersedes claim: repeat every admission check
- * credential-free at the snapshot the CAS commits against — the target is a
- * registered record, the claimant shares an owner with it, and its single
- * successor slot is still free. Shared by the register and submit publishers;
- * the pipeline's resolution phase ran the same checks earlier, but only
- * untrusted code did.
+ * at the snapshot the CAS commits against — the target is a registered record,
+ * the canonical command actor owns it, and its single successor slot is still
+ * free. Shared by the register and submit publishers; the pipeline's resolution
+ * phase checked the structural prerequisites earlier, but only untrusted code
+ * did.
  */
 export async function supersedesProblems(
   archive: PublisherArchive,
   claim: string | undefined,
   id: string,
-  owners: GitHubIdentity[],
+  actor: GitHubIdentity,
   snapshot: ArchiveSnapshot,
 ): Promise<string[]> {
   if (claim === undefined) return [];
@@ -286,8 +286,10 @@ export async function supersedesProblems(
   }
   const problems: string[] = [];
   const targetOwners = new Set(target.files.ownerList.owners.map((owner) => owner.githubId));
-  if (!owners.some((owner) => targetOwners.has(owner.githubId))) {
-    problems.push(`no owner of ${claim} owns ${id}; a submission can be superseded only by its own owners`);
+  if (!targetOwners.has(actor.githubId)) {
+    problems.push(
+      `${actor.handle} does not own ${claim}; only an owner of the superseded submission may submit or register ${id}`,
+    );
   }
   const existing = (await archive.listRegisteredSuperseders(claim, snapshot)).filter(
     (superseder) => superseder !== id,

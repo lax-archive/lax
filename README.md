@@ -25,9 +25,10 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 **Versioning.** A new version of a registered submission is an ordinary new
 submission whose `manifest.yaml` carries the optional `supersedes: lax-N`
 key. The claim binds when the new submission registers: the target must be
-registered, at least one of its owners must own the successor, and each
-submission has at most one successor (first to register wins; competing
-drafts merely race). The superseded record itself is never modified — the
+registered, the authenticated user submitting or registering the successor
+must be one of the target's frozen owners, and each submission has at most one
+successor (first to register wins; competing drafts merely race). The superseded
+record itself is never modified — the
 website derives the version chain from the successors' build outputs and
 nudges readers to the latest version. Fresh ids keep both versions usable in
 one dependency graph and keep old citations meaningful. Details and accepted

@@ -154,7 +154,7 @@ export class SubmitPublisher {
         this.archive,
         artifacts.buildOutput.inputs.manifest.supersedes,
         request.id,
-        current.files.ownerList.owners,
+        request.actor,
         current.snapshot,
       )),
     );

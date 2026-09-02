@@ -53,7 +53,7 @@ Git is configured with, and when Git has none either it writes the empty
 Spec touchpoint: the CLI `lax init` description and the Actions/Init
 paragraph — init no longer always allocates an id.
 
-## Versioning: `supersedes` successor chains (implemented, 2026-08-23)
+## Versioning: `supersedes` successor chains (implemented 2026-08-23; authorization tightened 2026-09-01)
 
 Submissions stay frozen in time (spec.md, Versioning), but work improves.
 The implemented mechanism is the arXiv model: a new version is an ordinary
@@ -73,10 +73,11 @@ Semantics, all enforced by the control plane:
   successor's registration**; competing drafts may claim the same target,
   and the first to register wins the slot. A deleted draft never bound
   anything, so the slot reopens by itself.
-- **Only the target's owners may supersede it**: at least one numeric owner
-  id of the target's (frozen) owner list must appear in the claimant's owner
-  list. Manifest `authors` play no role — they are credit, not
-  rights-management.
+- **Only the target's owners may supersede it**: the canonical GitHub identity
+  executing `/lax submit` or `/lax register` must appear in the target's
+  frozen owner list. The ordinary command authorization also requires that
+  identity to own the successor. Manifest `authors` play no role — they are
+  credit, not rights-management.
 - **The superseded record is never touched.** The forward pointer lives only
   in the successor's validated manifest, echoed into its
   `build-output.json` (`inputs.manifest.supersedes`); "superseded" is a
@@ -85,16 +86,17 @@ Semantics, all enforced by the control plane:
   when a claim binds, its target is already immutable.
 
 Where the checks run: shape and self-reference in the manifest validator;
-target existence/state, owner overlap, and slot uniqueness in the resolution
-phase against the pinned Archive snapshot (so `lax build` and the read-only
-gate answer before anything compiles); and — trust rule 2 — all of them
-again, credential-free, in both trusted publishers at the CAS-consistent
-snapshot (`supersedesProblems` in `src/shared/publisher.ts`, slot scan in
-`ArchiveRepository.listRegisteredSuperseders`). `lax register` runs the same
-checks in its local preflight and names the permanence in its notes before
-the typed confirmation. `lax submit` refuses a claim that can never bind
-(unregistered target, foreign owner, occupied slot) while the author still
-holds a fresh build.
+target existence/state, the necessary owner-list overlap, and slot uniqueness
+in the resolution phase against the pinned Archive snapshot (so `lax build`
+and the read-only gate answer before anything compiles); and — trust rule 2 —
+the canonical command actor's membership in the target owner list, together
+with the other admission checks, in both trusted publishers at the
+CAS-consistent snapshot (`supersedesProblems` in `src/shared/publisher.ts`,
+slot scan in `ArchiveRepository.listRegisteredSuperseders`). `lax register`
+runs the structural checks in its local preflight and names the permanence in
+its notes before the typed confirmation. `lax submit` refuses a claim from a
+non-owner actor, or one that can never bind because the target is unregistered
+or its slot is occupied, while the author still holds a fresh build.
 
 The website (lax-archive/lax-website) derives the chains: a superseded
 submission's pages carry a prominent banner linking to the latest version, a
