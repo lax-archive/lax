@@ -183,8 +183,21 @@ plan's order:
   positions on both the wrapper and the injected unmodified `main.tex`
   (14/14, `article` and `amsart`, deterministic, reflow proven in-browser);
   residuals are the display-wrapping phantom line (also a live ~12 pt bug in
-  the shipped `laxmark.sty` PDF path) and the schema's missing marker item
-  kind. Decision on proceeding to stage 1 open (Jan).
+  the shipped `laxmark.sty` PDF path — see the next bullet) and the schema's
+  missing marker item kind. Verdicts folded into paper-web-plan.md; stages
+  1+ are being implemented on `claude/html-annotation-overlay-tdmshk` per
+  Jan's direction (2026-09-02), with the Jan-owned steps — fork repo
+  creation, licensing confirmation, rehearsal, releases, round trip —
+  flagged in the plan's stage list, not attempted.
+- **Shipped PDF-path bug, found by the reflow spike**: an end marker
+  directly after `\end{equation}`-style displays followed by a blank line
+  shifts the next paragraph down one `\baselineskip` (~11.96 pt measured,
+  pdflatex + `assets/tex/laxmark.sty`) — the whatsit-only resumed paragraph
+  makes a phantom line, so paper-plan's "byte-identical text positions"
+  claim holds only for fixtures without display-wrapping markers. Owed:
+  a spec-notes caveat, `instructions.md` guidance (blank line before such
+  an end marker), and a decision whether `laxmark.sty` can normalize the
+  pattern instead.
 
 ## Admin tool (admin-plan.md — designed, not implemented)
 

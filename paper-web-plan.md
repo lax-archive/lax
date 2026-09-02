@@ -2,11 +2,11 @@
 
 Status: proposed 2026-09-02 from the reflow design discussion;
 adversarially reviewed the same day and revised — the review's anchor
-audit, trust findings, and gap list are folded in below. Stage 0 (the
-spike) is running; its verdicts get folded into the "Spike results"
-section when `spike/paper/reflow/REPORT.md` lands, and they gate every
-later stage. Design decisions recorded here are fixed unless Jan revisits
-them; stage order and caps are suggestions. This plan builds on the PDF
+audit, trust findings, and gap list are folded in below. **Stage 0
+executed the same day: GO** — see "Spike results" at the end and
+`spike/paper/reflow/REPORT.md` for the full measurements. Design
+decisions recorded here are fixed unless Jan revisits them; stage order
+and caps are suggestions. This plan builds on the PDF
 paper layer (paper-plan.md); its stages are independent of paper-plan
 stages 4 and 6, but **web stage 5 depends on paper-plan stage 5** — the
 `~/.lax/papers` cache and `lax serve` paper wiring do not exist yet, and
@@ -71,8 +71,11 @@ disassembling and reassembling the document TeX already knows how to read.
 Injection inherits every boundary/option/class decision from TeX itself;
 the splitter's residual failures would have been contract failures, while
 injection's are reflow-internal — exactly the failure class the goals
-accept. (The wrapper remains what the spike compares against, since a
-controlled class is the low-variance baseline.)
+accept. (The spike compared both: injection reproduced the wrapper's
+content stream on the fixture, under `article` and `amsart` — see Spike
+results.) One driver lesson from the spike: the job directory must
+precede the source directory on `TEXINPUTS`, or the job's rewritten
+`main.tex` loses to the original.
 
 ## Author-facing contract
 
@@ -97,6 +100,16 @@ manifest change, not a footnote:
   `instructions.md` with the degradation list (marginal notes, float
   placement, page references; geometry/margins are neutralized by design
   and need no guard).
+- One authoring note the spike forces: an end marker **directly** after
+  `\end{equation}`-style displays, with a blank line after it, leaves a
+  whatsit-only resumed paragraph — a phantom line worth one
+  `\baselineskip`, and **the same pattern is a live ~12 pt shift on the
+  shipped PDF path today** (paper-plan's byte-identical claim holds only
+  for fixtures without display-wrapping markers; spec-notes owes the
+  caveat). Guidance in `instructions.md`: put a blank line before an end
+  marker that follows a display (both paths are then clean); a
+  serializer-side normalization stays a knob if guidance proves
+  insufficient.
 
 ## Build mechanics
 
@@ -119,13 +132,22 @@ manifest change, not a footnote:
   serializer's font table names files inside the image; the host encode
   needs the bytes). Nothing else.
 - **Serializer fork.** Our fork of ReflowTeX (serializer + encode) adds:
-  the marker branch (emit the `\laxmark` whatsits at both capture sites —
-  inside paragraphs and in the shipout walk between them), an SVG
-  sanitizer in picture conversion (element/attribute allowlist — CSP is
-  defense-in-depth, not the only wall), a runner-mediated seam for
-  dvisvgm (upstream `transforms.py` shells out directly; ours converts
-  pictures through the pinned TeX image via the container runner, so no
-  host dvisvgm exists), and deterministic protobuf serialization. Home:
+  the marker branches the spike validated (**three** sites, not two —
+  inside paragraphs, in the shipout walk between them, and the
+  glyphless-resumed-paragraph hoist — plus `last_flow` transparency so
+  markers don't perturb the walk's display-spacing logic; the spike's
+  `serializer.patch` is the shape to productionize), a **`latex.proto`
+  marker content-item kind** (stock `encode_pb` crashes on stream
+  markers — `KeyError: 'marker'` — so the schema extension is mandatory,
+  with `latex_pb2.py` regenerated via a hash-pinned `grpcio-tools`
+  rather than an apt protoc; and `_ensure_pb2`'s mtime trigger must
+  never write into the vendored tree), an SVG sanitizer in picture
+  conversion (element/attribute allowlist — CSP is defense-in-depth, not
+  the only wall), a runner-mediated seam for dvisvgm (upstream
+  `transforms.py` shells out directly; ours converts pictures through
+  the pinned TeX image via the container runner, so no host dvisvgm
+  exists), and deterministic protobuf serialization (measured already
+  byte-stable; made explicit). Home:
   a public **`lax-archive/reflowtex` fork repo** (creation is Jan-owned),
   consumed at a pinned rev recorded in `pins.ts`, fetched in the workflow
   the way the page-builder is (`page-builder:fetch` pattern) — **AGPL
@@ -146,7 +168,13 @@ manifest change, not a footnote:
   token sequences to agree within tolerance. Normalization is specified,
   not hand-waved: hyphenation (the stream holds unbroken paragraphs with
   disc nodes; the PDF has applied hyphens), ligature decomposition via
-  the PDF's toUnicode, furniture stripping on the PDF side only.
+  the PDF's toUnicode, furniture stripping on the PDF side only, plus
+  two tolerances the spike established: unreferenced captures
+  (`\marginpar` text is captured but never referenced — PDF-only
+  marginal text must not count as divergence, and an "unreferenced
+  glyph-bearing paragraph" check is the cheap loud diagnostic for it)
+  and class-specific heading punctuation and `\MakeUppercase` casing
+  (amsart titles reach the stream as uppercase glyphs).
   Divergence ⇒ the web view is skipped with the first mismatch location.
   This converts reflow's silent misread class into loud, attributable
   skips.
@@ -307,14 +335,19 @@ Owner flags: **[Jan]** marks steps agents must flag and never attempt.
    linearization observation, geometry/setspace/marginpar/includeonly
    edges, determinism, sizes, a rendered reflow proof. Verdicts below
    gate everything after.
-1. **Fork.** The serializer/encode fork with the marker branch, SVG
-   sanitizer, dvisvgm seam, deterministic serialization, committed
-   `latex_pb2.py`, hash-locked requirements; `laxreflow.sty` (Apache,
-   lax-authored) + the `\iflaxweb` no-op in `laxmark.sty`; fork tests
-   (marker whatsit at both capture sites, double-run determinism of
-   `output.json`, a tikz fixture, luaotfload precedence). Fork repo
-   creation under `lax-archive` **[Jan]**; until then, pinned upstream
-   rev + local patches.
+1. **Fork.** The serializer/encode fork with the three-site marker
+   branch + `last_flow` transparency (the spike's patch productionized),
+   the `latex.proto` marker item kind + regenerated `latex_pb2.py`, SVG
+   sanitizer, dvisvgm seam, deterministic serialization, hash-locked
+   requirements; `laxreflow.sty` (Apache, lax-authored) + the
+   `\iflaxweb` no-op in `laxmark.sty`; fork tests (marker capture at
+   all three sites incl. the glyphless hoist, double-run determinism of
+   `output.json` and the pb, a **tikz fixture end-to-end with dvisvgm**
+   — the one -shell-escape justification the spike did not exercise —
+   and luaotfload precedence). Fork repo creation under `lax-archive`
+   **[Jan]**; until then, pinned upstream rev + local patches applied by
+   a fetch script (checkout gitignored, kept out of the npm `files`
+   set).
 2. **Host path.** The web compile (own fresh copy), export bounds,
    encode child, oracle (tokenizer cases: hyphenation, ligatures, math
    tokens, accents), bundle writer, `paper.web` emit and the full
@@ -323,12 +356,15 @@ Owner flags: **[Jan]** marks steps agents must flag and never attempt.
    behavior, the committed website fixture; tests: fake-runner units,
    fresh-copy isolation (PDF digest unchanged after a web compile),
    bundle double-derivation identity under the pinned env, cap cases;
-   CI: apt lualatex + hash-pinned pip env.
+   CI: apt lualatex (+ `texlive-pictures` — 313 MB / ~38 s measured for
+   the whole set) + hash-pinned pip env.
 3. **Trusted path.** Container web compile via the injected package,
    runner-mediated dvisvgm, the third OCI layer + publisher, the
    conditional-artifact mechanics enumerated under Storage, docker smoke
    fixture with a tikz picture, fake-ghcr three-layer manifest test,
-   stale-tar reset test, iff rejection both directions. Then the
+   stale-tar reset test, iff rejection both directions; re-measure the
+   luaotfload cold cache inside the pinned image (the spike's warm
+   numbers came from Debian's prebuilt name database). Then the
    scratch-repo rehearsal per the standing rule **[Jan]** (the scratch
    repos were torn down; recreation and tokens are Jan's) before
    anything Actions-side ships.
@@ -377,6 +413,56 @@ Owner flags: **[Jan]** marks steps agents must flag and never attempt.
   claim in a later stage (pin the full encode stack) or stay a content
   address.
 
-## Spike results
+## Spike results (2026-09-02)
 
-To be folded in from `spike/paper/reflow/REPORT.md` when stage 0 lands.
+Full detail and the serializer diff: `spike/paper/reflow/REPORT.md`
+(reference `radek-p/reflowtex` @ `36f8365eed25`); `run-all.sh` replays
+the suite in ~26 s.
+
+- **Markers: GO.** 14/14 marker instances (block, inline, nested,
+  display-wrapping, second-`\input`-file; ids from the real rewriter)
+  surface as exact stream positions in document order with asserted
+  word adjacency — on the wrapper path, the injected unmodified
+  `main.tex`, and injected `amsart`. Stock serializer surfaces 0/14:
+  the shipout walk drops all six vertical-mode whatsits (hypothesis
+  confirmed), and a third capture site nobody predicted was needed —
+  markers trapped in glyphless resumed paragraphs must be hoisted.
+- **Injection ≡ wrapper.** After dropping the title block
+  (`\maketitle` linearizes to two centered paragraphs; folios and
+  running heads produce no stream items), the injected stream equals
+  the wrapper's except the phantom-line site below and one invisible
+  `\input`-depth trailing space. `amsart`: compiles, adopts its 360 pt
+  band, titles arrive `\MakeUppercase`d — oracle tolerances set
+  accordingly.
+- **Layout neutrality.** Marked vs unmarked streams equal except three
+  display-adjacent paths: two invisible retained trailing spaces, and
+  the **phantom line** when an end marker directly follows a display
+  before a blank line — which cross-checking showed is a live
+  ~11.96 pt shift on the shipped pdflatex + `laxmark.sty` path too
+  (spec-notes caveat owed; instructions guidance adopted above). The
+  vertical-mode glue lift re-earned its keep: without it, `\topsep`
+  inflates two sites by exactly 8 pt.
+- **Determinism.** `output.json`, transformed json, and `nodelist.pb`
+  byte-identical across fresh directories; converted font names
+  content-hashed and stable; no `SOURCE_DATE_EPOCH` needed, no
+  absolute paths. (Same-box measurement — the content-address stance
+  stands until the encode env is pinned end to end.)
+- **Edges.** geometry `[margin=1in]`: paragraph nodes byte-inert,
+  displays bake `\displaywidth` into bands as designed; setspace
+  carries per-paragraph baselineskip 12 → 15 pt; `\marginpar` text is
+  captured but unreferenced — silently dropped, hence the oracle
+  diagnostic; `\includeonly` leaves excluded markers cleanly absent
+  (the loud count-check failure we want); `[11pt]` carries via class
+  options; `thebibliography` + `\cite` resolve under two passes.
+- **Encode + render.** Stock schema has no marker item kind
+  (`encode_pb` crashes on stream markers) — the proto extension is
+  stage 1's mandatory piece. Rendered fixture: 0 missing glyphs, 25
+  lines at 64 rem vs 36 at 34 rem (reflow proven), math faithful;
+  screenshots committed.
+- **Numbers.** TeX toolchain 313 MB / 37.6 s apt install
+  (`texlive-pictures` is required by the template's hard tikz load);
+  compile 0.8–1.2 s warm per pass; full pipeline 2.5–2.8 s;
+  fixture-scale page ≈ 829 KB (556 KB of that fonts). Chapter-scale
+  sizing, tikz-with-dvisvgm, real bibtex, footnotes, hyperref
+  coexistence, and the oracle itself remain untested — owed to stages
+  1–3 as marked.
