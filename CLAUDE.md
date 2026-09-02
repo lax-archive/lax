@@ -45,6 +45,10 @@ prefer them over inferring intent from the current code.
   `assets/tex/laxmark.sty`); the stage-3 rehearsal and stages 4–6 are
   open — see TODO.md. Throwaway spike material in `spike/paper/` (its
   `REPORT.md` files hold the measured verdicts).
+- **paper-web-plan.md** — the paper layer's derived HTML view (ReflowTeX
+  reflow, injected into the unmodified sources, transparent to authors
+  and never blocking validation): planned 2026-09-02; stage 0 is the
+  spike in `spike/paper/reflow/`, whose verdicts gate every code stage.
 - **one-axiom-plan.md** — the old one-statement-per-concept design. The
   bound was lifted on 2026-08-06 (a concept declares any number of
   statements; see the spec-notes entry), and the plan document was deleted
