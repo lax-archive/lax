@@ -4,9 +4,11 @@ import path from "node:path";
 import {
   directoryDigest,
   metadataFile,
+  NOTICES_FILENAME,
   readLock,
   sourceDirectory,
   runtimeDirectory,
+  thirdPartyNotices,
   vendorDirectory,
 } from "./shared.js";
 
@@ -35,6 +37,11 @@ execFileSync("tar", ["-xzf", archive, "-C", vendorDirectory]);
 // next to it would double the vendored payload.
 fs.rmSync(archive);
 fs.renameSync(path.join(vendorDirectory, "package"), runtimeDirectory);
+// The aggregation-with-notices obligation (paper-web-plan.md, "Risks"): the
+// packaged tree names every third-party component it vendors, and packaging
+// fails outright on vendored code without its license text. Written before
+// the digest so the manifest is part of the verified bytes.
+fs.writeFileSync(path.join(runtimeDirectory, NOTICES_FILENAME), thirdPartyNotices(runtimeDirectory));
 const bundleSha256 = directoryDigest(runtimeDirectory);
 fs.writeFileSync(
   metadataFile,

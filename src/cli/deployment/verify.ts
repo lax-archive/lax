@@ -3,9 +3,11 @@ import path from "node:path";
 import {
   directoryDigest,
   metadataFile,
+  NOTICES_FILENAME,
   readLock,
   repositoryRoot,
   runtimeDirectory,
+  thirdPartyNotices,
 } from "./shared.js";
 
 const lock = readLock();
@@ -25,6 +27,10 @@ if (
 ) {
   throw new Error("packaged page-builder metadata does not match its lock or bytes");
 }
+// Once a renderer release ships the paper viewers, this list (and
+// REQUIRED_RENDERER_PATHS in src/cli/website-renderer.ts) also names
+// "assets/site/pdfjs", "assets/site/reflowtex", and "assets/site/manuscript.js"
+// — a release-step edit, since the current pin predates those files.
 for (const relative of [
   "package.json",
   "dist/sitegen/generate.js",
@@ -32,10 +38,18 @@ for (const relative of [
   "assets/site",
   "content/landing.md",
   "content/contributing.md",
+  NOTICES_FILENAME,
 ]) {
   if (!fs.existsSync(path.join(runtimeDirectory, relative))) {
     throw new Error(`page-builder runtime bundle is missing ${relative}`);
   }
+}
+// The notices manifest must say exactly what the tree it ships in vendors:
+// re-derive it from the packaged bytes (which also re-fails a component
+// vendored without its license text) and require the stored file to match.
+const expectedNotices = thirdPartyNotices(runtimeDirectory);
+if (fs.readFileSync(path.join(runtimeDirectory, NOTICES_FILENAME), "utf8") !== expectedNotices) {
+  throw new Error("packaged third-party notices do not match the components the bundle vendors");
 }
 // The vendored bundle resolves its bare imports (katex, marked, shiki) from
 // the CLI package's own node_modules, so every page-builder runtime dependency
