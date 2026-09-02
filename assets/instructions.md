@@ -49,6 +49,7 @@ paper:
   folder: paper        # relative to the submission root, may be "."
   main: main.tex       # relative to folder
   engine: pdflatex     # pdflatex | lualatex | xelatex, default pdflatex
+  web: false           # optional: opt out of the derived web view (default true)
 ```
 
 Mark passages with bare comment lines. Your own build ignores them; no
@@ -93,6 +94,15 @@ The rules, applied to every `.tex` file under the folder:
 - Markers inside `verbatim` or `listings`, in moving arguments (section
   titles, captions), and inside display math are unsupported: put them
   around the environment. The build catches a marker that landed there.
+- Text positions match your own build, with one shape to know about. The
+  common display shape — `\end{equation}`, then `% lax end` on its own
+  line, then a blank line — is normalized automatically (the build lowers
+  the mark past the blank line). What still shifts the passage below by
+  one line is an own-line `% lax end` whose paragraph ends on the very
+  next line with no blank line adjacent: `\section` or `\par` directly
+  after it, or a `% lax begin` line between the marker and the blank
+  line. Give such an end marker a blank-line neighbor (before or after
+  it) and the layout is identical to your own build.
 
 The archive compiles the paper with latexmk (restricted shell escape, as on
 arXiv; bibtex or biber run when a `.bib` is present, a shipped `.bbl` is
@@ -102,6 +112,37 @@ other findings. `lax build` compiles the same way with the host's latexmk
 (4.77 or later) and writes `paper.pdf` beside `build-output.json` — a
 preview; the archive's run is the authority. Without latexmk the paper is
 skipped locally with a note, and the Lean validation stands.
+
+Beside the PDF, the archive derives a reflowable web rendering of the same
+sources — the paper re-typeset at the reader's width, shown on the site
+beside the as-printed PDF. This asks nothing of you: same files, same
+markers, no new requirement. It also **never fails validation**: when the
+derivation cannot stand behind the result (the document does not compile
+under lualatex, or the derived text diverges from the PDF), the web view is
+skipped and the reason appears as a note in the `lax submit` report; the
+PDF page remains. `web: false` under `paper:` opts out entirely. Only the
+archive derives the web view; `lax build` does not.
+
+Expect the web view to degrade in known ways: marginal notes do not appear
+there, floats render at their position in the text rather than where LaTeX
+placed them on the page, and `\pageref` numbers are meaningless without
+pages. Geometry and margin choices need no guard — reflow ignores them by
+design. For short print-only material (a `\pageref`-bearing sentence, a
+marginal note's callout) you may guard with `\iflaxweb`, defining the
+switch for your own build first — the archive's builds define it
+themselves, false on the PDF target and true on the web target:
+
+```latex
+% preamble (the \csname form matters: a literal \newif\iflaxweb in the
+% skipped branch would break the builds that already define the switch)
+\ifdefined\iflaxweb\else\expandafter\newif\csname iflaxweb\endcsname\fi
+% body
+\iflaxweb\else (see page~\pageref{sec:details})\fi
+```
+
+Keep guarded passages short: the archive cross-checks the web view's text
+against the PDF's, and a long print-only passage reads as a divergence and
+skips the web view.
 
 The first time you work with Lax, you want to run `lax print spec` to
 familiarize yourself with the tool. Once you are familiar with the full

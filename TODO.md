@@ -102,102 +102,67 @@ history/go-live.md). Still owed:
   every hand-added entry). Narrow the check to the warm-closure names, and
   say what deleting costs (a re-clone) when a `LaxN` entry is involved.
 
-## Paper layer (paper-plan.md — stages 1–3 implemented 2026-09-02)
+## Paper layer (paper-plan.md + paper-web-plan.md — code stages landed 2026-09-02; Jan-owned gates remain)
 
-A submission may carry a LaTeX document that the archive compiles itself;
-authors mark passages with bare `% lax begin <id>` / `% lax end` comments,
-and the website shows the PDF beside cards for the marked concepts,
-proofs, and submissions (`lax-42`: title plus a link, added 2026-09-02 as
-the third mark kind — parser, resolver, payload parser, docs). Done: the
-contract (manifest key, marker grammar and rewriter, static gate, `paper`
-payload parsers); the host path (`lax build` compiles
-with the host latexmk and `assets/tex/laxmark.sty`, extracts the
-destinations with pdf.js, resolves the ids, writes `paper.pdf` beside
-`build-output.json`; doctor's LaTeX row; the host e2e, for which CI installs
-a small TeX Live); and the trusted path — `PAPER_IMAGE_*` in `pins.ts`
-(`texlive/texlive:TL2025-historic`, pulled on demand), `ContainerRunner`'s
-per-image `verifyImage` and bare foreign-image invocations (no Lean mounts,
-the image's own PATH), `paper/container.ts` behind the `PaperCompiler`
-seam, the phase in `pipeline.ts` started before the runtime check and
-joined once whatever the Lean side does, the shared `paper/join.ts`, the
-PDF as a second layer of the capture's OCI manifest
-(`GhcrCaptureStore.promote` → `{ capture, paperBlob }`), `registryBlob`
-filled by the publisher, `paper.pdf` in the validate artifact with the
-credential-free hash in `readSuccessfulArtifacts`, `resetValidationOutputs`,
-the validate job's `timeout-minutes: 180`, the original paper sources under
-`paper/` in the capture tar (both paths), the `paper` docker smoke fixture,
-and the fake-registry test of the two-layer manifest. The smoke case ran
-green locally 2026-09-02 (see the session record below). Remaining, in the
-plan's order:
+A submission may carry a LaTeX paper the archive compiles itself (`paper:`
+in `manifest.yaml`, `% lax begin <id>` / `% lax end` markers); beside the
+PDF the archive derives a reflowable web view (ReflowTeX, non-blocking,
+`web: false` opts out), and the site's paper page shows both surfaces with
+a card per marked passage. All code stages of both plans are on
+`claude/html-annotation-overlay-tdmshk` (and lax-website's branch of the
+same name); the author contract is in instructions.md, the proposed spec
+amendment in spec-notes.md (2026-09-02). What remains:
 
-- **Stage 3: production round trip done 2026-09-02** (`history/
-  paper-roundtrip-20260902.md`): lax-61, a throwaway draft with a
-  one-page paper, validated, published (two-layer ghcr manifest,
-  `paper.pdf` in the artifact, `registryBlob` in the record) and deleted.
-  Validate took 2 m 23 s, of which the TeX image pull was 84 s — on a small
-  submission the pull *is* the critical path, so a layer cache is worth
-  measuring once real papers arrive. Follow-ups it surfaced: `lax submit`
-  says nothing paper-specific on success (no page/mark count — add the row
-  the local build shows); `lax delete` leaves the folder in
-  `~/.lax/submissions.json` and the issue open; ghcr blobs and tags survive
-  a tombstone (known, no GC). Jan: delete the throwaway repository
-  `jan3er/lax-paper-roundtrip-20260902` (`gh auth refresh -h github.com -s
-  delete_repo`, then `gh repo delete … --yes`). The scratch-repo rehearsal
-  was skipped by decision for this change.
-- **Stage 4, website — next session.** Nothing paper-related exists in
-  `lax-website` yet (no paper page, no viewer, no pdf.js); the plan's
-  "Website" section is the spec and its anchors were re-verified 2026-09-02
-  (`src/types.ts`, `src/database.ts:16` `rendererOutput`,
-  `src/sitegen/model.ts:5` `SiteSubmission`, `src/sitegen/generate.ts:20`
-  files map, `src/sitegen/assets.ts:9` `SITE_MIME`,
-  `src/sitegen/pages/shared.ts` `claimEntry` :39 / `proofJudgment` :49 /
-  `backToSubmission` :382, `src/sitegen/html.ts:42-46` the two CSP
-  variants). Inputs: `build-output.json` `paper` shape from
-  `parsePaperOutput` in `src/submission-validation/artifact-schema.ts`
-  (three mark kinds — `concept`, `proof`, and `submission`, the last
-  rendering only id badge + title + link), the marker semantics
-  (`v`/`h` mode tag, boundary rule) in `spike/paper/viewer/REPORT.md`,
-  and the working throwaway viewer in `spike/paper/viewer/` (local only,
-  gitignored) whose pure placement functions become
-  `assets/site/manuscript.js`. Live test data: lax-61 was deleted, so
-  the first real fixture is a `lax build` of `makePaperSubmission`
-  (`test/support/host.ts`) or one of the flagship drafts with a paper.
-  Order: types + loader + `papers:fetch` cache → generator output
-  (`<id>/paper.pdf`, `<id>/paper.html`) → page with pre-rendered cards →
-  viewer + CSP variant → cross-links → previews policy → renderer
-  release (page-builder bundle grows by pdf.js).
-- **Stage 5, `lax serve` + production round trip**; **stage 6, docs**
-  (spec-notes amendment, README's second image and doctor row,
-  `instructions.md` author section, retiring paper-plan.md into
-  `history/`).
-- Known limits to carry: pdf.js (`pdfjs-dist` 5.6, the last line that still
-  runs on Node 20.19) pulls `@napi-rs/canvas` as an optional native
-  dependency the extractor never loads; the paper container runs under the
-  Lean memory/cpu caps (16 GB / 4 cpus — TeX needs a few hundred MB; a
-  smaller per-invocation cap is a knob if the shared runner ever feels it);
-  the TeX image digest is not recorded in the report's runtime identity (the
-  pin lives in `pins.ts`, so a bump is a reviewed edit and the PDF digest is
-  a reproducibility claim for the image at that commit).
-- Reflow spike (paper-web-plan.md stage 0) executed 2026-09-02, verdicts in
-  `spike/paper/reflow/REPORT.md`: GO — markers surface as exact content-stream
-  positions on both the wrapper and the injected unmodified `main.tex`
-  (14/14, `article` and `amsart`, deterministic, reflow proven in-browser);
-  residuals are the display-wrapping phantom line (also a live ~12 pt bug in
-  the shipped `laxmark.sty` PDF path — see the next bullet) and the schema's
-  missing marker item kind. Verdicts folded into paper-web-plan.md; stages
-  1+ are being implemented on `claude/html-annotation-overlay-tdmshk` per
-  Jan's direction (2026-09-02), with the Jan-owned steps — fork repo
-  creation, licensing confirmation, rehearsal, releases, round trip —
-  flagged in the plan's stage list, not attempted.
-- **Shipped PDF-path bug, found by the reflow spike**: an end marker
-  directly after `\end{equation}`-style displays followed by a blank line
-  shifts the next paragraph down one `\baselineskip` (~11.96 pt measured,
-  pdflatex + `assets/tex/laxmark.sty`) — the whatsit-only resumed paragraph
-  makes a phantom line, so paper-plan's "byte-identical text positions"
-  claim holds only for fixtures without display-wrapping markers. Owed:
-  a spec-notes caveat, `instructions.md` guidance (blank line before such
-  an end marker), and a decision whether `laxmark.sty` can normalize the
-  pattern instead.
+- **[Jan] Fork + flip**: fork `radek-p/reflowtex` into `lax-archive` (a
+  github.com click) and enable the new repo for Claude; a session then
+  populates its `lax` branch (the `reflowtex/patches/` series as commits,
+  provenance README), flips `REFLOWTEX_URL` in `pins.ts`, and retires
+  `patches/`. The validate job also still needs its `reflowtex:fetch`
+  step (CI has one; `submission.yml` does not), until which trusted
+  derivation skips every paper with a `web-toolchain` warning —
+  non-blocking by design, but no web views in production.
+- **[Jan] Docker smoke**: on a machine with docker, `npm run
+  reflowtex:fetch`, then `LAX_SMOKE_CASE=paper-web npm run
+  smoke:submission-validation`, and take the luaotfload cold-cache
+  measure inside the pinned image while there (the spike's warm numbers
+  came from Debian's prebuilt name database).
+- **[Jan] Scratch-repo rehearsal** before the branch merges — the
+  standing rule; the branch touches `submission.yml`, the publisher, and
+  the capture store. The scratch repos were torn down, so recreation and
+  tokens are Jan's (`scripts/rehearsal/`).
+- **[Jan] Renderer release**: bump
+  `src/cli/deployment/website-source.lock.json` to a paper-bearing
+  lax-website revision, `page-builder:package` + `page-builder:verify`
+  (they now write and check `THIRD-PARTY-NOTICES.txt`), npm publish,
+  update `_renderer/latest.json`; then the release-step edit recorded in
+  code comments — add `assets/site/pdfjs`, `assets/site/reflowtex`, and
+  `assets/site/manuscript.js` to `REQUIRED_RENDERER_PATHS`
+  (`src/cli/website-renderer.ts`) and to the `deployment/verify.ts` path
+  list. Until the release, `lax serve` feeds the paper inputs to a pinned
+  renderer that ignores them.
+- **[Jan] Production round trips** closing both plans — a real paper (the
+  flagship drafts in `~/git/lax-submissions`) through validate → publish →
+  site page with both surfaces — recorded in `history/`; measure the TeX
+  image pull there (84 s on lax-61, where it *was* the critical path — a
+  layer cache is worth deciding once real papers arrive). Afterwards
+  retire paper-plan.md and paper-web-plan.md into `history/`.
+- **[Jan] Delete the throwaway repository**
+  `jan3er/lax-paper-roundtrip-20260902` from the lax-61 stage-3 round trip
+  (`history/paper-roundtrip-20260902.md`): `gh auth refresh -h github.com
+  -s delete_repo`, then `gh repo delete … --yes`.
+- xelatex is untested for the end-marker relocation
+  (`test/e2e/paper-neutrality.test.ts` measures pdflatex and lualatex):
+  add `texlive-xetex` to the CI TeX set, or verify at the first
+  xelatex-engine paper.
+- The serializer's `has_ink` gate fix (standalone figures vanished from
+  the web view; upstream has the same silent drop) is an upstreaming
+  candidate to `radek-p/reflowtex` once the fork exists.
+- Known limits, carried: pdf.js stays `pdfjs-dist` 5.6 (the last line
+  that runs on Node 20.19; its optional `@napi-rs/canvas` native
+  dependency is never loaded); the paper containers run under the Lean
+  memory/cpu caps (a smaller per-invocation cap is a knob); the TeX image
+  digest is not recorded in the report's runtime identity (the pin lives
+  in `pins.ts`, so a bump is a reviewed edit).
 
 ## Admin tool (admin-plan.md — designed, not implemented)
 

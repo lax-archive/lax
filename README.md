@@ -93,7 +93,13 @@ GitHub-hosted runner. The sandbox is a *stock* image pinned by digest in
 `src/submission-validation/pins.ts` — no custom image, no registry login; the
 runner installs the pinned elan/toolchain and warm mathlib workspace on the VM
 (`host/setup.ts`, the same code local `lax build` uses) and every container
-gets them bind-mounted read-only. The success path is three jobs — `route`,
+gets them bind-mounted read-only. A declared paper compiles in a second
+digest-pinned image — a full TeX Live, `PAPER_IMAGE` in the same pins module,
+pulled on demand only for paper-bearing submissions, with none of the Lean
+mounts — and the paper's derived web view is produced by the ReflowTeX fork
+pinned there too (`REFLOWTEX_URL`/`REFLOWTEX_REV`; `npm run reflowtex:fetch`
+obtains it, applies the patches in `reflowtex/patches/`, and installs the
+hash-pinned encode environment). The success path is three jobs — `route`,
 `Validate`, `publish-submit` — with `report-validation-failure` and
 `report-workflow-failure` covering the failure cases; publication is gated on
 the validate job's own result, since it exits non-zero unless the report is
@@ -260,6 +266,12 @@ renders the local
 rebuilds when either changes. The CLI and every generated page show a warning
 when the database is missing, stale, invalid, or cannot be checked. Pass
 `--database-only` to omit the local folder or `--port` to choose another port.
+Paper surfaces ride along: the local folder's own `paper.pdf` and
+`paper-web.tar` are handed to the renderer directly, and a database record's
+recorded blobs resolve through `~/.lax/papers/<digest>.pdf` and
+`~/.lax/bundles/<digest>.tar` — filled on demand by the same anonymous,
+digest-verified ghcr download the capture consumers use, degrading offline to
+the page without that surface rather than blocking the preview.
 
 `lax build [folder]` runs the shared submission-validation phases against the
 working tree and local database clone, then writes `build-output.json`. It
@@ -285,23 +297,33 @@ once in a phase-grouped summary instead of as separate errors.
 
 A submission may declare a paper (`paper:` in `manifest.yaml` — folder,
 entry file, engine) whose `.tex` files mark passages with `% lax begin <id>`
-/ `% lax end` comments naming a concept or a proof. `lax build` copies the
-folder into the job directory, rewrites the markers into `\laxmark` calls,
-compiles with the host `latexmk` and the shipped `assets/tex/laxmark.sty`
-(injected through `-usepretex`, never touching the author's files), reads
-the resulting PDF named destinations back with pdf.js, checks that every
-marker left exactly one begin and one end, resolves the ids against the
-inspected concepts and proofs and the directly required packages' records,
-and records the result under `paper` in `build-output.json` — the PDF's
-digest, size, and page count, the page sizes, and every mark's begin and
-end point (page, PDF coordinates, TeX mode). The PDF itself is written to
-`paper.pdf` beside `build-output.json`, bound by the digest. The paper
-compiles beside the Lean chain and closes its own row; with no `latexmk`
-(4.77 or later) on the machine the row is a note and `paper` is omitted.
-The author-facing contract is in `instructions.md`, the design in
-`paper-plan.md` (stages 1 and 2 are implemented; the trusted compile in a
-pinned TeX Live image, the PDF layer in the capture store, and the website
-viewer are the remaining stages).
+/ `% lax end` comments naming a concept, a proof, or a submission. `lax
+build` copies the folder into the job directory, rewrites the markers into
+`\laxmark` calls, compiles with the host `latexmk` and the shipped
+`assets/tex/laxmark.sty` (injected through `-usepretex`, never touching the
+author's files), reads the resulting PDF named destinations back with
+pdf.js, checks that every marker left exactly one begin and one end,
+resolves the ids against the inspected concepts and proofs and the directly
+required packages' records, and records the result under `paper` in
+`build-output.json` — the PDF's digest, size, and page count, the page
+sizes, and every mark's begin and end point (page, PDF coordinates, TeX
+mode). The PDF itself is written to `paper.pdf` beside `build-output.json`,
+bound by the digest. The paper compiles beside the Lean chain and closes
+its own row; with no `latexmk` (4.77 or later) on the machine the row is a
+note and `paper` is omitted. The archive runs the same phases in its pinned
+TeX Live image, stores the PDF as a second layer of the submission's
+capture manifest on ghcr, and additionally derives a reflowable web view of
+the same sources (ReflowTeX, injected via `assets/tex/laxreflow.sty` under
+lualatex, cross-checked against the PDF's text) as a third layer — never
+blocking: a derivation failure is a warning with the reason in the submit
+report, and `paper.web: false` in the manifest opts out. The website's
+paper page shows both surfaces — the reflow rendering at the reader's
+width, and the as-printed PDF behind a toggle — with a card for every
+marked passage. The author-facing contract is in `instructions.md`, the
+proposed spec amendment in spec-notes.md (2026-09-02); the design records
+are `paper-plan.md` and `paper-web-plan.md` (all code stages are
+implemented; the rehearsal, renderer release, and production round trips
+are pending — see TODO.md).
 
 `lax delete` accepts an issue reference or local submission folder, refreshes
 the local database to detect immutable/deleted records and stranded
@@ -349,4 +371,9 @@ removes the local credentials after GitHub accepts the revocation.
 `release.yml` tests the package, fetches the Website revision pinned in
 `src/cli/deployment/website-source.lock.json`, builds and bundles its
 page-builder, verifies the revision and bundle digest, and publishes through
-npm trusted publishing. No Website source is maintained here.
+npm trusted publishing. No Website source is maintained here. The packaging
+step writes a deterministic `THIRD-PARTY-NOTICES.txt` into the vendored tree
+and refuses to package vendored code whose license text is missing;
+verification re-derives and re-checks it — the vendored pdf.js and the AGPL
+ReflowTeX viewer ride the Apache-labelled npm tarball as aggregation with
+notices, and the viewer's source is served unminified by the site itself.

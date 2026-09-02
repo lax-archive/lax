@@ -37,18 +37,22 @@ prefer them over inferring intent from the current code.
 - **rewrite.md / rewrite-plan.md** — the rework charter (see above).
 - **paper-plan.md** — the paper layer (LaTeX documents with comment
   markers, compiled by the archive, shown beside concept/proof cards):
-  planned and spiked 2026-09-02; stages 1 (contract), 2 (host path), and
-  3 (trusted path: `pins.ts` TeX image, `paper/container.ts`, the phase in
-  `pipeline.ts`, the PDF layer in `capture-store.ts`, `paper.pdf` in the
-  validate artifact) implemented the same day
-  (`src/submission-validation/paper/`, `host/paper.ts`,
-  `assets/tex/laxmark.sty`); the stage-3 rehearsal and stages 4–6 are
-  open — see TODO.md. Throwaway spike material in `spike/paper/` (its
-  `REPORT.md` files hold the measured verdicts).
+  planned, spiked, and implemented through all six stages 2026-09-02
+  (`src/submission-validation/paper/`, `assets/tex/laxmark.sty`, the
+  paper page and pdf.js viewer in lax-website, the `lax serve` caches,
+  the docs pass); the scratch-repo rehearsal, the renderer release, and
+  the production round trip await Jan — see TODO.md. Throwaway spike
+  material in `spike/paper/` (its `REPORT.md` files hold the measured
+  verdicts).
 - **paper-web-plan.md** — the paper layer's derived HTML view (ReflowTeX
   reflow, injected into the unmodified sources, transparent to authors
-  and never blocking validation): planned 2026-09-02; stage 0 is the
-  spike in `spike/paper/reflow/`, whose verdicts gate every code stage.
+  and never blocking validation): planned, spiked (GO,
+  `spike/paper/reflow/`), and implemented through stage 5 the same day
+  (`reflowtex/` fork plumbing, `paper/web*.ts` both paths, the reflow
+  surface in lax-website, the serve bundle cache) plus the docs pass;
+  the Jan-owned gates — fork repo, docker smoke, rehearsal, renderer
+  release, round trip — are in TODO.md. Both plans retire to `history/`
+  after the round trips.
 - **one-axiom-plan.md** — the old one-statement-per-concept design. The
   bound was lifted on 2026-08-06 (a concept declares any number of
   statements; see the spec-notes entry), and the plan document was deleted

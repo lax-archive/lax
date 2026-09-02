@@ -6,6 +6,179 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## The paper layer: archive-compiled PDF and derived web view (implemented, 2026-09-02)
+
+A submission may carry the paper itself — a LaTeX document the archive
+compiles and shows beside cards for the marked concepts, proofs, and
+submissions. The layer sits strictly on top of the existing content:
+concepts keep being defined by the Lean module and its annotation, and the
+paper only points at them. Both halves below are implemented on both
+validation paths; the design records (paper-plan.md, paper-web-plan.md)
+retire into `history/` after the Jan-owned production round trips.
+
+**Manifest.** One optional block:
+
+    paper:
+      folder: paper       # a plain directory inside the submission, may be "."
+      main: main.tex      # a regular file inside folder
+      engine: pdflatex    # pdflatex | lualatex | xelatex, default pdflatex
+      web: false          # optional: opt out of the derived web view
+
+The vocabulary mirrors arXiv's 00README (compiler, entry file) so an author
+carries the same choices there; containment is the `source.folder` rule.
+`web` defaults to true and gates only the derived view below.
+
+**Markers.** Passages are marked with bare comment lines — `% lax begin
+<id>` … `% lax end` — that the author's own build ignores completely: no
+package, no preamble change. A marker is an unescaped `%` whose text is
+`lax begin <id>` or `lax end` (optional id, which must equal the innermost
+open marker); any other `% lax` comment is a violation, so a typo cannot
+silently drop a passage. Markers nest, close in the file that opened them,
+and are read from every `.tex` file under the folder. `<id>` is a concept
+id (`Lax261.Treewidth`), a proof id (`Lax261Proofs.Q`), or a submission id
+(`lax-42`) — three card kinds; statement ids, package roots, and mathlib
+names have no card and are violations. Ids resolve against the submission
+itself and the union of `requiredByConcepts` and `requiredByProofs` —
+directly required only, exactly as for assumptions: to talk about it,
+require it. Anything else is a citation and belongs in the bibliography.
+
+**Build.** The archive rewrites each marker comment — on a copy, never in
+the author's tree — into a `\laxmark{b|e}{<n>}%` call (numbers, never ids,
+so no escaping question exists) and compiles with latexmk:
+`-halt-on-error`, restricted shell escape as on arXiv, bibtex/biber or a
+shipped `.bbl`, `SOURCE_DATE_EPOCH` from the source commit, and
+`assets/tex/laxmark.sty` injected through `-usepretex` in front of the
+author's `\documentclass`. The package lowers each call to a PDF named
+destination `lax.<n>.<b|e>.<v|h>` (the `v`/`h` mode tag disambiguates
+line-start geometry for the viewer), with a glue lift in vertical mode so
+the whatsit stays layout-neutral. pdf.js reads the destinations back, and
+every mark must leave exactly one begin and one end — a marker swallowed
+by verbatim or a moving argument is caught here, by count, naming the id.
+A compile error fails validation exactly as a broken frontmatter does; TeX
+warnings and overfull boxes never do, and the log tail rides the report
+artifact.
+
+**A second digest-pinned image** (Archive Environment): the trusted
+compile runs in `PAPER_IMAGE` (`src/submission-validation/pins.ts`,
+`texlive/texlive:TL2025-historic`) — a full historic TeX Live, so the
+author's package set is present and the text layer gets real fonts —
+pulled on demand only for paper-bearing submissions, driven through the
+same hardened container runner with none of the Lean mounts, concurrent
+with the Lean chain. Locally `lax build` compiles with the host latexmk
+(≥ 4.77; skipped with a note when absent) as a preview; the archive's run
+is the authority.
+
+**Recorded shape and storage.** `build-output.json` gains one optional
+`paper` key, present iff the manifest declares a paper: the echoed block
+(folder/main/engine), `pdf` (digest, bytes, pages — published records add
+`registryBlob`), `pageSizes`, and `marks` in document order (id, kind,
+begin/end as page + PDF coordinates + mode). The PDF bytes become a
+**second layer of the capture's OCI manifest**
+(`application/vnd.lax.paper.v1+pdf`, `src/shared/capture-store.ts`) so one
+manifest keeps capture and PDF alive together and consumers fetch the PDF
+alone by digest; the original paper sources ride in the capture tar under
+`paper/`, so a registered record stays self-contained. Caps: folder
+50 MiB / 2 000 files, PDF 25 MiB / 500 pages.
+
+**Byte identity, the final form.** Text positions in the archive's PDF are
+byte-identical to the author's own build for all measured marker patterns,
+with one deliberate placement deviation: an own-line end marker directly
+followed by a blank line is lowered *after* the blank line, in vertical
+mode (a run of consecutive ones moves as one block, order preserved). Left
+in place it was the sole content of the paragraph TeX resumes after an
+`\end{equation}`-style display — TeX discards an *empty* resumed segment
+but not one holding a whatsit — and the resulting glyph-free line pushed
+everything below by one `\baselineskip` (~12 pt measured). The relocation
+lives in the rewriter (`paper/rewrite.ts`), not the package, because
+sty-level fixes are provably unsound: without lookahead the macro cannot
+tell a following blank line from continuing text (`\par`-ing an empty
+resumed segment visibly splits the continuation case), and a one-token
+lookahead cannot fix a run of end markers — the peek sees the next
+`\laxmark`, and the first whatsit in the segment already forces the
+phantom. `laxmark.sty` is unchanged. The mark table is unchanged too
+(each mark keeps the marker comment's own file:line), and both consumers
+read the moved destination as the same range close: in vertical mode the
+destination reports the preceding line's baseline either way, and the web
+stream records the same between-paragraphs position. Residual non-neutral
+shapes, each costing exactly one `\baselineskip`: an own-line end marker
+whose paragraph ends on the very next line with no blank line adjacent —
+`\section` or `\par` directly after it, or a `% lax begin` line separating
+the marker from the blank line. `instructions.md` tells authors to give
+such an end marker a blank-line neighbor. Measured with pdflatex and
+lualatex (`test/e2e/paper-neutrality.test.ts`); xelatex is untested for
+the relocation.
+
+**The derived web view.** Beside the PDF, the archive derives a reflowable
+HTML rendering of the same sources — ReflowTeX, our pinned fork of
+`radek-p/reflowtex`: LuaTeX serializes the finished node list (paragraphs
+unbroken, displays as finished boxes) and the site's viewer re-runs line
+breaking at the reader's width, so width, zoom, and theme become reader
+parameters while intra-line typesetting stays genuine TeX. The derivation
+is **transparent** — no new author vocabulary, no source restructuring: a
+fresh rewritten copy of its own compiles under lualatex (regardless of the
+manifest engine, which keeps governing the PDF) with
+`assets/tex/laxreflow.sty` injected the way `laxmark.sty` is, and the same
+markers surface as exact content-stream positions (no coordinates, no mode
+tags on this target). One flag deviation from the PDF compile:
+`-shell-escape`, which tikz's external library requires for its picture
+sub-runs — contained by the sandbox (no network, read-only root, resource
+caps, none of the Lean mounts) and used by nothing else; every converted
+picture passes an element/attribute-allowlist SVG sanitizer. And it is
+**never blocking**: every derivation failure — lualatex error, marker
+count mismatch in the stream, cap overrun, oracle divergence — is a
+warning finding with a `web-*` rule on the `paper` phase; `paper.web` is
+omitted, the reason rides the report and `lax submit`, and the PDF path
+never notices. `paper.web: false` opts out (then: not attempted, no
+warning).
+
+**The oracle.** Before a bundle is recorded, the stream's glyph text must
+agree with the PDF's text layer as normalized token sequences —
+hyphenation rejoined, ligatures/accents/casing folded, PDF-side furniture
+stripped, `\marginpar`-style captured-but-unreferenced paragraphs
+tolerated and each reported as its own warning — within a 0.98 similarity
+floor (`paperWebOracleSimilarity`); divergence skips the web view naming
+the first mismatch. This converts reflow's silent misread class into loud,
+attributable skips.
+
+**Web shape and storage.** `paper` gains one optional `web` key, present
+iff derivation succeeded: `format` — the pin that keeps the bundle
+interpretable (`tool`, fork `rev`, wire-schema hash) — and `bundle`
+(digest, bytes; published records add `registryBlob`). The bundle is one
+tar — `index.json`, `blocks/*.pb`, content-hashed `fonts/*.otf`, and its
+own `schema/latex.proto`, so it is self-describing — stored as a **third
+layer of the same capture OCI manifest**
+(`application/vnd.lax.paper-web.v1+tar`, 25 MiB cap). Its digest is a
+**content address, not a reproducibility claim** — the deliberate opposite
+of the PDF digest: within-run integrity is inherited (hash → push →
+verify → record), but a re-derivation may produce a new digest while any
+of the encode stack floats; upgrading to a reproducibility claim is a
+later, additive tightening. Homes and join keys are frozen, formats are
+not: the site build gates each record's schema hash against the viewer's
+supported set and drops a mismatch to the PDF-only page rather than
+rendering it wrong.
+
+**Licensing.** ReflowTeX is AGPL-3.0-or-later. No upstream source file is
+committed to this repository: `reflowtex/fetch.mjs` obtains the pinned rev
+and applies our patches (`reflowtex/patches/`, themselves AGPL-labelled
+derivatives), and the npm `files` allowlist excludes the directory —
+`laxreflow.sty` ships but is lax-authored and only *loads* the serializer.
+The public `lax-archive/reflowtex` fork repo is a pending Jan-owned click;
+until it exists the pin names the upstream repository. The website serves
+the fork's viewer unminified with its license text (source availability,
+AGPL §13), and the packaged page-builder that vendors it into the `lax`
+npm tarball is **aggregation with notices**: `page-builder:package` writes
+a deterministic `THIRD-PARTY-NOTICES.txt` and refuses vendored code whose
+license text is missing; `page-builder:verify` re-checks it. lax's own
+code stays Apache-2.0.
+
+Spec touchpoints: manifest.yaml (the optional `paper` block); Submission
+Layout / Archive Environment (the second pinned image and the ReflowTeX
+pin); Build Pipeline (the concurrent paper phase, the static marker gate,
+the non-blocking web derivation); Archive Database (the `paper` and
+`paper.web` shapes; the second and third capture layers); Site Generator
+(the paper page's two surfaces); CLI (`lax build`'s preview compile,
+doctor's LaTeX row, `lax serve`'s paper and bundle caches).
+
 ## `lax init --offline`: the placeholder id `lax-0` (implemented, 2026-08-24)
 
 `lax init` opens an issue to allocate `lax-N` before it writes a single file
