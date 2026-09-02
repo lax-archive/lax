@@ -9,6 +9,14 @@ const MAX_MANIFEST_BYTES = 16 * 1024;
 const MAX_RENDERER_BYTES = 50 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
+// Both the pinned vendored bundle and the currently *published* release must
+// satisfy this list — websiteRendererIsReady gates the downloaded copy and
+// updateWebsiteRenderer gates a fresh download — so paths that exist only in
+// a newer lax-website revision may join it only once a renderer release
+// carrying them is published (a release-step edit, together with the
+// deployment/verify.ts list). Concretely owed to the first paper-bearing
+// release: "assets/site/pdfjs", "assets/site/reflowtex", "assets/site/manuscript.js".
+// Adding them earlier would fail `lax update` against the current release.
 const REQUIRED_RENDERER_PATHS = [
   "dist/sitegen/generate.js",
   "dist/sitegen/assets.js",

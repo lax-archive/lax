@@ -5,9 +5,11 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import * as ui from "../../src/cli/ui.js";
 import {
   applyWebsiteWarning,
+  attachPaperFiles,
   loadWebsiteSubmissions,
   type PageBuilder,
   serveWebsite,
@@ -15,6 +17,7 @@ import {
   type WebsitePreview,
 } from "../../src/cli/website.js";
 import { initialFiles } from "../../src/shared/archive-schema.js";
+import { startFakeGhcr, type FakeGhcr } from "../fake-ghcr.js";
 
 const issue = { repositoryId: 123456789, number: 42 };
 const alice = { githubId: 10, handle: "alice" };
@@ -309,6 +312,231 @@ describe("the local preview", () => {
   });
 });
 
+describe("the paper surfaces in the preview", () => {
+  const environment = {
+    home: process.env.LAX_HOME,
+    url: process.env.LAX_DATABASE_URL,
+    poll: process.env.LAX_DATABASE_POLL_INTERVAL_MS,
+    registry: process.env.LAX_CAPTURE_REGISTRY_URL,
+  };
+  let preview: WebsitePreview | undefined;
+  let ghcr: FakeGhcr | undefined;
+
+  beforeEach(() => {
+    ui.configure({ color: false });
+    process.env.LAX_DATABASE_POLL_INTERVAL_MS = "600000";
+  });
+
+  afterEach(async () => {
+    await preview?.close();
+    preview = undefined;
+    await ghcr?.close();
+    ghcr = undefined;
+    restore("LAX_HOME", environment.home);
+    restore("LAX_DATABASE_URL", environment.url);
+    restore("LAX_DATABASE_POLL_INTERVAL_MS", environment.poll);
+    restore("LAX_CAPTURE_REGISTRY_URL", environment.registry);
+  });
+
+  it("hands the local paper.pdf and paper-web.tar to the renderer and watches both", async () => {
+    currentDatabase([]);
+    const local = temporaryDirectory("lax-serve-paper-");
+    const pdf = Buffer.from("%PDF-1.7\nlocal paper\n%%EOF\n", "latin1");
+    const bundle = Buffer.alloc(1024);
+    bundle.write("ustar", 257, "latin1");
+    fs.writeFileSync(
+      path.join(local, "build-output.json"),
+      JSON.stringify(paperBuildOutput("lax-50", digestOf(pdf), digestOf(bundle))),
+    );
+    fs.writeFileSync(path.join(local, "paper.pdf"), pdf);
+    fs.writeFileSync(path.join(local, "paper-web.tar"), bundle);
+    const port = await freePort();
+    const renderer = stubRenderer();
+    const output = capture();
+
+    try {
+      await serveWebsite(local, port, {
+        renderer,
+        onListening: (live) => { preview = live; },
+      });
+
+      expect(renderer.seen.at(-1)).toEqual([
+        {
+          id: "lax-50",
+          paperFile: path.join(local, "paper.pdf"),
+          bundleFile: path.join(local, "paper-web.tar"),
+        },
+      ]);
+
+      // A rebuilt paper is the same news as a rebuilt output: the watcher
+      // schedules a render for it.
+      const renders = renderer.renders;
+      fs.writeFileSync(path.join(local, "paper.pdf"), Buffer.concat([pdf, Buffer.from("v2\n")]));
+      await waitFor(() => renderer.renders > renders, "a rebuild after paper.pdf changed");
+    } finally {
+      output.restore();
+    }
+  });
+
+  it("resolves a database record's paper and bundle through the ~/.lax caches", async () => {
+    const pdf = Buffer.from("%PDF-1.7\narchive paper\n%%EOF\n", "latin1");
+    const bundle = Buffer.alloc(1536);
+    bundle.write("index.json", 0, "latin1");
+    bundle.write("ustar", 257, "latin1");
+    const home = currentDatabase([]);
+    writeSubmission(
+      path.join(home, "lax-database"),
+      "lax-9",
+      draftFilesWithPaper("lax-9", digestOf(pdf), digestOf(bundle)),
+    );
+    ghcr = await startFakeGhcr();
+    process.env.LAX_CAPTURE_REGISTRY_URL = ghcr.url;
+    ghcr.state.blobs.set(`sha256:${digestOf(pdf)}`, pdf);
+    ghcr.state.blobs.set(`sha256:${digestOf(bundle)}`, bundle);
+    const port = await freePort();
+    const renderer = stubRenderer();
+    const output = capture();
+
+    try {
+      await serveWebsite(temporaryDirectory("lax-serve-local-"), port, {
+        databaseOnly: true,
+        renderer,
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    const paperFile = path.join(home, "papers", `${digestOf(pdf)}.pdf`);
+    const bundleFile = path.join(home, "bundles", `${digestOf(bundle)}.tar`);
+    expect(renderer.seen.at(-1)).toEqual([{ id: "lax-9", paperFile, bundleFile }]);
+    expect(fs.readFileSync(paperFile)).toEqual(pdf);
+    expect(fs.readFileSync(bundleFile)).toEqual(bundle);
+  });
+
+  it("renders the page without the viewer when the registry is unreachable", async () => {
+    const pdf = Buffer.from("%PDF-1.7\nunreachable\n%%EOF\n", "latin1");
+    const home = currentDatabase([]);
+    writeSubmission(
+      path.join(home, "lax-database"),
+      "lax-9",
+      draftFilesWithPaper("lax-9", digestOf(pdf)),
+    );
+    // A registry that answers nothing: the port was real once and is closed.
+    const probe = await listening();
+    const dead = `http://127.0.0.1:${(probe.address() as AddressInfo).port}`;
+    await new Promise<void>((resolve) => probe.close(() => { resolve(); }));
+    process.env.LAX_CAPTURE_REGISTRY_URL = dead;
+    const port = await freePort();
+    const renderer = stubRenderer();
+    const output = capture();
+
+    try {
+      await serveWebsite(temporaryDirectory("lax-serve-local-"), port, {
+        databaseOnly: true,
+        renderer,
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    // The preview is up and the record rendered — just without the file.
+    expect(renderer.seen.at(-1)).toEqual([{ id: "lax-9" }]);
+    const page = await fetch(`http://localhost:${preview!.port}/`);
+    expect(await page.text()).toContain("rendered by the stub");
+  });
+
+  it("attaches nothing for outputs without a paper and skips memoized failures", async () => {
+    const submissions = [
+      { record: { id: "lax-1", state: "draft" }, output: { concepts: [] } },
+      { record: { id: "lax-2", state: "draft" } },
+    ];
+    await attachPaperFiles(submissions);
+    expect(submissions[0]).not.toHaveProperty("paperFile");
+    expect(submissions[1]).not.toHaveProperty("paperFile");
+
+    // A digest that failed moments ago is not retried on the next rebuild.
+    ghcr = await startFakeGhcr();
+    process.env.LAX_CAPTURE_REGISTRY_URL = ghcr.url;
+    process.env.LAX_HOME = temporaryDirectory("lax-serve-home-");
+    const digest = digestOf(Buffer.from("missing"));
+    const failed = new Map<string, number>([[digest, Date.now()]]);
+    const withPaper = [{
+      record: { id: "lax-3", state: "draft" },
+      output: {
+        paper: {
+          pdf: { digest, registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${digest}` },
+        },
+      },
+    }];
+    await attachPaperFiles(withPaper, failed);
+    expect(withPaper[0]).not.toHaveProperty("paperFile");
+    expect(ghcr.requests.length).toBe(0);
+  });
+});
+
+function digestOf(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** A local build output declaring a compiled paper and its derived bundle. */
+function paperBuildOutput(id: string, pdfDigest: string, bundleDigest?: string): Record<string, unknown> {
+  return {
+    ...localBuildOutput(id, "With a paper"),
+    paper: {
+      folder: "paper",
+      main: "main.tex",
+      engine: "pdflatex",
+      pdf: { digest: pdfDigest, bytes: 1, pages: 2 },
+      pageSizes: [[612, 792]],
+      marks: [],
+      ...(bundleDigest === undefined
+        ? {}
+        : {
+            web: {
+              format: { tool: "reflowtex", rev: "0".repeat(40), schema: "0".repeat(64) },
+              bundle: { digest: bundleDigest, bytes: 1 },
+            },
+          }),
+    },
+  };
+}
+
+/** A draft archive record whose build output records registry blobs. */
+function draftFilesWithPaper(
+  id: string,
+  pdfDigest: string,
+  bundleDigest?: string,
+): Record<string, string> {
+  const reference = (digest: string): string => `ghcr.io/lax-archive/lax-captures@sha256:${digest}`;
+  const output = paperBuildOutput(id, pdfDigest, bundleDigest) as {
+    paper: { pdf: Record<string, unknown>; web?: { bundle: Record<string, unknown> } };
+  };
+  output.paper.pdf.registryBlob = reference(pdfDigest);
+  if (output.paper.web !== undefined) {
+    output.paper.web.bundle.registryBlob = reference(bundleDigest!);
+  }
+  return {
+    "record.json": `${JSON.stringify({
+      specVersion: "1",
+      id,
+      state: "draft",
+      createdAt: "2026-07-30T10:00:00Z",
+      source: {
+        repository: "https://github.com/alice/formalization",
+        commit: "0".repeat(40),
+        folder: ".",
+      },
+    })}\n`,
+    "build-output.json": `${JSON.stringify({
+      issue,
+      ...output,
+    })}\n`,
+    "owner-list.json": `${JSON.stringify({ specVersion: "1", owners: [alice] })}\n`,
+  };
+}
+
 function temporaryDirectory(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
@@ -365,13 +593,31 @@ function currentDatabase(ids: readonly string[]): string {
   return home;
 }
 
+/** What the stub renderer was handed, one snapshot per render. */
+interface SeenSubmission {
+  id: string;
+  paperFile?: string;
+  bundleFile?: string;
+}
+
 /** A renderer standing in for the pinned lax-website bundle, which only a
- * release carries: it writes one page and counts how often it was asked to. */
-function stubRenderer(): PageBuilder & { renders: number } {
-  const builder: PageBuilder & { renders: number } = {
+ * release carries: it writes one page, counts how often it was asked to,
+ * and records the per-submission renderer inputs the serve wiring feeds. */
+function stubRenderer(): PageBuilder & { renders: number; seen: SeenSubmission[][] } {
+  const builder: PageBuilder & { renders: number; seen: SeenSubmission[][] } = {
     renders: 0,
-    generateSite: async (_submissions, outDir) => {
+    seen: [],
+    generateSite: async (submissions, outDir) => {
       builder.renders += 1;
+      builder.seen.push(
+        (submissions as Array<{ record: { id: string }; paperFile?: string; bundleFile?: string }>).map(
+          (submission) => ({
+            id: submission.record.id,
+            ...(submission.paperFile === undefined ? {} : { paperFile: submission.paperFile }),
+            ...(submission.bundleFile === undefined ? {} : { bundleFile: submission.bundleFile }),
+          }),
+        ),
+      );
       fs.writeFileSync(
         path.join(outDir, "index.html"),
         "<!doctype html><html><head></head><body>rendered by the stub</body></html>",

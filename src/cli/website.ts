@@ -11,6 +11,7 @@ import {
   databaseFreshnessAsync,
   type DatabaseFreshness,
 } from "./database.js";
+import { bundleCachePath, ensureCachedPaperBlob, paperCachePath } from "./papers-cache.js";
 import * as ui from "./ui.js";
 import {
   downloadedPageBuilderDirectory,
@@ -21,6 +22,12 @@ import {
 interface WebsiteSubmission {
   record: Record<string, unknown> & { id: string; state: string };
   output?: Record<string, unknown>;
+  /** The compiled paper's PDF on disk — the renderer's `SiteSubmission.paperFile`.
+   * The local folder's own `paper.pdf`, or a papers-cache hit for a database
+   * record. Renderers that predate the paper page ignore it. */
+  paperFile?: string;
+  /** The derived reflow bundle tar on disk (`SiteSubmission.bundleFile`). */
+  bundleFile?: string;
 }
 
 export interface PageBuilder {
@@ -128,6 +135,8 @@ export async function serveWebsite(
   const pageBuilder = options.renderer === undefined
     ? loadPageBuilder()
     : Promise.resolve(options.renderer);
+  /** Failed paper/bundle downloads, memoized across rebuilds of this preview. */
+  const failedPaperFetches = new Map<string, number>();
 
   const rebuild = async (): Promise<void> => {
     if (building) {
@@ -137,6 +146,7 @@ export async function serveWebsite(
     building = true;
     try {
       const submissions = loadWebsiteSubmissions(archive, localFolder);
+      await attachPaperFiles(submissions, failedPaperFetches);
       const builder = await pageBuilder;
       await builder.generateSite(submissions, outDir);
       applyWebsiteWarning(outDir, bannerText(advice));
@@ -176,8 +186,12 @@ export async function serveWebsite(
   };
   ensureArchiveWatcher();
   if (localFolder !== undefined && fs.existsSync(localFolder)) {
+    // The build's whole output set: the result, the compiled paper beside
+    // it, and the derived web bundle — a rebuild of any of the three is the
+    // same news to the preview.
+    const rendered = new Set(["build-output.json", "paper.pdf", "paper-web.tar"]);
     localWatcher = fs.watch(localFolder, (_event, filename) => {
-      if (filename === "build-output.json") schedule();
+      if (typeof filename === "string" && rendered.has(filename)) schedule();
     });
   }
 
@@ -472,7 +486,7 @@ function loadLocalSubmission(folder: string): WebsiteSubmission {
     ? parseJson(fs.readFileSync(outputFile, "utf8"), outputFile)
     : undefined;
   const id = isObject(raw) && typeof raw.id === "string" ? raw.id : "local";
-  return {
+  const submission: WebsiteSubmission = {
     record: {
       specVersion: "1",
       id,
@@ -482,6 +496,79 @@ function loadLocalSubmission(folder: string): WebsiteSubmission {
     },
     ...(raw === undefined ? {} : { output: rendererOutput(raw, outputFile) }),
   };
+  // A local build writes the compiled paper and the derived web bundle
+  // beside build-output.json (removing stale ones), so presence is the
+  // whole check here; a record that instead points at the registry has no
+  // local file and is resolved through the caches by attachPaperFiles.
+  const paper = isObject(submission.output?.paper) ? submission.output.paper : undefined;
+  if (paper !== undefined) {
+    const pdf = path.join(root, "paper.pdf");
+    if (fs.existsSync(pdf)) submission.paperFile = pdf;
+    if (isObject(paper.web)) {
+      const bundle = path.join(root, "paper-web.tar");
+      if (fs.existsSync(bundle)) submission.bundleFile = bundle;
+    }
+  }
+  return submission;
+}
+
+/** How long a failed paper or bundle download stays memoized before a later
+ * rebuild may retry it: an offline preview must render without the viewer,
+ * not stall every rebuild re-asking the registry for the same bytes. */
+const FAILED_FETCH_RETRY_MS = 5 * 60_000;
+
+/**
+ * Resolve every recorded `registryBlob` the loaded submissions carry into
+ * `paperFile`/`bundleFile` through the `~/.lax` caches (papers-cache.ts).
+ * Data-driven, not identity-driven: whichever submission records a registry
+ * address and has no file yet gets the cache lookup, and any failure leaves
+ * the field unset — the renderer already degrades to a page without that
+ * surface. Never throws; a preview outlives an offline registry.
+ */
+export async function attachPaperFiles(
+  submissions: WebsiteSubmission[],
+  failedAt: Map<string, number> = new Map(),
+): Promise<void> {
+  const resolve = async (
+    kind: "paper" | "bundle",
+    entry: Record<string, unknown> | undefined,
+  ): Promise<string | undefined> => {
+    if (
+      entry === undefined ||
+      typeof entry.digest !== "string" ||
+      typeof entry.registryBlob !== "string"
+    ) {
+      return undefined;
+    }
+    let cached: string;
+    try {
+      cached = kind === "paper" ? paperCachePath(entry.digest) : bundleCachePath(entry.digest);
+    } catch {
+      return undefined;
+    }
+    // A disk hit is always an answer; the failure memo only spares the
+    // preview re-asking the registry for bytes it could not get moments ago.
+    if (fs.existsSync(cached)) return cached;
+    const failed = failedAt.get(entry.digest);
+    if (failed !== undefined && Date.now() - failed < FAILED_FETCH_RETRY_MS) return undefined;
+    const file = await ensureCachedPaperBlob(kind, entry.digest, entry.registryBlob);
+    if (file === undefined) failedAt.set(entry.digest, Date.now());
+    else failedAt.delete(entry.digest);
+    return file;
+  };
+  for (const submission of submissions) {
+    const paper = isObject(submission.output?.paper) ? submission.output.paper : undefined;
+    if (paper === undefined) continue;
+    if (submission.paperFile === undefined) {
+      const file = await resolve("paper", isObject(paper.pdf) ? paper.pdf : undefined);
+      if (file !== undefined) submission.paperFile = file;
+    }
+    const web = isObject(paper.web) ? paper.web : undefined;
+    if (submission.bundleFile === undefined && web !== undefined) {
+      const file = await resolve("bundle", isObject(web.bundle) ? web.bundle : undefined);
+      if (file !== undefined) submission.bundleFile = file;
+    }
+  }
 }
 
 function rendererOutput(value: unknown, label: string): Record<string, unknown> | undefined {
