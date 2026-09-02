@@ -307,10 +307,19 @@ not just the file set, since blocks are embedded.
   the paper" blocks) hits the reflow surface unchanged. The rail/cards
   machinery joins on those anchors and re-places on resize — structural,
   no text matching, no geometry.
-- **Viewer vendoring.** The fork's viewer + protobuf.js land beside
-  pdf.js, the viewer *unminified* with its AGPL license file (serving
-  source satisfies AGPL §13), protobuf.js under its BSD notice — the
-  GUST/pdf.js precedent shelf.
+- **Viewer vendoring.** The fork's viewer lands beside pdf.js,
+  *unminified* with its AGPL license file and a provenance header
+  (serving source satisfies AGPL §13). **protobuf.js is not shipped**
+  (stage-4 finding): its reflection decoder is built via `Function(…)`
+  at runtime, which `script-src 'self'` without `unsafe-eval` blocks —
+  the plan's original "no CSP change" claim was false as stated. The
+  CSP was NOT loosened; instead the viewer carries a handwritten
+  fixed-schema proto2 wire decoder, proven byte-equivalent to
+  protobufjs over the fixture and sound because the schema gate already
+  pins which generations this viewer renders. Consequence: a schema
+  bump is a three-part change in lax-website (regenerated fixture,
+  `supported-schemas.json`, the decoder extension — enforced by the
+  equivalence test).
 - The pdf.js view remains as the "as printed" surface and the fallback
   for records without a bundle (or gated by schema). Layout of the two
   surfaces is a page decision, cheap to change.
@@ -412,7 +421,21 @@ Owner flags: **[Jan]** marks steps agents must flag and never attempt.
   injection surface.
 - **Cost**: a second TeX compile plus encode per paper-bearing
   submission, overlapped with the Lean chain; bundle bytes on ghcr and
-  up to the embed budget inline per page.
+  up to the embed budget inline per page. Measured at fixture scale
+  (stage 4): ~15 KB of inline blocks, ~725 KB of per-paper fonts served
+  content-hashed from the site root (identical bytes dedupe across
+  records), viewer ~90 KB unminified, no protobuf runtime.
+- **AGPL inside the lax npm tarball** (stage-4 finding, resolved under
+  the delegated gate authority): the page-builder tarball vendored into
+  the `lax` CLI release packs lax-website's assets, so the next
+  renderer release carries the AGPL viewer inside an Apache-labelled
+  npm package. Decision: **aggregation with notices** — the AGPL text
+  and a third-party notice ship in the tarball beside the existing
+  pdf.js/GUST license precedents; lax's own code stays Apache; source
+  availability is satisfied by the unminified file and the public
+  repositories. The packaging step
+  (`page-builder:package`/`page-builder:verify`) must carry and check
+  those notices — owed in stage 5.
 
 ## Decisions (2026-09-02 — Jan delegated gate authority to the session)
 
