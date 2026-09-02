@@ -58,6 +58,45 @@ describe("submission validation outputs", () => {
     expect(fs.existsSync(path.join(directory, CAPTURE_FILENAME))).toBe(false);
   });
 
+  it("writes a typed operational failure without manufacturing a violation", () => {
+    const directory = temporaryDirectory();
+    const report: ValidationReport = {
+      ...baseReport(),
+      ok: false,
+      failure: {
+        kind: "infrastructure",
+        retryable: true,
+        phase: "source",
+        rule: "archive-snapshot",
+        message: "GitHub returned HTTP 503",
+      },
+    };
+
+    writeValidationOutputs(directory, report);
+
+    expect(readJson(path.join(directory, VALIDATION_REPORT_FILENAME))).toEqual(report);
+    expect(report.violations).toEqual([]);
+  });
+
+  it("rejects contradictory or unexplained unsuccessful reports", () => {
+    const directory = temporaryDirectory();
+    const failure = {
+      kind: "resource-limit" as const,
+      retryable: false,
+      phase: "compile-concepts" as const,
+      rule: "compile",
+      message: "memory limit",
+    };
+    expect(() => writeValidationOutputs(directory, {
+      ...baseReport(),
+      ok: false,
+      failure,
+      violations: [{ phase: "static", rule: "manifest", message: "invalid" }],
+    })).toThrow("both an operational failure and submission violations");
+    expect(() => writeValidationOutputs(directory, { ...baseReport(), ok: false }))
+      .toThrow("must describe a failure or a submission violation");
+  });
+
   it("does not publish a success report unless the complete output set exists", () => {
     const directory = temporaryDirectory();
     expect(() => writeValidationOutputs(directory, successfulReport())).toThrow("no capture.tar");

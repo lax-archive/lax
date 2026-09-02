@@ -2,6 +2,7 @@ import fs from "node:fs";
 import type { ValidationLimits } from "../config.js";
 import type { ValidationRunner } from "../sandbox/container.js";
 import type { ProvisionedWorkspace } from "./provision.js";
+import { compilationFailure, containerBoundaryFailure } from "../failures.js";
 
 export interface CompileResult {
   output: string;
@@ -53,8 +54,13 @@ async function compile(
     maxOutputBytes: limits.maxOutputBytes,
   });
   if (result.code !== 0) {
-    const reason = result.timedOut ? `${kind} compilation exceeded its time limit` : result.output.trim();
-    throw new Error(reason || `${kind} compilation failed`);
+    const boundary = containerBoundaryFailure(
+      result,
+      `${kind} compilation exceeded its time limit`,
+      `${kind} compilation exceeded its memory limit`,
+    );
+    if (boundary !== undefined) throw boundary;
+    throw compilationFailure(result.output, `${kind} compilation failed`);
   }
   return { output: result.output };
 }

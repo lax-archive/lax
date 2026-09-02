@@ -406,6 +406,54 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     }
   });
 
+  it("prints an infrastructure outcome without presenting a submission error", async () => {
+    const folder = seedSubmit(82, "802", {
+      status: "in_progress",
+      conclusion: null,
+      jobs: [{ name: "Validate", status: "completed", conclusion: "failure" }],
+    });
+    github.state.actionsArtifacts.set("802", [
+      {
+        id: 3082,
+        name: "submission-validation-report-82",
+        zip: artifactZip({
+          "validation-report.json": JSON.stringify({
+            reportVersion: 1,
+            ok: false,
+            warnings: [],
+            violations: [],
+            failure: {
+              kind: "infrastructure",
+              retryable: true,
+              phase: "source",
+              rule: "archive-snapshot",
+              message: "GitHub returned HTTP 503",
+            },
+          }),
+        }),
+      },
+    ]);
+
+    try {
+      const result = await lax(["submit", "--resume", folder], {
+        ...env,
+        LAX_POLL_INTERVAL_MS: "25",
+        LAX_WORKFLOW_TIMEOUT_MS: "30000",
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("validation infrastructure failed");
+      expect(result.stdout).toContain("source/archive-snapshot");
+      expect(result.stdout).toContain("retrying it unchanged may succeed");
+      expect(result.stdout).toContain("lax-82 could not be validated");
+      expect(result.stdout).not.toContain("1 error");
+      expect(result.stdout).not.toContain("was not published");
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
   it("prints validation warnings and keeps following to the outcome comment", async () => {
     // A passing validation is not the end of a submit: publication and the
     // website dispatch can still fail, so the CLI prints what the report warns

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { ArchiveSnapshot } from "../submission-validation/archive/snapshot.js";
 import type {
+  ValidationFailure,
   ValidationFinding,
   ValidationScope,
 } from "../submission-validation/contracts.js";
@@ -40,6 +41,7 @@ export interface LocalBuildOutcome {
   ok: boolean;
   warnings: ValidationFinding[];
   violations: ValidationFinding[];
+  failure?: ValidationFailure;
   /** Statement counts, once there is a build output to count them in. */
   concepts?: number;
   proofs?: number;
@@ -231,6 +233,7 @@ export async function buildSubmission(
       ok: report.ok && (scope !== "both" || report.buildOutput !== undefined),
       warnings: report.warnings,
       violations: report.violations,
+      ...(report.failure === undefined ? {} : { failure: report.failure }),
     };
     if (report.buildOutput !== undefined) {
       outcome.concepts = report.buildOutput.concepts.length;
@@ -254,6 +257,7 @@ export async function buildSubmission(
     if (!outcome.ok) {
       steps?.finish();
       if (steps !== undefined) {
+        if (outcome.failure !== undefined) showValidationFailure(outcome.failure);
         showFindings(outcome);
         ui.verdict(`${id} did not build`);
         ui.done();
@@ -346,6 +350,21 @@ export function showFindings(outcome: {
     notes.add(warnings.headline, ...warnings.body);
     notes.print();
   }
+}
+
+export function showValidationFailure(failure: ValidationFailure): void {
+  const headline = failure.kind === "resource-limit"
+    ? "validation reached a resource limit"
+    : "validation infrastructure failed";
+  const guidance = failure.kind === "resource-limit"
+    ? "The submission was not rejected on content; reduce its resource use before retrying."
+    : failure.retryable
+      ? "The submission was not rejected on content; retrying it unchanged may succeed."
+      : "The submission was not rejected on content; inspect the workflow run or report this archive failure.";
+  ui.problem(
+    headline,
+    [`[${failure.phase}/${failure.rule}]`, ...failure.message.split("\n"), guidance],
+  );
 }
 
 /** A clean checkout can reuse a full build only when source, Archive snapshot,

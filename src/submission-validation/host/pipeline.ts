@@ -25,11 +25,19 @@ import type {
   PaperOutput,
   ResolutionResult,
   StaticResult,
+  ValidationFailure,
   ValidationFinding,
   ValidationReport,
   ValidationRequest,
   ValidationScope,
 } from "../contracts.js";
+import {
+  asPipelineFailure,
+  compilationFailure,
+  infrastructureFailure,
+  replayFailure,
+  type PipelineFailureKind,
+} from "../failures.js";
 import { joinPaperMarks } from "../paper/join.js";
 import { capturePaperSources, runPaperPhase, type CompiledPaper, type PaperPhaseResult } from "../paper/phase.js";
 import { emitBuildOutput } from "../phases/emit.js";
@@ -92,6 +100,7 @@ interface HostState {
   fetched: FetchedSource;
   warnings: ValidationFinding[];
   violations: ValidationFinding[];
+  failure?: ValidationFailure;
   dependencies: ResolutionResult["all"];
   phase<T>(name: string, operation: () => Promise<T> | T, judge?: (result: T) => boolean): Promise<T>;
 }
@@ -145,35 +154,52 @@ export async function validateSubmissionOnHost(
       }
     },
   };
-  const report = (ok: boolean): ValidationReport => ({
-    reportVersion: 1,
-    ok,
-    request,
-    runtime,
-    dependencies: state.dependencies,
-    warnings,
-    violations,
-  });
-  const fail = (phase: ValidationFinding["phase"], rule: string, error: unknown): ValidationReport => {
-    // Unlike the trusted pipeline's safeError, keep the full multi-line
-    // message: locally the author owns the transcript.
-    violations.push({
-      phase,
-      rule,
-      message: error instanceof Error ? error.message : String(error),
-    });
+  const report = (ok: boolean): ValidationReport => {
+    const value: ValidationReport = {
+      reportVersion: 1,
+      ok,
+      request,
+      runtime,
+      dependencies: state.dependencies,
+      warnings: [...warnings],
+      violations: [...violations],
+    };
+    if (state.failure !== undefined) value.failure = state.failure;
+    return value;
+  };
+  const fail = (
+    phase: ValidationFinding["phase"],
+    rule: string,
+    error: unknown,
+    fallbackKind: PipelineFailureKind = "infrastructure",
+  ): ValidationReport => {
+    // Locally keep the full multi-line message: the author owns the transcript.
+    const failure = asPipelineFailure(error, fallbackKind);
+    const message = failure.message;
+    if (failure.kind === "submission") violations.push({ phase, rule, message });
+    else state.failure = { kind: failure.kind, retryable: failure.retryable, phase, rule, message };
     return report(false);
   };
 
-  const staticCheck = await state.phase("static validation", () =>
-    runStaticValidation(request, state.fetched.submissionRoot, runtime));
+  let staticCheck: ReturnType<typeof runStaticValidation>;
+  try {
+    staticCheck = await state.phase("static validation", () =>
+      runStaticValidation(request, state.fetched.submissionRoot, runtime));
+  } catch (error) {
+    return fail("static", "validator", error);
+  }
   warnings.push(...staticCheck.findings.warnings);
   violations.push(...staticCheck.findings.violations);
   if (staticCheck.findings.failed || staticCheck.result.concepts === undefined || staticCheck.result.proofs === undefined)
     return report(false);
 
-  const resolution = await state.phase("dependency resolution", () =>
-    runResolution(request, staticCheck.result, options.local.archive, runtime));
+  let resolution: ReturnType<typeof runResolution>;
+  try {
+    resolution = await state.phase("dependency resolution", () =>
+      runResolution(request, staticCheck.result, options.local.archive, runtime));
+  } catch (error) {
+    return fail("resolution", "resolver", error);
+  }
   warnings.push(...resolution.findings.warnings);
   violations.push(...resolution.findings.violations);
   state.dependencies = resolution.result.all;
@@ -198,11 +224,15 @@ export async function validateSubmissionOnHost(
 
   const lean = await runLeanChain();
   const paper = paperRun === undefined ? undefined : await paperRun;
-  if (paper !== undefined) {
-    warnings.push(...paper.findings.warnings);
-    violations.push(...paper.findings.violations);
+  if (paper !== undefined) warnings.push(...paper.findings.warnings);
+  if (isReport(lean)) {
+    if (lean.failure === undefined && paper !== undefined) {
+      violations.push(...paper.findings.violations);
+      return paper.findings.failed ? report(false) : report(lean.ok);
+    }
+    return report(lean.ok);
   }
-  if (isReport(lean)) return paper?.findings.failed === true ? { ...lean, ok: false } : lean;
+  if (paper !== undefined) violations.push(...paper.findings.violations);
   if (paper?.findings.failed === true) return report(false);
 
   try {
@@ -244,18 +274,23 @@ export async function validateSubmissionOnHost(
       return fail("provision", "warm-store", error);
     }
     if (warmWs === undefined) {
-      violations.push({
-        phase: "provision",
-        rule: "warm-store",
-        message:
+      return fail(
+        "provision",
+        "warm-store",
+        infrastructureFailure(
           "the shared mathlib environment could not be built (see the transcript above); " +
-          "fix the cause (network, disk) and rerun `lax build`",
-      });
-      return report(false);
+            "fix the cause (network, disk) and rerun `lax build`",
+          true,
+        ),
+      );
     }
     const warm = warmWs;
 
-    fs.mkdirSync(state.captureRoot, { recursive: true, mode: 0o700 });
+    try {
+      fs.mkdirSync(state.captureRoot, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      return fail("provision", "capture-workspace", error);
+    }
     const kinds: Array<"concepts" | "proofs"> =
       scope === "concepts" ? ["concepts"] : ["concepts", "proofs"];
     for (const kind of kinds) {
@@ -270,7 +305,7 @@ export async function validateSubmissionOnHost(
           seedManifest(warm, pkgDir, hostDependencies(kind, staticCheck.result, resolution.result));
         });
       } catch (error) {
-        return fail(failurePhase, "provision", error);
+        return fail("provision", `${kind}-workspace`, error);
       }
       if (echo) console.log(`\n== lake build (${kind}) ==`);
       const build = await state.phase(`compile ${kind}`, () =>
@@ -280,6 +315,11 @@ export async function validateSubmissionOnHost(
           maxOutputBytes: limits.maxOutputBytes,
         }));
       if (build.code !== 0) {
+        const failure = compilationFailure(
+          build.output,
+          `\`lake build\` failed in ${kind}/ (exit ${build.code})`,
+        );
+        if (failure.kind !== "submission") return fail(failurePhase, "build", failure);
         violations.push({
           phase: failurePhase,
           rule: "build",
@@ -289,8 +329,13 @@ export async function validateSubmissionOnHost(
         });
         return report(false);
       }
-      const materialized = await state.phase(`materialize oleans (${kind})`, () =>
-        materializeOwnOleans(staticPackage.inventory, pkgDir, failurePhase, state));
+      let materialized: boolean;
+      try {
+        materialized = await state.phase(`materialize oleans (${kind})`, () =>
+          materializeOwnOleans(staticPackage.inventory, pkgDir, failurePhase, state));
+      } catch (error) {
+        return fail(failurePhase, "build-artifacts", error);
+      }
       if (!materialized) return report(false);
       try {
         await state.phase(`capture ${kind}`, () => capturePackage(
@@ -343,6 +388,11 @@ export async function validateSubmissionOnHost(
         const result = await state.phase(`replay ${kind}`, () =>
           leanEnv.exec(leanEnv.leancheckerBin, [inventory.rootModule], cwd));
         if (result.code !== 0) {
+          const failure = replayFailure(
+            result.output,
+            `leanchecker failed for package ${inventory.packageName}`,
+          );
+          if (failure.kind !== "submission") return fail("replay", "kernel-replay", failure);
           violations.push({
             phase: "replay",
             rule: "kernel-replay",
@@ -396,14 +446,19 @@ export async function validateSubmissionOnHost(
     } catch (error) {
       return fail("inspect", "inspector", error);
     }
-    const inspection = await state.phase("judge inspection", () => judgeInspection(
-      conceptReport,
-      proofReport,
-      staticCheck.result.concepts!.inventory,
-      scope === "concepts" ? undefined : staticCheck.result.proofs!.inventory,
-      resolution.result,
-      scope,
-    ));
+    let inspection;
+    try {
+      inspection = await state.phase("judge inspection", () => judgeInspection(
+        conceptReport,
+        proofReport,
+        staticCheck.result.concepts!.inventory,
+        scope === "concepts" ? undefined : staticCheck.result.proofs!.inventory,
+        resolution.result,
+        scope,
+      ));
+    } catch (error) {
+      return fail("inspect", "judge", error);
+    }
     warnings.push(...inspection.findings.warnings);
     violations.push(...inspection.findings.violations);
     if (inspection.findings.failed) return report(false);
@@ -566,12 +621,7 @@ async function materializeOwnOleans(
   }
   const lines = result.output.split("\n").filter((line) => line.trim().startsWith("\""));
   if (lines.length !== jobs.length) {
-    state.violations.push({
-      phase: failurePhase,
-      rule: "build",
-      message: `unexpected \`lake query\` output for package ${inventory.packageName}`,
-    });
-    return false;
+    throw infrastructureFailure(`unexpected \`lake query\` output for package ${inventory.packageName}`);
   }
   for (const [index, job] of jobs.entries()) {
     const source = JSON.parse(lines[index]!.trim()) as string;
@@ -589,4 +639,3 @@ async function materializeOwnOleans(
   }
   return true;
 }
-

@@ -116,11 +116,11 @@ describe("source fetch fallback", () => {
     expect(calls.some((args) => args.some((arg) => arg.startsWith("--deepen=")))).toBe(true);
   });
 
-  it("stops at the depth cap and reports the existing absence violation", async () => {
+  it("stops at the depth cap and reports resource exhaustion rather than absence", async () => {
     const { git, calls } = workspace();
     const target = commits[30];
     await expect(checkoutRemoteCommit(git, origin, target, 8)).rejects.toThrow(
-      "requested commit is not present in the fetched repository",
+      "requested commit is deeper than the validation fetch limit of 8 commits",
     );
     // depth 1 from the tip fetch, then a single capped deepen to 8 — the cap
     // must stop the loop, not the exhaustion of the remote's history.

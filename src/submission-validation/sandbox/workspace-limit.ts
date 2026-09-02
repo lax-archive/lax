@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
+import { infrastructureFailure, resourceLimitFailure } from "../failures.js";
 
 export interface WorkspaceUsage {
   bytes: number;
@@ -18,16 +19,19 @@ export function assertWorkspaceWithinLimit(
 ): WorkspaceUsage {
   const usage = measureWorkspace(root, limits);
   if (usage.bytes > limits.maxWorkspaceBytes) {
-    throw new Error(`validation workspace exceeds ${formatGiB(limits.maxWorkspaceBytes)} GiB`);
+    throw resourceLimitFailure(`validation workspace exceeds ${formatGiB(limits.maxWorkspaceBytes)} GiB`);
   }
   if (usage.entries > limits.maxWorkspaceEntries) {
-    throw new Error(
+    throw resourceLimitFailure(
       `validation workspace contains more than ${limits.maxWorkspaceEntries.toLocaleString("en-US")} entries`,
     );
   }
   const filesystem = fs.statfsSync(root);
   if (filesystem.bavail < Math.ceil(limits.minFreeDiskBytes / filesystem.bsize)) {
-    throw new Error(`validation filesystem has less than ${formatGiB(limits.minFreeDiskBytes)} GiB free`);
+    throw infrastructureFailure(
+      `validation filesystem has less than ${formatGiB(limits.minFreeDiskBytes)} GiB free`,
+      true,
+    );
   }
   return usage;
 }

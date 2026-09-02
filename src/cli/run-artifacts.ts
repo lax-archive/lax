@@ -13,7 +13,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { unzipSync, type UnzipFileInfo } from "fflate";
 import { CONTROL_REPOSITORY } from "../shared/constants.js";
 import { GitHubError, repositoryPath, type GitHubClient } from "../shared/github.js";
-import type { ValidationFinding, ValidationPhase } from "../submission-validation/contracts.js";
+import type {
+  ValidationFailure,
+  ValidationFinding,
+  ValidationPhase,
+} from "../submission-validation/contracts.js";
 import { sanitizeTerminalText } from "./render.js";
 
 /** The report is capped at 64 MiB where it is read by the publisher; nothing
@@ -28,6 +32,7 @@ export interface RemoteValidationReport {
   ok: boolean;
   warnings: ValidationFinding[];
   violations: ValidationFinding[];
+  failure?: ValidationFailure;
 }
 
 /**
@@ -155,10 +160,43 @@ export function parseValidationReport(value: unknown): RemoteValidationReport {
   if (typeof report.ok !== "boolean") {
     throw new ValidationReportUnavailableError("the validation report has no verdict");
   }
+  const warnings = findings(report.warnings, "warnings");
+  const violations = findings(report.violations, "violations");
+  const failure = validationFailure(report.failure);
+  if (report.ok && failure !== undefined) {
+    throw new ValidationReportUnavailableError("a successful validation report contains a failure");
+  }
+  if (failure !== undefined && violations.length > 0) {
+    throw new ValidationReportUnavailableError(
+      "the validation report mixes an operational failure with submission violations",
+    );
+  }
   return {
     ok: report.ok,
-    warnings: findings(report.warnings, "warnings"),
-    violations: findings(report.violations, "violations"),
+    warnings,
+    violations,
+    ...(failure === undefined ? {} : { failure }),
+  };
+}
+
+function validationFailure(value: unknown): ValidationFailure | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null) {
+    throw new ValidationReportUnavailableError("the validation report failure is not an object");
+  }
+  const failure = value as Record<string, unknown>;
+  if (
+    (failure.kind !== "resource-limit" && failure.kind !== "infrastructure") ||
+    typeof failure.retryable !== "boolean"
+  ) {
+    throw new ValidationReportUnavailableError("the validation report has an invalid failure classification");
+  }
+  return {
+    kind: failure.kind,
+    retryable: failure.retryable,
+    phase: (text(failure.phase, 40) || "validation") as ValidationPhase,
+    rule: text(failure.rule, 60) || "unspecified",
+    message: text(failure.message, MESSAGE_LIMIT) || "unspecified failure",
   };
 }
 

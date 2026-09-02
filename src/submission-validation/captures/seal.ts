@@ -9,6 +9,12 @@ import type {
   ValidationRuntimeIdentity,
 } from "../contracts.js";
 import type { ValidationRunner } from "../sandbox/container.js";
+import {
+  containerBoundaryFailure,
+  infrastructureFailure,
+  resourceLimitFailure,
+  submissionFailure,
+} from "../failures.js";
 
 const MAX_CAPTURE_FILES = 100_000;
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -70,7 +76,7 @@ export function capturePackage(
 }
 
 function missingArtifacts(inventory: ModuleInventory, modules: string[]): Error {
-  return new Error(
+  return submissionFailure(
     `compiled artifact is missing or unsafe for ${modules.length === 1 ? "module" : "modules"} ` +
       `${modules.join(", ")} of package ${inventory.packageName}; root module ` +
       `${inventory.rootModule} must import exactly the other modules of its package, so a ` +
@@ -146,7 +152,15 @@ export async function sealCapture(
     timeoutMs: limits.checkTimeoutMs,
     maxOutputBytes: limits.maxOutputBytes,
   });
-  if (result.code !== 0) throw new Error(`could not seal artifact capture: ${result.output.trim()}`);
+  if (result.code !== 0) {
+    const boundary = containerBoundaryFailure(
+      result,
+      "sealing the artifact capture exceeded its time limit",
+      "sealing the artifact capture exceeded its memory limit",
+    );
+    if (boundary !== undefined) throw boundary;
+    throw infrastructureFailure(`could not seal artifact capture: ${result.output.trim()}`);
+  }
   const digest = sha256File(archivePath);
   return {
     formatVersion: 1,
@@ -191,9 +205,11 @@ function inventoryFiles(root: string): CapturedFile[] {
         const relative = path.relative(root, filename).split(path.sep).join("/");
         const stat = fs.statSync(filename);
         totalBytes += stat.size;
-        if (result.length >= MAX_CAPTURE_FILES) throw new Error(`capture contains more than ${MAX_CAPTURE_FILES} files`);
+        if (result.length >= MAX_CAPTURE_FILES) {
+          throw resourceLimitFailure(`capture contains more than ${MAX_CAPTURE_FILES} files`);
+        }
         if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_CAPTURE_BYTES)
-          throw new Error("capture exceeds 2 GiB");
+          throw resourceLimitFailure("capture exceeds 2 GiB");
         result.push({ path: relative, bytes: stat.size, sha256: sha256File(filename) });
       } else throw new Error("capture contains a non-regular filesystem entry");
     }

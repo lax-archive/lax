@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { ModuleInventory, ResolutionResult } from "../contracts.js";
 import type { ValidationRunner } from "../sandbox/container.js";
+import { containerBoundaryFailure, replayFailure } from "../failures.js";
 
 export async function replayPackage(
   kind: "concepts" | "proofs",
@@ -45,7 +46,12 @@ export async function replayPackage(
     maxOutputBytes: limits.maxOutputBytes,
   });
   if (result.code !== 0) {
-    const reason = result.timedOut ? `${kind} kernel replay exceeded its time limit` : result.output.trim();
-    throw new Error(reason || `${kind} kernel replay failed`);
+    const boundary = containerBoundaryFailure(
+      result,
+      `${kind} kernel replay exceeded its time limit`,
+      `${kind} kernel replay exceeded its memory limit`,
+    );
+    if (boundary !== undefined) throw boundary;
+    throw replayFailure(result.output, `${kind} kernel replay failed`);
   }
 }

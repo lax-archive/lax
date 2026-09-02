@@ -22,7 +22,12 @@ import type { GitHubIdentity, SourceLocation } from "../shared/types.js";
 import type { ValidationFinding } from "../submission-validation/contracts.js";
 import { checkDeleteLocally, checkRegisterLocally } from "./archive-preflight.js";
 import { AuthenticationError, ensureLoggedIn, githubAppUserToken } from "./auth.js";
-import { buildSubmission, hasCurrentLocalBuild, showFindings } from "./build.js";
+import {
+  buildSubmission,
+  hasCurrentLocalBuild,
+  showFindings,
+  showValidationFailure,
+} from "./build.js";
 import { confirmTyped } from "./confirm.js";
 import { databaseDirectory, tryRefreshDatabase } from "./database.js";
 import { groupFindings } from "./findings.js";
@@ -401,10 +406,19 @@ class SubmitReport {
         this.steps.settle("archive", { status: "fail" });
         this.steps.settle("publish", { hidden: true });
         this.steps.finish();
+        if (report.failure !== undefined) showValidationFailure(report.failure);
         showFindings(report);
-        ui.verdict(`${this.id} was not published`);
+        ui.verdict(
+          report.failure === undefined
+            ? `${this.id} was not published`
+            : `${this.id} could not be validated`,
+        );
         ui.done();
-        throw new CommandFailedError(`${this.id} did not pass the archive's checks`);
+        throw new CommandFailedError(
+          report.failure === undefined
+            ? `${this.id} did not pass the archive's checks`
+            : `${this.id} did not receive a validation verdict`,
+        );
       },
     };
   }
@@ -625,6 +639,7 @@ async function checkLocally(
     submit.steps.settle("archive", { hidden: true });
     submit.steps.settle("publish", { hidden: true });
     submit.steps.finish();
+    if (outcome.failure !== undefined) showValidationFailure(outcome.failure);
     showFindings(outcome);
     ui.verdict("Nothing was sent to the archive");
     ui.done();

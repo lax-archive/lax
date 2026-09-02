@@ -11,6 +11,7 @@ import type {
   ResolutionResult,
 } from "../contracts.js";
 import type { ValidationRunner } from "../sandbox/container.js";
+import { containerBoundaryFailure, infrastructureFailure } from "../failures.js";
 
 export async function runInspector(
   kind: "concepts" | "proofs",
@@ -52,13 +53,31 @@ export async function runInspector(
     maxOutputBytes: limits.maxOutputBytes,
   });
   if (result.code !== 0) {
-    const reason = result.timedOut ? `${kind} inspection exceeded its time limit` : result.output.trim();
-    throw new Error(reason || `${kind} inspection failed`);
+    const boundary = containerBoundaryFailure(
+      result,
+      `${kind} inspection exceeded its time limit`,
+      `${kind} inspection exceeded its memory limit`,
+    );
+    if (boundary !== undefined) throw boundary;
+    throw infrastructureFailure(result.output.trim() || `${kind} inspection failed`);
   }
   const reportPath = path.join(outputDir, "report.json");
-  const stat = fs.lstatSync(reportPath);
-  if (!stat.isFile() || stat.size > 32 * 1024 * 1024) throw new Error(`${kind} inspector report is missing or oversized`);
-  return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown);
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(reportPath);
+  } catch {
+    throw infrastructureFailure(`${kind} inspector report is missing or oversized`);
+  }
+  if (!stat.isFile() || stat.size > 32 * 1024 * 1024) {
+    throw infrastructureFailure(`${kind} inspector report is missing or oversized`);
+  }
+  try {
+    return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown);
+  } catch (error) {
+    throw infrastructureFailure(
+      `could not read the ${kind} inspector report: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /** Parse and bound an untrusted inspector report; shared with the host

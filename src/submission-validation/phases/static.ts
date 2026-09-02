@@ -11,6 +11,7 @@ import type {
 } from "../contracts.js";
 import { packageNameForSubmission } from "../contracts.js";
 import { FindingCollector } from "../findings.js";
+import { infrastructureFailure, resourceLimitFailure } from "../failures.js";
 import { rewriteMarkers, texRewriteOrder } from "../paper/rewrite.js";
 import { validateLakefile } from "../validators/lakefile.js";
 import { isAcceptedLicense } from "../validators/license.js";
@@ -218,7 +219,11 @@ function checkTrackedFiles(root: string, findings: FindingCollector, paperDeclar
       }
     }
   } catch (error) {
-    findings.violate("tracked-files", `could not inspect the submitted git tree: ${(error as Error).message}`);
+    const message = `could not inspect the submitted git tree: ${(error as Error).message}`;
+    if (error instanceof Error && /(?:timed? out|ETIMEDOUT)/iu.test(error.message)) {
+      throw resourceLimitFailure(message);
+    }
+    throw infrastructureFailure(message);
   }
 }
 

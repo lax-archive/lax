@@ -4,6 +4,12 @@ import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type { PublishedCapture, ResolvedDependency } from "../contracts.js";
 import type { ValidationRunner } from "../sandbox/container.js";
+import {
+  containerBoundaryFailure,
+  infrastructureFailure,
+  looksRetryable,
+  resourceLimitFailure,
+} from "../failures.js";
 
 /** Deduplicate the resolved captures by submission and enforce the aggregate
  * declared-size budget; shared by the container and host materializers. */
@@ -24,7 +30,7 @@ export function capturesBySubmission(
     for (const file of capture.files) {
       declaredBytes += file.bytes;
       if (!Number.isSafeInteger(declaredBytes) || declaredBytes > limits.maxWorkspaceBytes) {
-        throw new Error("dependency captures exceed the aggregate validation workspace limit");
+        throw resourceLimitFailure("dependency captures exceed the aggregate validation workspace limit");
       }
     }
   }
@@ -56,8 +62,16 @@ export async function materializeDependencyCaptures(
           timeoutMs: limits.fetchTimeoutMs,
           maxOutputBytes: limits.maxOutputBytes,
         });
-        if (download.code !== 0) throw new Error(`could not download capture for ${id}: ${download.output.trim()}`);
-        if (sha256File(archive) !== capture.digest) throw new Error(`capture archive digest mismatch for ${id}`);
+        if (download.code !== 0) {
+          const message = `could not download capture for ${id}: ${download.output.trim()}`;
+          if (download.timedOut) throw infrastructureFailure(message, true);
+          const boundary = containerBoundaryFailure(download, message, `downloading capture for ${id} exceeded its memory limit`);
+          if (boundary !== undefined) throw boundary;
+          throw infrastructureFailure(message, looksRetryable(message));
+        }
+        if (sha256File(archive) !== capture.digest) {
+          throw infrastructureFailure(`capture archive digest mismatch for ${id}`);
+        }
         const extract = await runner.run({
           label: `extract-${id}`,
           args: ["node", "/opt/lax/bin/extract-capture.mjs", `/job/downloads/${archiveName}`, `/job/dependencies/${id}`],
@@ -65,7 +79,16 @@ export async function materializeDependencyCaptures(
           timeoutMs: 60_000,
           maxOutputBytes: limits.maxOutputBytes,
         });
-        if (extract.code !== 0) throw new Error(`could not extract capture for ${id}: ${extract.output.trim()}`);
+        if (extract.code !== 0) {
+          const message = `could not extract capture for ${id}: ${extract.output.trim()}`;
+          const boundary = containerBoundaryFailure(
+            extract,
+            `extracting capture for ${id} exceeded its time limit`,
+            `extracting capture for ${id} exceeded its memory limit`,
+          );
+          if (boundary !== undefined) throw boundary;
+          throw infrastructureFailure(message);
+        }
         verifyFiles(base, capture);
         makeCapturedPackagesUsable(base, (kind, tree) => `/deps/${id}/${kind}/${tree}`);
         makeReadOnly(base);

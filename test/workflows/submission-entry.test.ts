@@ -218,6 +218,71 @@ describe("report-validation entry point", () => {
     expect(body).toContain(resultMarker(commentId));
     expect(parseWorkflowComment(body)).toMatchObject({ outcome: "failure", runId: "777" });
   });
+
+  it("reports a typed transient infrastructure failure without blaming the submission", async () => {
+    const reportPath = path.join(workDirectory(), "validation-report.json");
+    fs.writeFileSync(reportPath, JSON.stringify({
+      reportVersion: 1,
+      ok: false,
+      request: { id: "lax-42" },
+      warnings: [],
+      violations: [],
+      failure: {
+        kind: "infrastructure",
+        retryable: true,
+        phase: "source",
+        rule: "archive-snapshot",
+        message: "GitHub returned HTTP 503\ntransport transcript",
+      },
+    }));
+    stubWorkflowEnv({
+      VALIDATION_CONTEXT: encode({ id: "lax-42", issueNumber, commentId }),
+      VALIDATION_REPORT_PATH: reportPath,
+    });
+    const state: IssueState = { comments: [], reactions: [] };
+    installIssueFetch(state);
+
+    await reportValidation();
+
+    const body = state.comments[0]!.body;
+    expect(body).toContain("Validation infrastructure failed for **lax-42**");
+    expect(body).toContain("did not receive a content verdict");
+    expect(body).toContain("Failure `[source/archive-snapshot]`: GitHub returned HTTP 503");
+    expect(body).toContain("retrying the unchanged submission may succeed");
+    expect(body).not.toContain("Submission validation failed");
+    expect(body).not.toContain("transport transcript");
+  });
+
+  it("reports a resource limit as capacity rather than a content rejection", async () => {
+    const reportPath = path.join(workDirectory(), "validation-report.json");
+    fs.writeFileSync(reportPath, JSON.stringify({
+      reportVersion: 1,
+      ok: false,
+      request: { id: "lax-42" },
+      warnings: [],
+      violations: [],
+      failure: {
+        kind: "resource-limit",
+        retryable: false,
+        phase: "compile-proofs",
+        rule: "compile",
+        message: "proofs compilation exceeded its memory limit",
+      },
+    }));
+    stubWorkflowEnv({
+      VALIDATION_CONTEXT: encode({ id: "lax-42", issueNumber, commentId }),
+      VALIDATION_REPORT_PATH: reportPath,
+    });
+    const state: IssueState = { comments: [], reactions: [] };
+    installIssueFetch(state);
+
+    await reportValidation();
+
+    const body = state.comments[0]!.body;
+    expect(body).toContain("reached an Archive resource limit");
+    expect(body).toContain("was not rejected on content");
+    expect(body).toContain("Reduce the submission's resource use before retrying");
+  });
 });
 
 describe("prepare-submit entry point", () => {

@@ -36,6 +36,21 @@ export interface ValidationFinding {
   message: string;
 }
 
+/**
+ * A validation that could not produce an ordinary content verdict. Submission
+ * mistakes remain in `violations`; this describes capacity exhaustion or a
+ * failure of the Archive's own machinery. It is optional so successful v1
+ * reports keep their exact authenticated schema and older CLIs can still read
+ * unsuccessful reports while a control-plane/CLI rollout is in progress.
+ */
+export interface ValidationFailure {
+  kind: "resource-limit" | "infrastructure";
+  retryable: boolean;
+  phase: ValidationPhase;
+  rule: string;
+  message: string;
+}
+
 export interface ValidationRuntimeIdentity {
   image: string;
   imageDigest: string;
@@ -353,6 +368,7 @@ export interface ValidationReport {
   dependencies: ResolvedDependency[];
   warnings: ValidationFinding[];
   violations: ValidationFinding[];
+  failure?: ValidationFailure;
   buildOutput?: BuildOutputPayload;
   capture?: CaptureManifest;
 }
