@@ -3,6 +3,7 @@ import type { LocatedMark } from "../../src/submission-validation/paper/extract.
 import { resolvePaperMarks, type MarkResolutionContext } from "../../src/submission-validation/paper/resolve.js";
 
 const CONTEXT: MarkResolutionContext = {
+  submissionId: "lax-261",
   conceptPackage: "Lax261",
   own: { concepts: ["Lax261.Treewidth"], proofs: ["Lax261Proofs.Q"] },
   required: new Map([
@@ -98,7 +99,52 @@ describe("paper mark resolution", () => {
 
   it("resolves nothing against an empty context without complaint", () => {
     expect(
-      resolvePaperMarks([], { conceptPackage: "Lax0", own: { concepts: [], proofs: [] }, required: new Map() }),
+      resolvePaperMarks([], {
+        submissionId: "lax-0",
+        conceptPackage: "Lax0",
+        own: { concepts: [], proofs: [] },
+        required: new Map(),
+      }),
     ).toEqual({ marks: [], problems: [] });
+  });
+
+  it("resolves the submission itself and directly required submissions as submission marks", () => {
+    const result = resolvePaperMarks([located("lax-261", 1), located("lax-42", 2)], CONTEXT);
+    expect(result.problems).toEqual([]);
+    expect(result.marks).toEqual([
+      {
+        id: "lax-261",
+        kind: "submission",
+        begin: { page: 1, x: 72, y: 700, mode: "v" },
+        end: { page: 1, x: 72, y: 601, mode: "h" },
+      },
+      {
+        id: "lax-42",
+        kind: "submission",
+        begin: { page: 1, x: 72, y: 700, mode: "v" },
+        end: { page: 1, x: 72, y: 602, mode: "h" },
+      },
+    ]);
+  });
+
+  it("resolves the offline placeholder as the scaffold's own submission", () => {
+    const result = resolvePaperMarks([located("lax-0")], {
+      submissionId: "lax-0",
+      conceptPackage: "Lax0",
+      own: { concepts: [], proofs: [] },
+      required: new Map(),
+    });
+    expect(result.problems).toEqual([]);
+    expect(result.marks.map((mark) => [mark.id, mark.kind])).toEqual([["lax-0", "submission"]]);
+  });
+
+  it("refuses a submission the paper's packages do not require directly", () => {
+    const result = resolvePaperMarks([located("lax-7"), located("lax-42", 2)], CONTEXT);
+    expect(result.marks.map((mark) => mark.id)).toEqual(["lax-42"]);
+    expect(result.problems).toHaveLength(1);
+    expect(result.problems[0]).toContain(
+      "mark lax-7: lax-7 is not this submission or one whose package this submission requires directly",
+    );
+    expect(result.problems[0]).toContain("citation, not a mark");
   });
 });

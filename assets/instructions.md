@@ -75,12 +75,16 @@ The rules, applied to every `.tex` file under the folder:
   drop a passage.
 - `<id>` is a **concept id** (`Lax261.Treewidth`) — the passage is the
   informal counterpart of the concept, and its card shows the concept as
-  sourced from Lean — or a **proof id** (`Lax261Proofs.Q`) — the passage is
+  sourced from Lean — a **proof id** (`Lax261Proofs.Q`) — the passage is
   a proof or proof sketch, and its card is the judgment (assumptions →
-  conclusion). Statement ids, submission ids, package roots, and mathlib
-  declarations have no card and are errors. Ids match exactly.
+  conclusion) — or a **submission id** (`lax-42`) — the passage is about
+  that submission as a whole, and its card is just the title and a link to
+  its page. Statement ids, package roots, and mathlib declarations have no
+  card and are errors. Ids match exactly.
 - You may mark your own concepts and proofs, and those of packages your
-  lakefiles require directly (`requiredByConcepts` ∪ `requiredByProofs`).
+  lakefiles require directly (`requiredByConcepts` ∪ `requiredByProofs`);
+  likewise your own submission id and the submissions those packages belong
+  to (an offline scaffold marks itself as `lax-0` until it is renumbered).
   Anything else is a citation and belongs in the bibliography.
 - Markers nest; `end` closes the innermost open marker; every marker must be
   closed in the file that opened it. The same id may be marked any number

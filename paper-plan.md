@@ -10,7 +10,7 @@ suggestions.
 
 A submission may carry a LaTeX document. The archive compiles it itself,
 the author marks passages with bare comment lines, and the website shows the
-compiled PDF beside cards for the marked concepts and proofs.
+compiled PDF beside cards for the marked concepts, proofs, and submissions.
 
 The layer sits strictly on top of the existing content. Concepts keep being
 defined where they are defined today — the Lean module and its annotation
@@ -18,8 +18,12 @@ defined where they are defined today — the Lean module and its annotation
 shows, on the right, the concept as sourced from Lean: its title, type,
 description, and statements. A passage marked with a proof id shows the
 existing judgment card (assumptions → conclusion, grounded or conditional),
-never the proof code. All passages are equal; there is no "primary" passage
-and no notion of a paper defining anything.
+never the proof code. A passage marked with a submission id shows a small
+card naming that submission — its title and a link to its page — for the
+places where a paper talks about a whole piece of work (a related-work
+paragraph, "we build on lax-42", the paper's own abstract) rather than one
+concept in it. All passages are equal; there is no "primary" passage and no
+notion of a paper defining anything.
 
 Three things are hard to change later and are fixed here: the marker syntax
 authors put into their `.tex`, the `paper` shape in `build-output.json`, and
@@ -65,7 +69,7 @@ Grammar, applied to every `.tex` file under `paper.folder` (and only those;
   optional spaces, `lax`, spaces, `begin <id>` or `end` with an optional
   `<id>` that must equal the innermost open marker. Everything else after
   `%` on that line is ignored, as in any comment.
-- `<id>` is one of two kinds, and the kind decides what the card shows:
+- `<id>` is one of three kinds, and the kind decides what the card shows:
   - a **concept id** (`Lax261.Myconcept`): the passage is the informal
     counterpart of the concept — a definition, a theorem as stated, the
     paragraph introducing the object. Card: the concept as sourced from
@@ -73,20 +77,28 @@ Grammar, applied to every `.tex` file under `paper.folder` (and only those;
   - a **proof id** (`Lax261Proofs.Q`): the passage is a proof or proof
     sketch tied to one specific Lean proof. Card: the judgment card
     (assumptions → conclusion, grounded or conditional). Never Lean code.
+  - a **submission id** (`lax-42`): the passage is about that submission as
+    a whole. Card: deliberately small — the title and a link to the
+    submission page, nothing sourced from Lean. The paper's own id is
+    markable too (an offline scaffold marks `lax-0` until it is
+    renumbered, exactly as its packages are `Lax0` until then).
   Individual statements are not markable; the concept is the unit.
 - Ids resolve if they belong to the submission itself or to a package in
   the **union** of `requiredByConcepts` and `requiredByProofs` — directly
   required only, transitively reachable packages do not qualify, exactly as
-  for assumptions: to talk about it, require it. Own ids resolve against the
-  inventory and inspection results, foreign ids against the archive
+  for assumptions: to talk about it, require it. A submission id resolves
+  under the same rule: it is the paper's own submission or the record one
+  of those directly required packages belongs to. Own ids resolve against
+  the inventory and inspection results, foreign ids against the archive
   snapshot the Resolution phase holds. Starting strict is deliberate: a
   mention of an archive concept the submission does not build on is a
   citation and belongs in the bibliography; relaxing later to any
   registered id is additive, tightening later would break papers.
-- Not ids: statement ids (`Lax261.Myconcept.X`), submission ids
-  (`lax-42`), package roots (`Lax42`), mathlib declarations, and
-  frontmatter-less helpers of a proof package — none has a card. Ids
-  match exactly, no normalization. Any other id is a validation error.
+- Not ids: statement ids (`Lax261.Myconcept.X`), package roots (`Lax42` —
+  the error points at `lax-42` for the whole submission), mathlib
+  declarations, and frontmatter-less helpers of a proof package — none has
+  a card. Ids match exactly, no normalization. Any other id is a validation
+  error.
 - Markers nest and may overlap by nesting only; `end` closes the innermost
   open marker; an unclosed marker at end of file, or an `end` with nothing
   open, is a violation. The same id may be marked any number of times.
@@ -235,7 +247,8 @@ declares a paper:
       ]
     }
 
-`kind` is `concept` or `proof`, decided at resolution.
+`kind` is `concept`, `proof`, or `submission`, decided at resolution (from
+the id's spelling; the resolver only settles whether the id names a card).
 `marks` keep mark-number order (which is compile order, i.e. document
 order); pages are 1-based; coordinates keep two decimals. Local builds omit
 `registryBlob` and instead write `paper.pdf` beside `build-output.json`
@@ -344,9 +357,12 @@ disk and never fetches.
   (`shared.ts:378`, `backToSubmission`), a two-column body that stacks at
   the existing 900 px breakpoint, the marks as an inert JSON script tag (the
   `graphDataScript` pattern, `graphs.ts:130`), and pre-rendered cards — one
-  per mark, in mark order — built from `proofJudgment` :49 for proofs and
+  per mark, in mark order — built from `proofJudgment` :49 for proofs,
   title/type badge/description/statement list (via `claimEntry` :39) for
-  concepts. Cards carry the `line-proven`/`line-open` vocabulary
+  concepts, and, for submissions, only the id badge, the title, and a link
+  to the submission page (the submission model already carries both; a
+  foreign submission that is not in the site's database renders the id as
+  plain text). Cards carry the `line-proven`/`line-open` vocabulary
   from `highlight.ts:193`. Class prefix `manuscript-*` (`paper-*` is the
   submission masthead). Above the columns: a short index of what the paper
   marks, own and foreign.

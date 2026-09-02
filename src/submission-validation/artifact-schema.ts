@@ -344,11 +344,13 @@ export function parsePaperOutput(value: unknown, manifest: PaperManifest, publis
 function parsePaperMark(value: unknown, index: number, pages: number): PaperMark {
   const label = `generated paper mark ${index + 1}`;
   const object = exactObject(value, ["id", "kind", "begin", "end"], label);
-  const id = identifier(object.id, `${label} id`, 2_048);
+  const id = nonemptyText(object.id, `${label} id`, 2_048, false);
   const shape = markIdProblem(id);
   if (shape !== undefined) throw new ValidationError(`${label} id: ${shape}`);
   const kind = object.kind;
-  if (kind !== "concept" && kind !== "proof") throw new ValidationError(`${label} kind is invalid`);
+  if (kind !== "concept" && kind !== "proof" && kind !== "submission") {
+    throw new ValidationError(`${label} kind is invalid`);
+  }
   if (kind !== markIdKind(id)) throw new ValidationError(`${label} kind does not match its id`);
   return {
     id,

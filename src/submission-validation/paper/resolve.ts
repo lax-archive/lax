@@ -5,9 +5,11 @@
 // against the inspection; foreign ids against the build outputs of packages
 // in the union of `requiredByConcepts` and `requiredByProofs` — directly
 // required only, exactly as for assumptions: to talk about it, require it.
+// A submission id resolves under the same rule: it is the submission's own
+// id or the record one of those directly required packages belongs to.
 // Pure; the caller reads the archive snapshot.
 
-import type { PaperMark } from "../contracts.js";
+import { submissionIdForPackage, type PaperMark } from "../contracts.js";
 import type { LocatedMark } from "./extract.js";
 import { markIdKind, markIdPackage } from "./rewrite.js";
 
@@ -18,6 +20,8 @@ export interface CardIds {
 }
 
 export interface MarkResolutionContext {
+  /** The submission's own id (`lax-261`, or `lax-0` for an offline scaffold). */
+  submissionId: string;
   /** The submission's own concept package name (`Lax261`). */
   conceptPackage: string;
   /** Cards the submission itself produced, from Inspect. */
@@ -35,9 +39,24 @@ export function resolvePaperMarks(
   const marks: PaperMark[] = [];
   const problems: string[] = [];
   const proofPackage = `${context.conceptPackage}Proofs`;
+  const requiredSubmissions = new Set(
+    [...context.required.keys()].map((packageName) => submissionIdForPackage(packageName)),
+  );
   for (const mark of located) {
-    const packageName = markIdPackage(mark.id);
     const kind = markIdKind(mark.id);
+    if (kind === "submission") {
+      if (mark.id === context.submissionId || requiredSubmissions.has(mark.id)) {
+        marks.push({ id: mark.id, kind, begin: mark.begin, end: mark.end });
+      } else {
+        problems.push(
+          `mark ${mark.id}: ${mark.id} is not this submission or one whose package this submission requires directly — ` +
+            "a paper can mark only itself and the submissions in its lakefiles' requires; " +
+            "mentioning anything else is a citation, not a mark",
+        );
+      }
+      continue;
+    }
+    const packageName = markIdPackage(mark.id);
     let cards: CardIds | undefined;
     let owner: string;
     if (packageName === context.conceptPackage || packageName === proofPackage) {

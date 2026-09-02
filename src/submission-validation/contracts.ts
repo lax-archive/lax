@@ -112,9 +112,14 @@ export interface PaperMarkPoint {
   mode: "v" | "h";
 }
 
+/** What a mark's card shows, decided from the id's spelling: a concept
+ * (`Lax261.Treewidth`), a proof (`Lax261Proofs.Q`), or a whole submission
+ * (`lax-261` — title and a link to its page). */
+export type PaperMarkKind = "concept" | "proof" | "submission";
+
 export interface PaperMark {
   id: string;
-  kind: "concept" | "proof";
+  kind: PaperMarkKind;
   begin: PaperMarkPoint;
   end: PaperMarkPoint;
 }
@@ -229,7 +234,8 @@ export interface PublishedCapture extends CaptureManifest {
 
 /** A canonical Lean name: dot-separated identifiers, no «» escapes. The
  * shape every concept, proof, and statement id in a build output has, and
- * hence the shape of every paper mark id. */
+ * hence the shape of every concept or proof mark id in a paper (submission
+ * marks use the `lax-N` record id instead). */
 export const LEAN_NAME_PATTERN =
   /^(?:[\p{L}_][\p{L}\p{N}\p{M}_']*)(?:\.(?:[\p{L}_][\p{L}\p{N}\p{M}_']*))*$/u;
 

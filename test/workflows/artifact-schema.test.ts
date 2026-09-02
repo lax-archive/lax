@@ -332,6 +332,18 @@ describe("paper build output", () => {
       parsePaperOutput(loose((paper) => { mark(paper).id = "Lax42"; }), PAPER_MANIFEST, false),
     ).toThrow("generated paper mark 1 id: `Lax42` is a package name");
     expect(() =>
+      parsePaperOutput(loose((paper) => { mark(paper).id = "lax-42"; }), PAPER_MANIFEST, false),
+    ).toThrow("generated paper mark 1 kind does not match its id");
+    expect(() =>
+      parsePaperOutput(loose((paper) => { mark(paper).id = "lax-042"; mark(paper).kind = "submission"; }), PAPER_MANIFEST, false),
+    ).toThrow("generated paper mark 1 id: `lax-042` is neither a Lean name nor a submission id");
+    const submission = parsePaperOutput(
+      loose((paper) => { mark(paper).id = "lax-42"; mark(paper).kind = "submission"; }),
+      PAPER_MANIFEST,
+      false,
+    );
+    expect(submission.marks[0]).toMatchObject({ id: "lax-42", kind: "submission" });
+    expect(() =>
       parsePaperOutput(loose((paper) => { (mark(paper).end as Record<string, unknown>).mode = "m"; }), PAPER_MANIFEST, false),
     ).toThrow("generated paper mark 1 end mode is invalid");
     expect(() =>

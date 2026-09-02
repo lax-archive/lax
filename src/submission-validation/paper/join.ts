@@ -34,6 +34,7 @@ export function joinPaperMarks(
     );
   }
   const resolved = resolvePaperMarks(compiled.located, {
+    submissionId: staticResult.manifest!.id,
     conceptPackage: staticResult.concepts!.lakefile.packageName,
     own: {
       concepts: inspection.concepts.map((concept) => concept.id),

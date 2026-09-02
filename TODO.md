@@ -106,9 +106,11 @@ history/go-live.md). Still owed:
 
 A submission may carry a LaTeX document that the archive compiles itself;
 authors mark passages with bare `% lax begin <id>` / `% lax end` comments,
-and the website shows the PDF beside cards for the marked concepts and
-proofs. Done: the contract (manifest key, marker grammar and rewriter,
-static gate, `paper` payload parsers); the host path (`lax build` compiles
+and the website shows the PDF beside cards for the marked concepts,
+proofs, and submissions (`lax-42`: title plus a link, added 2026-09-02 as
+the third mark kind — parser, resolver, payload parser, docs). Done: the
+contract (manifest key, marker grammar and rewriter, static gate, `paper`
+payload parsers); the host path (`lax build` compiles
 with the host latexmk and `assets/tex/laxmark.sty`, extracts the
 destinations with pdf.js, resolves the ids, writes `paper.pdf` beside
 `build-output.json`; doctor's LaTeX row; the host e2e, for which CI installs
@@ -142,9 +144,31 @@ plan's order:
   `jan3er/lax-paper-roundtrip-20260902` (`gh auth refresh -h github.com -s
   delete_repo`, then `gh repo delete … --yes`). The scratch-repo rehearsal
   was skipped by decision for this change.
-- **Stage 4, website**; **stage 5, `lax serve` + production round trip**;
-  **stage 6, docs** (spec-notes amendment, README's second image and
-  doctor row, `instructions.md` author section, retiring paper-plan.md into
+- **Stage 4, website — next session.** Nothing paper-related exists in
+  `lax-website` yet (no paper page, no viewer, no pdf.js); the plan's
+  "Website" section is the spec and its anchors were re-verified 2026-09-02
+  (`src/types.ts`, `src/database.ts:16` `rendererOutput`,
+  `src/sitegen/model.ts:5` `SiteSubmission`, `src/sitegen/generate.ts:20`
+  files map, `src/sitegen/assets.ts:9` `SITE_MIME`,
+  `src/sitegen/pages/shared.ts` `claimEntry` :39 / `proofJudgment` :49 /
+  `backToSubmission` :382, `src/sitegen/html.ts:42-46` the two CSP
+  variants). Inputs: `build-output.json` `paper` shape from
+  `parsePaperOutput` in `src/submission-validation/artifact-schema.ts`
+  (three mark kinds — `concept`, `proof`, and `submission`, the last
+  rendering only id badge + title + link), the marker semantics
+  (`v`/`h` mode tag, boundary rule) in `spike/paper/viewer/REPORT.md`,
+  and the working throwaway viewer in `spike/paper/viewer/` (local only,
+  gitignored) whose pure placement functions become
+  `assets/site/manuscript.js`. Live test data: lax-61 was deleted, so
+  the first real fixture is a `lax build` of `makePaperSubmission`
+  (`test/support/host.ts`) or one of the flagship drafts with a paper.
+  Order: types + loader + `papers:fetch` cache → generator output
+  (`<id>/paper.pdf`, `<id>/paper.html`) → page with pre-rendered cards →
+  viewer + CSP variant → cross-links → previews policy → renderer
+  release (page-builder bundle grows by pdf.js).
+- **Stage 5, `lax serve` + production round trip**; **stage 6, docs**
+  (spec-notes amendment, README's second image and doctor row,
+  `instructions.md` author section, retiring paper-plan.md into
   `history/`).
 - Known limits to carry: pdf.js (`pdfjs-dist` 5.6, the last line that still
   runs on Node 20.19) pulls `@napi-rs/canvas` as an optional native

@@ -14,7 +14,13 @@
 // `laxmark.sty` turns into a PDF named destination carrying only the number.
 // Ids never enter the PDF; the mark table maps numbers back to them.
 
-import { LEAN_NAME_PATTERN, submissionIdForPackage, type PaperMarkTableEntry } from "../contracts.js";
+import { PLACEHOLDER_SUBMISSION_ID, SUBMISSION_ID_PATTERN } from "../../shared/constants.js";
+import {
+  LEAN_NAME_PATTERN,
+  submissionIdForPackage,
+  type PaperMarkKind,
+  type PaperMarkTableEntry,
+} from "../contracts.js";
 
 /** A `.tex` text to rewrite, keyed by its path relative to `paper.folder`. */
 export interface TexFile {
@@ -132,32 +138,50 @@ export function parseMarker(body: string): ParsedMarker | undefined {
   return id === undefined ? { keyword: "end" } : { keyword: "end", id };
 }
 
+const MARK_ID_SHAPES =
+  "a mark id is a concept id like Lax261.Treewidth, a proof id like Lax261Proofs.Q, or a submission id like lax-261";
+
 /**
- * Whether an id can name a card at all, decided from its spelling: a Lax
- * package component followed by at least one more — `Lax261.Treewidth` (a
- * concept) or `Lax261Proofs.Q` (a proof). A submission id, a package root, a
- * mathlib declaration, or anything that is not a Lean name has no card. The
- * offline placeholder packages `Lax0`/`Lax0Proofs` are legal spellings: they
- * are the submission's own packages until it is renumbered.
+ * Whether an id can name a card at all, decided from its spelling: a
+ * submission id (`lax-261`), or a Lax package component followed by at
+ * least one more — `Lax261.Treewidth` (a concept) or `Lax261Proofs.Q` (a
+ * proof). A package root, a mathlib declaration, or anything that is
+ * neither a submission id nor a Lean name has no card. The offline
+ * placeholders `lax-0`/`Lax0`/`Lax0Proofs` are legal spellings: they are
+ * the submission's own id and packages until it is renumbered.
  */
 export function markIdProblem(id: string): string | undefined {
-  if (!LEAN_NAME_PATTERN.test(id)) return `\`${id}\` is not a Lean name; a mark id is a concept id like Lax261.Treewidth or a proof id like Lax261Proofs.Q`;
+  if (isSubmissionMarkId(id)) return undefined;
+  if (!LEAN_NAME_PATTERN.test(id)) return `\`${id}\` is neither a Lean name nor a submission id; ${MARK_ID_SHAPES}`;
   const dot = id.indexOf(".");
-  if (dot < 0) return `\`${id}\` is a package name, not a concept or proof id; mark Lax261.Treewidth, not Lax261`;
+  if (dot < 0) {
+    const submission = submissionIdForPackage(id) ?? (/^Lax0(?:Proofs)?$/u.test(id) ? PLACEHOLDER_SUBMISSION_ID : undefined);
+    return submission === undefined
+      ? `\`${id}\` is a package name, not a concept or proof id; mark Lax261.Treewidth, not Lax261`
+      : `\`${id}\` is a package name, not a concept or proof id; mark ${id}.Treewidth for a concept, or ${submission} for the whole submission`;
+  }
   const packageName = id.slice(0, dot);
   if (submissionIdForPackage(packageName) === undefined && !/^Lax0(?:Proofs)?$/u.test(packageName)) {
-    return `\`${id}\` does not belong to a Lax package; a mark id is a concept id like Lax261.Treewidth or a proof id like Lax261Proofs.Q`;
+    return `\`${id}\` does not belong to a Lax package; ${MARK_ID_SHAPES}`;
   }
   return undefined;
 }
 
-/** The card kind an id's package component announces. */
-export function markIdKind(id: string): "concept" | "proof" {
+/** Whether an id is spelled as a submission id (`lax-261`, or the offline
+ * placeholder `lax-0`). */
+export function isSubmissionMarkId(id: string): boolean {
+  return SUBMISSION_ID_PATTERN.test(id) || id === PLACEHOLDER_SUBMISSION_ID;
+}
+
+/** The card kind an id's spelling announces. */
+export function markIdKind(id: string): PaperMarkKind {
+  if (isSubmissionMarkId(id)) return "submission";
   const packageName = id.slice(0, id.indexOf("."));
   return packageName.endsWith("Proofs") ? "proof" : "concept";
 }
 
-/** The package component of a mark id (`Lax261` of `Lax261.Treewidth`). */
+/** The package component of a concept or proof mark id (`Lax261` of
+ * `Lax261.Treewidth`). Not for submission ids, which name no package. */
 export function markIdPackage(id: string): string {
   return id.slice(0, id.indexOf("."));
 }

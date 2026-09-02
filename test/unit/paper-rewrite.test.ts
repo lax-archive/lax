@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   firstCommentIndex,
+  isSubmissionMarkId,
   markIdKind,
   markIdPackage,
   markIdProblem,
@@ -146,7 +147,7 @@ describe("paper marker nesting", () => {
     const { marks, problems } = rewriteOne("% lax begin Lax261\n% lax end\n");
     expect(marks).toEqual([]);
     expect(problems).toEqual([
-      "main.tex:1: `Lax261` is a package name, not a concept or proof id; mark Lax261.Treewidth, not Lax261",
+      "main.tex:1: `Lax261` is a package name, not a concept or proof id; mark Lax261.Treewidth for a concept, or lax-261 for the whole submission",
       "main.tex:2: `lax end` with no open marker",
     ]);
   });
@@ -199,11 +200,25 @@ describe("mark ids", () => {
     expect(markIdProblem("Lax0Proofs.Q")).toBeUndefined();
   });
 
+  it("accepts submission ids, including the offline placeholder", () => {
+    expect(markIdProblem("lax-261")).toBeUndefined();
+    expect(markIdProblem("lax-0")).toBeUndefined();
+    expect(isSubmissionMarkId("lax-261")).toBe(true);
+    expect(isSubmissionMarkId("Lax261")).toBe(false);
+    expect(markIdProblem("lax-01")).toContain("is neither a Lean name nor a submission id");
+    expect(markIdProblem("lax-")).toContain("is neither a Lean name nor a submission id");
+    expect(markIdProblem("LAX-261")).toContain("is neither a Lean name nor a submission id");
+  });
+
   it("rejects non-names, package roots, and non-Lax packages", () => {
-    expect(markIdProblem("not a name")).toContain("is not a Lean name");
-    expect(markIdProblem("Lax261.")).toContain("is not a Lean name");
+    expect(markIdProblem("not a name")).toContain("is neither a Lean name nor a submission id");
+    expect(markIdProblem("Lax261.")).toContain("is neither a Lean name nor a submission id");
     expect(markIdProblem("Lax261")).toContain("is a package name, not a concept or proof id");
-    expect(markIdProblem("Lax261Proofs")).toContain("is a package name");
+    // a package root points at the submission id that names the whole record
+    expect(markIdProblem("Lax261")).toContain("mark Lax261.Treewidth for a concept, or lax-261 for the whole submission");
+    expect(markIdProblem("Lax261Proofs")).toContain("or lax-261 for the whole submission");
+    expect(markIdProblem("Lax0")).toContain("or lax-0 for the whole submission");
+    expect(markIdProblem("Mathlib")).toContain("mark Lax261.Treewidth, not Lax261");
     expect(markIdProblem("Mathlib.Order.Basic")).toContain("does not belong to a Lax package");
     expect(markIdProblem("Lax01.A")).toContain("does not belong to a Lax package");
     expect(markIdProblem("lax261.A")).toContain("does not belong to a Lax package");
@@ -213,6 +228,8 @@ describe("mark ids", () => {
     expect(markIdKind("Lax261.Treewidth")).toBe("concept");
     expect(markIdKind("Lax261Proofs.Q")).toBe("proof");
     expect(markIdKind("Lax0Proofs.Q.R")).toBe("proof");
+    expect(markIdKind("lax-261")).toBe("submission");
+    expect(markIdKind("lax-0")).toBe("submission");
     expect(markIdPackage("Lax261.Treewidth")).toBe("Lax261");
     expect(markIdPackage("Lax261Proofs.Q.R")).toBe("Lax261Proofs");
   });
