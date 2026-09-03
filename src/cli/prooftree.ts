@@ -144,7 +144,7 @@ export async function generateProofTree(
   const submissionId = normalizeSubmissionId(submissionInput);
   const database = databaseDirectory();
   if (!fs.existsSync(path.join(database, ".git"))) {
-    throw new Error(`local lax-database checkout is missing at ${database}; run \`lax update-db\``);
+    throw new Error(`local lax-database checkout is missing at ${database}; run \`lax sync\``);
   }
   const refresh = tryRefreshDatabase();
   if (refresh === "failed") {

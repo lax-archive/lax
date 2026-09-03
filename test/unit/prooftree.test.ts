@@ -1,5 +1,8 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { selectProofTree, type NetworkProof } from "../../src/cli/prooftree.js";
+import { generateProofTree, selectProofTree, type NetworkProof } from "../../src/cli/prooftree.js";
 
 function proof(
   id: string,
@@ -16,6 +19,20 @@ function proof(
 }
 
 describe("proof-tree selection", () => {
+  it("directs missing-database recovery to lax sync", async () => {
+    const previousHome = process.env.LAX_HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "lax-prooftree-home-"));
+    process.env.LAX_HOME = home;
+
+    try {
+      await expect(generateProofTree("lax-1")).rejects.toThrow("run `lax sync`");
+    } finally {
+      if (previousHome === undefined) delete process.env.LAX_HOME;
+      else process.env.LAX_HOME = previousHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("prefers a proof whose complete assumption tree is grounded", () => {
     const selection = selectProofTree(
       ["B"],
