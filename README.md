@@ -97,9 +97,9 @@ gets them bind-mounted read-only. A declared paper compiles in a second
 digest-pinned image — a full TeX Live, `PAPER_IMAGE` in the same pins module,
 pulled on demand only for paper-bearing submissions, with none of the Lean
 mounts — and the paper's derived web view is produced by the ReflowTeX fork
-pinned there too (`REFLOWTEX_URL`/`REFLOWTEX_REV`; `npm run reflowtex:fetch`
-obtains it, applies the patches in `reflowtex/patches/`, and installs the
-hash-pinned encode environment). The success path is three jobs — `route`,
+pinned there too (`REFLOWTEX_URL`/`REFLOWTEX_REV` — the `lax` branch of
+`lax-archive/reflowtex`; `npm run reflowtex:fetch` obtains it and installs
+the hash-pinned encode environment). The success path is three jobs — `route`,
 `Validate`, `publish-submit` — with `report-validation-failure` and
 `report-workflow-failure` covering the failure cases; publication is gated on
 the validate job's own result, since it exits non-zero unless the report is

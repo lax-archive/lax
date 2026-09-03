@@ -108,27 +108,18 @@ A submission may carry a LaTeX paper the archive compiles itself (`paper:`
 in `manifest.yaml`, `% lax begin <id>` / `% lax end` markers); beside the
 PDF the archive derives a reflowable web view (ReflowTeX, non-blocking,
 `web: false` opts out), and the site's paper page shows both surfaces with
-a card per marked passage. All code stages of both plans are on
-`claude/html-annotation-overlay-tdmshk` (and lax-website's branch of the
-same name); the author contract is in instructions.md, the proposed spec
-amendment in spec-notes.md (2026-09-02). What remains:
+a card per marked passage. All code stages of both plans are merged
+(lax-website 2026-09-03 morning, lax the same day); the author contract
+is in instructions.md, the proposed spec amendment in spec-notes.md
+(2026-09-02). The fork `lax-archive/reflowtex` exists (`lax` branch, one
+commit per changed file) and the pin points at it. The paper-web docker
+smoke first ran 2026-09-03 on Jan's machine and found the pinned image's
+dvisvgm cannot read PDF (Ghostscript 10.07, no mutool) — fixed with the
+Ghostscript EPS detour in `web-container.ts`; the web compile of the
+tikz fixture takes ~16 s in the image. Jan waived the scratch-repo
+rehearsal for this merge (2026-09-03, "finish all the way"); the standing
+rule itself stands for the next Actions-side change. What remains:
 
-- **[Jan] Fork + flip**: fork `radek-p/reflowtex` into `lax-archive` (a
-  github.com click) and enable the new repo for Claude; a session then
-  populates its `lax` branch (the `reflowtex/patches/` series as commits,
-  provenance README), flips `REFLOWTEX_URL` in `pins.ts`, and retires
-  `patches/`. The validate job's failure-tolerant `reflowtex:fetch` step
-  follows the pin automatically (landed with the docs pass; a fetch
-  hiccup degrades to a `web-toolchain` skip, never a failed validation).
-- **[Jan] Docker smoke**: on a machine with docker, `npm run
-  reflowtex:fetch`, then `LAX_SMOKE_CASE=paper-web npm run
-  smoke:submission-validation`, and take the luaotfload cold-cache
-  measure inside the pinned image while there (the spike's warm numbers
-  came from Debian's prebuilt name database).
-- **[Jan] Scratch-repo rehearsal** before the branch merges — the
-  standing rule; the branch touches `submission.yml`, the publisher, and
-  the capture store. The scratch repos were torn down, so recreation and
-  tokens are Jan's (`scripts/rehearsal/`).
 - **[Jan] Renderer release**: bump
   `src/cli/deployment/website-source.lock.json` to a paper-bearing
   lax-website revision, `page-builder:package` + `page-builder:verify`
@@ -155,7 +146,7 @@ amendment in spec-notes.md (2026-09-02). What remains:
   xelatex-engine paper.
 - The serializer's `has_ink` gate fix (standalone figures vanished from
   the web view; upstream has the same silent drop) is an upstreaming
-  candidate to `radek-p/reflowtex` once the fork exists.
+  candidate from `lax-archive/reflowtex` to `radek-p/reflowtex`.
 - Known limits, carried: pdf.js stays `pdfjs-dist` 5.6 (the last line
   that runs on Node 20.19; its optional `@napi-rs/canvas` native
   dependency is never loaded); the paper containers run under the Lean

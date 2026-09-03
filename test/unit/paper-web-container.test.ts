@@ -385,7 +385,13 @@ describe("export helpers", () => {
     const script = webExportScript();
     expect(script).toContain("kpsewhich");
     expect(script).toContain('kpsewhich "$name.pfb"');
-    expect(script).toContain("dvisvgm --pdf --no-fonts --optimize=all");
+    // PDF → EPS through the image's Ghostscript, then dvisvgm's --eps input:
+    // the pinned image's dvisvgm refuses its Ghostscript for --pdf and has
+    // no mutool (2026-09-03 smoke), so a direct --pdf never converts there.
+    expect(script).toContain("-sDEVICE=eps2write");
+    expect(script).toContain("dvisvgm --eps --no-fonts --optimize=all");
+    expect(script).not.toContain("dvisvgm --pdf");
+    expect(script).toContain("picture not converted");
     expect(script).toContain("--tmpdir=");
     expect(script).toContain(`${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}`);
   });
@@ -406,5 +412,20 @@ describe("export helpers", () => {
       "web-export-cap",
     );
     expect(webExportProblem(webSrc, [FONT, "missing.otf"], DEFAULT_LIMITS)?.rule).toBe("web-font-export");
+  });
+
+  it("names a picture the image left unconverted instead of letting the encode trip on it", () => {
+    const webSrc = tmpDir("lax-web-export-picture-");
+    fs.mkdirSync(path.join(webSrc, WEB_EXPORT_FONTS_DIR), { recursive: true });
+    fs.mkdirSync(path.join(webSrc, "pics"), { recursive: true });
+    fs.writeFileSync(path.join(webSrc, WEB_EXPORT_FONTS_DIR, FONT), FONT_BYTES);
+    fs.writeFileSync(path.join(webSrc, "pics", "fig0.pdf"), "%PDF");
+    fs.writeFileSync(path.join(webSrc, "pics", "fig0.svg"), "<svg/>");
+    fs.writeFileSync(path.join(webSrc, "pics", "fig1.pdf"), "%PDF"); // no fig1.svg
+
+    const problem = webExportProblem(webSrc, [FONT], DEFAULT_LIMITS);
+    expect(problem?.rule).toBe("web-picture-export");
+    expect(problem?.message).toContain("fig1.pdf");
+    expect(problem?.message).not.toContain("fig0.pdf");
   });
 });

@@ -60,13 +60,18 @@ export const WEB_EXPORT_FONTS_DIR = "lax-fonts";
  * each legacy face's Type1 outline (`<name>.pfb`) with kpsewhich — the
  * same lookups the encode's own provisioning and t1 conversion would do if
  * the host had TeX — into the fonts directory, then convert every
- * externalized picture PDF to SVG with the image's dvisvgm, using exactly
- * the fork's invocation (transforms.py) including the private tmpdir. A
- * file kpsewhich cannot resolve or a picture dvisvgm cannot convert is
- * simply left absent — the deriver checks the required pieces afterwards
- * and skips loudly (a missing pfb is not required: it degrades to metric
- * boxes exactly as on a TeX-full host), so nothing fails silently and the
- * script itself stays simple.
+ * externalized picture PDF to SVG with the image's dvisvgm — via an EPS
+ * detour through the image's own Ghostscript: dvisvgm's direct `--pdf`
+ * input needs Ghostscript < 10.01 or mutool, and the pinned TL2025 image
+ * ships Ghostscript 10.07 and no mutool (measured 2026-09-03, the first
+ * docker smoke of this path), while its `--eps` input runs on any
+ * Ghostscript. The dvisvgm options match the fork's invocation
+ * (transforms.py), private tmpdir included. A file kpsewhich cannot
+ * resolve or a picture that does not convert is left absent, with the
+ * converter's transcript on stderr — the deriver checks the required
+ * pieces afterwards and skips loudly (a missing pfb is not required: it
+ * degrades to metric boxes exactly as on a TeX-full host), so nothing
+ * fails silently and the script itself stays simple.
  */
 export function webExportScript(): string {
   const fontsDir = `${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}`;
@@ -94,7 +99,12 @@ export function webExportScript(): string {
     "  out=\"${pdf%.pdf}.svg\"",
     "  [ -f \"$out\" ] && continue",
     "  tmp=\"$(mktemp -d)\"",
-    "  dvisvgm --pdf --no-fonts --optimize=all \"--tmpdir=$tmp\" \"--output=$out\" \"$pdf\" || true",
+    "  eps=\"$tmp/picture.eps\"",
+    "  if gs -q -dNOPAUSE -dBATCH -dSAFER -sDEVICE=eps2write \"-sOutputFile=$eps\" \"$pdf\" >&2 &&",
+    "     dvisvgm --eps --no-fonts --optimize=all \"--tmpdir=$tmp\" \"--output=$out\" \"$eps\" >&2; then :; else",
+    "    echo \"lax paper-web export: picture not converted: $pdf\" >&2",
+    "    rm -f \"$out\"",
+    "  fi",
     "  rm -rf \"$tmp\"",
     "done",
     "exit 0",
@@ -132,10 +142,26 @@ export function webExportProblem(
     exported.push(path.join(fontsDir, name));
   }
   const picsDir = path.join(webSrc, "pics");
+  const unconverted: string[] = [];
   if (fs.existsSync(picsDir)) {
     for (const name of fs.readdirSync(picsDir).sort()) {
       if (name.endsWith(".svg")) exported.push(path.join(picsDir, name));
+      if (name.endsWith(".pdf") && !fs.existsSync(path.join(picsDir, `${name.slice(0, -4)}.svg`))) {
+        unconverted.push(name);
+      }
     }
+  }
+  if (unconverted.length > 0) {
+    // Every externalized picture must arrive converted: the host encode has
+    // no dvisvgm (its seam is shut), so a missing SVG there would surface as
+    // a confusing encode failure instead of naming the picture.
+    return {
+      rule: "web-picture-export",
+      message:
+        "the reflow view was not derived: the TeX image could not convert " +
+        `picture(s) to SVG: ${unconverted.slice(0, 10).join(", ")}` +
+        (unconverted.length > 10 ? ` (and ${unconverted.length - 10} more)` : ""),
+    };
   }
   if (exported.length > limits.paperWebExportFiles) {
     return {

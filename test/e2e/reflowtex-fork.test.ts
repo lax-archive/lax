@@ -38,13 +38,17 @@ function answers(command: string, args: string[]): boolean {
 const hasSource = fs.existsSync(path.join(source, "src", "extract", "serializer.lua"));
 const hasPython = answers("python3", ["--version"]);
 const hasLualatex = answers("lualatex", ["--version"]);
+// Debian splits luaotfload (fontspec's font loader) into texlive-luatex; a
+// lualatex binary without it fails every fontspec document at font lookup.
+const hasLuaotfload = answers("kpsewhich", ["luaotfload.sty"]);
 const hasDvisvgm = answers("dvisvgm", ["--version"]);
-const withFork = hasSource && hasPython && hasLualatex;
+const withFork = hasSource && hasPython && hasLualatex && hasLuaotfload;
 if (!withFork) {
   const missing = [
     hasSource ? undefined : `no reflowtex checkout at ${source} (set LAX_REFLOWTEX_SOURCE)`,
     hasPython ? undefined : "python3 not found",
     hasLualatex ? undefined : "lualatex not found",
+    hasLuaotfload ? undefined : "luaotfload not found (Debian: texlive-luatex)",
   ].filter((reason) => reason !== undefined);
   console.warn(`reflowtex-fork: skipping — ${missing.join("; ")}`);
 }

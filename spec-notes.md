@@ -159,11 +159,11 @@ rendering it wrong.
 
 **Licensing.** ReflowTeX is AGPL-3.0-or-later. No upstream source file is
 committed to this repository: `reflowtex/fetch.mjs` obtains the pinned rev
-and applies our patches (`reflowtex/patches/`, themselves AGPL-labelled
-derivatives), and the npm `files` allowlist excludes the directory —
-`laxreflow.sty` ships but is lax-authored and only *loads* the serializer.
-The public `lax-archive/reflowtex` fork repo is a pending Jan-owned click;
-until it exists the pin names the upstream repository. The website serves
+of our public fork `lax-archive/reflowtex` (its `lax` branch carries our
+changes as AGPL-labelled commits; created 2026-09-03, replacing the interim
+upstream-plus-patches fetch), and the npm `files` allowlist excludes the
+directory — `laxreflow.sty` ships but is lax-authored and only *loads* the
+serializer. The website serves
 the fork's viewer unminified with its license text (source availability,
 AGPL §13), and the packaged page-builder that vendors it into the `lax`
 npm tarball is **aggregation with notices**: `page-builder:package` writes

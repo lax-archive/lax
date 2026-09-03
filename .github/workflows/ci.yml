@@ -70,10 +70,10 @@ jobs:
             texlive-luatex texlive-fonts-recommended fonts-lmodern \
             texlive-pictures dvisvgm mupdf-tools
       # The reflowtex fork e2es gate on a reference clone of the pinned
-      # upstream (LAX_REFLOWTEX_SOURCE) and fetch from it in their beforeAll;
+      # fork (LAX_REFLOWTEX_SOURCE) and fetch from it in their beforeAll;
       # the venv install is hash-pinned (requirements.lock) and cached on the
-      # lock, so a warm run only re-clones and re-patches (~seconds). The
-      # fetch runs here too so a cold venv is built on its own log line.
+      # lock, so a warm run only re-clones (~seconds). The fetch runs here
+      # too so a cold venv is built on its own log line.
       - name: Restore the reflowtex encode venv
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -81,10 +81,12 @@ jobs:
           key: lax-reflowtex-venv-v1-${{ runner.os }}-${{ hashFiles('reflowtex/requirements.lock') }}
       - name: Fetch the pinned ReflowTeX fork
         run: |
-          rev="$(node -p "require('fs').readFileSync('src/submission-validation/pins.ts','utf8').match(/REFLOWTEX_REV = \"([0-9a-f]{40})\"/)[1]")"
-          git clone --quiet https://github.com/radek-p/reflowtex "$RUNNER_TEMP/reflowtex-upstream"
-          git -C "$RUNNER_TEMP/reflowtex-upstream" fetch --quiet origin "$rev"
-          echo "LAX_REFLOWTEX_SOURCE=$RUNNER_TEMP/reflowtex-upstream" >> "$GITHUB_ENV"
+          pins="$(cat src/submission-validation/pins.ts)"
+          url="$(node -p "process.argv[1].match(/REFLOWTEX_URL = \"([^\"]+)\"/)[1]" "$pins")"
+          rev="$(node -p "process.argv[1].match(/REFLOWTEX_REV = \"([0-9a-f]{40})\"/)[1]" "$pins")"
+          git clone --quiet "$url" "$RUNNER_TEMP/reflowtex-fork"
+          git -C "$RUNNER_TEMP/reflowtex-fork" fetch --quiet origin "$rev"
+          echo "LAX_REFLOWTEX_SOURCE=$RUNNER_TEMP/reflowtex-fork" >> "$GITHUB_ENV"
           npm run reflowtex:fetch
       - run: npm test
 
@@ -114,6 +116,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # The `paper-web` fixture drives the trusted web derivation, whose
+      # host-side encode runs over the fetched ReflowTeX fork (the same
+      # fetch the validate job performs); without it the fixture can only
+      # report a `web-toolchain` skip, which the smoke asserts against.
+      - name: Restore the reflowtex encode venv
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: reflowtex/venv
+          key: lax-reflowtex-venv-v1-${{ runner.os }}-${{ hashFiles('reflowtex/requirements.lock') }}
+      - name: Fetch the pinned ReflowTeX fork
+        run: npm run reflowtex:fetch
       # Same store, same identity, same rules as submission.yml's validate job:
       # the pins module is the single home of everything the host setup installs,
       # so its hash is the cache key, and no restore-keys — a store for other

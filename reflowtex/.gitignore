@@ -3,3 +3,5 @@
 # checkout is AGPL upstream source; see README.md).
 checkout/
 venv/
+# fetch.mjs serializes concurrent fetches on this pid-stamped lock
+.fetch.lock
