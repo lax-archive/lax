@@ -17,6 +17,7 @@ import type {
   StaticResult,
 } from "../../src/submission-validation/contracts.js";
 import { joinPaperMarks } from "../../src/submission-validation/paper/join.js";
+import { ONE_LINE_TAIL_BYTES, oneLineTail } from "../../src/submission-validation/paper/compile.js";
 import { runPaperPhase, type CompiledPaper } from "../../src/submission-validation/paper/phase.js";
 import {
   markerCountProblems,
@@ -25,6 +26,7 @@ import {
   webLatexmkArguments,
   writeDeterministicTar,
   type WebDeriver,
+  parseEncodeReport,
 } from "../../src/submission-validation/paper/web.js";
 import { tmpDir } from "../support/host.js";
 
@@ -368,5 +370,28 @@ describe("prerequisite probe and compile shape", () => {
       SOURCE_DATE_EPOCH: "1700000000",
       FORCE_SOURCE_DATE: "1",
     });
+  });
+});
+
+describe("report-schema hygiene of web messages", () => {
+  // The 2026-09-03 lax-65 round trip: a web-encode warning carried a raw
+  // transcript tail, the publisher's schema ("message must be one line")
+  // refused the report, and a *non-blocking* derivation blocked publication.
+  it("folds a transcript tail onto one schema-clean line within the byte budget", () => {
+    const folded = oneLineTail("line one\r\nline\ttwo\nERROR: x\u200b\n", 12_000);
+    expect(folded).not.toMatch(/[\r\n\t\u200b]/u);
+    expect(folded).toBe("line one ⏎ line two ⏎ ERROR: x ");
+    const long = oneLineTail("é".repeat(10_000), 12_000);
+    expect(Buffer.byteLength(long, "utf8")).toBeLessThanOrEqual(ONE_LINE_TAIL_BYTES + 8);
+    expect(long.startsWith("[…] ")).toBe(true);
+    expect(long).not.toContain("\ufffd");
+    expect(long.normalize("NFC")).toBe(long);
+  });
+
+  it("reads the encode's dropped-picture count, defaulting to none", () => {
+    expect(parseEncodeReport({ pbBytes: 2, fonts: {} }).droppedPictures).toBe(0);
+    expect(parseEncodeReport({ pbBytes: 2, fonts: {}, droppedPictures: 3 }).droppedPictures).toBe(3);
+    expect(() => parseEncodeReport({ pbBytes: 2, fonts: {}, droppedPictures: -1 })).toThrow(/droppedPictures/u);
+    expect(() => parseEncodeReport({ pbBytes: 2, fonts: {}, droppedPictures: 1.5 })).toThrow(/droppedPictures/u);
   });
 });

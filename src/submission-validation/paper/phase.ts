@@ -12,7 +12,7 @@ import path from "node:path";
 import { PAPER_CAPS, type ValidationLimits } from "../config.js";
 import type { StaticPaper } from "../contracts.js";
 import { FindingCollector } from "../findings.js";
-import { latexmkArguments, logTail, paperPdfName } from "./compile.js";
+import { latexmkArguments, oneLineTail, paperPdfName } from "./compile.js";
 import { extractPdf, matchDestinations, type LocatedMark } from "./extract.js";
 import type { DerivedWebBundle, WebDeriver } from "./web.js";
 
@@ -76,7 +76,7 @@ export async function runPaperPhase(input: PaperPhaseInput): Promise<PaperPhaseR
       (result.timedOut === true
         ? `the paper did not compile within ${Math.round(input.limits.paperCompileTimeoutMs / 60_000)} minutes`
         : `the paper did not compile (latexmk exit ${result.code})`) +
-        `; the end of the transcript:\n${logTail(result.output, input.limits.paperLogTailChars)}`,
+        `; the end of the transcript: ${oneLineTail(result.output, input.limits.paperLogTailChars)}`,
     );
     return { findings };
   }

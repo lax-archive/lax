@@ -220,7 +220,11 @@ def main() -> None:
 
     # The fork's proven encode order (stage 1): pictures, strip, legacy
     # fonts, glyph addressing, deterministic serialization.
-    transforms.convert_pictures(data, job)
+    # (lax) Unsourced image rules — plain \\includegraphics the template
+    # hook never stamped — degrade to width-keeping kerns and are counted;
+    # the deriver turns the count into a `web-pictures-dropped` warning.
+    dropped_pictures: list = []
+    transforms.convert_pictures(data, job, dropped_pictures)
     transforms.strip_unsupported_nodes(data)
     transforms.normalise_legacy_font_addressing(data, pipe.fonts)
     transforms.normalise_glyph_addressing(data, pipe.fonts)
@@ -233,6 +237,7 @@ def main() -> None:
     (out / "encode.json").write_text(json.dumps({
         "pbBytes": len(blob),
         "fonts": pipe.font_map(),
+        "droppedPictures": len(dropped_pictures),
     }))
     print(f"encoded {len(blob)} bytes; {len(pipe.font_map())} font(s)")
 

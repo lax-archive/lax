@@ -28,7 +28,7 @@ import type { PaperMarkTableEntry, PaperWebFormat, StaticPaper } from "../contra
 import { run } from "../host/proc.js";
 import { engineAvailable, laxmarkDirectory, MIN_LATEXMK_VERSION, probeLatexmkAsync } from "../host/paper.js";
 import { REFLOWTEX_REV } from "../pins.js";
-import { logTail, paperJobName } from "./compile.js";
+import { oneLineTail, paperJobName } from "./compile.js";
 import { extractPdfText } from "./extract.js";
 import { copyPaperFolder } from "./phase.js";
 import {
@@ -245,6 +245,9 @@ interface StreamReport {
 interface EncodeReport {
   pbBytes: number;
   fonts: Record<string, string>;
+  /** Image rules the serializer could not source (plain \includegraphics),
+   * kept as kerns by the encode — see the fork's convert_pictures. */
+  droppedPictures: number;
 }
 
 function parseStreamReport(value: unknown): StreamReport {
@@ -270,7 +273,7 @@ function parseStreamReport(value: unknown): StreamReport {
   return { markers, text: object.text, unreferenced };
 }
 
-function parseEncodeReport(value: unknown): EncodeReport {
+export function parseEncodeReport(value: unknown): EncodeReport {
   const object = asObject(value, "encode report");
   if (!Number.isSafeInteger(object.pbBytes) || (object.pbBytes as number) <= 0) {
     throw new Error("encode report: invalid pbBytes");
@@ -281,7 +284,11 @@ function parseEncodeReport(value: unknown): EncodeReport {
     if (typeof served !== "string") throw new Error("encode report: font map values must be strings");
     map[original] = served;
   }
-  return { pbBytes: object.pbBytes as number, fonts: map };
+  const dropped = object.droppedPictures ?? 0;
+  if (!Number.isSafeInteger(dropped) || (dropped as number) < 0) {
+    throw new Error("encode report: invalid droppedPictures");
+  }
+  return { pbBytes: object.pbBytes as number, fonts: map, droppedPictures: dropped as number };
 }
 
 function asObject(value: unknown, label: string): Record<string, unknown> {
@@ -373,7 +380,7 @@ export function webCompileProblem(
         (result.code === 124 || result.timedOut === true
           ? `the reflow view was not derived: the web compile did not finish within ${Math.round(limits.paperCompileTimeoutMs / 60_000)} minutes`
           : `the reflow view was not derived: lualatex failed under laxreflow (latexmk exit ${result.code})`) +
-        `; the end of the transcript:\n${logTail(result.output, limits.paperLogTailChars)}`,
+        `; the end of the transcript: ${oneLineTail(result.output, limits.paperLogTailChars)}`,
     };
   }
   const texErrors = readTexErrors(path.join(webSrc, `${paperJobName(main)}.log`));
@@ -382,7 +389,7 @@ export function webCompileProblem(
       rule: "web-compile",
       message:
         `the reflow view was not derived: lualatex reported ${texErrors.length} error(s) under laxreflow ` +
-        `(nonstopmode continued, so the serialized stream would be silently wrong):\n${texErrors.slice(0, 10).join("\n")}`,
+        `(nonstopmode continued, so the serialized stream would be silently wrong): ${oneLineTail(texErrors.slice(0, 10).join("\n"), 12_000)}`,
     };
   }
   return undefined;
@@ -510,7 +517,7 @@ export async function encodeAndSealWebBundle(
       (encode.code === 124
         ? `the reflow view was not derived: the encode step did not finish within ${Math.round(input.limits.paperWebEncodeTimeoutMs / 60_000)} minutes`
         : `the reflow view was not derived: the encode step failed (exit ${encode.code})`) +
-        `; the end of the transcript:\n${logTail(encode.output, input.limits.paperLogTailChars)}`,
+        `; the end of the transcript: ${oneLineTail(encode.output, input.limits.paperLogTailChars)}`,
     );
   }
   let stream: StreamReport;
@@ -570,6 +577,18 @@ export async function encodeAndSealWebBundle(
         `first divergence at token ${verdict.divergence.index}: ` +
         `PDF reads "${verdict.divergence.pdf}", the stream reads "${verdict.divergence.stream}"`,
     );
+  }
+
+  if (encoded.droppedPictures > 0) {
+    // Derived, but not whole: the loud counterpart of the encode's kern
+    // fallback, so an omitted figure never passes unremarked.
+    warnings.push({
+      rule: "web-pictures-dropped",
+      message:
+        `the reflow view omits ${encoded.droppedPictures} included graphic(s) the web compile could not ` +
+        "externalize (plain \\includegraphics — class logos, ORCID icons, raster figures; tikz pictures are shown); " +
+        "each keeps its width as blank space",
+    });
   }
 
   // ── the bundle: index.json + blocks + fonts + schema, sealed ───────────

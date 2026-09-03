@@ -140,6 +140,15 @@ rule itself stands for the next Actions-side change. What remains:
   `jan3er/lax-paper-roundtrip-20260902` from the lax-61 stage-3 round trip
   (`history/paper-roundtrip-20260902.md`): `gh auth refresh -h github.com
   -s delete_repo`, then `gh repo delete … --yes`.
+- **`\includegraphics` in the web view**: included graphics files are
+  dropped (kern of their width + a `web-pictures-dropped` warning; the
+  fork's `convert_pictures` tolerates unsourced image rules when the
+  caller opts in) since the first real LIPIcs paper (lax-65, 2026-09-03)
+  hit the stock abort over its ORCID icon. Supporting them means hooking
+  `\Gin@setfile` in `laxreflow.sty` to stamp and record the resolved
+  file like the tikz capture does, converting referenced PDFs in the
+  export script (they live outside `pics/`), and deciding what the viewer
+  does with raster formats.
 - xelatex is untested for the end-marker relocation
   (`test/e2e/paper-neutrality.test.ts` measures pdflatex and lualatex):
   add `texlive-xetex` to the CI TeX set, or verify at the first

@@ -297,6 +297,7 @@ describe("container web deriver", () => {
     expect(derived.warnings).toHaveLength(1);
     expect(derived.warnings[0]!.rule).toBe("web-compile");
     expect(derived.warnings[0]!.message).toContain("silently wrong");
+    expect(derived.warnings[0]!.message).not.toMatch(/[\r\n]/u); // the report schema's one-line rule
     expect(runner.calls.filter((call) => typeof call !== "string")).toHaveLength(1); // compile only
   });
 
