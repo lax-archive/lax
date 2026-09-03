@@ -75,7 +75,11 @@ prefer them over inferring intent from the current code.
   and the production round trip), `pipeline-simplification-rollout.md`
   (the 2026-08-07 rollout: why a secret cannot be moved between
   environments, the vacuous protected-branches policy, and the
-  seven-record production sweep that replaced the skipped drill).
+  seven-record production sweep that replaced the skipped drill),
+  `paper-roundtrip-20260902.md` (the lax-61 stage-3 round trip), and
+  `audit-20260903.md` (the 0.1.31→0.1.35 hardening audit — 40 verified
+  defects, and the one class they nearly all belong to: rules copied to
+  call sites instead of placed at boundaries).
 
 ## Commands
 
