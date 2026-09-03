@@ -242,7 +242,10 @@ describe("lax doctor submission checks", () => {
     fs.rmSync(warm, { recursive: true, force: true });
     const report = await doctorReport();
     expect(report).toMatch(/! lax-100042\s/u);
-    expect(report).toContain("package overrides point at missing folders");
+    // macOS resolves the two broken links to one grouped folder finding;
+    // Linux retains one missing-store detail per package.
+    expect(report).toContain("package overrides point at");
+    expect(report).toMatch(/missing (?:folders|mathlib store)/u);
     // The fixture has to survive the report that reads it: doctor provisions a
     // missing store, and with a toolchain in reach it would rebuild this one
     // mid-test — leaving the override valid, the assertion above false, and a
