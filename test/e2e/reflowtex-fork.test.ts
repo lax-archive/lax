@@ -666,6 +666,14 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
   });
 
   it("strips disallowed elements and attributes while keeping the drawing", () => {
+    // Real bytes, so the sanitizer's magic-number check has something to
+    // check: an 8x8 PNG, the smallest valid JPEG-ish header, and an SVG
+    // document base64'd under a PNG label.
+    const PNG_DATA =
+      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAGElEQVR42mNgYPj/n4EB" +
+      "C4ldFCw8CHUAAOkwP8H8I6eUAAAAAElFTkSuQmCC";
+    const JPEG_DATA = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]).toString("base64");
+    const SVG_AS_PNG = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>").toString("base64");
     const crafted = [
       "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 10 10' onload='evil()'>",
       "<script>alert(1)</script>",
@@ -674,6 +682,10 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
       "<use xlink:href='#a'/>",
       "<use xlink:href='https://evil.example/x'/>",
       "<image href='https://evil.example/i.png' width='5' height='5'/>",
+      `<image id='png' xlink:href='data:image/png;base64,${PNG_DATA}' width='5' height='5'/>`,
+      `<image id='jpeg' xlink:href='data:image/jpeg;base64,${JPEG_DATA}' width='5' height='5'/>`,
+      `<image id='liar' xlink:href='data:image/png;base64,${SVG_AS_PNG}' width='5' height='5'/>`,
+      "<image id='trunc' xlink:href='data:image/png;base64,not+base64!!' width='5' height='5'/>",
       "<rect x='0' y='0' width='2' height='2' style='fill:red' fill='url(https://evil.example)'/>",
       "<linearGradient id='grad'><stop offset='0' stop-color='#00f'/></linearGradient>",
       "<text x='1' y='1'>ok</text>",
@@ -692,6 +704,15 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
     const { clean, removed } = JSON.parse(result.stdout) as { clean: string; removed: string[] };
     // The drawing survives: structure, ids, fragment references, gradients.
     expect(clean).toContain("<path d='M0 0L5 5' fill='url(#grad)' stroke='#f00'/>");
+    // An inline raster survives too — that is how a \includegraphics of a PNG
+    // or a JPEG reaches the view — but only when its declared media type and
+    // its decoded bytes agree. `SVG_AS_PNG` is an SVG document wearing a PNG
+    // label, which a sniffing browser would happily execute.
+    expect(clean).toContain(`<image id='png' xlink:href='data:image/png;base64,${PNG_DATA}'`);
+    expect(clean).toContain(`<image id='jpeg' xlink:href='data:image/jpeg;base64,${JPEG_DATA}'`);
+    expect(clean).toContain("<image id='liar' width='5' height='5'/>");
+    expect(clean).toContain("<image id='trunc' width='5' height='5'/>");
+    expect(clean).not.toContain(SVG_AS_PNG);
     expect(clean).toContain("<use xlink:href='#a'/>");
     expect(clean).toContain("<linearGradient id='grad'>");
     expect(clean).toContain("<text x='1' y='1'>ok</text>");
@@ -701,7 +722,7 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
       expect(clean).not.toContain(forbidden);
     }
     expect(removed).toContain("element script");
-    expect(removed).toContain("element image");
+    expect(removed).not.toContain("element image");
     expect(removed).toContain("attribute onload");
     expect(removed).toContain("attribute style");
     // the external url() reference cost the rect its fill attribute

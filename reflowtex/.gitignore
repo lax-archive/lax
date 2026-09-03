@@ -3,5 +3,8 @@
 # checkout is AGPL upstream source; see README.md).
 checkout/
 venv/
+# The pinned PyMuPDF wheel, unpacked for the container's picture converter
+# (fetch.mjs step 5) — a linux/amd64 binary, reproduced by the fetch.
+pymupdf/
 # fetch.mjs serializes concurrent fetches on this pid-stamped lock
 .fetch.lock

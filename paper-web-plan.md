@@ -136,6 +136,19 @@ manifest change, not a footnote:
   every math-bearing paper would lose its web view on the TeX-less
   Validate host). Nothing else; count, byte, and timeout caps on the
   export.
+  *As built (2026-09-03):* the in-image conversion is **PyMuPDF**, not
+  dvisvgm — a pinned wheel (`pins.ts`, `PYMUPDF_*`) fetched beside the
+  fork and bind-mounted read-only into the export container. dvisvgm
+  cannot take PDF input against the pinned image's Ghostscript 10.07
+  (it needs < 10.01 or mutool, and the image has neither), and the
+  `gs -sDEVICE=eps2write` detour that worked around that rasterizes
+  every page carrying transparency, so both of lax-65's figures arrived
+  blank. MuPDF reads the PDF directly, keeps the opacity attributes, and
+  is about a quarter of the size; the Ghostscript/dvisvgm chain is gone
+  rather than kept as a fallback. The same converter turns every plain
+  `\includegraphics` into a picture — vector files directly, rasters
+  re-encoded through a Pixmap into one `<image>` with a `data:` URI —
+  each under a host-assigned slot name, never the author's own path.
 - **Serializer fork.** Our fork of ReflowTeX (serializer + encode) adds:
   the marker branches the spike validated (**three** sites, not two —
   inside paragraphs, in the shipout walk between them, and the

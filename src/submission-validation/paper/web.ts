@@ -82,6 +82,11 @@ export interface ReflowtexInstallation {
   encodeScript: string;
   schemaProto: string;
   generatedPb2: string;
+  /** The unpacked PyMuPDF wheel (pins.ts, PYMUPDF_*). Not part of the encode
+   * environment: it is the picture converter the trusted export step mounts
+   * read-only into the pinned TeX image, which carries no library that can
+   * read a PDF without rasterizing it. A directory, not a file. */
+  pymupdf: string;
 }
 
 /** Resolve `reflowtex/` beside `src`/`dist`, the way laxmarkDirectory does. */
@@ -98,10 +103,15 @@ export function probeReflowtex(root = reflowtexDirectory()): ReflowtexInstallati
     encodeScript: path.join(root, "encode_web.py"),
     schemaProto: path.join(root, "checkout", "src", "schema", "latex.proto"),
     generatedPb2: path.join(root, "checkout", "build", "latex_pb2.py"),
+    pymupdf: path.join(root, "pymupdf", "lib"),
   };
+  const directories = new Set(["checkout", "pymupdf"]);
   for (const [name, filename] of Object.entries(installation)) {
     // statSync, not lstat: a venv's python is a symlink by construction.
-    if (name === "checkout" ? !fs.existsSync(filename) : !fs.statSync(filename, { throwIfNoEntry: false })?.isFile()) {
+    const present = directories.has(name)
+      ? fs.statSync(filename, { throwIfNoEntry: false })?.isDirectory() === true
+      : fs.statSync(filename, { throwIfNoEntry: false })?.isFile() === true;
+    if (!present) {
       return { missing: `${path.relative(path.dirname(root), filename)} (run \`npm run reflowtex:fetch\`)` };
     }
   }
@@ -464,6 +474,11 @@ function fontTableEntries(webSrc: string, limits: ValidationLimits): Array<{ fil
 
 /** How the shared encode+seal tail runs the encode child in one deriver. */
 export interface WebEncodeOptions {
+  /** The included graphics the caller already knows will not be shown — a
+   * file name refused by shape, or one the export could not convert. The
+   * encode counts every unsourced picture; these are the ones that can be
+   * *named*, so the author is told which figure went missing. */
+  droppedPictureNames?: readonly string[];
   /** Extra `encode_web.py` arguments (the container path's `--fonts`,
    * pointing font provisioning at the exported bytes). */
   extraArgs?: string[];
@@ -591,13 +606,21 @@ export async function encodeAndSealWebBundle(
 
   if (encoded.droppedPictures > 0) {
     // Derived, but not whole: the loud counterpart of the encode's kern
-    // fallback, so an omitted figure never passes unremarked.
+    // fallback, so an omitted figure never passes unremarked. An included
+    // graphic is shown when its file name is acceptable and the trusted
+    // export could convert it (paper/web-container.ts); what lands here is
+    // the remainder — a name refused by shape, a file that resolved nowhere
+    // the run may read, a picture no converter could open — plus anything
+    // the compile never stamped at all.
+    const named = options.droppedPictureNames ?? [];
     warnings.push({
       rule: "web-pictures-dropped",
       message:
-        `the reflow view omits ${encoded.droppedPictures} included graphic(s) the web compile could not ` +
-        "externalize (plain \\includegraphics — class logos, ORCID icons, raster figures; tikz pictures are shown); " +
-        "each keeps its width as blank space",
+        `the reflow view omits ${encoded.droppedPictures} included graphic(s)` +
+        (named.length > 0
+          ? ` (${named.slice(0, 5).join(", ")}${named.length > 5 ? ", …" : ""})`
+          : "") +
+        ": the picture could not be sourced and converted, so each keeps its width as blank space",
     });
   }
 

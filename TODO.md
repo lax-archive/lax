@@ -146,7 +146,10 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   `assets/site/manuscript.js` to `REQUIRED_RENDERER_PATHS`
   (`src/cli/website-renderer.ts`) and to the `deployment/verify.ts` path
   list. Until the release, `lax serve` feeds the paper inputs to a pinned
-  renderer that ignores them.
+  renderer that ignores them. (The picture converter's wheel is *not* part
+  of this: only the trusted container derivation uses it, and
+  `npm run reflowtex:fetch` already brings it — `lax serve` and `lax
+  build` derive no web view at all.)
 - **[Jan] Production round trips** closing both plans — a real paper (the
   flagship drafts in `~/git/lax-submissions`) through validate → publish →
   site page with both surfaces — recorded in `history/`; measure the TeX
@@ -173,31 +176,22 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   open: a virtual font that *composes* (accents built from two glyphs)
   keeps metric boxes for those slots, and BOONDOX bold/fraktur/
   doublestruck are untested.
-- **Transparency in a tikz picture is flattened in the web view**: the
-  in-image conversion has to go PDF → EPS → SVG (dvisvgm cannot read PDF
-  against the pinned image's Ghostscript 10.07, and there is no mutool),
-  and Ghostscript rasterizes any page that carries transparency — the
-  whole drawing comes back as one JPEG, which the encode's SVG sanitizer
-  drops, so the figure arrived *empty*. Since 2026-09-03 such a picture is
-  redrawn with `-dNOTRANSPARENCY` (vector, alpha lost, a
-  `web-pictures-flattened` warning naming it) — measured on lax-65, whose
-  two figures both carry faded nodes and both arrived blank. Showing them
-  exactly would mean carrying the raster: an `image` element with a
-  `data:` URI through the fork's sanitizer (element and attribute
-  allowlists, `href` must be a `#` fragment), which costs ~430 KB per
-  figure against the 2 MiB embed budget — or a converter in the image that
-  reads PDF (mutool is not in `texlive/texlive`). **Anything already in
-  `lax-database` keeps its blank figures until it is re-validated**: the
-  fix is in the derivation, not the site.
-- **`\includegraphics` in the web view**: included graphics files are
-  dropped (kern of their width + a `web-pictures-dropped` warning; the
-  fork's `convert_pictures` tolerates unsourced image rules when the
-  caller opts in) since the first real LIPIcs paper (lax-65, 2026-09-03)
-  hit the stock abort over its ORCID icon. Supporting them means hooking
-  `\Gin@setfile` in `laxreflow.sty` to stamp and record the resolved
-  file like the tikz capture does, converting referenced PDFs in the
-  export script (they live outside `pics/`), and deciding what the viewer
-  does with raster formats.
+- **Re-validate the records derived before 2026-09-03**: until that day
+  the in-image picture conversion went through Ghostscript, which
+  rasterized every page carrying transparency into a JPEG the sanitizer
+  then dropped (lax-65's two figures arrived *blank*), and every plain
+  `\includegraphics` was dropped to a kern. Both are fixed in the
+  derivation, not the site, so **anything already in `lax-database` keeps
+  its blank figures and missing icons until it is re-validated**. Needs
+  the admin `revalidate` verb, or a sweep.
+- **Cache the PyMuPDF wheel in the Validate job** (optional): `npm run
+  reflowtex:fetch` now downloads 25 MB per paper-bearing run. The existing
+  `actions/cache` pair covers `reflowtex/venv`, keyed on
+  `requirements.lock`; the wheel would want its own pair over
+  `reflowtex/pymupdf`, keyed on the `PYMUPDF_*` pins rather than on all of
+  `pins.ts` (which every unrelated pin bump would invalidate). The step
+  already tolerates failure — a missed download degrades to a
+  `web-toolchain` skip — so this is throughput, not correctness.
 - xelatex is untested for the end-marker relocation
   (`test/e2e/paper-neutrality.test.ts` measures pdflatex and lualatex):
   add `texlive-xetex` to the CI TeX set, or verify at the first

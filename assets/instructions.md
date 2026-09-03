@@ -38,7 +38,10 @@ submission (`lax init`) and add `supersedes: lax-N` to its `manifest.yaml`,
 naming the submission it replaces. The link becomes permanent when the new
 submission registers; the old version must be registered, one of its owners
 must own the new one, and it can have only one successor. The website will
-then point readers from the old version to the new one.
+then point readers from the old version to the new one. If a submission you
+build on is superseded, nothing breaks — your require is pinned to a commit —
+but `lax build`, `lax submit` and `lax register` will point out that a newer
+version exists, so you can decide whether to build on that one instead.
 
 A submission may carry the paper itself: a LaTeX document the archive
 compiles and shows beside cards for the concepts and proofs the text marks.
@@ -126,13 +129,16 @@ archive derives the web view; `lax build` does not.
 Expect the web view to degrade in known ways: marginal notes do not appear
 there, floats render at their position in the text rather than where LaTeX
 placed them on the page, and `\pageref` numbers are meaningless without
-pages. TikZ pictures are shown, but a picture that uses transparency (a
-faded node, a shading, a blend) is redrawn without it — everything is
-drawn solid, so parts that should show through do not — and the report
-says which pictures that happened to. Graphics included as files
-(`\includegraphics` — figures, class logos, ORCID icons) are not shown at
-all yet, and leave blank space of their width, also noted in the report. Geometry and margin choices need no guard — reflow ignores them by
-design. For short print-only material (a `\pageref`-bearing sentence, a
+pages. Pictures are shown: a TikZ picture with its transparency intact, and
+a graphic included as a file (`\includegraphics` — a figure, a class logo,
+an ORCID icon) as well, in `pdf`, `png`, `jpg`, or `jpeg`. A raster is
+carried as pixels rather than as a drawing, so a large one is scaled down
+first and the report says which; a picture in some other format, or one the
+archive cannot read, is left out and leaves blank space of its width, also
+noted in the report. Geometry and margin choices need no guard — reflow
+ignores them by design.
+
+For short print-only material (a `\pageref`-bearing sentence, a
 marginal note's callout) you may guard with `\iflaxweb`, defining the
 switch for your own build first — the archive's builds define it
 themselves, false on the PDF target and true on the web target:

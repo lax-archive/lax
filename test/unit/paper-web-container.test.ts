@@ -25,13 +25,20 @@ import {
   pictureAtOrigin,
   resolveVirtualFonts,
   sharedSlots,
+  assignIncludedPictureSlots,
+  dropUnconvertedPictures,
+  webConvertScript,
+  webDownsampledPictures,
   webExportProblem,
   webExportScript,
-  webFlattenedPictures,
-  WEB_EXPORT_FLAT_SUFFIX,
+  WEB_EXPORT_CONVERTER,
+  WEB_EXPORT_DOWNSAMPLED_SUFFIX,
   WEB_EXPORT_FONT_LIST,
   WEB_EXPORT_FONTS_DIR,
+  WEB_EXPORT_PICTURE_LIST,
   WEB_EXPORT_SCRIPT,
+  WEB_INCLUDED_SLOT_PREFIX,
+  WEB_PYMUPDF_PATH,
 } from "../../src/submission-validation/paper/web-container.js";
 import {
   webFontFilenames,
@@ -88,6 +95,9 @@ function fakeReflowtex(): string {
     fs.writeFileSync(target, content, { mode });
   };
   write("checkout/src/extract/serializer.lua", "-- fake serializer\n");
+  // The picture converter's library, which the probe requires as a directory
+  // and the export step mounts read-only (pins.ts, PYMUPDF_*).
+  write("pymupdf/lib/pymupdf/__init__.py", "# fake pymupdf\n");
   write("checkout/src/schema/latex.proto", SCHEMA);
   write("checkout/build/latex_pb2.py", "# generated\n");
   write("encode_web.py", "# consumed by the fake venv python below\n");
@@ -108,6 +118,8 @@ for a in "$@"; do
 done
 unref='[]'
 if [ -n "$job" ] && [ -f "$job/fake-unreferenced.json" ]; then unref="$(cat "$job/fake-unreferenced.json")"; fi
+dropped=0
+if [ -n "$job" ] && [ -f "$job/fake-dropped.txt" ]; then dropped="$(cat "$job/fake-dropped.txt")"; fi
 mkdir -p "$out/blocks" "$out/fonts"
 printf '%s\\n' "$@" > "$out/argv.txt"
 printf '%s' "\${REFLOWTEX_DVISVGM-unset}" > "$out/dvisvgm-seam.txt"
@@ -115,7 +127,7 @@ printf '%s' "\${REFLOWTEX_PFB_DIR-unset}" > "$out/pfb-seam.txt"
 if [ -n "$fonts" ] && [ -d "$fonts" ]; then cp "$fonts"/* "$out/fonts/" 2>/dev/null || true; fi
 printf 'PB' > "$out/blocks/000.pb"
 printf '%s' '{"markers":[],"text":"Hello web world","unreferenced":'"$unref"'}' > "$out/stream.json"
-printf '%s' '{"pbBytes":2,"fonts":{"${FONT}":"${FONT}"}}' > "$out/encode.json"
+printf '%s' '{"pbBytes":2,"droppedPictures":'"$dropped"',"fonts":{"${FONT}":"${FONT}"}}' > "$out/encode.json"
 exit 0
 `,
     0o755,
@@ -155,8 +167,12 @@ interface FakeRunnerOptions {
   /** Picture stems the fake export leaves converted, each with an
    * EPS-style (origin-off) SVG beside its PDF. */
   pictures?: string[];
-  /** Of those, the ones it had to redraw without transparency. */
-  flattened?: string[];
+  /** Slots (`pics/lax-inc<N>`) the fake export refuses to convert. */
+  unconvertible?: string[];
+  /** Slots the fake export had to downsample to the long-edge cap. */
+  downsampled?: string[];
+  /** What the fake encode child reports as unsourced picture nodes. */
+  droppedPictures?: number;
 }
 
 function fakeRunner(options: FakeRunnerOptions = {}): ValidationRunner & { calls: Array<string | ContainerInvocation> } {
@@ -193,6 +209,9 @@ function fakeRunner(options: FakeRunnerOptions = {}): ValidationRunner & { calls
             JSON.stringify(options.unreferenced.map((text) => ({ text, markers: [] }))),
           );
         }
+        if (options.droppedPictures !== undefined) {
+          fs.writeFileSync(path.join(webSrc, "fake-dropped.txt"), String(options.droppedPictures));
+        }
         return { code: 0, output: "latexmk web transcript", timedOut: false, ...options.compileResult };
       }
       if (invocation.label === "paper-web-export") {
@@ -212,8 +231,19 @@ function fakeRunner(options: FakeRunnerOptions = {}): ValidationRunner & { calls
             path.join(webSrc, "pics", `${name}.svg`),
             "<svg version='1.1' viewBox='0 -18 74 18'><g id='page1'/></svg>",
           );
-          if (options.flattened?.includes(name) === true) {
-            fs.writeFileSync(path.join(webSrc, "pics", `${name}.${WEB_EXPORT_FLAT_SUFFIX}`), "");
+        }
+        // The listed \includegraphics files, by the slot the host assigned.
+        const listed = JSON.parse(
+          fs.readFileSync(path.join(webSrc, WEB_EXPORT_PICTURE_LIST), "utf8"),
+        ) as Array<{ slot: string; file: string }>;
+        for (const picture of listed) {
+          if (options.unconvertible?.includes(picture.slot) === true) continue;
+          fs.writeFileSync(
+            path.join(webSrc, `${picture.slot}.svg`),
+            "<svg version='1.1' viewBox=\"0 0 74 18\"><g id='page1'/></svg>",
+          );
+          if (options.downsampled?.includes(picture.slot) === true) {
+            fs.writeFileSync(path.join(webSrc, `${picture.slot}.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`), "");
           }
         }
         return { code: 0, output: "", timedOut: false, ...options.exportResult };
@@ -229,12 +259,12 @@ function derive(runnerOptions: FakeRunnerOptions = {}, limits?: ValidationLimits
   const reflowtexRoot = fakeReflowtex();
   const input = webInput(limits);
   const deriver = containerWebDeriver(runner, { reflowtexRoot, styDir });
-  return { runner, styDir, input, run: () => deriver(input) };
+  return { runner, styDir, reflowtexRoot, input, run: () => deriver(input) };
 }
 
 describe("container web deriver", () => {
   it("verifies the pinned TeX image, compiles with -shell-escape on the fresh copy, exports, and seals the bundle", async () => {
-    const { runner, styDir, input, run } = derive();
+    const { runner, styDir, reflowtexRoot, input, run } = derive();
     const derived = await run();
 
     expect(derived.warnings).toEqual([]);
@@ -276,7 +306,13 @@ describe("container web deriver", () => {
     expect(exported.label).toBe("paper-web-export");
     expect(exported.image).toEqual({ image: PAPER_IMAGE, imageDigest: PAPER_IMAGE_DIGEST });
     expect(exported.args).toEqual(["sh", `${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_SCRIPT}`]);
-    expect(exported.mounts).toEqual([{ source: webSrc, target: PAPER_CONTAINER_PATHS.work, writable: true }]);
+    // The converter's library rides in read-only and alone on PYTHONPATH;
+    // the work copy is the only writable thing in the container.
+    expect(exported.mounts).toEqual([
+      { source: webSrc, target: PAPER_CONTAINER_PATHS.work, writable: true },
+      { source: path.join(reflowtexRoot, "pymupdf", "lib"), target: WEB_PYMUPDF_PATH },
+    ]);
+    expect(exported.env).toEqual({ HOME: "/tmp", PYTHONPATH: WEB_PYMUPDF_PATH });
     expect(exported.timeoutMs).toBe(DEFAULT_LIMITS.paperWebExportTimeoutMs);
     expect(fs.readFileSync(path.join(webSrc, WEB_EXPORT_FONT_LIST), "utf8")).toBe(`${FONT}\n`);
     // The legacy face's Type1 outline is requested by TeX name.
@@ -366,23 +402,180 @@ describe("container web deriver", () => {
     expect(rules[0]!.message).toContain('"a margin note"');
   });
 
-  it("says which pictures lost their transparency, and squares their boxes before the encode reads them", async () => {
-    const { input, run } = derive({ pictures: ["fig0", "fig1"], flattened: ["fig1"] });
+  it("squares every converted picture's box before the encode reads it", async () => {
+    const { input, run } = derive({ pictures: ["fig0", "fig1"] });
     const derived = await run();
 
-    // Derived, and whole — the drawing is there; only the alpha is not.
     expect(derived.web).toBeDefined();
-    expect(derived.warnings).toHaveLength(1);
-    expect(derived.warnings[0]!.rule).toBe("web-pictures-flattened");
-    expect(derived.warnings[0]!.message).toContain("fig1.pdf");
-    expect(derived.warnings[0]!.message).not.toContain("fig0.pdf");
-    expect(derived.warnings[0]!.message).not.toMatch(/[\r\n]/u); // the report schema's one-line rule
-
-    // Both pictures — flattened or not — come back down into their boxes.
+    expect(derived.warnings).toEqual([]);
     const pics = path.join(input.jobDir, "paper", "web", "src", "pics");
     for (const name of ["fig0", "fig1"]) {
       expect(fs.readFileSync(path.join(pics, `${name}.svg`), "utf8")).toContain("viewBox='0 0 74 18'");
     }
+  });
+
+  // ── plain \includegraphics: slots, validation, accounting ────────────────
+
+  /** A serialized stream carrying one picture node per `file` value, plus a
+   * nested one so the walk is exercised at depth. */
+  function streamWithPictures(files: Array<string | undefined>): string {
+    const picture = (file: string | undefined) => ({
+      type: "picture",
+      width: 100,
+      height: 100,
+      depth: 0,
+      ...(file === undefined ? {} : { file }),
+    });
+    return JSON.stringify({
+      // The same font table the default stream carries, so the fake encode's
+      // font map still names something the export served.
+      fonts: { "1": { name: "lmroman10", size_sp: 655360, filename: FONT } },
+      paragraphs: [{ nodes: files.slice(0, 1).map(picture) }],
+      content: [
+        {
+          box: {
+            children: [
+              { type: "hlist", children: files.slice(1).map(picture) },
+            ],
+          },
+        },
+      ],
+    });
+  }
+
+  function pictureFiles(webSrc: string): Array<string | undefined> {
+    const data = JSON.parse(fs.readFileSync(path.join(webSrc, "output.json"), "utf8")) as {
+      paragraphs: Array<{ nodes: Array<{ file?: string }> }>;
+      content: Array<{ box: { children: Array<{ children: Array<{ file?: string }> }> } }>;
+    };
+    return [
+      ...data.paragraphs.flatMap((paragraph) => paragraph.nodes.map((node) => node.file)),
+      ...data.content.flatMap((item) => item.box.children.flatMap((child) => child.children.map((node) => node.file))),
+    ];
+  }
+
+  it("gives every acceptable included graphic a slot, refuses the rest, and never repeats a file", () => {
+    const webSrc = tmpDir("lax-web-slots-");
+    fs.mkdirSync(path.join(webSrc, "pics"), { recursive: true });
+    // A tikz externalization stem: written by the compile, PDF beside it.
+    fs.writeFileSync(path.join(webSrc, "pics", "main-figure0.pdf"), "%PDF");
+    fs.writeFileSync(
+      path.join(webSrc, "output.json"),
+      streamWithPictures([
+        "pics/main-figure0", // tikz: left alone
+        "orcid.pdf", // slot 0
+        "figures/plot.PNG", // slot 1 (extension case is TeX's, not ours)
+        "/usr/local/texlive/2025/texmf-dist/doc/logo.pdf", // slot 2: kpsewhich's absolute form
+        "orcid.pdf", // the same file again: the same slot, listed once
+        undefined, // never stamped at all: already a kern candidate
+      ]),
+    );
+
+    const assigned = assignIncludedPictureSlots(webSrc, DEFAULT_LIMITS);
+    expect(assigned.refused).toEqual([]);
+    expect(assigned.included).toEqual([
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}0`, file: "orcid.pdf" },
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}1`, file: "figures/plot.PNG" },
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}2`, file: "/usr/local/texlive/2025/texmf-dist/doc/logo.pdf" },
+    ]);
+    // The author's own paths never reach the encode: only slots do.
+    expect(pictureFiles(webSrc)).toEqual([
+      "pics/main-figure0",
+      `${WEB_INCLUDED_SLOT_PREFIX}0`,
+      `${WEB_INCLUDED_SLOT_PREFIX}1`,
+      `${WEB_INCLUDED_SLOT_PREFIX}2`,
+      `${WEB_INCLUDED_SLOT_PREFIX}0`,
+      undefined,
+    ]);
+  });
+
+  it("refuses an included graphic by name shape, extension, or count, leaving it a kern", () => {
+    const refusable = [
+      "../../etc/passwd.pdf", // traversal
+      "a/../b.pdf", // traversal, mid-path
+      "figure.svg", // not in the extension allowlist
+      "figure.pdf.exe", // nor is the last extension
+      "logo", // no extension at all
+      "with space.png", // not a plain name
+      "$(id).png", // shell metacharacters
+      "fig\nure.pdf", // a newline in the name
+      "-rf.png", // a leading dash could be an option somewhere
+      `${"deep/".repeat(9)}x.pdf`, // deeper than the segment cap
+      `${"x".repeat(200)}.pdf`, // longer than one segment allows
+    ];
+    const webSrc = tmpDir("lax-web-slots-refused-");
+    fs.mkdirSync(path.join(webSrc, "pics"), { recursive: true });
+    fs.writeFileSync(path.join(webSrc, "output.json"), streamWithPictures(refusable));
+
+    const assigned = assignIncludedPictureSlots(webSrc, DEFAULT_LIMITS);
+    expect(assigned.included).toEqual([]);
+    expect(assigned.refused).toEqual([...refusable].sort());
+    // Every one of them lost its file: the fork's kern fallback takes over.
+    expect(pictureFiles(webSrc).filter((file) => file !== undefined)).toEqual([]);
+
+    // The count cap refuses the surplus rather than the whole derivation.
+    const capped = tmpDir("lax-web-slots-cap-");
+    fs.writeFileSync(path.join(capped, "output.json"), streamWithPictures(["a.pdf", "b.pdf", "c.pdf"]));
+    const bounded = assignIncludedPictureSlots(capped, { ...DEFAULT_LIMITS, paperWebIncludedPictures: 2 });
+    expect(bounded.included.map((picture) => picture.file)).toEqual(["a.pdf", "b.pdf"]);
+    expect(bounded.refused).toEqual(["c.pdf"]);
+  });
+
+  it("drops a slot the export could not convert and names the raster ones it downsampled", () => {
+    const webSrc = tmpDir("lax-web-slots-convert-");
+    fs.mkdirSync(path.join(webSrc, "pics"), { recursive: true });
+    fs.writeFileSync(path.join(webSrc, "output.json"), streamWithPictures(["orcid.pdf", "photo.jpg"]));
+    const assigned = assignIncludedPictureSlots(webSrc, DEFAULT_LIMITS);
+    expect(assigned.included).toHaveLength(2);
+
+    // Only the second slot came back converted, and it had to be downsampled.
+    fs.writeFileSync(path.join(webSrc, `${WEB_INCLUDED_SLOT_PREFIX}1.svg`), "<svg/>");
+    fs.writeFileSync(path.join(webSrc, `${WEB_INCLUDED_SLOT_PREFIX}1.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`), "");
+
+    expect(dropUnconvertedPictures(webSrc, assigned.included, DEFAULT_LIMITS)).toEqual(["orcid.pdf"]);
+    expect(pictureFiles(webSrc)).toEqual([undefined, `${WEB_INCLUDED_SLOT_PREFIX}1`]);
+    expect(webDownsampledPictures(webSrc, assigned.included)).toEqual(["photo.jpg"]);
+  });
+
+  it("shows an included graphic, and names the ones it could not, through the whole deriver", async () => {
+    const stream = streamWithPictures(["orcid.pdf", "photo.png", "cover.svg"]);
+    const shown = await derive({ outputJson: stream, downsampled: [`${WEB_INCLUDED_SLOT_PREFIX}1`] }).run();
+    expect(shown.web).toBeDefined();
+    // The raster is carried, at a bounded resolution, and said so.
+    const raster = shown.warnings.filter((warning) => warning.rule === "web-pictures-raster");
+    expect(raster).toHaveLength(1);
+    expect(raster[0]!.message).toContain("photo.png");
+    expect(raster[0]!.message).not.toMatch(/[\r\n]/u); // the report schema's one-line rule
+    // `cover.svg` is not a format the converter reads, so it stays a kern —
+    // and the fake encode reports no unsourced picture, so nothing else fires.
+    expect(shown.warnings.map((warning) => warning.rule)).toEqual(["web-pictures-raster"]);
+
+    // A slot the export cannot fill degrades the same way, by name.
+    const missing = await derive({
+      outputJson: stream,
+      unconvertible: [`${WEB_INCLUDED_SLOT_PREFIX}0`],
+      droppedPictures: 2,
+    }).run();
+    expect(missing.web).toBeDefined();
+    const dropped = missing.warnings.filter((warning) => warning.rule === "web-pictures-dropped");
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]!.message).toContain("cover.svg");
+    expect(dropped[0]!.message).toContain("orcid.pdf");
+    expect(dropped[0]!.message).toContain("2 included graphic(s)");
+  });
+
+  it("writes the converter with the caps baked in and never names an author's file to it", () => {
+    const script = webConvertScript(DEFAULT_LIMITS);
+    expect(script).toContain("import pymupdf");
+    expect(script).toContain("get_svg_image(text_as_path=True)");
+    expect(script).toContain(`MAX_SVG_BYTES = ${DEFAULT_LIMITS.paperWebPictureBytes}`);
+    expect(script).toContain(`RASTER_LONG_EDGE = ${DEFAULT_LIMITS.paperWebRasterLongEdge}`);
+    // One page only, and every resolved path checked against the roots.
+    expect(script).toContain("expected exactly 1");
+    expect(script).toContain("def contained(path):");
+    expect(script).toContain("kpsewhich");
+    // The file names live in the list the host writes, never in the script.
+    expect(script).toContain(WEB_EXPORT_PICTURE_LIST);
   });
 
   it("skips over the export caps: too many font files before the run, too many bytes after it", async () => {
@@ -472,20 +665,14 @@ describe("export helpers", () => {
     // The vector is copied before the outline: a re-encoded face whose
     // vector does not resolve exports neither file.
     expect(script.indexOf('cp -- "$esrc"')).toBeLessThan(script.lastIndexOf('cp -- "$src"'));
-    // PDF → EPS through the image's Ghostscript, then dvisvgm's --eps input:
-    // the pinned image's dvisvgm refuses its Ghostscript for --pdf and has
-    // no mutool (2026-09-03 smoke), so a direct --pdf never converts there.
-    expect(script).toContain("-sDEVICE=eps2write");
-    expect(script).toContain("dvisvgm --eps --no-fonts --optimize=all");
-    expect(script).not.toContain("dvisvgm --pdf");
-    expect(script).toContain("picture not converted");
-    // Ghostscript rasterizes a page with any transparency, and the encode's
-    // sanitizer drops the raster — so a picture that came back as one is
-    // redrawn with transparency off, marked, and named on stderr.
-    expect(script).toContain("grep -q '<image'");
-    expect(script).toContain("-dNOTRANSPARENCY");
-    expect(script).toContain(`: > "\${pdf%.pdf}.${WEB_EXPORT_FLAT_SUFFIX}"`);
-    expect(script).toContain("picture redrawn without transparency");
+    // Picture conversion is the mounted PyMuPDF and nothing else: the
+    // Ghostscript → EPS → dvisvgm chain that preceded it flattened every
+    // transparent drawing (lax-65's two figures both arrived blank), and it
+    // is gone rather than kept as a fallback.
+    expect(script).toContain(`python3 '${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_CONVERTER}'`);
+    for (const retired of ["dvisvgm", "eps2write", "NOTRANSPARENCY", "mktemp"]) {
+      expect(script).not.toContain(retired);
+    }
     // A face pdftex.map does not name may be virtual: it is followed to the
     // base font it draws from, whose outline is exported under the virtual
     // name with the program and the base's vector beside it for the host.
@@ -494,7 +681,6 @@ describe("export helpers", () => {
     expect(script).toContain("(MAPFONT D 0");
     expect(script).toContain("8a.enc");
     expect(script).toContain("t1disasm");
-    expect(script).toContain("--tmpdir=");
     expect(script).toContain(`${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}`);
   });
 
@@ -643,19 +829,17 @@ describe("export helpers", () => {
     expect(normalizePictureBoxes(tmpDir("lax-web-origin-empty-"))).toBe(0);
   });
 
-  it("reports the pictures the export had to redraw without transparency", () => {
-    const webSrc = tmpDir("lax-web-flat-");
+  it("does not let a picture's own side files make the export look unconverted", () => {
+    // Only a `.pdf` without its `.svg` is an unconverted picture; the
+    // converter's `.downsampled` markers and a slot's SVG are not pictures.
+    const webSrc = tmpDir("lax-web-sidefiles-");
     fs.mkdirSync(path.join(webSrc, "pics"), { recursive: true });
-    expect(webFlattenedPictures(webSrc)).toEqual([]);
-    fs.writeFileSync(path.join(webSrc, "pics", "fig1.svg"), "<svg/>");
-    fs.writeFileSync(path.join(webSrc, "pics", `fig1.${WEB_EXPORT_FLAT_SUFFIX}`), "");
-    fs.writeFileSync(path.join(webSrc, "pics", `fig0.${WEB_EXPORT_FLAT_SUFFIX}`), "");
-    expect(webFlattenedPictures(webSrc)).toEqual(["fig0.pdf", "fig1.pdf"]);
-    // The markers are not pictures: they never make the export look unconverted.
-    fs.writeFileSync(path.join(webSrc, "pics", "fig0.pdf"), "%PDF");
-    fs.writeFileSync(path.join(webSrc, "pics", "fig0.svg"), "<svg/>");
     fs.mkdirSync(path.join(webSrc, WEB_EXPORT_FONTS_DIR), { recursive: true });
     fs.writeFileSync(path.join(webSrc, WEB_EXPORT_FONTS_DIR, FONT), FONT_BYTES);
+    fs.writeFileSync(path.join(webSrc, "pics", "fig0.pdf"), "%PDF");
+    fs.writeFileSync(path.join(webSrc, "pics", "fig0.svg"), "<svg/>");
+    fs.writeFileSync(path.join(webSrc, "pics", "lax-inc0.svg"), "<svg/>");
+    fs.writeFileSync(path.join(webSrc, "pics", `lax-inc0.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`), "");
     expect(webExportProblem(webSrc, [FONT], DEFAULT_LIMITS)).toBeUndefined();
   });
 

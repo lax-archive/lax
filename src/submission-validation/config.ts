@@ -38,6 +38,18 @@ export interface ValidationLimits {
   paperWebExportFiles: number;
   /** Bound on the enumerated container export set's total bytes. */
   paperWebExportBytes: number;
+  /** Bound on one converted picture's SVG. A vector conversion of a real
+   * figure is tens of KB and a downsampled raster's data: URI a few hundred;
+   * anything past this is refused rather than carried into the bundle. */
+  paperWebPictureBytes: number;
+  /** How many plain `\includegraphics` files one document may bring into
+   * the web view — the tikz pictures the compile externalizes itself are
+   * not counted here. */
+  paperWebIncludedPictures: number;
+  /** Long-edge pixel cap for a raster `\includegraphics`: a larger image is
+   * downsampled before it is re-encoded into the picture's data: URI, so a
+   * print-resolution photograph cannot dominate the bundle. */
+  paperWebRasterLongEdge: number;
   /** Cap on the serializer's `output.json` (and the encode child's stream
    * report) — a chapter-scale document produces tens of MB. */
   paperWebOutputJsonBytes: number;
@@ -86,6 +98,9 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   paperWebExportTimeoutMs: 5 * 60_000,
   paperWebExportFiles: 256,
   paperWebExportBytes: 256 * 1024 * 1024,
+  paperWebPictureBytes: 4 * 1024 * 1024,
+  paperWebIncludedPictures: 64,
+  paperWebRasterLongEdge: 2_048,
   paperWebOutputJsonBytes: 64 * 1024 * 1024,
   paperWebOracleSimilarity: 0.98,
 };

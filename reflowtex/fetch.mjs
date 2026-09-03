@@ -17,7 +17,14 @@
 //      with grpcio-tools' bundled protoc (never apt protoc, and never at
 //      pipeline run time — the fork's _ensure_pb2 is verify-only);
 //   4. import the generated module and assert both marker forms are present
-//      (the proof that the checkout is the fork's branch, not stock upstream).
+//      (the proof that the checkout is the fork's branch, not stock upstream);
+//   5. download the pinned PyMuPDF wheel into pymupdf/ (gitignored), verify
+//      its sha256 *before* unpacking, and unpack it into pymupdf/lib/. That
+//      one is not part of the encode environment at all: it is the picture
+//      converter the trusted export step bind-mounts read-only into the
+//      pinned TeX image (paper/web-container.ts), so it is a linux/amd64
+//      wheel matching that image rather than this machine, and it is
+//      deliberately kept out of venv/.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -32,6 +39,8 @@ const checkoutDir = path.join(here, "checkout");
 const venvDir = path.join(here, "venv");
 const venvPython = path.join(venvDir, "bin", "python");
 const pb2Dir = path.join(checkoutDir, "build");
+const pymupdfDir = path.join(here, "pymupdf");
+const pymupdfLibDir = path.join(pymupdfDir, "lib");
 
 function pin(name, pattern) {
   const text = fs.readFileSync(pinsFile, "utf8");
@@ -50,6 +59,9 @@ function run(command, args, options = {}) {
 
 const url = pin("REFLOWTEX_URL", /^https:\/\/.+/u);
 const rev = pin("REFLOWTEX_REV", /^[0-9a-f]{40}$/u);
+const wheelName = pin("PYMUPDF_WHEEL", /^[A-Za-z0-9][A-Za-z0-9._+-]*\.whl$/u);
+const wheelUrl = pin("PYMUPDF_URL", /^https:\/\/files\.pythonhosted\.org\/.+\.whl$/u);
+const wheelSha256 = pin("PYMUPDF_SHA256", /^[0-9a-f]{64}$/u);
 const source = process.env.LAX_REFLOWTEX_SOURCE ?? url;
 
 // ── 0. one fetch at a time ────────────────────────────────────────────────
@@ -153,5 +165,52 @@ run(
 if (!fs.existsSync(path.join(pb2Dir, "latex_pb2.py"))) {
   throw new Error("latex_pb2.py was not generated");
 }
+
+// ── 5. the pinned PyMuPDF wheel, for the *container* ──────────────────────
+// The same shape as the venv step: a stamp file records what is unpacked, so
+// an unchanged pin is a no-op, and the sha256 is checked against the pin
+// before a single byte is unpacked. LAX_PYMUPDF_WHEEL (read per call) points
+// at a local copy of the same file — the hash still has to match, so it is a
+// download shortcut and never a substitution.
+const wheelStamp = path.join(pymupdfDir, ".wheel-sha256");
+const pymupdfCurrent =
+  fs.existsSync(path.join(pymupdfLibDir, "pymupdf", "__init__.py")) &&
+  fs.existsSync(wheelStamp) &&
+  fs.readFileSync(wheelStamp, "utf8").trim() === wheelSha256;
+if (!pymupdfCurrent) {
+  fs.rmSync(pymupdfDir, { recursive: true, force: true });
+  fs.mkdirSync(pymupdfDir, { recursive: true });
+  const wheelFile = path.join(pymupdfDir, wheelName);
+  const local = process.env.LAX_PYMUPDF_WHEEL;
+  if (local !== undefined && local !== "") {
+    fs.copyFileSync(local, wheelFile);
+  } else {
+    const response = await fetch(wheelUrl, { redirect: "follow" });
+    if (!response.ok) throw new Error(`downloading ${wheelUrl} failed with ${response.status}`);
+    fs.writeFileSync(wheelFile, Buffer.from(await response.arrayBuffer()));
+  }
+  const digest = createHash("sha256").update(fs.readFileSync(wheelFile)).digest("hex");
+  if (digest !== wheelSha256) {
+    fs.rmSync(pymupdfDir, { recursive: true, force: true });
+    throw new Error(`${wheelName} hashes to ${digest}, expected ${wheelSha256}`);
+  }
+  // A wheel is a zip; python3 unpacks it without adding a dependency (and
+  // without running any of its code — `pip install` would run hooks and would
+  // also resolve for *this* platform, which is not the one it is for).
+  fs.mkdirSync(pymupdfLibDir, { recursive: true });
+  run("python3", [
+    "-c",
+    "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
+    wheelFile,
+    pymupdfLibDir,
+  ]);
+  if (!fs.existsSync(path.join(pymupdfLibDir, "pymupdf", "__init__.py"))) {
+    throw new Error(`${wheelName} does not carry a pymupdf package`);
+  }
+  fs.rmSync(wheelFile, { force: true });
+  fs.writeFileSync(wheelStamp, `${wheelSha256}\n`);
+}
+
 console.log(`Fetched reflowtex at ${rev} (${source === url ? url : source}), ` +
-  `env ${venvCurrent ? "reused" : "installed"}, latex_pb2.py regenerated.`);
+  `env ${venvCurrent ? "reused" : "installed"}, latex_pb2.py regenerated, ` +
+  `pymupdf ${pymupdfCurrent ? "reused" : "unpacked"}.`);

@@ -24,9 +24,10 @@
 %%     LuaTeX typesets with is the file the encode step serves;
 %%   - the node-list serializer (paragraphs unbroken, displays finished);
 %%   - the shipout walk, which learns the document order of the two;
-%% plus the tikz picture capture, armed only if the author loads tikz,
-%% and the web lowering of \laxmark: a user_defined whatsit at the
-%% current point (user_id 90210, string value "b:<n>"/"e:<n>"), an exact
+%% plus the picture captures -- tikz's externalized pictures, armed only
+%% if the author loads tikz, and every plain \includegraphics through
+%% graphics.sty -- and the web lowering of \laxmark: a user_defined
+%% whatsit at the current point (user_id 90210, value "b:<n>"/"e:<n>"), an exact
 %% content-stream position, legal in both modes -- replacing the PDF
 %% path's destination geometry entirely (no boundary rule, no v/h tags,
 %% no coordinates on this target). The author's class, fonts, and
@@ -91,6 +92,31 @@
     \global\advance\laxreflowPicCount by 1
     \directlua{Serializer.note_picture(\the\laxreflowPicCount, "\luaescapestring{#1}")}%
     \begingroup\attribute902=\laxreflowPicCount\relax\laxreflow@orig{#1}\endgroup}}
+
+%% The same capture for a plain \includegraphics -- a class logo, an ORCID
+%% icon, a photograph, a figure exported as PDF or PNG. graphics.sty routes
+%% every one of them through \Gin@setfile{<type>}{<read ext>}{<file>}, whose
+%% third argument is the file name it resolved, extension included; the
+%% driver called inside it is what emits the image rule the serializer sees,
+%% so stamping attribute 902 around the original catches exactly that node.
+%% Without this the rule reaches the encode unsourced and keeps only its
+%% width as blank space (a `web-pictures-dropped` warning).
+%%
+%% No double stamping with the tikz capture above: pgf includes an
+%% externalized picture through its own \pgfimage -> \pgfsys@defineimage,
+%% which under LuaTeX is \saveimageresource and never reaches graphics.sty.
+%% (The externalization sub-run re-inputs the document with this package
+%% re-injected, so it installs this hook too -- harmless: the sub-run
+%% typesets one picture and its own output.json is overwritten by the
+%% parent run's.)
+\AddToHook{package/graphics/after}{%
+  \let\laxreflow@setfile\Gin@setfile
+  \def\Gin@setfile#1#2#3{%
+    \global\advance\laxreflowPicCount by 1
+    \directlua{Serializer.note_picture(\the\laxreflowPicCount, "\luaescapestring{#3}")}%
+    \begingroup\attribute902=\laxreflowPicCount\relax
+      \laxreflow@setfile{#1}{#2}{#3}%
+    \endgroup}}
 
 \newskip\laxreflow@skip
 

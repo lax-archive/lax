@@ -250,20 +250,17 @@ function fixtures(): SmokeFixture[] {
       manifestExtra: "paper:\n  folder: paper\n  main: main.tex\n",
       check(report, jobRoot) {
         assertSuccessful(report);
-        // The picture's transparent shape is the only expected web note: it
-        // is redrawn without transparency (see below), which is reported and
-        // never a skip.
-        const webSkips = report.warnings.filter(
-          (warning) => warning.rule.startsWith("web-") && warning.rule !== "web-pictures-flattened",
-        );
+        // Nothing about the web view is expected to be remarked on: the
+        // transparent picture converts with its alpha and the included ORCID
+        // icon is shown, so neither the flattening nor the dropping this
+        // fixture used to prove still happens.
+        const webNotes = report.warnings.filter((warning) => warning.rule.startsWith("web-"));
         assert.equal(
-          webSkips.length,
+          webNotes.length,
           0,
-          "the web derivation skipped (run `npm run reflowtex:fetch` first?): " +
-            JSON.stringify(webSkips, null, 2),
+          "the web derivation warned or skipped (run `npm run reflowtex:fetch` first?): " +
+            JSON.stringify(webNotes, null, 2),
         );
-        const flattened = report.warnings.filter((warning) => warning.rule === "web-pictures-flattened");
-        assert.equal(flattened.length, 1, "the transparent picture was not reported as flattened");
         const paper = report.buildOutput!.paper;
         assert(paper !== undefined, "the paper was not recorded");
         const web = paper.web;
@@ -279,22 +276,35 @@ function fixtures(): SmokeFixture[] {
         for (const required of ["index.json", "blocks/000.pb", "schema/latex.proto"]) {
           assert(entries.includes(required), `bundle is missing ${required}`);
         }
-        // The tikz picture came through the in-image dvisvgm conversion into
-        // the encoded block as inline SVG (the encode child's own dvisvgm
-        // seam is pinned shut on this path, so a missed conversion cannot
-        // pass silently — reaching here proves the export step converted).
+        // The tikz picture came through the in-image conversion into the
+        // encoded block as inline SVG (the encode child's own dvisvgm seam is
+        // pinned shut on this path, so a missed conversion cannot pass
+        // silently — reaching here proves the export step converted).
         const block = execFileSync("tar", ["-xOf", webPath, "blocks/000.pb"]);
         assert(block.includes(Buffer.from("<path", "utf8")), "the encoded block carries no picture SVG");
-        // Ghostscript rasterizes a page with transparency and the sanitizer
-        // drops the raster, which left the figure blank until the export
-        // learned to redraw it without transparency; and the EPS route draws
-        // the page above the origin, which the host squares up before the
-        // encode reads it. Both are invisible downstream, so they are checked
-        // in the bytes the reader's browser will draw.
-        assert(!block.includes(Buffer.from("<image", "utf8")), "the picture arrived as a raster image");
+        // The picture's transparency survives. It did not until 2026-09-03:
+        // the conversion went through Ghostscript, which rasterizes any page
+        // it cannot express in PostScript, and the sanitizer then dropped the
+        // raster — so the figure arrived blank, silently. MuPDF reads the PDF
+        // directly, which is only visible in the bytes the browser will draw.
         assert(
-          block.includes(Buffer.from("<g transform='translate(", "utf8")),
-          "the picture's box was not moved to the origin",
+          block.includes(Buffer.from("fill-opacity", "utf8")),
+          "the picture lost its transparency on the way into the block",
+        );
+        // The one raster in the bundle is the included PNG below, and nothing
+        // else: a rasterized *drawing* would be the old failure returning.
+        assert.equal(
+          [...block.toString("latin1").matchAll(/<image\b/gu)].length,
+          1,
+          "the encoded block carries an unexpected number of raster images",
+        );
+        // The plain \includegraphics files are shown too, which is what the
+        // \Gin@setfile capture and the slot machinery exist for: a vector one
+        // as paths, a raster one as a single <image> with an inline data: URI
+        // the fork's sanitizer re-checked against the PNG magic number.
+        assert(
+          block.includes(Buffer.from("data:image/png;base64,", "utf8")),
+          "the included raster was not carried into the block",
         );
         // The T1 Latin Modern text face reached the bundle as a converted
         // outline: the in-image export resolved `ec-lmr10` through
@@ -354,7 +364,13 @@ function writeFixture(
   const write = (relative: string, content: string): void => {
     const filename = path.join(root, relative);
     fs.mkdirSync(path.dirname(filename), { recursive: true });
-    fs.writeFileSync(filename, content, "utf8");
+    // A fixture file is text, except where a case genuinely needs bytes (the
+    // paper-web PNG): `base64:` in front of the payload writes them.
+    fs.writeFileSync(
+      filename,
+      content.startsWith(BASE64_FILE) ? Buffer.from(content.slice(BASE64_FILE.length), "base64") : content,
+      "utf8",
+    );
   };
   write(
     "manifest.yaml",
@@ -498,6 +514,49 @@ end Lax44Proofs
   };
 }
 
+/** Marker for a fixture file given as bytes rather than text. */
+const BASE64_FILE = "base64:";
+
+/** A 8x8 checkerboard PNG — the raster `\includegraphics` case, small enough
+ * that its whole data: URI is a couple of hundred bytes in the bundle. */
+const SMOKE_PNG =
+  `${BASE64_FILE}iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAGElEQVR42mNgYPj/n4EB` +
+  "C4ldFCw8CHUAAOkwP8H8I6eUAAAAAElFTkSuQmCC";
+
+/** A one-page PDF drawing a filled rectangle and a line, uncompressed so the
+ * fixture stays text — the vector `\includegraphics` case (an ORCID icon, a
+ * class logo), which reaches the serializer through graphics.sty and not
+ * through tikz's externalization. */
+const SMOKE_PDF = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 20] /Contents 4 0 R /Resources << >> >>
+endobj
+4 0 obj
+<< /Length 56 >>
+stream
+0 0.4 0.8 rg 2 2 36 16 re f 1 0 0 RG 1 w 2 2 m 38 18 l S
+endstream
+endobj
+xref
+0 5
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000217 00000 n 
+trailer
+<< /Size 5 /Root 1 0 R >>
+startxref
+323
+%%EOF
+`;
+
 function paperWebFiles(): Record<string, string> {
   return {
     "concepts/Lax45.lean": "import Lax45.Claim\n",
@@ -520,6 +579,10 @@ theorem claim : 0 = 0 := rfl
 
 end Lax45Proofs
 `,
+    // Beside the tikz picture, one \includegraphics of each kind: a vector
+    // PDF and a raster PNG. Neither reaches tikz's externalization — they go
+    // through graphics.sty's \Gin@setfile, which laxreflow.sty hooks — and
+    // both were dropped from the view entirely until 2026-09-03.
     // A textless tikz picture on purpose, and a transparent shape in it:
     // externalization, the -shell-escape sub-run, the in-image dvisvgm
     // conversion, the flatten-and-retry for the raster Ghostscript makes of
@@ -530,11 +593,14 @@ end Lax45Proofs
     // text face every lmodern/lipics paper uses: its outlines resolve only
     // through pdftex.map (`lmr10.pfb` re-encoded by `lm-ec.enc`), which the
     // in-image export must carry for the encode host to convert them.
+    "paper/badge.pdf": SMOKE_PDF,
+    "paper/tile.png": SMOKE_PNG,
     "paper/main.tex": `\\documentclass{article}
 \\usepackage[T1]{fontenc}
 \\usepackage{lmodern}
 \\usepackage{amsthm}
 \\usepackage{BOONDOX-cal}
+\\usepackage{graphicx}
 \\usepackage{tikz}
 \\newtheorem{theorem}{Theorem}
 \\begin{document}
@@ -551,6 +617,8 @@ derivation's oracle sees two token sequences that agree completely.
   \\draw (3,0) rectangle (4,1);
   \\fill[opacity=0.3] (0.2,0.2) rectangle (1,0.8);
 \\end{tikzpicture}
+
+\\includegraphics[width=1cm]{badge.pdf}\\includegraphics[width=1cm]{tile.png}
 
 % lax begin Lax45.Claim
 \\begin{theorem}

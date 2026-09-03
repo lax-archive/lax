@@ -8,9 +8,9 @@
 //
 // What leaves the container is enumerated and bounded: `output.json` (read
 // through the shared size cap), `pics/*.pdf` plus the SVGs a second
-// in-image step converts them to (dvisvgm lives in the TeX image; the
-// encode host has none — the fork consumes a pre-converted `<src>.svg`
-// as-is, sanitizer still applied), and the font files the run used,
+// in-image step converts them to (the encode host has no PDF converter at
+// all — the fork consumes a pre-converted `<src>.svg` as-is, sanitizer
+// still applied), and the font files the run used,
 // resolved in-image by kpsewhich from the serializer's font table and
 // consumed host-side through `encode_web.py --fonts` (fonts.py's
 // `local_dir` injection point). Nothing else. The encode child then runs on
@@ -51,42 +51,45 @@ import {
  * with them; none of them can shadow author content (the fresh copy is
  * re-made per run) and none enter the sealed bundle. */
 export const WEB_EXPORT_SCRIPT = "lax-web-export.sh";
+export const WEB_EXPORT_CONVERTER = "lax-web-convert.py";
 export const WEB_EXPORT_FONT_LIST = "lax-web-fonts.txt";
 export const WEB_EXPORT_PFB_LIST = "lax-web-pfbs.txt";
+export const WEB_EXPORT_PICTURE_LIST = "lax-web-pictures.json";
 export const WEB_EXPORT_FONTS_DIR = "lax-fonts";
-/** Extension of the marker the export leaves beside a picture it had to
- * redraw with transparency off, so the host can say so in the report. */
-export const WEB_EXPORT_FLAT_SUFFIX = "flattened";
+/** Extension of the marker the export leaves beside a raster picture it had
+ * to downsample to the long-edge cap. */
+export const WEB_EXPORT_DOWNSAMPLED_SUFFIX = "downsampled";
+/** Where the unpacked PyMuPDF wheel is mounted, read-only, in the export
+ * container — `PYTHONPATH`, and the only thing in it. */
+export const WEB_PYMUPDF_PATH = "/opt/lax/pymupdf";
 
 /**
  * The in-image export step: resolve each requested font file by name and
  * each legacy face's Type1 outline with kpsewhich — the same lookups the
  * encode's own provisioning and t1 conversion would do if the host had
- * TeX — into the fonts directory, then convert every
- * externalized picture PDF to SVG with the image's dvisvgm — via an EPS
- * detour through the image's own Ghostscript: dvisvgm's direct `--pdf`
- * input needs Ghostscript < 10.01 or mutool, and the pinned TL2025 image
- * ships Ghostscript 10.07 and no mutool (measured 2026-09-03, the first
- * docker smoke of this path), while its `--eps` input runs on any
- * Ghostscript. The dvisvgm options match the fork's invocation
- * (transforms.py), private tmpdir included.
+ * TeX — into the fonts directory, then run the picture converter
+ * (`webConvertScript`, PyMuPDF over the mounted wheel), which is the only
+ * thing in the container that turns a picture into SVG.
  *
- * Ghostscript rasterizes a page it cannot express in PostScript, which for
- * a tikz picture means any transparency at all (an `opacity=` node, a
- * shading): the whole drawing comes back as one embedded JPEG, which the
- * encode's SVG sanitizer then drops — the reader would get an empty
- * figure, silently (measured 2026-09-03 on lax-65, whose two figures both
- * carry faded nodes). So a converted picture that came back as a raster is
- * redrawn with `-dNOTRANSPARENCY`: the drawing stays vector and the alpha
- * is lost, which is the readable trade. The retry leaves a `.flattened`
- * marker beside the picture so the host can say so in the report; a retry
- * that does not produce vectors keeps the first result rather than
- * claiming more than it has. A file kpsewhich cannot
- * resolve or a picture that does not convert is left absent, with the
- * converter's transcript on stderr — the deriver checks the required
- * pieces afterwards and skips loudly (a missing pfb is not required: it
- * degrades to metric boxes exactly as on a TeX-full host), so nothing
- * fails silently and the script itself stays simple.
+ * It used to be the image's own dvisvgm, through a Ghostscript EPS detour,
+ * and both halves of that were losses. dvisvgm's direct `--pdf` input needs
+ * Ghostscript < 10.01 or mutool, and the pinned TL2025 image ships
+ * Ghostscript 10.07 and no mutool (measured 2026-09-03, the first docker
+ * smoke of this path), so the PDF had to go through `gs -sDEVICE=eps2write`
+ * first — and Ghostscript rasterizes any page it cannot express in
+ * PostScript, which for a tikz picture means any transparency at all (an
+ * `opacity=` node, a shading): the whole drawing came back as one embedded
+ * JPEG, which the encode's SVG sanitizer dropped, so the figure arrived
+ * empty (measured on lax-65, whose two figures both carry faded nodes).
+ * MuPDF reads the PDF directly, keeps the alpha, and is a quarter of the
+ * size, so the chain is gone rather than kept as a fallback: one converter,
+ * one failure mode.
+ *
+ * A file kpsewhich cannot resolve or a picture that does not convert is
+ * left absent, with the converter's transcript on stderr — the deriver
+ * checks the required pieces afterwards and skips loudly (a missing pfb is
+ * not required: it degrades to metric boxes exactly as on a TeX-full
+ * host), so nothing fails silently and the script itself stays simple.
  *
  * A legacy face resolves the way the engines resolve it: through its
  * `pdftex.map` line, whose `<file` tokens name the outline and, for a
@@ -176,32 +179,195 @@ export function webExportScript(): string {
     "  fi",
     `  cp -- "$src" '${fontsDir}/'"$name.pfb"`,
     `done < '${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_PFB_LIST}'`,
-    `for pdf in '${PAPER_CONTAINER_PATHS.work}/pics/'*.pdf; do`,
-    "  [ -f \"$pdf\" ] || continue",
-    "  out=\"${pdf%.pdf}.svg\"",
-    "  [ -f \"$out\" ] && continue",
-    "  tmp=\"$(mktemp -d)\"",
-    "  eps=\"$tmp/picture.eps\"",
-    "  if gs -q -dNOPAUSE -dBATCH -dSAFER -sDEVICE=eps2write \"-sOutputFile=$eps\" \"$pdf\" >&2 &&",
-    "     dvisvgm --eps --no-fonts --optimize=all \"--tmpdir=$tmp\" \"--output=$out\" \"$eps\" >&2; then",
-    "    if grep -q '<image' \"$out\"; then",
-    "      if gs -q -dNOPAUSE -dBATCH -dSAFER -dNOTRANSPARENCY -sDEVICE=eps2write \"-sOutputFile=$tmp/flat.eps\" \"$pdf\" >&2 &&",
-    "         dvisvgm --eps --no-fonts --optimize=all \"--tmpdir=$tmp\" \"--output=$tmp/flat.svg\" \"$tmp/flat.eps\" >&2 &&",
-    "         ! grep -q '<image' \"$tmp/flat.svg\"; then",
-    "        cat \"$tmp/flat.svg\" > \"$out\"",
-    `        : > "\${pdf%.pdf}.${WEB_EXPORT_FLAT_SUFFIX}"`,
-    "        echo \"lax paper-web export: picture redrawn without transparency: $pdf\" >&2",
-    "      fi",
-    "    fi",
-    "  else",
-    "    echo \"lax paper-web export: picture not converted: $pdf\" >&2",
-    "    rm -f \"$out\"",
-    "  fi",
-    "  rm -rf \"$tmp\"",
-    "done",
+    "# The picture converter (PyMuPDF): every externalized tikz PDF and every",
+    "# listed \\includegraphics file, straight to SVG. Per-file failures are",
+    "# reported on stderr and leave that picture's SVG absent, which the host",
+    "# then accounts for; nothing else in the image can read a PDF.",
+    `python3 '${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_CONVERTER}' >&2 ||`,
+    "  echo 'lax paper-web export: the picture converter did not run' >&2",
     "exit 0",
     "",
   ].join("\n");
+}
+
+/**
+ * The in-image picture converter: PyMuPDF (pins.ts, mounted read-only at
+ * WEB_PYMUPDF_PATH) turning every picture the run holds into SVG, written by
+ * the host into the job copy after the compile the way the export script is.
+ *
+ * The pinned TeX Live image carries no other way to read a PDF: dvisvgm
+ * cannot take PDF input against its Ghostscript, and the Ghostscript detour
+ * rasterizes every page with transparency. MuPDF reads the file directly,
+ * keeps `fill-opacity`/`stroke-opacity`, draws text as paths, and emits only
+ * elements the fork's sanitizer already allows — at roughly a quarter of the
+ * flattened output's size (measured on lax-65: 59 KB and 43 KB against
+ * 247 KB and 205 KB).
+ *
+ * Two kinds of input, both bounded. A PDF (an externalized tikz picture, a
+ * vector figure) becomes its single page's vector SVG — more than one page is
+ * refused rather than silently cropped. A raster (`\\includegraphics` of a
+ * PNG or a JPEG) has no vector form, so it is re-encoded through a Pixmap —
+ * which turns untrusted bytes into pixels this process produced — downsampled
+ * to the long-edge cap, and wrapped in an `<svg>` holding one `<image>` with a
+ * `data:` URI; the fork's sanitizer re-checks the media type against the
+ * decoded magic number on the way in. Every conversion is capped by output
+ * size and no single failure is fatal: an unconverted picture simply leaves no
+ * SVG, and the caller degrades it to the kern fallback.
+ *
+ * The `\\includegraphics` files are named by the *slot* the host assigned
+ * (`assignIncludedPictureSlots`), never by their own path, and each one is
+ * resolved inside the job copy or the image's TeX tree or not at all.
+ */
+export function webConvertScript(limits: ValidationLimits): string {
+  return `#!/usr/bin/env python3
+# lax paper-web picture conversion (written by the trusted deriver after the
+# compile, run inside the pinned TeX image against the mounted PyMuPDF).
+import base64, glob, json, os, subprocess, sys
+
+WORK = "${PAPER_CONTAINER_PATHS.work}"
+MAX_SVG_BYTES = ${limits.paperWebPictureBytes}
+RASTER_LONG_EDGE = ${limits.paperWebRasterLongEdge}
+PICTURE_LIST = os.path.join(WORK, "${WEB_EXPORT_PICTURE_LIST}")
+DOWNSAMPLED_SUFFIX = "${WEB_EXPORT_DOWNSAMPLED_SUFFIX}"
+
+import pymupdf
+
+
+def note(message):
+    print("lax paper-web convert: " + message, file=sys.stderr)
+
+
+def kpse(*args):
+    try:
+        done = subprocess.run(["kpsewhich", *args], capture_output=True,
+                              text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+# Where a \\includegraphics file may come from: the job's own copy, or the
+# image's TeX tree (a class logo). Anything else — /etc, /proc, a symlink out
+# of the copy — is refused: the compile ran with -shell-escape and wrote both
+# the file names and the files, so a resolved path is checked, never trusted.
+def allowed_roots():
+    roots = [os.path.realpath(WORK)]
+    for var in ("SELFAUTOPARENT", "TEXMFDIST", "TEXMFLOCAL", "TEXMFHOME", "TEXMFVAR"):
+        value = kpse("--var-value=" + var)
+        if value and os.path.isdir(value):
+            roots.append(os.path.realpath(value))
+    return roots
+
+
+ROOTS = allowed_roots()
+
+
+def contained(path):
+    return any(path == root or path.startswith(root + os.sep) for root in ROOTS)
+
+
+def resolve(name):
+    """The listed file as an absolute path inside an allowed root, or None."""
+    inside = os.path.realpath(os.path.join(WORK, name))
+    if os.path.isfile(inside) and contained(inside):
+        return inside
+    found = kpse(name).splitlines()
+    if found:
+        outside = os.path.realpath(found[0])
+        if os.path.isfile(outside) and contained(outside):
+            return outside
+    return None
+
+
+def write_svg(out, svg):
+    data = svg.encode("utf-8")
+    if len(data) > MAX_SVG_BYTES:
+        note("over the %d byte cap, not converted: %s" % (MAX_SVG_BYTES, out))
+        return False
+    with open(out, "wb") as handle:
+        handle.write(data)
+    return True
+
+
+def vector_svg(source):
+    """One page of a PDF as pure vector SVG, text drawn as paths (no font
+    lookup on the reader's side, and none of dvisvgm's id collisions)."""
+    document = pymupdf.open(source)
+    try:
+        if document.page_count != 1:
+            raise RuntimeError("%d pages, expected exactly 1" % document.page_count)
+        return document[0].get_svg_image(text_as_path=True)
+    finally:
+        document.close()
+
+
+def raster_svg(source, jpeg):
+    """A raster re-encoded through a Pixmap — which normalizes untrusted bytes
+    into pixels this process produced — downsampled to the long-edge cap and
+    wrapped in an <svg> holding one <image>. Returns (svg, downsampled)."""
+    pixmap = pymupdf.Pixmap(source)
+    downsampled = False
+    while max(pixmap.width, pixmap.height) > RASTER_LONG_EDGE and min(pixmap.width, pixmap.height) > 1:
+        pixmap.shrink(1)  # halves both dimensions in place
+        downsampled = True
+    if jpeg and pixmap.alpha:
+        pixmap = pymupdf.Pixmap(pixmap, 0)  # JPEG carries no alpha channel
+    if pixmap.colorspace is not None and pixmap.colorspace.n > 3:
+        pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
+    payload = base64.b64encode(pixmap.tobytes("jpeg" if jpeg else "png")).decode("ascii")
+    mime = "image/jpeg" if jpeg else "image/png"
+    width, height = pixmap.width, pixmap.height
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' "
+        "xmlns:xlink='http://www.w3.org/1999/xlink' "
+        "width='%d' height='%d' viewBox='0 0 %d %d'>"
+        "<image width='%d' height='%d' xlink:href='data:%s;base64,%s'/></svg>"
+        % (width, height, width, height, width, height, mime, payload)
+    )
+    return svg, downsampled
+
+
+def convert(source, out):
+    """Returns True when \`out\` now holds the picture. Never raises."""
+    extension = os.path.splitext(source)[1].lower()
+    try:
+        if extension in (".png", ".jpg", ".jpeg"):
+            svg, downsampled = raster_svg(source, extension != ".png")
+            if not write_svg(out, svg):
+                return False
+            if downsampled:
+                open(out[: -len(".svg")] + "." + DOWNSAMPLED_SUFFIX, "wb").close()
+            return True
+        return write_svg(out, vector_svg(source))
+    except Exception as error:  # noqa: BLE001 — one bad picture is not fatal
+        note("not converted: %s (%s: %s)" % (source, type(error).__name__, error))
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
+        return False
+
+
+# ── the externalized tikz pictures, by their own name ─────────────────────
+for pdf in sorted(glob.glob(os.path.join(WORK, "pics", "*.pdf"))):
+    out = pdf[: -len(".pdf")] + ".svg"
+    if not os.path.exists(out):
+        convert(pdf, out)
+
+# ── the \\includegraphics files, by the slot the host assigned each ────────
+try:
+    with open(PICTURE_LIST, "r", encoding="utf-8") as handle:
+        listed = json.load(handle)
+except (OSError, ValueError):
+    listed = []
+for entry in listed:
+    slot, name = entry["slot"], entry["file"]
+    source = resolve(name)
+    if source is None:
+        note("not resolved inside the job copy or the TeX tree: %s" % name)
+        continue
+    convert(source, os.path.join(WORK, slot + ".svg"))
+`;
 }
 
 // ── virtual fonts ──────────────────────────────────────────────────────────
@@ -348,24 +514,25 @@ export function resolveVirtualFonts(webSrc: string): { resolved: string[]; refus
   return { resolved, refused };
 }
 
-/** The root `<svg viewBox='x y w h'>` of a dvisvgm conversion, single-quoted
- * as dvisvgm writes it — the fork's own root pattern, which reads the width
- * and height and ignores the origin. */
+/** The root `<svg viewBox='x y w h'>` of a converted picture — the fork's own
+ * root pattern, which reads the width and height and ignores the origin,
+ * with either quote character (MuPDF writes double, the fork single). */
 const SVG_ROOT =
-  /(?<head><svg\b[^>]*\bviewBox=')(?<x>[\d.eE+-]+) (?<y>[\d.eE+-]+) (?<w>[\d.eE+-]+) (?<h>[\d.eE+-]+)(?<tail>'[^>]*>)(?<body>[\s\S]*)<\/svg>/u;
+  /(?<head><svg\b[^>]*\bviewBox=(?<q>['"]))(?<x>[\d.eE+-]+) (?<y>[\d.eE+-]+) (?<w>[\d.eE+-]+) (?<h>[\d.eE+-]+)(?<tail>\k<q>[^>]*>)(?<body>[\s\S]*)<\/svg>/u;
 
 /**
  * One converted picture with its box's origin moved to `0 0`, or undefined
- * when it is there already (every conversion from PDF input) or the markup
- * is not a dvisvgm root.
+ * when it is there already or the markup carries no `<svg viewBox>` root.
  *
- * EPS input is drawn in PostScript's upward y: dvisvgm emits `viewBox='0 -h
- * w h'` and draws the page above the origin. Nothing downstream can see
- * that — the encode keeps only the viewBox's width and height, and the
- * viewer places a picture from its box's top-left corner — so the drawing
- * would land one box's height too high, over the text above it. Moving the
- * origin here, on the trusted side and before the encode reads the file,
- * keeps the box's size and puts the drawing back in it.
+ * Nothing downstream can see a picture's origin — the encode keeps only the
+ * viewBox's width and height, and the viewer places a picture from its box's
+ * top-left corner — so a drawing sitting anywhere else in its box would land
+ * that far off, over the text around it. The retired dvisvgm route did that
+ * on every picture (EPS is drawn in PostScript's upward y, so its root read
+ * `viewBox='0 -h w h'`); MuPDF's conversions are all at `0 0`, so today this
+ * is a guard that does not fire rather than a repair that must. It stays
+ * because it is the one place a wrong origin could still be caught, on the
+ * trusted side and before the encode reads the file.
  */
 export function pictureAtOrigin(svg: string): string | undefined {
   const match = SVG_ROOT.exec(svg);
@@ -398,17 +565,168 @@ export function normalizePictureBoxes(webSrc: string): number {
   return moved;
 }
 
-/** The pictures the export had to redraw without transparency, by their
- * PDF's name — the `.flattened` markers the script leaves. Read after a
- * successful export, before the encode. */
-export function webFlattenedPictures(webSrc: string): string[] {
-  const picsDir = path.join(webSrc, "pics");
-  if (!fs.existsSync(picsDir)) return [];
-  return fs
-    .readdirSync(picsDir)
-    .filter((name) => name.endsWith(`.${WEB_EXPORT_FLAT_SUFFIX}`))
-    .map((name) => `${name.slice(0, -WEB_EXPORT_FLAT_SUFFIX.length - 1)}.pdf`)
-    .sort();
+// ── plain \includegraphics ─────────────────────────────────────────────────
+//
+// An externalized tikz picture is written by the compile into `pics/` under a
+// name the compile chose, and the serializer records that stem. Every *other*
+// picture — a class logo, an ORCID icon, a photograph, a figure exported as
+// PDF — is a plain `\includegraphics`, and what `laxreflow.sty` records for it
+// is the file name graphics.sty resolved: an author-controlled string out of a
+// `-shell-escape` run's own output.json, pointing at a file that may sit
+// anywhere the run could read.
+//
+// So the name never travels. Each distinct one is validated by shape, assigned
+// a slot (`pics/lax-inc<N>`), and only the slot goes into the output.json the
+// encode reads and into the bundle; the file itself is named exactly once, in
+// the list the in-container converter resolves against the job copy and the
+// TeX tree. A name that fails validation, and a slot the converter did not
+// produce an SVG for, lose their `file` field — which is precisely the fork's
+// kern fallback, reported as `web-pictures-dropped`.
+
+/** The stem every included picture's slot is named with. */
+export const WEB_INCLUDED_SLOT_PREFIX = "pics/lax-inc";
+
+/** One path segment of an included graphics file name. It cannot begin with a
+ * dot, so `..` is unspellable and no traversal can be expressed. */
+const INCLUDED_SEGMENT = "[A-Za-z0-9_][A-Za-z0-9._+-]{0,99}";
+
+/** An acceptable `\includegraphics` file: a relative name of at most eight
+ * such segments, or the absolute form kpsewhich hands back for a file in the
+ * TeX tree, with one of the four extensions the converter can read. Shape
+ * only — the containment check that matters happens in the container, against
+ * the resolved path. */
+export const WEB_INCLUDED_FILE = new RegExp(
+  `^/?(?:${INCLUDED_SEGMENT}/){0,8}${INCLUDED_SEGMENT}\\.(?:pdf|png|jpe?g)$`,
+  "iu",
+);
+
+/** A picture the host gave a slot: the slot's stem inside the job copy, and
+ * the file name the container is to resolve. */
+export interface WebIncludedPicture {
+  slot: string;
+  file: string;
+}
+
+export interface WebIncludedPictures {
+  included: WebIncludedPicture[];
+  /** Distinct file values refused by shape or by the count cap; each one's
+   * picture keeps its width as blank space. */
+  refused: string[];
+}
+
+/** A tikz picture's own externalization stem, as the compile wrote it. */
+function tikzStem(webSrc: string, file: string): boolean {
+  return (
+    /^pics\/[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/u.test(file) &&
+    fs.lstatSync(path.join(webSrc, `${file}.pdf`), { throwIfNoEntry: false })?.isFile() === true
+  );
+}
+
+/**
+ * Give every plain `\includegraphics` in the serialized stream a slot,
+ * rewriting `output.json` in place: a tikz stem is left alone, an acceptable
+ * file name becomes its slot, anything else loses its `file` field. Runs after
+ * the compile and before the export, and returns what the export must resolve.
+ */
+export function assignIncludedPictureSlots(webSrc: string, limits: ValidationLimits): WebIncludedPictures {
+  const file = path.join(webSrc, "output.json");
+  const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (stat === undefined || !stat.isFile() || stat.size > limits.paperWebOutputJsonBytes) {
+    return { included: [], refused: [] };
+  }
+  const data = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+  const slots = new Map<string, string>();
+  const refused = new Set<string>();
+  let changed = false;
+  walkPictureNodes(data, (node) => {
+    const value = node.file;
+    if (typeof value !== "string" || value === "") return;
+    if (tikzStem(webSrc, value)) return;
+    let slot = slots.get(value);
+    if (slot === undefined) {
+      if (!WEB_INCLUDED_FILE.test(value) || value.length > 512 || slots.size >= limits.paperWebIncludedPictures) {
+        refused.add(value);
+        delete node.file;
+        changed = true;
+        return;
+      }
+      slot = `${WEB_INCLUDED_SLOT_PREFIX}${slots.size}`;
+      slots.set(value, slot);
+    }
+    node.file = slot;
+    changed = true;
+  });
+  if (changed) fs.writeFileSync(file, JSON.stringify(data));
+  return {
+    included: [...slots].map(([name, slot]) => ({ slot, file: name })),
+    refused: [...refused].sort(),
+  };
+}
+
+/**
+ * The slots the export produced no SVG for, stripped from `output.json` so the
+ * fork's kern fallback takes them instead of the encode dying on a picture it
+ * cannot source. Returns their file names, for the report.
+ */
+export function dropUnconvertedPictures(
+  webSrc: string,
+  included: readonly WebIncludedPicture[],
+  limits: ValidationLimits,
+): string[] {
+  const missing = new Map<string, string>();
+  for (const picture of included) {
+    if (fs.lstatSync(path.join(webSrc, `${picture.slot}.svg`), { throwIfNoEntry: false })?.isFile() !== true) {
+      missing.set(picture.slot, picture.file);
+    }
+  }
+  if (missing.size === 0) return [];
+  const file = path.join(webSrc, "output.json");
+  const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (stat === undefined || !stat.isFile() || stat.size > limits.paperWebOutputJsonBytes) return [];
+  const data = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+  walkPictureNodes(data, (node) => {
+    if (typeof node.file === "string" && missing.has(node.file)) delete node.file;
+  });
+  fs.writeFileSync(file, JSON.stringify(data));
+  return [...new Set(missing.values())].sort();
+}
+
+/** The raster pictures the export had to downsample, by the author's own file
+ * name — the `.downsampled` markers the converter leaves. */
+export function webDownsampledPictures(webSrc: string, included: readonly WebIncludedPicture[]): string[] {
+  const names: string[] = [];
+  for (const picture of included) {
+    const marker = path.join(webSrc, `${picture.slot}.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`);
+    if (fs.lstatSync(marker, { throwIfNoEntry: false })?.isFile() === true) names.push(picture.file);
+  }
+  return [...new Set(names)].sort();
+}
+
+/** Every `picture` node of a serialized stream, at any depth — the same walk
+ * the fork's transforms do, over the parsed object as untrusted data. */
+function walkPictureNodes(data: unknown, visit: (node: Record<string, unknown>) => void): void {
+  const walk = (nodes: unknown): void => {
+    if (!Array.isArray(nodes)) return;
+    for (const entry of nodes) {
+      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const node = entry as Record<string, unknown>;
+      if (node.type === "picture") visit(node);
+      for (const key of ["children", "replace", "pre", "post", "nobreak"]) walk(node[key]);
+      if (node.leader !== undefined) walk([node.leader]);
+    }
+  };
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+  const document = data as Record<string, unknown>;
+  for (const paragraph of Array.isArray(document.paragraphs) ? document.paragraphs : []) {
+    if (paragraph !== null && typeof paragraph === "object") {
+      walk((paragraph as Record<string, unknown>).nodes);
+    }
+  }
+  for (const item of Array.isArray(document.content) ? document.content : []) {
+    if (item === null || typeof item !== "object") continue;
+    const box = (item as Record<string, unknown>).box;
+    if (box !== null && typeof box === "object") walk((box as Record<string, unknown>).children);
+  }
 }
 
 /** The export set's count + total-bytes bound, over everything the export
@@ -549,8 +867,21 @@ export function containerWebDeriver(
     // written, so it cannot tamper with them — and the fonts directory is
     // re-made empty so nothing the compile planted pre-seeds the export.
     fs.rmSync(path.join(webSrc, WEB_EXPORT_FONTS_DIR), { recursive: true, force: true });
+    // Every plain \includegraphics gets a slot and the file names stay behind
+    // (see "plain \includegraphics" above); the tikz pictures are untouched.
+    const pictures = assignIncludedPictureSlots(webSrc, input.limits);
+    // Slot names belong to the host, so nothing the compile left under one is
+    // allowed to pre-seed the export — the same doctrine as the fonts
+    // directory. (A planted SVG would still pass the fork's sanitizer, as any
+    // picture must; this simply keeps the slot meaning what the host said.)
+    for (const picture of pictures.included) {
+      fs.rmSync(path.join(webSrc, `${picture.slot}.svg`), { force: true });
+      fs.rmSync(path.join(webSrc, `${picture.slot}.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`), { force: true });
+    }
     fs.writeFileSync(path.join(webSrc, WEB_EXPORT_FONT_LIST), fontNames.map((name) => `${name}\n`).join(""), { mode: 0o600 });
     fs.writeFileSync(path.join(webSrc, WEB_EXPORT_PFB_LIST), legacyNames.map((name) => `${name}\n`).join(""), { mode: 0o600 });
+    fs.writeFileSync(path.join(webSrc, WEB_EXPORT_PICTURE_LIST), `${JSON.stringify(pictures.included)}\n`, { mode: 0o600 });
+    fs.writeFileSync(path.join(webSrc, WEB_EXPORT_CONVERTER), webConvertScript(input.limits), { mode: 0o600 });
     fs.writeFileSync(path.join(webSrc, WEB_EXPORT_SCRIPT), webExportScript(), { mode: 0o600 });
     const exported = await runner.run({
       label: "paper-web-export",
@@ -558,9 +889,13 @@ export function containerWebDeriver(
       args: ["sh", `${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_SCRIPT}`],
       mounts: [
         { source: webSrc, target: PAPER_CONTAINER_PATHS.work, writable: true },
+        // The picture converter's library, read-only and alone on PYTHONPATH:
+        // the pinned image has no way of its own to read a PDF without
+        // rasterizing it (pins.ts, PYMUPDF_*).
+        { source: reflowtex.pymupdf, target: WEB_PYMUPDF_PATH },
       ],
       workdir: PAPER_CONTAINER_PATHS.work,
-      env: { HOME: "/tmp" },
+      env: { HOME: "/tmp", PYTHONPATH: WEB_PYMUPDF_PATH },
       timeoutMs: input.limits.paperWebExportTimeoutMs,
       maxOutputBytes: input.limits.maxOutputBytes,
     });
@@ -576,23 +911,28 @@ export function containerWebDeriver(
     if (exportProblem !== undefined) return skip(exportProblem.rule, exportProblem.message);
     resolveVirtualFonts(webSrc);
     normalizePictureBoxes(webSrc);
-    const flattened = webFlattenedPictures(webSrc);
-    if (flattened.length > 0) {
-      // Derived, and whole, but not identical: the drawing is there and the
-      // transparency is not, so the author is told rather than left to spot
-      // a solid node where the paper has a faded one.
+    // A slot the converter could not fill degrades to the kern fallback rather
+    // than killing the encode; together with the names refused by shape, those
+    // are what `web-pictures-dropped` will count below.
+    const unconverted = dropUnconvertedPictures(webSrc, pictures.included, input.limits);
+    const droppedNames = [...pictures.refused, ...unconverted];
+    const downsampled = webDownsampledPictures(webSrc, pictures.included);
+    if (downsampled.length > 0) {
+      // Shown, and readable, but not at the file's own resolution: a raster has
+      // no vector form, so the view carries pixels and there is a budget.
       warnings.push({
-        rule: "web-pictures-flattened",
+        rule: "web-pictures-raster",
         message:
-          `the reflow view redrew ${flattened.length} picture(s) without transparency ` +
-          `(${flattened.slice(0, 5).join(", ")}${flattened.length > 5 ? ", …" : ""}): ` +
-          "Ghostscript renders a transparent picture as a raster image, which the view cannot carry, " +
-          "so faded or blended parts are drawn solid",
+          `the reflow view carries ${downsampled.length} included image(s) as downsampled pixels ` +
+          `(${downsampled.slice(0, 5).join(", ")}${downsampled.length > 5 ? ", …" : ""}): ` +
+          `a raster has no vector form, so it is re-encoded at up to ${input.limits.paperWebRasterLongEdge} px ` +
+          "on its long edge and embedded in the picture",
       });
     }
 
     // ── everything after compile + export is the shared engine ───────────
     return encodeAndSealWebBundle(input, reflowtex, webSrc, webOut, warnings, skip, {
+      droppedPictureNames: droppedNames,
       extraArgs: ["--fonts", path.join(webSrc, WEB_EXPORT_FONTS_DIR)],
       env: {
         // The dvisvgm seam stays shut: conversion already happened inside
