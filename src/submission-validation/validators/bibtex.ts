@@ -73,8 +73,8 @@ function validEntryBody(type: string, rawBody: string): boolean {
   if (type === "preamble") return validValue(body);
   if (type === "string") {
     const assignments = splitTopLevel(body, ",");
-    return assignments !== undefined && assignments.filter(Boolean).length > 0 &&
-      assignments.filter(Boolean).every(validAssignment);
+    const assignment = assignments?.length === 1 ? assignments[0] : undefined;
+    return assignment !== undefined && validAssignment(assignment);
   }
   const parts = splitTopLevel(body, ",");
   if (parts === undefined || parts.length < 2) return false;
