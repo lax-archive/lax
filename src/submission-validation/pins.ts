@@ -65,7 +65,7 @@ export const PAPER_IMAGE = `${PAPER_IMAGE_NAME}@sha256:${PAPER_IMAGE_DIGEST}`;
  * module stays the single source of truth.
  */
 export const REFLOWTEX_URL = "https://github.com/lax-archive/reflowtex";
-export const REFLOWTEX_REV = "74215bf6e878ae8d7e68716112ebdf5b73e1e421";
+export const REFLOWTEX_REV = "7c6c88377f9486217dcb81095f2053e2c6855ada";
 
 /** Version of the validation runtime layout recorded in reports and captures.
  * The capture layout (concepts|proofs → package/, lib/) is unchanged from the

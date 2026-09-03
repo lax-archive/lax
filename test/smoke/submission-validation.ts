@@ -278,6 +278,17 @@ function fixtures(): SmokeFixture[] {
         // pass silently — reaching here proves the export step converted).
         const block = execFileSync("tar", ["-xOf", webPath, "blocks/000.pb"]);
         assert(block.includes(Buffer.from("<path", "utf8")), "the encoded block carries no picture SVG");
+        // The T1 Latin Modern text face reached the bundle as a converted
+        // outline: the in-image export resolved `ec-lmr10` through
+        // pdftex.map (lmr10.pfb + lm-ec.enc under the TeX name) and the
+        // host encode converted it — the route the first real lipics paper
+        // (lax-65) found missing.
+        const index = JSON.parse(execFileSync("tar", ["-xOf", webPath, "index.json"], { encoding: "utf8" })) as {
+          fonts: Record<string, string>;
+        };
+        const converted = Object.keys(index.fonts).filter((name) => /^ec-lmr10\.reflowtex-[0-9a-f]{8}\.otf$/u.test(name));
+        assert.equal(converted.length, 1, `no converted ec-lmr10 in the font map: ${Object.keys(index.fonts).join(", ")}`);
+        assert(entries.includes(index.fonts[converted[0]!]!), "the converted face is mapped but not carried");
         // The PDF path is untouched beside it.
         assert.equal(paper.pdf.pages, 1);
       },
@@ -488,8 +499,13 @@ end Lax45Proofs
     // sub-run, the in-image dvisvgm conversion, and the SVG sanitizer are
     // all exercised while the oracle's substrates stay token-identical
     // (picture *label* text is a PDF-only token and a known oracle
-    // tolerance question, not this smoke's subject).
+    // tolerance question, not this smoke's subject). T1 Latin Modern is the
+    // text face every lmodern/lipics paper uses: its outlines resolve only
+    // through pdftex.map (`lmr10.pfb` re-encoded by `lm-ec.enc`), which the
+    // in-image export must carry for the encode host to convert them.
     "paper/main.tex": `\\documentclass{article}
+\\usepackage[T1]{fontenc}
+\\usepackage{lmodern}
 \\usepackage{amsthm}
 \\usepackage{tikz}
 \\newtheorem{theorem}{Theorem}

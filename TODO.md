@@ -118,7 +118,24 @@ dvisvgm cannot read PDF (Ghostscript 10.07, no mutool) — fixed with the
 Ghostscript EPS detour in `web-container.ts`; the web compile of the
 tikz fixture takes ~16 s in the image. Jan waived the scratch-repo
 rehearsal for this merge (2026-09-03, "finish all the way"); the standing
-rule itself stands for the next Actions-side change. What remains:
+rule itself stands for the next Actions-side change. The first real paper
+(lax-65, LIPIcs, 2026-09-03) then found three trusted-path gaps the tikz
+fixture could not: the fork's opt-in list for unsourced pictures shadowed
+a local (UnboundLocalError; renamed, fork 74215bf); every text face of an
+lmodern/lipics paper is a re-encoded legacy Type1 (`ec-lmr10` is
+`lmr10.pfb` through `lm-ec.enc`, no `ec-lmr10.pfb` exists) that stock
+lookup never finds — and on the TeX-less Validate host the fallback
+`kpsewhich` call crashed the encode; and the oracle read those faces'
+slots through a Computer-Modern-keyed table ("deøned", vanished accents,
+"1γ"), subtracted trial typesettings (`\caption`'s measuring box, a
+paragraph's opening letters) from the PDF side, and landed at 0.9799
+against the 0.98 floor. Now: the fork resolves legacy faces through
+`pdftex.map` with their encoding vectors (exported in-image as
+`<name>.pfb` + `<name>.enc`, `find_outline`), f-ligatures address their
+presentation forms, `provision` survives a missing kpsewhich, the oracle
+text is taken after the legacy re-addressing, and a capture whose text
+the stream carries is no omission (`web.ts`); the smoke fixture typesets
+in T1 Latin Modern so the map route runs in the pinned image. What remains:
 
 - **[Jan] Renderer release**: bump
   `src/cli/deployment/website-source.lock.json` to a paper-bearing

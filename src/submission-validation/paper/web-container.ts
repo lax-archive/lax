@@ -57,9 +57,9 @@ export const WEB_EXPORT_FONTS_DIR = "lax-fonts";
 
 /**
  * The in-image export step: resolve each requested font file by name and
- * each legacy face's Type1 outline (`<name>.pfb`) with kpsewhich — the
- * same lookups the encode's own provisioning and t1 conversion would do if
- * the host had TeX — into the fonts directory, then convert every
+ * each legacy face's Type1 outline with kpsewhich — the same lookups the
+ * encode's own provisioning and t1 conversion would do if the host had
+ * TeX — into the fonts directory, then convert every
  * externalized picture PDF to SVG with the image's dvisvgm — via an EPS
  * detour through the image's own Ghostscript: dvisvgm's direct `--pdf`
  * input needs Ghostscript < 10.01 or mutool, and the pinned TL2025 image
@@ -72,6 +72,17 @@ export const WEB_EXPORT_FONTS_DIR = "lax-fonts";
  * pieces afterwards and skips loudly (a missing pfb is not required: it
  * degrades to metric boxes exactly as on a TeX-full host), so nothing
  * fails silently and the script itself stays simple.
+ *
+ * A legacy face resolves the way the engines resolve it: through its
+ * `pdftex.map` line, whose `<file` tokens name the outline and, for a
+ * re-encoded face, the encoding vector — `ec-lmr10` is `lmr10.pfb`
+ * through `lm-ec.enc`, and there is no `ec-lmr10.pfb` anywhere. Both land
+ * under the TeX name (`<name>.pfb`, `<name>.enc`), which is the
+ * `REFLOWTEX_PFB_DIR` contract the fork's `find_outline` reads; a
+ * re-encoded face whose vector does not resolve exports nothing (metric
+ * boxes, never the outline's built-in encoding addressing every slot
+ * above ASCII wrongly). A name without a map line is `<name>.pfb` as
+ * stock (plain lualatex math's cmmi10, cmsy10, …).
  */
 export function webExportScript(): string {
   const fontsDir = `${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}`;
@@ -87,12 +98,33 @@ export function webExportScript(): string {
     `    cp -- "$src" '${fontsDir}/'"$name"`,
     "  fi",
     `done < '${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONT_LIST}'`,
+    "map=\"$(kpsewhich pdftex.map || true)\"",
     "while IFS= read -r name; do",
     "  [ -n \"$name\" ] || continue",
-    "  src=\"$(kpsewhich \"$name.pfb\" || true)\"",
-    "  if [ -n \"$src\" ] && [ -f \"$src\" ]; then",
-    `    cp -- "$src" '${fontsDir}/'"$name.pfb"`,
+    "  pfb=\"\"; enc=\"\"",
+    "  if [ -n \"$map\" ] && [ -f \"$map\" ]; then",
+    "    for tok in $(awk -v n=\"$name\" '$1 == n { print; exit }' \"$map\"); do",
+    "      case \"$tok\" in",
+    "        '<<'*) f=\"${tok#<<}\" ;;",
+    "        '<['*) f=\"${tok#<[}\" ;;",
+    "        '<'*) f=\"${tok#<}\" ;;",
+    "        *) continue ;;",
+    "      esac",
+    "      case \"$f\" in",
+    "        *.enc) enc=\"$f\" ;;",
+    "        *.pfb|*.pfa) pfb=\"$f\" ;;",
+    "      esac",
+    "    done",
     "  fi",
+    "  [ -n \"$pfb\" ] || pfb=\"$name.pfb\"",
+    "  src=\"$(kpsewhich \"$pfb\" || true)\"",
+    "  [ -n \"$src\" ] && [ -f \"$src\" ] || continue",
+    "  if [ -n \"$enc\" ]; then",
+    "    esrc=\"$(kpsewhich \"$enc\" || true)\"",
+    "    [ -n \"$esrc\" ] && [ -f \"$esrc\" ] || continue",
+    `    cp -- "$esrc" '${fontsDir}/'"$name.enc"`,
+    "  fi",
+    `  cp -- "$src" '${fontsDir}/'"$name.pfb"`,
     `done < '${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_PFB_LIST}'`,
     `for pdf in '${PAPER_CONTAINER_PATHS.work}/pics/'*.pdf; do`,
     "  [ -f \"$pdf\" ] || continue",
@@ -238,7 +270,8 @@ export function containerWebDeriver(
     //    to SVG, all in-image ───────────────────────────────────────────────
     const fontNames = webFontFilenames(webSrc, input.limits);
     const legacyNames = webLegacyFontNames(webSrc, input.limits);
-    if (fontNames.length + legacyNames.length > input.limits.paperWebExportFiles) {
+    // A legacy face may export two files (outline and encoding vector).
+    if (fontNames.length + 2 * legacyNames.length > input.limits.paperWebExportFiles) {
       return skip(
         "web-export-cap",
         `the reflow view was not derived: the run used ${fontNames.length + legacyNames.length} font files, ` +

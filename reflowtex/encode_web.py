@@ -214,10 +214,6 @@ def main() -> None:
 
     data = json.loads((job / "output.json").read_text())
 
-    # The oracle's stream side, from the pristine node list — before the
-    # transforms rewrite glyph codepoints to PUA addresses.
-    (out / "stream.json").write_text(json.dumps(stream_report(data)))
-
     # The fork's proven encode order (stage 1): pictures, strip, legacy
     # fonts, glyph addressing, deterministic serialization.
     # (lax) Unsourced image rules — plain \\includegraphics the template
@@ -227,6 +223,17 @@ def main() -> None:
     transforms.convert_pictures(data, job, dropped_pictures)
     transforms.strip_unsupported_nodes(data)
     transforms.normalise_legacy_font_addressing(data, pipe.fonts)
+
+    # The oracle's stream side, taken between the two font passes: after
+    # the legacy re-addressing, which turns an 8-bit face's slots into the
+    # codepoints its glyph names denote through the face's own encoding
+    # vector (T1's slot 0xE9 is é, 0x1C the fi ligature — a table keyed on
+    # a font's name cannot know that), and before the glyph-index pass
+    # rewrites the OpenType faces' codepoints to PUA addresses. A face no
+    # outline converted keeps its slots and decode_glyph's name-keyed
+    # fallback.
+    (out / "stream.json").write_text(json.dumps(stream_report(data)))
+
     transforms.normalise_glyph_addressing(data, pipe.fonts)
     blob = encode_pb.serialize_document(data)
     (out / "blocks" / "000.pb").write_bytes(blob)
@@ -234,12 +241,16 @@ def main() -> None:
     # Cmap-patch the served fonts against everything this document
     # addresses, then record the {original -> served} map for index.json.
     pipe.patch_fonts([data])
+    # (lax) A legacy face no outline converted keeps the serializer's
+    # 'unknown' placeholder as its filename; the viewer draws its glyphs as
+    # metric boxes and there is no file to serve, so it leaves the map.
+    font_map = {k: v for k, v in pipe.font_map().items() if k != "unknown"}
     (out / "encode.json").write_text(json.dumps({
         "pbBytes": len(blob),
-        "fonts": pipe.font_map(),
+        "fonts": font_map,
         "droppedPictures": len(dropped_pictures),
     }))
-    print(f"encoded {len(blob)} bytes; {len(pipe.font_map())} font(s)")
+    print(f"encoded {len(blob)} bytes; {len(font_map)} font(s)")
 
 
 if __name__ == "__main__":

@@ -600,6 +600,71 @@ describe.skipIf(!withFork)("reflowtex fork (fetch + injection + encode)", () => 
     expect(bare).toBeNull();
   });
 
+  it("resolves a re-encoded legacy face through pdftex.map and addresses its slots by the encoding vector", (context) => {
+    // Latin Modern under T1 (`ec-lmr10`, every lipics/lmodern paper) has no
+    // `ec-lmr10.pfb`: its map line is `lmr10.pfb` re-encoded through
+    // `lm-ec.enc`, and the outline's built-in encoding would put the wrong
+    // glyph in every slot above ASCII. The converter must read the vector
+    // — T1's 0xE9 is é, 0x1C the fi ligature (a searchable presentation
+    // form, so NFKC reads "fi") — on this TeX-full host through kpsewhich,
+    // and in the injected directory through `<name>.enc` beside the
+    // outline, the trusted path's export contract.
+    const outDir = tmpDir("lax-reflow-t1-");
+    const pfbDir = tmpDir("lax-reflow-pfb-");
+    const probe = [
+      "import json, os, shutil, sys",
+      `sys.path.insert(0, ${JSON.stringify(path.join(checkoutDir, "src", "encode"))})`,
+      "import t1_convert",
+      "found = t1_convert.find_outline('ec-lmr10')",
+      "report = {'found': found, 'host': None, 'pinned': None, 'plain': None, 'missingVector': None}",
+      "if found:",
+      `    served, addressing = t1_convert.convert('ec-lmr10', ${JSON.stringify(outDir)})`,
+      "    report['host'] = {'served': served, 'e9': addressing.get(0xE9), 'fi': addressing.get(0x1C), 'a': addressing.get(0x61)}",
+      `    shutil.copy(found[0], os.path.join(${JSON.stringify(pfbDir)}, 'ec-lmr10.pfb'))`,
+      `    shutil.copy(found[1], os.path.join(${JSON.stringify(pfbDir)}, 'ec-lmr10.enc'))`,
+      `    os.environ['REFLOWTEX_PFB_DIR'] = ${JSON.stringify(pfbDir)}`,
+      "    report['pinned'] = t1_convert.find_outline('ec-lmr10')",
+      `    served2, addressing2 = t1_convert.convert('ec-lmr10', ${JSON.stringify(outDir)})`,
+      "    report['pinnedServed'] = served2",
+      "    report['pinnedE9'] = addressing2.get(0xE9)",
+      "    del os.environ['REFLOWTEX_PFB_DIR']",
+      "plain = t1_convert.find_outline('cmmi10')",
+      "report['plain'] = plain",
+      // A map line whose vector cannot be found must yield nothing, never
+      // the outline under its built-in encoding.
+      "t1_convert._MAP_CACHE = {'fakeface10': 'fakeface10 FakeFace \" enc ReEncodeFont \" <no-such-vector.enc <cmmi10.pfb'}",
+      "report['missingVector'] = t1_convert.find_outline('fakeface10')",
+      "print(json.dumps(report))",
+    ].join("\n");
+    const result = spawnSync(venvPython, ["-c", probe], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    const report = JSON.parse(result.stdout) as {
+      found: [string, string | null] | null;
+      host: { served: string; e9: number; fi: number; a: number } | null;
+      pinned: [string, string | null] | null;
+      pinnedServed?: string;
+      pinnedE9?: number;
+      plain: [string, string | null] | null;
+      missingVector: unknown;
+    };
+    if (report.found === null) {
+      context.skip(); // no Latin Modern Type1 outlines on this host
+      return;
+    }
+    expect(report.found[0]).toMatch(/\/lmr10\.pfb$/u);
+    expect(report.found[1]).toMatch(/\/lm-ec\.enc$/u);
+    expect(report.host).toEqual({ served: report.host!.served, e9: 0xe9, fi: 0xfb01, a: 0x61 });
+    expect(report.host!.served).toMatch(/^ec-lmr10\.reflowtex-[0-9a-f]{8}\.otf$/u);
+    expect(report.pinned).toEqual([path.join(pfbDir, "ec-lmr10.pfb"), path.join(pfbDir, "ec-lmr10.enc")]);
+    // Same bytes either way: the served name is a content hash.
+    expect(report.pinnedServed).toBe(report.host!.served);
+    expect(report.pinnedE9).toBe(0xe9);
+    // A face with a map line and no vector keeps the stock path.
+    expect(report.plain?.[0]).toMatch(/\/cmmi10\.pfb$/u);
+    expect(report.plain?.[1]).toBeNull();
+    expect(report.missingVector).toBeNull();
+  });
+
   it("strips disallowed elements and attributes while keeping the drawing", () => {
     const crafted = [
       "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 10 10' onload='evil()'>",

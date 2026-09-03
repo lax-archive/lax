@@ -31,14 +31,20 @@ stage-0 spike (`spike/paper/reflow/REPORT.md`) proved necessary:
   picture's PDF is consumed as-is (stage 3 converts inside the pinned
   image right after the compile — the encode host has no dvisvgm), with
   the sanitizer still applied to every consumed SVG.
-- **Injectable Type1 lookup** (`src/encode/t1_convert.py`): with
-  `REFLOWTEX_PFB_DIR` set (read per call), `find_pfb` resolves outlines
-  from that directory and nowhere else — the trusted path exports the
-  `.pfb` outlines legacy 8-bit faces need (plain lualatex math: cmmi10,
-  cmsy10, …) from the pinned image, and a host tree must never silently
-  substitute for a missed export; without it, kpsewhich as stock, but a
-  host without kpsewhich yields the metric-box fallback instead of an
-  uncaught crash.
+- **Map-aware, injectable Type1 lookup** (`src/encode/t1_convert.py`):
+  `find_outline` resolves a legacy 8-bit face the way the engines do,
+  through its `pdftex.map` line — the outline plus, for a re-encoded
+  face, its encoding vector (`ec-lmr10`, every lmodern/lipics paper's
+  text face, is `lmr10.pfb` through `lm-ec.enc`; there is no
+  `ec-lmr10.pfb`), and the conversion addresses slots by that vector. With
+  `REFLOWTEX_PFB_DIR` set (read per call), `<name>.pfb` plus an optional
+  `<name>.enc` in that directory are the only source — the trusted path
+  exports both from the pinned image under the TeX name
+  (`web-container.ts`), and a host tree must never silently substitute
+  for a missed export; without it, kpsewhich as stock, but a host without
+  kpsewhich yields the metric-box fallback instead of an uncaught crash
+  (`fonts.provision` too, which also skips the serializer's `unknown`
+  placeholder).
 - **No run-time writes into the checkout** (`src/encode/pipeline.py`):
   `_ensure_pb2` only verifies — `latex_pb2.py` is regenerated at fetch
   time into `checkout/build/`, never into the (possibly read-only,

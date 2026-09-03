@@ -88,21 +88,24 @@ function fakeReflowtex(): string {
   write(
     "venv/bin/python",
     `#!/bin/sh
-out=""; fonts=""; prev=""
+out=""; fonts=""; job=""; prev=""
 for a in "$@"; do
   case "$prev" in
     --out) out="$a";;
     --fonts) fonts="$a";;
+    --job) job="$a";;
   esac
   prev="$a"
 done
+unref='[]'
+if [ -n "$job" ] && [ -f "$job/fake-unreferenced.json" ]; then unref="$(cat "$job/fake-unreferenced.json")"; fi
 mkdir -p "$out/blocks" "$out/fonts"
 printf '%s\\n' "$@" > "$out/argv.txt"
 printf '%s' "\${REFLOWTEX_DVISVGM-unset}" > "$out/dvisvgm-seam.txt"
 printf '%s' "\${REFLOWTEX_PFB_DIR-unset}" > "$out/pfb-seam.txt"
 if [ -n "$fonts" ] && [ -d "$fonts" ]; then cp "$fonts"/* "$out/fonts/" 2>/dev/null || true; fi
 printf 'PB' > "$out/blocks/000.pb"
-printf '%s' '{"markers":[],"text":"Hello web world","unreferenced":[]}' > "$out/stream.json"
+printf '%s' '{"markers":[],"text":"Hello web world","unreferenced":'"$unref"'}' > "$out/stream.json"
 printf '%s' '{"pbBytes":2,"fonts":{"${FONT}":"${FONT}"}}' > "$out/encode.json"
 exit 0
 `,
@@ -137,6 +140,9 @@ interface FakeRunnerOptions {
   exportResult?: Partial<ContainerResult>;
   /** Which requested fonts the export step resolves (default: all). */
   resolveFonts?: (name: string) => boolean;
+  /** Unreferenced paragraph texts the fake encode child reports beside
+   * its "Hello web world" stream. */
+  unreferenced?: string[];
 }
 
 function fakeRunner(options: FakeRunnerOptions = {}): ValidationRunner & { calls: Array<string | ContainerInvocation> } {
@@ -167,6 +173,12 @@ function fakeRunner(options: FakeRunnerOptions = {}): ValidationRunner & { calls
             }),
         );
         fs.writeFileSync(path.join(webSrc, "main.log"), options.log ?? "This is LuaHBTeX\nOutput written on main.pdf\n");
+        if (options.unreferenced !== undefined) {
+          fs.writeFileSync(
+            path.join(webSrc, "fake-unreferenced.json"),
+            JSON.stringify(options.unreferenced.map((text) => ({ text, markers: [] }))),
+          );
+        }
         return { code: 0, output: "latexmk web transcript", timedOut: false, ...options.compileResult };
       }
       if (invocation.label === "paper-web-export") {
@@ -311,6 +323,24 @@ describe("container web deriver", () => {
     expect(fs.existsSync(path.join(input.jobDir, "paper", "web", "out", "argv.txt"))).toBe(false);
   });
 
+  it("reports an unreferenced capture only when the stream does not carry its words", async () => {
+    // \caption measures every caption in a box first and classes measure
+    // a paragraph's first word the same way: those captures are trial
+    // typesettings the surface shows anyway — no warning, and nothing
+    // subtracted from the PDF side. A \marginpar's text is a real
+    // omission: named, and removed from the PDF tokens (the minimal PDF
+    // here does not carry it, so the removal is a no-op).
+    const trial = await derive({ unreferenced: ["web", "Hello web", "Wo"] }).run();
+    expect(trial.web).toBeDefined();
+    expect(trial.warnings.map((warning) => warning.rule)).not.toContain("web-unreferenced-paragraph");
+
+    const omission = await derive({ unreferenced: ["a margin note", "web"] }).run();
+    expect(omission.web).toBeDefined();
+    const rules = omission.warnings.filter((warning) => warning.rule === "web-unreferenced-paragraph");
+    expect(rules).toHaveLength(1);
+    expect(rules[0]!.message).toContain('"a margin note"');
+  });
+
   it("skips over the export caps: too many font files before the run, too many bytes after it", async () => {
     const tightFiles = { ...DEFAULT_LIMITS, paperWebExportFiles: 0 };
     const first = derive({}, tightFiles);
@@ -382,10 +412,22 @@ describe("export helpers", () => {
     expect(webLegacyFontNames(webSrc, DEFAULT_LIMITS)).toEqual(["cmmi10", "cmsy10"]);
   });
 
-  it("keeps the export script on the fork's dvisvgm contract, with the pfb leg", () => {
+  it("keeps the export script on the fork's dvisvgm contract, with the map-resolved pfb leg", () => {
     const script = webExportScript();
     expect(script).toContain("kpsewhich");
-    expect(script).toContain('kpsewhich "$name.pfb"');
+    // A legacy face resolves through its pdftex.map line — outline plus,
+    // for a re-encoded face, the encoding vector, both exported under the
+    // TeX name (the fork's REFLOWTEX_PFB_DIR contract) — and a name with
+    // no map line falls back to `<name>.pfb` as stock.
+    expect(script).toContain("kpsewhich pdftex.map");
+    expect(script).toContain("'$1 == n { print; exit }'");
+    expect(script).toContain('*.enc) enc="$f"');
+    expect(script).toContain('[ -n "$pfb" ] || pfb="$name.pfb"');
+    expect(script).toContain(`'${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}/'"$name.enc"`);
+    expect(script).toContain(`'${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}/'"$name.pfb"`);
+    // The vector is copied before the outline: a re-encoded face whose
+    // vector does not resolve exports neither file.
+    expect(script.indexOf('cp -- "$esrc"')).toBeLessThan(script.lastIndexOf('cp -- "$src"'));
     // PDF → EPS through the image's Ghostscript, then dvisvgm's --eps input:
     // the pinned image's dvisvgm refuses its Ghostscript for --pdf and has
     // no mutool (2026-09-03 smoke), so a direct --pdf never converts there.

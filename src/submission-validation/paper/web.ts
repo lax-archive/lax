@@ -554,9 +554,19 @@ export async function encodeAndSealWebBundle(
     return skip("web-oracle", `the reflow view was not derived: ${error instanceof Error ? error.message : String(error)}`);
   }
   const streamTokens = oracleTokens(stream.text);
+  const streamJoined = ` ${streamTokens.join(" ")} `;
   for (const paragraph of stream.unreferenced) {
     const tokens = oracleTokens(paragraph.text);
     if (tokens.length === 0) continue; // marker-only capture (the hoist's leftover)
+    // A capture the page stream never references but whose text it
+    // carries anyway is a trial typesetting — LaTeX's \caption measures
+    // every caption in a box first, and classes and theorem packages
+    // measure the opening letters of a paragraph the same way ("th",
+    // "We") — not an omission: the surface shows that text, and
+    // subtracting it from the PDF side would manufacture the divergence
+    // the oracle exists to catch. Substring, not token run: the opening
+    // letters are a fragment of a word, never a whole token.
+    if (streamJoined.includes(` ${tokens.join(" ")}`)) continue;
     // The cheap loud diagnostic for \marginpar and friends: text the
     // reflow surface will not show, named, whether or not the web view
     // itself derives.
