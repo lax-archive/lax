@@ -250,13 +250,20 @@ function fixtures(): SmokeFixture[] {
       manifestExtra: "paper:\n  folder: paper\n  main: main.tex\n",
       check(report, jobRoot) {
         assertSuccessful(report);
-        const webSkips = report.warnings.filter((warning) => warning.rule.startsWith("web-"));
+        // The picture's transparent shape is the only expected web note: it
+        // is redrawn without transparency (see below), which is reported and
+        // never a skip.
+        const webSkips = report.warnings.filter(
+          (warning) => warning.rule.startsWith("web-") && warning.rule !== "web-pictures-flattened",
+        );
         assert.equal(
           webSkips.length,
           0,
           "the web derivation skipped (run `npm run reflowtex:fetch` first?): " +
             JSON.stringify(webSkips, null, 2),
         );
+        const flattened = report.warnings.filter((warning) => warning.rule === "web-pictures-flattened");
+        assert.equal(flattened.length, 1, "the transparent picture was not reported as flattened");
         const paper = report.buildOutput!.paper;
         assert(paper !== undefined, "the paper was not recorded");
         const web = paper.web;
@@ -278,6 +285,17 @@ function fixtures(): SmokeFixture[] {
         // pass silently — reaching here proves the export step converted).
         const block = execFileSync("tar", ["-xOf", webPath, "blocks/000.pb"]);
         assert(block.includes(Buffer.from("<path", "utf8")), "the encoded block carries no picture SVG");
+        // Ghostscript rasterizes a page with transparency and the sanitizer
+        // drops the raster, which left the figure blank until the export
+        // learned to redraw it without transparency; and the EPS route draws
+        // the page above the origin, which the host squares up before the
+        // encode reads it. Both are invisible downstream, so they are checked
+        // in the bytes the reader's browser will draw.
+        assert(!block.includes(Buffer.from("<image", "utf8")), "the picture arrived as a raster image");
+        assert(
+          block.includes(Buffer.from("<g transform='translate(", "utf8")),
+          "the picture's box was not moved to the origin",
+        );
         // The T1 Latin Modern text face reached the bundle as a converted
         // outline: the in-image export resolved `ec-lmr10` through
         // pdftex.map (lmr10.pfb + lm-ec.enc under the TeX name) and the
@@ -495,9 +513,11 @@ theorem claim : 0 = 0 := rfl
 
 end Lax45Proofs
 `,
-    // A textless tikz picture on purpose: externalization, the -shell-escape
-    // sub-run, the in-image dvisvgm conversion, and the SVG sanitizer are
-    // all exercised while the oracle's substrates stay token-identical
+    // A textless tikz picture on purpose, and a transparent shape in it:
+    // externalization, the -shell-escape sub-run, the in-image dvisvgm
+    // conversion, the flatten-and-retry for the raster Ghostscript makes of
+    // any transparency, and the SVG sanitizer are all exercised while the
+    // oracle's substrates stay token-identical
     // (picture *label* text is a PDF-only token and a known oracle
     // tolerance question, not this smoke's subject). T1 Latin Modern is the
     // text face every lmodern/lipics paper uses: its outlines resolve only
@@ -519,6 +539,7 @@ derivation's oracle sees two token sequences that agree completely.
 \\begin{tikzpicture}
   \\draw[->] (0,0) -- (2,1);
   \\draw (3,0) rectangle (4,1);
+  \\fill[opacity=0.3] (0.2,0.2) rectangle (1,0.8);
 \\end{tikzpicture}
 
 % lax begin Lax45.Claim

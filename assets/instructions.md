@@ -126,9 +126,12 @@ archive derives the web view; `lax build` does not.
 Expect the web view to degrade in known ways: marginal notes do not appear
 there, floats render at their position in the text rather than where LaTeX
 placed them on the page, and `\pageref` numbers are meaningless without
-pages. TikZ pictures are shown; graphics included as files
-(`\includegraphics` — figures, class logos, ORCID icons) are not yet, and
-leave blank space of their width, noted in the report. Geometry and margin choices need no guard — reflow ignores them by
+pages. TikZ pictures are shown, but a picture that uses transparency (a
+faded node, a shading, a blend) is redrawn without it — everything is
+drawn solid, so parts that should show through do not — and the report
+says which pictures that happened to. Graphics included as files
+(`\includegraphics` — figures, class logos, ORCID icons) are not shown at
+all yet, and leave blank space of their width, also noted in the report. Geometry and margin choices need no guard — reflow ignores them by
 design. For short print-only material (a `\pageref`-bearing sentence, a
 marginal note's callout) you may guard with `\iflaxweb`, defining the
 switch for your own build first — the archive's builds define it

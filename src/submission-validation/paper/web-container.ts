@@ -54,6 +54,9 @@ export const WEB_EXPORT_SCRIPT = "lax-web-export.sh";
 export const WEB_EXPORT_FONT_LIST = "lax-web-fonts.txt";
 export const WEB_EXPORT_PFB_LIST = "lax-web-pfbs.txt";
 export const WEB_EXPORT_FONTS_DIR = "lax-fonts";
+/** Extension of the marker the export leaves beside a picture it had to
+ * redraw with transparency off, so the host can say so in the report. */
+export const WEB_EXPORT_FLAT_SUFFIX = "flattened";
 
 /**
  * The in-image export step: resolve each requested font file by name and
@@ -66,7 +69,19 @@ export const WEB_EXPORT_FONTS_DIR = "lax-fonts";
  * ships Ghostscript 10.07 and no mutool (measured 2026-09-03, the first
  * docker smoke of this path), while its `--eps` input runs on any
  * Ghostscript. The dvisvgm options match the fork's invocation
- * (transforms.py), private tmpdir included. A file kpsewhich cannot
+ * (transforms.py), private tmpdir included.
+ *
+ * Ghostscript rasterizes a page it cannot express in PostScript, which for
+ * a tikz picture means any transparency at all (an `opacity=` node, a
+ * shading): the whole drawing comes back as one embedded JPEG, which the
+ * encode's SVG sanitizer then drops — the reader would get an empty
+ * figure, silently (measured 2026-09-03 on lax-65, whose two figures both
+ * carry faded nodes). So a converted picture that came back as a raster is
+ * redrawn with `-dNOTRANSPARENCY`: the drawing stays vector and the alpha
+ * is lost, which is the readable trade. The retry leaves a `.flattened`
+ * marker beside the picture so the host can say so in the report; a retry
+ * that does not produce vectors keeps the first result rather than
+ * claiming more than it has. A file kpsewhich cannot
  * resolve or a picture that does not convert is left absent, with the
  * converter's transcript on stderr — the deriver checks the required
  * pieces afterwards and skips loudly (a missing pfb is not required: it
@@ -133,7 +148,17 @@ export function webExportScript(): string {
     "  tmp=\"$(mktemp -d)\"",
     "  eps=\"$tmp/picture.eps\"",
     "  if gs -q -dNOPAUSE -dBATCH -dSAFER -sDEVICE=eps2write \"-sOutputFile=$eps\" \"$pdf\" >&2 &&",
-    "     dvisvgm --eps --no-fonts --optimize=all \"--tmpdir=$tmp\" \"--output=$out\" \"$eps\" >&2; then :; else",
+    "     dvisvgm --eps --no-fonts --optimize=all \"--tmpdir=$tmp\" \"--output=$out\" \"$eps\" >&2; then",
+    "    if grep -q '<image' \"$out\"; then",
+    "      if gs -q -dNOPAUSE -dBATCH -dSAFER -dNOTRANSPARENCY -sDEVICE=eps2write \"-sOutputFile=$tmp/flat.eps\" \"$pdf\" >&2 &&",
+    "         dvisvgm --eps --no-fonts --optimize=all \"--tmpdir=$tmp\" \"--output=$tmp/flat.svg\" \"$tmp/flat.eps\" >&2 &&",
+    "         ! grep -q '<image' \"$tmp/flat.svg\"; then",
+    "        cat \"$tmp/flat.svg\" > \"$out\"",
+    `        : > "\${pdf%.pdf}.${WEB_EXPORT_FLAT_SUFFIX}"`,
+    "        echo \"lax paper-web export: picture redrawn without transparency: $pdf\" >&2",
+    "      fi",
+    "    fi",
+    "  else",
     "    echo \"lax paper-web export: picture not converted: $pdf\" >&2",
     "    rm -f \"$out\"",
     "  fi",
@@ -142,6 +167,69 @@ export function webExportScript(): string {
     "exit 0",
     "",
   ].join("\n");
+}
+
+/** The root `<svg viewBox='x y w h'>` of a dvisvgm conversion, single-quoted
+ * as dvisvgm writes it — the fork's own root pattern, which reads the width
+ * and height and ignores the origin. */
+const SVG_ROOT =
+  /(?<head><svg\b[^>]*\bviewBox=')(?<x>[\d.eE+-]+) (?<y>[\d.eE+-]+) (?<w>[\d.eE+-]+) (?<h>[\d.eE+-]+)(?<tail>'[^>]*>)(?<body>[\s\S]*)<\/svg>/u;
+
+/**
+ * One converted picture with its box's origin moved to `0 0`, or undefined
+ * when it is there already (every conversion from PDF input) or the markup
+ * is not a dvisvgm root.
+ *
+ * EPS input is drawn in PostScript's upward y: dvisvgm emits `viewBox='0 -h
+ * w h'` and draws the page above the origin. Nothing downstream can see
+ * that — the encode keeps only the viewBox's width and height, and the
+ * viewer places a picture from its box's top-left corner — so the drawing
+ * would land one box's height too high, over the text above it. Moving the
+ * origin here, on the trusted side and before the encode reads the file,
+ * keeps the box's size and puts the drawing back in it.
+ */
+export function pictureAtOrigin(svg: string): string | undefined {
+  const match = SVG_ROOT.exec(svg);
+  const groups = match?.groups;
+  if (groups === undefined) return undefined;
+  const x = Number(groups.x);
+  const y = Number(groups.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || (x === 0 && y === 0)) return undefined;
+  return (
+    `${groups.head}0 0 ${groups.w} ${groups.h}${groups.tail}` +
+    `<g transform='translate(${-x},${-y})'>${groups.body}</g></svg>`
+  );
+}
+
+/** Every converted picture moved to a `0 0` origin, in place; the number
+ * rewritten. Runs on the export's output before the encode child reads it. */
+export function normalizePictureBoxes(webSrc: string): number {
+  const picsDir = path.join(webSrc, "pics");
+  if (!fs.existsSync(picsDir)) return 0;
+  let moved = 0;
+  for (const name of fs.readdirSync(picsDir).sort()) {
+    if (!name.endsWith(".svg")) continue;
+    const file = path.join(picsDir, name);
+    if (!fs.lstatSync(file).isFile()) continue;
+    const rewritten = pictureAtOrigin(fs.readFileSync(file, "utf8"));
+    if (rewritten === undefined) continue;
+    fs.writeFileSync(file, rewritten);
+    moved += 1;
+  }
+  return moved;
+}
+
+/** The pictures the export had to redraw without transparency, by their
+ * PDF's name — the `.flattened` markers the script leaves. Read after a
+ * successful export, before the encode. */
+export function webFlattenedPictures(webSrc: string): string[] {
+  const picsDir = path.join(webSrc, "pics");
+  if (!fs.existsSync(picsDir)) return [];
+  return fs
+    .readdirSync(picsDir)
+    .filter((name) => name.endsWith(`.${WEB_EXPORT_FLAT_SUFFIX}`))
+    .map((name) => `${name.slice(0, -WEB_EXPORT_FLAT_SUFFIX.length - 1)}.pdf`)
+    .sort();
 }
 
 /** The export set's count + total-bytes bound, over everything the export
@@ -307,6 +395,21 @@ export function containerWebDeriver(
     }
     const exportProblem = webExportProblem(webSrc, fontNames, input.limits);
     if (exportProblem !== undefined) return skip(exportProblem.rule, exportProblem.message);
+    normalizePictureBoxes(webSrc);
+    const flattened = webFlattenedPictures(webSrc);
+    if (flattened.length > 0) {
+      // Derived, and whole, but not identical: the drawing is there and the
+      // transparency is not, so the author is told rather than left to spot
+      // a solid node where the paper has a faded one.
+      warnings.push({
+        rule: "web-pictures-flattened",
+        message:
+          `the reflow view redrew ${flattened.length} picture(s) without transparency ` +
+          `(${flattened.slice(0, 5).join(", ")}${flattened.length > 5 ? ", …" : ""}): ` +
+          "Ghostscript renders a transparent picture as a raster image, which the view cannot carry, " +
+          "so faded or blended parts are drawn solid",
+      });
+    }
 
     // ── everything after compile + export is the shared engine ───────────
     return encodeAndSealWebBundle(input, reflowtex, webSrc, webOut, warnings, skip, {

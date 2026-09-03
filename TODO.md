@@ -157,6 +157,22 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   `jan3er/lax-paper-roundtrip-20260902` from the lax-61 stage-3 round trip
   (`history/paper-roundtrip-20260902.md`): `gh auth refresh -h github.com
   -s delete_repo`, then `gh repo delete … --yes`.
+- **Transparency in a tikz picture is flattened in the web view**: the
+  in-image conversion has to go PDF → EPS → SVG (dvisvgm cannot read PDF
+  against the pinned image's Ghostscript 10.07, and there is no mutool),
+  and Ghostscript rasterizes any page that carries transparency — the
+  whole drawing comes back as one JPEG, which the encode's SVG sanitizer
+  drops, so the figure arrived *empty*. Since 2026-09-03 such a picture is
+  redrawn with `-dNOTRANSPARENCY` (vector, alpha lost, a
+  `web-pictures-flattened` warning naming it) — measured on lax-65, whose
+  two figures both carry faded nodes and both arrived blank. Showing them
+  exactly would mean carrying the raster: an `image` element with a
+  `data:` URI through the fork's sanitizer (element and attribute
+  allowlists, `href` must be a `#` fragment), which costs ~430 KB per
+  figure against the 2 MiB embed budget — or a converter in the image that
+  reads PDF (mutool is not in `texlive/texlive`). **Anything already in
+  `lax-database` keeps its blank figures until it is re-validated**: the
+  fix is in the derivation, not the site.
 - **`\includegraphics` in the web view**: included graphics files are
   dropped (kern of their width + a `web-pictures-dropped` warning; the
   fork's `convert_pictures` tolerates unsourced image rules when the
