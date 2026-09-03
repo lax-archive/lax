@@ -8,6 +8,7 @@ import {
   validateFolder,
   validatePaperMain,
 } from "../../shared/validation.js";
+import { isValidBibtex } from "./bibtex.js";
 
 const MANIFEST_KEYS = new Set([
   "specVersion",
@@ -53,11 +54,11 @@ export function validateManifest(
 
   const stringField = (key: string, limit: number): string | undefined => {
     const field = value[key];
-    if (typeof field !== "string" && typeof field !== "number") {
+    if (typeof field !== "string") {
       if (field !== undefined) findings.violate("manifest", `manifest.yaml: \`${key}\` must be a string`);
       return undefined;
     }
-    const normalized = String(field).normalize("NFC");
+    const normalized = field.normalize("NFC");
     if (Buffer.byteLength(normalized, "utf8") > limit)
       findings.violate("manifest", `manifest.yaml: \`${key}\` exceeds ${limit} UTF-8 bytes`);
     if (/\r|\u0000|\u2028|\u2029/u.test(normalized))
@@ -156,7 +157,15 @@ export function validateManifest(
       if (typeof entry !== "string") findings.violate("manifest", `manifest.yaml: bibEntries[${index}] must be a string`);
       else if (Buffer.byteLength(entry, "utf8") > 16 * 1024)
         findings.violate("manifest", `manifest.yaml: bibEntries[${index}] exceeds 16 KiB`);
-      else bibEntries.push(entry.replace(/\r\n?/gu, "\n").normalize("NFC"));
+      else {
+        const normalized = entry.replace(/\r\n?/gu, "\n").normalize("NFC");
+        if (!isValidBibtex(normalized))
+          findings.violate(
+            "manifest",
+            `manifest.yaml: bibEntries[${index}] must contain one or more complete BibTeX entries`,
+          );
+        else bibEntries.push(normalized);
+      }
     });
   }
 

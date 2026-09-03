@@ -173,6 +173,7 @@ database directly:
 lax init submission
 lax build submission
 lax serve submission
+lax generate-prooftree lax-N
 git commit && git push
 lax submit submission
 lax owners submission --new-list alice bob
@@ -324,6 +325,16 @@ proposed spec amendment in spec-notes.md (2026-09-02); the design records
 are `paper-plan.md` and `paper-web-plan.md` (all code stages are
 implemented; the rehearsal, renderer release, and production round trips
 are pending — see TODO.md).
+
+`lax generate-prooftree lax-N` reads the local Archive database, selects one
+recursively grounded proof for each reachable statement when possible, and
+composes replacement theorems from the leaves upward. If no grounded proof is
+available it follows a random proof and reports the remaining open or cyclic
+statement leaves. The generated `.olean` module and `proof-tree.json` include
+a kernel axiom audit; the command succeeds only when every statement of the
+target submission has a generated theorem depending on background axioms
+only. The first run prepares a pinned local Mathlib cache. Use `--output` to
+choose the artifact folder.
 
 `lax delete` accepts an issue reference or local submission folder, refreshes
 the local database to detect immutable/deleted records and stranded

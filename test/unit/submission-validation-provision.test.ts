@@ -35,6 +35,9 @@ describe("submission workspace provisioning", () => {
     const sourceRoot = temporary("lax-provision-tree-");
     makeSubmission("lax-1", path.join(sourceRoot, "a"));
     const submissionRoot = makeSubmission("lax-2", path.join(sourceRoot, "b"));
+    writeFile(sourceRoot, "README.md", "repository documentation\n");
+    writeFile(submissionRoot, "notes.md", "submission documentation\n");
+    writeFile(submissionRoot, "concepts/README.md", "package documentation\n");
     const job = temporary("lax-provision-job-");
 
     const workspace = provisionWorkspace(
@@ -51,6 +54,9 @@ describe("submission workspace provisioning", () => {
       (JSON.parse(workspace.manifests[kind]) as {
         packages: Array<{ type: string; name: string; dir?: string }>;
       }).packages;
+    expect(fs.existsSync(path.join(workspace.repositoryRoot, "README.md"))).toBe(false);
+    expect(fs.existsSync(path.join(workspace.submissionRoot, "notes.md"))).toBe(false);
+    expect(fs.existsSync(path.join(workspace.submissionRoot, "concepts", "README.md"))).toBe(false);
     // the proof package's own concept package, spelled relatively
     expect(packages("proofs")).toContainEqual(
       expect.objectContaining({ type: "path", name: "Lax2", dir: "../concepts" }),
