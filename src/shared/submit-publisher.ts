@@ -201,11 +201,9 @@ export class SubmitPublisher {
         problems.push(`dependency ${expected.packageName} no longer exists`);
         continue;
       }
-      const expectedIssueNumber = Number(expected.submissionId.slice("lax-".length));
-      if (
-        current.files.buildOutput.issue.repositoryId !== this.repositoryId ||
-        current.files.buildOutput.issue.number !== expectedIssueNumber
-      ) problems.push(`dependency ${expected.packageName} has an invalid issue binding`);
+      if (current.files.buildOutput.issue.repositoryId !== this.repositoryId) {
+        problems.push(`dependency ${expected.packageName} has an invalid issue binding`);
+      }
       if (current.files.record.state !== "draft" && current.files.record.state !== "registered") {
         problems.push(`dependency ${expected.packageName} is now ${current.files.record.state}`);
         continue;

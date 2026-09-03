@@ -24,9 +24,18 @@ vi.mock("../../src/cli/build.js", async (importOriginal) => ({
   buildSubmission: stub.buildSubmission,
   hasCurrentLocalBuild: stub.hasCurrentLocalBuild,
 }));
-vi.mock("../../src/cli/manifest.js", () => ({
+vi.mock("../../src/cli/manifest.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   issueNumberFromFolder: () => 14,
   submissionIdFromFolder: () => "lax-14",
+  readLocalSubmissionManifest: () => ({
+    filename: "manifest.yaml",
+    id: "lax-14",
+    title: "Authentication preflight",
+    authors: [],
+    issue: { repositoryId: 123456789, number: 14 },
+    initialOwners: [],
+  }),
   declaresPaper: () => false,
 }));
 vi.mock("../../src/cli/git.js", () => ({

@@ -511,12 +511,16 @@ function validationRequest(request: PublishRequest): ValidationRequest {
   return {
     requestVersion: 1,
     id: request.id,
+    issue: request.issue,
     source: {
       repository: request.command.repository,
       commit: request.command.commit,
       folder: request.command.folder,
     },
     archiveSha: request.archiveSha,
+    ...(request.legacyManifestWithoutIssue === undefined
+      ? {}
+      : { legacyManifestWithoutIssue: request.legacyManifestWithoutIssue }),
   };
 }
 
@@ -637,8 +641,6 @@ function parseValidationContext(value: unknown): ValidationContext {
   for (const key of ["issueNumber", "commentId"] as const)
     if (!Number.isSafeInteger(value[key]) || (value[key] as number) <= 0)
       throw new ValidationError(`validation context ${key} is malformed`);
-  if (value.id !== `lax-${value.issueNumber as number}`)
-    throw new ValidationError("validation context id does not match its issue");
   return { id: value.id, issueNumber: value.issueNumber as number, commentId: value.commentId as number };
 }
 

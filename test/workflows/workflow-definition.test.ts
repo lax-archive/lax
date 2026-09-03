@@ -153,11 +153,14 @@ describe("submission workflow wiring", () => {
     // The gate is a job-level condition, not a job: an unrelated comment on
     // this repository must not start a runner at all. It is evaluated as data
     // — no comment text is ever interpolated into a `run:` script — and for
-    // `issues` events the absent comment body makes the prefix test false.
+    // New issue events must carry the private reservation marker (or the exact
+    // historical body during migration), and comments must be commands on one
+    // of those issues. Ordinary project issues never allocate a runner.
     expect(jobs.route.needs).toBeUndefined();
-    expect(jobs.route.if).toBe(
-      "github.event_name == 'issues' || startsWith(github.event.comment.body, '/lax')",
-    );
+    expect(jobs.route.if).toContain("startsWith(github.event.issue.body, '<!-- lax-submission-id:')");
+    expect(jobs.route.if).toContain("github.event_name == 'issue_comment'");
+    expect(jobs.route.if).toContain("startsWith(github.event.comment.body, '/lax')");
+    expect(jobs.route.if).toContain("This issue is the control plane for one Lax submission.");
     expect(workflow).not.toContain("precheck");
     expect(workflow).not.toContain("should_run");
   });

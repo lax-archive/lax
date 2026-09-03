@@ -49,30 +49,6 @@ export function normalizeRepositoryUrl(value: string): string {
   return validateRepositoryUrl(normalized);
 }
 
-/**
- * The author's name as Git knows it, for a scaffold that has no GitHub handle
- * to use — `lax init --offline` never signs in. Undefined when Git has no
- * `user.name` configured, which leaves the manifest's author list empty rather
- * than inventing a name for it.
- */
-export function gitAuthorName(folder: string): string | undefined {
-  // The folder itself may not exist yet — a scaffold asks before it writes —
-  // and `user.name` can be set per repository, so the question is asked from
-  // the nearest directory that does exist.
-  let cwd = path.resolve(folder);
-  while (!fs.existsSync(cwd)) {
-    const parent = path.dirname(cwd);
-    if (parent === cwd) return undefined;
-    cwd = parent;
-  }
-  try {
-    const name = git(cwd, ["config", "--get", "user.name"]);
-    return name === "" ? undefined : name;
-  } catch {
-    return undefined;
-  }
-}
-
 export function repositoryRoot(folder: string): string {
   const root = path.resolve(folder);
   try {

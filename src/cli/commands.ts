@@ -4,21 +4,29 @@ import os from "node:os";
 import path from "node:path";
 import {
   CONTROL_REPOSITORY,
+  CONTROL_REPOSITORY_ID,
   githubOauthBase,
   HANDLE_PATTERN,
-  PLACEHOLDER_ISSUE_NUMBER,
+  LEGACY_SUBMISSION_IDS,
+  MAX_OWNERS,
+  NEW_SUBMISSION_ID_PATTERN,
+  PLACEHOLDER_SUBMISSION_ID,
   SUBMISSION_ID_PATTERN,
   submissionUrl,
 } from "../shared/constants.js";
+import { ArchiveRepository } from "../shared/archive.js";
 import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
+import { issueReservationBody } from "../shared/issue-reservation.js";
 import {
   normalizeSubmissionId,
   normalizeTitle,
+  isObject,
   validateCommit,
   validateFolder,
+  validateNewSubmissionId,
   validateRepositoryUrl,
 } from "../shared/validation.js";
-import type { GitHubIdentity, SourceLocation } from "../shared/types.js";
+import type { GitHubIdentity, IssueBinding, SourceLocation } from "../shared/types.js";
 import type { ValidationFinding } from "../submission-validation/contracts.js";
 import { checkDeleteLocally, checkRegisterLocally } from "./archive-preflight.js";
 import { AuthenticationError, ensureLoggedIn, githubAppUserToken } from "./auth.js";
@@ -40,8 +48,15 @@ import {
   type FollowOptions,
   type FollowResult,
 } from "./follow.js";
-import { deriveSubmittedSource, gitAuthorName, repositoryRoot } from "./git.js";
-import { declaresPaper, issueNumberFromFolder } from "./manifest.js";
+import { deriveSubmittedSource, repositoryRoot } from "./git.js";
+import {
+  clearInitialOwners,
+  declaresPaper,
+  readLocalSubmissionManifest,
+  setInitialOwners,
+  setManifestIssue,
+} from "./manifest.js";
+import { rekeySubmission } from "./rekey.js";
 import { forgetSubmissionsById, recordSubmission } from "./registry.js";
 import { renderComment } from "./render.js";
 import {
@@ -51,9 +66,9 @@ import {
 import {
   ensureEmptyFolder,
   provisionScaffold,
-  type ScaffoldAuthor,
   scaffoldSubmission,
 } from "./scaffold.js";
+import { generateSubmissionId, validateScaffoldIdentity } from "./submission-id.js";
 import * as ui from "./ui.js";
 
 const base = repositoryPath(CONTROL_REPOSITORY);
@@ -75,11 +90,7 @@ async function client(): Promise<GitHubClient> {
 
 export interface InitOptions {
   title?: string;
-  /**
-   * Scaffold against the placeholder id instead of reserving one. Nothing is
-   * signed in to and no issue is opened, so the archive never learns the
-   * folder exists — see PLACEHOLDER_SUBMISSION_ID.
-   */
+  /** Accepted temporarily for scripts written while loginless init was opt-in. */
   offline?: boolean;
 }
 
@@ -88,72 +99,25 @@ export async function initializeSubmission(
   options: InitOptions = {},
 ): Promise<void> {
   const root = ensureEmptyFolder(folder);
-  const offline = options.offline === true;
   // No title given means the folder name stands in for one — which is a thing
   // the author will want to fix, so the identity block says so once.
   const defaulted = options.title === undefined;
   const title = normalizeTitle(options.title ?? (path.basename(root) || "Untitled submission"));
+  const id = generateSubmissionId();
   const notes = new ui.Notes();
 
   ui.title("Creating a submission");
   const steps = new ui.Steps();
-  // Offline there is no account to sign in to and no id to reserve, so those
-  // rows are not declared rather than declared and skipped.
-  if (!offline) {
-    steps.add("account", "Signing in");
-    steps.add("reserve", "Reserving an id");
-  }
   steps.add("files", "Creating the files");
   steps.add("mathlib", "Preparing mathlib");
   try {
-    let issueNumber = PLACEHOLDER_ISSUE_NUMBER;
-    let author: ScaffoldAuthor | undefined;
-    if (offline) {
-      // No login, so no handle: the name Git knows is the closest thing this
-      // machine has to the author, and it may be nothing at all.
-      const name = gitAuthorName(root);
-      if (name !== undefined) author = { name };
-    } else {
-      const github = await client();
-      const user = await github.request<{ id: number; login: string; type: string }>("GET", "/user");
-      if (user.type !== "User") throw new Error("the authenticated GitHub identity is not a human user");
-      steps.settle("account", { label: `Signed in as ${user.login}` });
-
-      const issue = await github.request<{ number: number; html_url: string }>("POST", `${base}/issues`, {
-        title,
-        body:
-          "This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.",
-      });
-      ui.verbose(`submission issue: ${issue.html_url}`);
-      issueNumber = issue.number;
-      author = { name: user.login, github: user.login };
-      const reserved = `lax-${issue.number}`;
-      steps.relabel("reserve", `Reserving ${reserved}`);
-      const result = await followInitialization(github, issue.number, {
-        onStage: (stage) => {
-          if (stage.row === "queued") steps.waiting("reserve", QUEUED);
-          else steps.begin("reserve");
-        },
-      });
-      if (result.outcome === "failure") {
-        steps.settle("reserve", { status: "fail" });
-        steps.settle("files", { hidden: true });
-        steps.settle("mathlib", { hidden: true });
-        steps.finish();
-        ui.problem(`the archive refused to create ${reserved}`, renderComment(result.comment ?? "").split("\n"));
-        throw new CommandFailedError(`${reserved} was not created`);
-      }
-      steps.settle("reserve", { label: `Reserved ${reserved}` });
-    }
-    const id = `lax-${issueNumber}`;
-
-    scaffoldSubmission(root, issueNumber, title, author);
+    scaffoldSubmission(root, id, title);
     recordSubmission(root);
     steps.settle("files", { label: "Created the files" });
 
     // Provision mathlib right away: a bare `lake build` straight after init
     // (agents do this) must replay the shared store, not clone mathlib.
-    const provisioned = await provisionScaffold(root, issueNumber);
+    const provisioned = await provisionScaffold(root, id);
     steps.settle("mathlib", {
       status: provisioned.ok ? "ok" : "warn",
       label: provisioned.ok ? "Prepared mathlib" : "Could not prepare mathlib",
@@ -166,14 +130,10 @@ export async function initializeSubmission(
         ...(provisioned.reason === undefined ? [] : [ui.dim(provisioned.reason)]),
       );
     }
-    if (offline) {
-      notes.add(
-        `${id} is a placeholder, not an archive id: nothing was reserved.`,
-        `${ui.cmd("lax build")} and ${ui.cmd("lax serve")} work with it; ${ui.cmd("lax submit")} does not.`,
-        `To send this work to the archive, run ${ui.cmd("lax init")} in a fresh folder for a real`,
-        "id and move the sources across — package names, imports and namespaces all carry it.",
-      );
-    }
+    notes.add(
+      "Nothing was sent to GitHub and no login was needed.",
+      `${ui.cmd("lax submit")} will create and bind the control issue when the source is ready.`,
+    );
     try {
       repositoryRoot(root);
     } catch {
@@ -196,28 +156,30 @@ export async function initializeSubmission(
 
 export async function replaceOwners(reference: string, handles: string[]): Promise<void> {
   if (handles.length === 0) throw new Error("--new-list requires at least one GitHub handle");
-  const issue = resolveIssueReference(reference);
-  const id = `lax-${issue}`;
+  if (handles.length > MAX_OWNERS) throw new Error(`--new-list accepts at most ${MAX_OWNERS} handles`);
+  const local = localFolder(reference);
+  if (local !== undefined) {
+    const manifest = readLocalSubmissionManifest(local);
+    if (manifest.issue === undefined && legacyIssueBinding(manifest.id) === undefined) {
+      const checked = await checkLocalOwnerHandles(handles);
+      setInitialOwners(local, checked);
+      ui.verdict(
+        `Stored ${ui.plural(checked.length, "provisional owner")} for ${manifest.id}`,
+      );
+      ui.line("They will be authenticated and synchronized when the submission first creates its issue.");
+      ui.done();
+      return;
+    }
+  }
+  const target = resolveSubmissionReference(reference);
+  const { id } = target;
   // Three seconds of work, so one row and no report.
   const steps = new ui.Steps();
   steps.add("owners", "Updating the owner list");
   try {
-    const owners: GitHubIdentity[] = [];
-    const seen = new Set<number>();
     const github = await client();
-    for (const handle of handles) {
-      if (!HANDLE_PATTERN.test(handle)) throw new Error(`invalid GitHub handle: ${handle}`);
-      const user = await github.request<{ id: number; login: string; type: string }>(
-        "GET",
-        `/users/${encodeURIComponent(handle)}`,
-      );
-      if (user.type !== "User") throw new Error(`${handle} is not a human GitHub user`);
-      if (seen.has(user.id)) throw new Error(`${handle} names a duplicate GitHub account`);
-      seen.add(user.id);
-      owners.push({ githubId: user.id, handle: user.login });
-    }
-    owners.sort((left, right) => left.githubId - right.githubId);
-    await postCommand(issue, `/lax owners ${JSON.stringify(owners)}`, {
+    const owners = await resolveOwnerHandles(github, handles);
+    await postCommand(github, target, `/lax owners ${id} ${JSON.stringify(owners)}`, {
       acceptSuccessReaction: true,
       onStage: (stage) => {
         if (stage.row === "queued") steps.waiting("owners", QUEUED);
@@ -245,18 +207,21 @@ export async function submitExplicitSource(
     commit: validateCommit(commitInput),
     folder: validateFolder(folderInput),
   };
-  const issue = resolveIssueReference(reference);
-  const id = `lax-${issue}`;
+  const local = localFolder(reference);
+  if (local !== undefined && await prepareBeforeSubmit(local)) return;
+  const target = resolveSubmissionReference(reference);
+  const { id } = target;
   ui.title(`Submitting ${id}`);
   const submit = new SubmitReport(id, { local: false });
   try {
     submit.steps.settle("account", { label: `Signed in as ${await ensureLoggedIn()}` });
+    const github = await client();
     submit.steps.settle("source", {
       label: "Checked your source",
       detail: describeSource(source),
     });
     await withResumeHint(reference, () =>
-      postCommand(issue, `/lax submit ${JSON.stringify(source)}`, submit.follow()));
+      postCommand(github, target, `/lax submit ${id} ${JSON.stringify(source)}`, submit.follow()));
     submit.succeed();
   } finally {
     submit.steps.finish();
@@ -269,8 +234,9 @@ export async function submitFolder(
 ): Promise<void> {
   const root = path.resolve(folder);
   const force = options.force ?? false;
-  const issue = issueNumberFromFolder(root);
-  const id = `lax-${issue}`;
+  if (await prepareBeforeSubmit(root)) return;
+  const target = resolveSubmissionReference(root);
+  const { id } = target;
   ui.title(`Submitting ${id}`);
   // The paper row is declared from the manifest, as `lax build` declares
   // its own: even a forced submit knows up front whether the archive will
@@ -295,8 +261,9 @@ export async function submitFolder(
     } else {
       await checkLocally(submit, root, source, options.allowDirty ?? false);
     }
+    const github = await client();
     await withResumeHint(folder, () =>
-      postCommand(issue, `/lax submit ${JSON.stringify(source)}`, submit.follow()));
+      postCommand(github, target, `/lax submit ${id} ${JSON.stringify(source)}`, submit.follow()));
     submit.succeed();
   } finally {
     submit.steps.finish();
@@ -313,8 +280,9 @@ export async function submitFolder(
  * remembered comment id would be exactly the thing that is missing.
  */
 export async function resumeSubmit(target: string): Promise<void> {
-  const issue = resolveIssueReference(target);
-  const id = `lax-${issue}`;
+  const reference = resolveSubmissionReference(target);
+  const { id } = reference;
+  const issue = reference.issue.number;
   ui.title(`Submitting ${id}`);
   ui.faint("Reattaching to the run already in progress.");
   const submit = new SubmitReport(id, { local: false, account: false, source: false });
@@ -332,7 +300,9 @@ export async function resumeSubmit(target: string): Promise<void> {
       const command = [...comments]
         .reverse()
         .find((comment) =>
-          comment.user?.id === user.id && comment.body?.startsWith("/lax submit ") === true);
+          comment.user?.id === user.id &&
+          (comment.body?.startsWith(`/lax submit ${id} `) === true ||
+            (id === `lax-${issue}` && comment.body?.startsWith("/lax submit ") === true)));
       if (command === undefined) {
         throw new NothingToResumeError(
           `no submit of yours is on ${id}; nothing is running — run \`lax submit\` instead`,
@@ -538,8 +508,9 @@ export function paperSummary(
 }
 
 export async function requestDelete(reference: string, yes = false): Promise<number> {
-  const issue = resolveIssueReference(reference);
-  const id = `lax-${issue}`;
+  const target = resolveSubmissionReference(reference);
+  const { id } = target;
+  const issue = target.issue.number;
   ui.title(`Delete ${id}`);
   ui.line(`This is permanent. ${id} leaves the archive and the site, and its id is`);
   ui.line("retired — it will never be reused.");
@@ -560,7 +531,8 @@ export async function requestDelete(reference: string, yes = false): Promise<num
   const steps = new ui.Steps();
   steps.add("delete", `Deleting ${id}`);
   try {
-    await postCommand(issue, "/lax delete", {
+    const github = await client();
+    await postCommand(github, target, `/lax delete ${id}`, {
       onPreview: (text) => ui.verbose(text),
       onStage: (stage) => {
         if (stage.row === "queued") steps.waiting("delete", QUEUED);
@@ -575,7 +547,7 @@ export async function requestDelete(reference: string, yes = false): Promise<num
   // `lax doctor` checking a folder for a submission that no longer exists,
   // and the tracking issue — which the trusted workflow leaves open, having
   // no issue-state writes of its own — has served its purpose: the id it
-  // allocated is retired for good. Both are the author's own tidiness, so a
+  // bound is retired for good. Both are the author's own tidiness, so a
   // failure here is a note, never a failed delete.
   for (const root of forgetSubmissionsById(id)) {
     ui.verbose(`forgot ${root} in the submission registry`);
@@ -600,8 +572,8 @@ export async function requestDelete(reference: string, yes = false): Promise<num
 }
 
 export async function requestRegistration(reference: string, yes = false): Promise<number> {
-  const issue = resolveIssueReference(reference);
-  const id = `lax-${issue}`;
+  const target = resolveSubmissionReference(reference);
+  const { id } = target;
   ui.title(`Register ${id}`);
   ui.line("Registering is permanent. The record becomes immutable and citable, and");
   ui.line("it can never be changed or removed.");
@@ -622,7 +594,8 @@ export async function requestRegistration(reference: string, yes = false): Promi
   const steps = new ui.Steps();
   steps.add("register", `Registering ${id}`);
   try {
-    await postCommand(issue, "/lax register", {
+    const github = await client();
+    await postCommand(github, target, `/lax register ${id}`, {
       // The control plane's echo of the request is dropped from the happy path:
       // the CLI ran the same preflight one second earlier and printed its
       // result. It reappears the moment the two disagree, which is the only
@@ -779,13 +752,13 @@ async function buildCommittedTree(
 }
 
 async function postCommand(
-  reference: string | number,
+  github: GitHubClient,
+  reference: SubmissionReference,
   body: string,
   options: FollowOptions = {},
 ): Promise<FollowResult> {
-  const issue = typeof reference === "number" ? reference : parseIssueReference(reference);
-  const github = await client();
-  const comment = await github.request<{ id: number; html_url: string }>(
+  const issue = reference.issue.number;
+  const comment = await github.request<{ id: number; html_url: string; created_at: string }>(
     "POST",
     `${base}/issues/${issue}/comments`,
     { body },
@@ -817,28 +790,16 @@ function list(values: readonly string[]): string {
 
 /** Issue commands also accept a submission folder containing manifest.yaml. */
 export function resolveIssueReference(value: string): number {
-  const candidate = path.resolve(value);
-  let folder = false;
-  try {
-    folder = fs.statSync(candidate).isDirectory();
-  } catch {
-    // It is an issue reference, not a local folder.
-  }
-  // Once this *is* a folder, what its manifest says is the answer — including
-  // its refusals. Reading a bad manifest as "not a folder after all" would
-  // answer a placeholder id, or a broken one, with a lecture about issue URLs.
-  return folder ? issueNumberFromFolder(candidate) : parseIssueReference(value);
+  return resolveSubmissionReference(value).issue.number;
 }
 
 export function parseIssueReference(value: string): number {
   if (/^[1-9][0-9]*$/u.test(value)) return Number(value);
-  if (SUBMISSION_ID_PATTERN.test(value) || /^Lax[1-9][0-9]*$/u.test(value))
-    return Number(normalizeSubmissionId(value).slice("lax-".length));
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error("issue must be a number, lax-N/LaxN id, or authoritative GitHub issue URL");
+    throw new Error("issue must be a number or authoritative GitHub issue URL");
   }
   const match = /^\/([^/]+)\/([^/]+)\/issues\/([1-9][0-9]*)\/?$/u.exec(url.pathname);
   if (
@@ -850,6 +811,458 @@ export function parseIssueReference(value: string): number {
     throw new Error(`issue URL must belong to ${CONTROL_REPOSITORY}`);
   }
   return Number(match[3]);
+}
+
+interface SubmissionReference {
+  id: string;
+  issue: IssueBinding;
+}
+
+function resolveSubmissionReference(value: string): SubmissionReference {
+  const local = localFolder(value);
+  if (local !== undefined) {
+    const manifest = readLocalSubmissionManifest(local);
+    if (manifest.issue === undefined) {
+      const issue = legacyIssueBinding(manifest.id);
+      if (issue !== undefined) return { id: manifest.id, issue };
+      throw new Error(
+        `${manifest.filename} has no issue binding; run ${ui.cmd("lax submit")} for this folder first`,
+      );
+    }
+    return { id: manifest.id, issue: manifest.issue };
+  }
+  if (SUBMISSION_ID_PATTERN.test(value) || /^Lax[1-9][0-9]*$/u.test(value)) {
+    const id = normalizeSubmissionId(value);
+    const fromDatabase = bindingFromLocalDatabase(id);
+    if (fromDatabase !== undefined) return { id, issue: fromDatabase };
+    if (LEGACY_SUBMISSION_IDS.has(id)) {
+      return {
+        id,
+        issue: {
+          repositoryId: CONTROL_REPOSITORY_ID,
+          number: Number(id.slice("lax-".length)),
+        },
+      };
+    }
+    throw new Error(
+      `${id} is not in your local archive copy; use its submission folder or run ${ui.cmd("lax sync")}`,
+    );
+  }
+  const issue = parseIssueReference(value);
+  const legacyId = `lax-${issue}`;
+  if (!LEGACY_SUBMISSION_IDS.has(legacyId)) {
+    throw new Error(
+      `issue #${issue} does not identify a legacy submission; use the submission folder or lax-N id`,
+    );
+  }
+  return {
+    id: legacyId,
+    issue: { repositoryId: CONTROL_REPOSITORY_ID, number: issue },
+  };
+}
+
+function localFolder(value: string): string | undefined {
+  const candidate = path.resolve(value);
+  try {
+    return fs.statSync(candidate).isDirectory() ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function bindingFromLocalDatabase(id: string): IssueBinding | undefined {
+  const filename = path.join(databaseDirectory(), id, "build-output.json");
+  let value: unknown;
+  try {
+    value = JSON.parse(fs.readFileSync(filename, "utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (
+    !isObject(value) ||
+    value.id !== id ||
+    !isObject(value.issue) ||
+    Object.keys(value.issue).sort().join(",") !== "number,repositoryId" ||
+    value.issue.repositoryId !== CONTROL_REPOSITORY_ID ||
+    !Number.isSafeInteger(value.issue.number) ||
+    (value.issue.number as number) <= 0
+  ) {
+    throw new Error(`${filename} has an invalid issue binding`);
+  }
+  return { repositoryId: CONTROL_REPOSITORY_ID, number: value.issue.number as number };
+}
+
+/**
+ * Bind an unbound local manifest, migrate a historical manifest, or synchronize
+ * provisional owners. Returns true exactly when it changed manifest.yaml and
+ * the caller must ask for a commit before it can submit immutable source.
+ */
+export async function prepareLocalSubmission(
+  rootInput: string,
+  github: GitHubClient,
+  followOptions: FollowOptions = {},
+): Promise<boolean> {
+  const root = path.resolve(rootInput);
+  let manifest = readLocalSubmissionManifest(root);
+  const archive = new ArchiveRepository(github);
+
+  if (manifest.id === PLACEHOLDER_SUBMISSION_ID) {
+    validateScaffoldIdentity(root, manifest.id);
+    const replacement = await unusedSubmissionId(archive, manifest.id);
+    rekeySubmission(root, manifest.id, replacement);
+    ui.verbose(`rekeyed the old ${PLACEHOLDER_SUBMISSION_ID} scaffold to ${replacement}`);
+    return true;
+  }
+
+  if (manifest.issue !== undefined) {
+    if (NEW_SUBMISSION_ID_PATTERN.test(manifest.id)) {
+      validateScaffoldIdentity(root, manifest.id);
+      const binding = await recoverArchiveBinding(
+        archive,
+        github,
+        { id: manifest.id, issue: manifest.issue },
+        followOptions,
+      );
+      if (binding === "mismatch") {
+        const replacement = await unusedSubmissionId(archive, manifest.id);
+        rekeySubmission(root, manifest.id, replacement);
+        ui.verbose(
+          `issue #${manifest.issue.number} did not reserve ${manifest.id}; rekeyed to ${replacement}`,
+        );
+        return true;
+      }
+      // The binding was written before polling began. A recovery therefore
+      // still owes the normal commit-and-push stop, even though this retry did
+      // not have to rewrite manifest.yaml itself.
+      if (binding === "recovered" && manifest.initialOwners.length === 0) return true;
+    } else {
+      await verifyArchiveBinding(github, { id: manifest.id, issue: manifest.issue });
+    }
+    if (manifest.initialOwners.length === 0) return false;
+    await synchronizeInitialOwners(root, github, followOptions);
+    return true;
+  }
+
+  const legacyIssue = legacyIssueBinding(manifest.id);
+  if (legacyIssue !== undefined) {
+    await verifyArchiveBinding(github, { id: manifest.id, issue: legacyIssue });
+    setManifestIssue(root, legacyIssue);
+    if (manifest.initialOwners.length > 0) {
+      await synchronizeInitialOwners(root, github, followOptions);
+    }
+    return true;
+  }
+
+  validateNewSubmissionId(manifest.id);
+  validateScaffoldIdentity(root, manifest.id);
+  if (manifest.title === undefined) {
+    throw new Error(`${manifest.filename} must contain a non-empty title before its first submit`);
+  }
+  const actor = await currentUser(github);
+  // Resolve every provisional owner before issue creation so a typo cannot
+  // leave behind a needless control-plane issue.
+  const pendingOwners = await resolveOwnerHandles(github, [actor.handle, ...manifest.initialOwners]);
+  const snapshot = await archive.snapshot();
+  if (await archive.exists(manifest.id, snapshot)) {
+    const replacement = await unusedSubmissionId(archive, manifest.id);
+    rekeySubmission(root, manifest.id, replacement);
+    ui.verbose(`${manifest.id} already existed; rekeyed the local submission to ${replacement}`);
+    return true;
+  }
+
+  const issue = await github.request<{ number: number; html_url: string }>(
+    "POST",
+    `${base}/issues`,
+    { title: normalizeTitle(manifest.title), body: issueReservationBody(manifest.id) },
+  );
+  if (
+    !Number.isSafeInteger(issue.number) ||
+    issue.number <= 0 ||
+    typeof issue.html_url !== "string" ||
+    issue.html_url === ""
+  ) {
+    throw new Error("GitHub returned an invalid issue allocation response");
+  }
+  const binding = { repositoryId: CONTROL_REPOSITORY_ID, number: issue.number };
+  // Persist immediately. If polling is interrupted, retrying will inspect this
+  // authoritative binding instead of creating a second issue.
+  try {
+    setManifestIssue(root, binding);
+  } catch (error) {
+    throw new Error(
+      `created ${issue.html_url}, but could not record its binding in manifest.yaml: ` +
+        `${(error as Error).message}. Add issue.repositoryId=${binding.repositoryId} and ` +
+        `issue.number=${binding.number} before retrying`,
+    );
+  }
+  ui.verbose(`control issue: ${issue.html_url}`);
+  const result = await followInitialization(github, issue.number, followOptions);
+
+  const loaded = await archive.load(manifest.id);
+  if (
+    loaded === undefined ||
+    loaded.files.buildOutput.issue.repositoryId !== binding.repositoryId ||
+    loaded.files.buildOutput.issue.number !== binding.number
+  ) {
+    const replacement = await unusedSubmissionId(archive, manifest.id);
+    rekeySubmission(root, manifest.id, replacement);
+    ui.verbose(`issue #${issue.number} did not reserve ${manifest.id}; rekeyed to ${replacement}`);
+    return true;
+  }
+  if (result.outcome === "failure") {
+    ui.faint("The initialization report failed after the id was reserved; submission can continue.");
+  }
+
+  manifest = readLocalSubmissionManifest(root);
+  if (manifest.initialOwners.length > 0) {
+    const target = { id: manifest.id, issue: binding };
+    await postCommand(
+      github,
+      target,
+      `/lax owners ${manifest.id} ${JSON.stringify(pendingOwners)}`,
+      { ...followOptions, acceptSuccessReaction: true },
+    );
+    await verifyOwnerList(github, target, pendingOwners);
+    clearInitialOwners(root);
+  }
+  return true;
+}
+
+async function prepareBeforeSubmit(root: string): Promise<boolean> {
+  const manifest = readLocalSubmissionManifest(root);
+  if (manifest.issue !== undefined && manifest.initialOwners.length === 0) {
+    // Historical ids were already initialized before this recovery protocol
+    // existed. Their recorded binding needs no initialization reattach.
+    if (!NEW_SUBMISSION_ID_PATTERN.test(manifest.id)) return false;
+    const localBinding = bindingFromLocalDatabase(manifest.id);
+    if (
+      localBinding?.repositoryId === manifest.issue.repositoryId &&
+      localBinding.number === manifest.issue.number
+    ) {
+      return false;
+    }
+  }
+
+  ui.title(`Preparing ${manifest.id} for submission`);
+  const steps = new ui.Steps();
+  steps.add("account", "Signing in");
+  steps.add("binding", "Binding the control issue");
+  try {
+    steps.settle("account", { label: `Signed in as ${await ensureLoggedIn()}` });
+    const github = await client();
+    const changed = await prepareLocalSubmission(root, github, {
+      onStage: (stage) => {
+        if (stage.row === "queued") steps.waiting("binding", QUEUED);
+        else steps.begin("binding");
+      },
+    });
+    if (!changed) return false;
+    const updated = readLocalSubmissionManifest(root);
+    steps.settle("binding", {
+      label: updated.issue === undefined ? `Assigned ${updated.id}` : `Bound ${updated.id}`,
+    });
+    steps.finish();
+    ui.verdict(`${updated.id} is ready for its next commit`);
+    ui.line(`Commit and push the changed files, then run ${ui.cmd("lax submit")} again.`);
+    ui.done();
+    return true;
+  } finally {
+    steps.finish();
+  }
+}
+
+async function synchronizeInitialOwners(
+  root: string,
+  github: GitHubClient,
+  followOptions: FollowOptions,
+): Promise<void> {
+  const manifest = readLocalSubmissionManifest(root);
+  if (manifest.issue === undefined || manifest.initialOwners.length === 0) return;
+  const actor = await currentUser(github);
+  const owners = await resolveOwnerHandles(github, [actor.handle, ...manifest.initialOwners]);
+  const target = { id: manifest.id, issue: manifest.issue };
+  await postCommand(
+    github,
+    target,
+    `/lax owners ${manifest.id} ${JSON.stringify(owners)}`,
+    { ...followOptions, acceptSuccessReaction: true },
+  );
+  await verifyOwnerList(github, target, owners);
+  clearInitialOwners(root);
+}
+
+async function currentUser(github: GitHubClient): Promise<GitHubIdentity> {
+  const user = await github.request<{ id: number; login: string; type: string }>("GET", "/user");
+  if (
+    !Number.isSafeInteger(user.id) ||
+    user.id <= 0 ||
+    !HANDLE_PATTERN.test(user.login) ||
+    user.type !== "User"
+  ) {
+    throw new Error("the authenticated GitHub identity is not a human user");
+  }
+  return { githubId: user.id, handle: user.login };
+}
+
+async function resolveOwnerHandles(
+  github: GitHubClient,
+  handles: string[],
+): Promise<GitHubIdentity[]> {
+  const owners: GitHubIdentity[] = [];
+  const seen = new Set<number>();
+  for (const handle of uniqueHandles(handles)) {
+    const user = await github.request<{ id: number; login: string; type: string }>(
+      "GET",
+      `/users/${encodeURIComponent(handle)}`,
+    );
+    if (user.type !== "User") throw new Error(`${handle} is not a human GitHub user`);
+    if (!Number.isSafeInteger(user.id) || user.id <= 0 || !HANDLE_PATTERN.test(user.login)) {
+      throw new Error(`GitHub returned an invalid identity for ${handle}`);
+    }
+    if (seen.has(user.id)) throw new Error(`${handle} names a duplicate GitHub account`);
+    seen.add(user.id);
+    owners.push({ githubId: user.id, handle: user.login });
+  }
+  owners.sort((left, right) => left.githubId - right.githubId);
+  return owners;
+}
+
+async function checkLocalOwnerHandles(handles: string[]): Promise<string[]> {
+  const github = new GitHubClient();
+  const checked: string[] = [];
+  const seenIds = new Set<number>();
+  for (const handle of uniqueHandles(handles)) {
+    try {
+      const user = await github.request<{ id: number; login: string; type: string }>(
+        "GET",
+        `/users/${encodeURIComponent(handle)}`,
+      );
+      if (user.type !== "User") throw new Error(`${handle} is not a human GitHub user`);
+      if (!Number.isSafeInteger(user.id) || user.id <= 0 || !HANDLE_PATTERN.test(user.login)) {
+        throw new Error(`GitHub returned an invalid identity for ${handle}`);
+      }
+      if (seenIds.has(user.id)) throw new Error(`${handle} names a duplicate GitHub account`);
+      seenIds.add(user.id);
+      checked.push(user.login);
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 404) {
+        throw new Error(`${handle} is not a GitHub user`);
+      }
+      if (
+        !(error instanceof GitHubError) &&
+        !String((error as Error).message).startsWith("GitHub request failed:")
+      ) {
+        throw error;
+      }
+      ui.faint(
+        `Could not verify ${handle} without a login; it will be checked on first submission.`,
+      );
+      checked.push(handle);
+    }
+  }
+  return checked;
+}
+
+function uniqueHandles(handles: string[]): string[] {
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const handle of handles) {
+    if (!HANDLE_PATTERN.test(handle)) throw new Error(`invalid GitHub handle: ${handle}`);
+    const key = handle.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    values.push(handle);
+  }
+  if (values.length > MAX_OWNERS) {
+    throw new Error(`owner list may contain at most ${MAX_OWNERS} users`);
+  }
+  return values;
+}
+
+async function verifyArchiveBinding(
+  github: GitHubClient,
+  reference: SubmissionReference,
+): Promise<void> {
+  const loaded = await new ArchiveRepository(github).load(reference.id);
+  if (loaded === undefined) throw new Error(`${reference.id} does not exist in lax-database`);
+  if (
+    loaded.files.buildOutput.issue.repositoryId !== reference.issue.repositoryId ||
+    loaded.files.buildOutput.issue.number !== reference.issue.number
+  ) {
+    throw new Error(`${reference.id} is not bound to issue #${reference.issue.number}`);
+  }
+}
+
+/**
+ * A manifest binding is persisted before the CLI starts polling Actions. If
+ * that polling was interrupted, reattach to the same initialization and then
+ * inspect the authoritative Archive record; never create a duplicate issue.
+ */
+async function recoverArchiveBinding(
+  archive: ArchiveRepository,
+  github: GitHubClient,
+  reference: SubmissionReference,
+  followOptions: FollowOptions,
+): Promise<"verified" | "recovered" | "mismatch"> {
+  let loaded = await archive.load(reference.id);
+  let recovered = false;
+  if (loaded === undefined) {
+    await followInitialization(github, reference.issue.number, followOptions);
+    loaded = await archive.load(reference.id);
+    recovered = true;
+  }
+  const matches =
+    loaded !== undefined &&
+    loaded.files.buildOutput.issue.repositoryId === reference.issue.repositoryId &&
+    loaded.files.buildOutput.issue.number === reference.issue.number;
+  return matches ? (recovered ? "recovered" : "verified") : "mismatch";
+}
+
+function legacyIssueBinding(id: string): IssueBinding | undefined {
+  if (!LEGACY_SUBMISSION_IDS.has(id)) return undefined;
+  return {
+    repositoryId: CONTROL_REPOSITORY_ID,
+    number: Number(id.slice("lax-".length)),
+  };
+}
+
+async function verifyOwnerList(
+  github: GitHubClient,
+  reference: SubmissionReference,
+  expected: GitHubIdentity[],
+): Promise<void> {
+  const loaded = await new ArchiveRepository(github).load(reference.id);
+  if (loaded === undefined) {
+    throw new Error(`${reference.id} disappeared while synchronizing owners`);
+  }
+  if (
+    loaded.files.buildOutput.issue.repositoryId !== reference.issue.repositoryId ||
+    loaded.files.buildOutput.issue.number !== reference.issue.number
+  ) {
+    throw new Error(`${reference.id} changed its issue binding while synchronizing owners`);
+  }
+  const actualIds = loaded.files.ownerList.owners
+    .map((owner) => owner.githubId)
+    .sort((left, right) => left - right);
+  const expectedIds = expected.map((owner) => owner.githubId).sort((left, right) => left - right);
+  if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) {
+    throw new Error(
+      "the provisional owner list was not committed; it remains in manifest.yaml for retry",
+    );
+  }
+}
+
+async function unusedSubmissionId(
+  archive: ArchiveRepository,
+  excluded?: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const id = generateSubmissionId();
+    if (id === excluded) continue;
+    const snapshot = await archive.snapshot();
+    if (!await archive.exists(id, snapshot)) return id;
+  }
+  throw new Error("could not generate an unused six-digit submission id after 100 attempts");
 }
 
 function git(cwd: string, args: string[]): string {

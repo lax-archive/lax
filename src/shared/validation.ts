@@ -5,6 +5,7 @@ import {
   LEGACY_SUBMISSION_ID_PATTERN,
   MAX_FOLDER_BYTES,
   MAX_FOLDER_SEGMENTS,
+  NEW_SUBMISSION_ID_PATTERN,
   PLACEHOLDER_SUBMISSION_ID,
   PLACEHOLDER_SUBMISSION_ID_PATTERN,
   SUBMISSION_ID_PATTERN,
@@ -115,7 +116,7 @@ export function normalizeTitle(raw: string): string {
 }
 
 /**
- * How an id check treats `lax-0`, the id `lax init --offline` scaffolds with.
+ * How an id check treats `lax-0`, used by historical offline scaffolds.
  *
  * Refusing it is the default everywhere, so a new call site is strict until
  * someone decides otherwise: only the local pipeline — which never touches the
@@ -125,7 +126,7 @@ export interface SubmissionIdOptions {
   placeholder?: boolean;
 }
 
-/** Whether an id is the offline placeholder, in either spelling. */
+/** Whether an id is the historical offline placeholder, in either spelling. */
 export function isPlaceholderSubmissionId(value: string): boolean {
   return PLACEHOLDER_SUBMISSION_ID_PATTERN.test(value);
 }
@@ -134,6 +135,16 @@ export function validateSubmissionId(value: string, options: SubmissionIdOptions
   if (options.placeholder === true && value === PLACEHOLDER_SUBMISSION_ID) return value;
   if (!SUBMISSION_ID_PATTERN.test(value)) {
     throw new ValidationError(`submission id must match lax-<positive decimal>, got ${value}`);
+  }
+  return value;
+}
+
+/** New locally allocated ids have exactly six ASCII decimal digits. */
+export function validateNewSubmissionId(value: string): string {
+  if (!NEW_SUBMISSION_ID_PATTERN.test(value)) {
+    throw new ValidationError(
+      `new submission id must match lax-<six digits> without a leading zero, got ${value}`,
+    );
   }
   return value;
 }

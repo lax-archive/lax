@@ -22,12 +22,19 @@ permissions:
 # carries hidden correlation markers and readers match on those, not on order.
 
 jobs:
-  # Unrelated issue comments never allocate a runner: the condition below is
-  # the whole gate. It is data-only expression evaluation — no comment text
-  # reaches a `run:` script — and for `issues` events the missing comment
-  # object makes the prefix test false while the first disjunct admits them.
+  # Ordinary project issues and their comments never allocate a runner. A
+  # current CLI puts the locally generated id in a hidden issue-body marker;
+  # the exact old CLI body remains admitted during migration. TypeScript still
+  # parses the complete marker and command under strict byte and shape limits.
   route:
-    if: github.event_name == 'issues' || startsWith(github.event.comment.body, '/lax')
+    if: >-
+      (github.event_name == 'issues' &&
+       (startsWith(github.event.issue.body, '<!-- lax-submission-id:') ||
+        github.event.issue.body == 'This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.')) ||
+      (github.event_name == 'issue_comment' &&
+       startsWith(github.event.comment.body, '/lax') &&
+       (startsWith(github.event.issue.body, '<!-- lax-submission-id:') ||
+        github.event.issue.body == 'This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.'))
     runs-on: ubuntu-latest
     outputs:
       operation: ${{ steps.route.outputs.operation }}

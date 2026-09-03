@@ -226,6 +226,61 @@ Git is configured with, and when Git has none either it writes the empty
 Spec touchpoint: the CLI `lax init` description and the Actions/Init
 paragraph — init no longer always allocates an id.
 
+## Loginless `lax init`: local ids and first-submit binding (implemented 2026-09-03)
+
+This replaces the 2026-08-24 placeholder design above. Every `lax init` is now
+local and loginless: it draws a cryptographically random id matching
+`lax-[1-9][0-9]{5}`, scaffolds the corresponding packages, and writes an empty
+author list. It neither authenticates nor creates a GitHub issue. The retired
+`--offline` option remains hidden and accepted temporarily so existing scripts
+keep working, but all init invocations now have the same behavior.
+
+The first `lax submit` is the binding step. Before creating anything remotely,
+the CLI verifies that the manifest id agrees with the generated package paths
+and lakefiles, authenticates the current user and any provisional owners, and
+checks the current Archive snapshot for an id collision. A collision causes a
+new local id to be drawn and rewrites the generated paths plus textual id,
+package, import, and namespace references; no issue has been created at that
+point. A historical `lax-0` scaffold takes the same rekey path.
+
+For an unused id, the CLI creates an issue whose first line is the strict hidden
+marker `<!-- lax-submission-id:lax-NNNNNN -->`. The issue-open route accepts
+only that marker or the exact body emitted by issue-number-based CLI releases;
+ordinary project issues and their comments do not allocate Actions runners.
+Initialization publishes the usual three Archive stubs, now using the marked
+id rather than deriving it from the issue number. Current `/lax` comments carry
+the submission id explicitly, and routing repeats the stored Archive issue
+binding before authorization or mutation. Old comments without the id continue
+to derive it from their issue number.
+
+Immediately after issue creation, the CLI records this authoritative block in
+`manifest.yaml`:
+
+```yaml
+issue:
+  repositoryId: 1320232165
+  number: 123
+```
+
+The trusted remote validator requires that block to match the routed issue. The
+CLI then stops and asks the author to commit and push it before the immutable
+source can be submitted. `lax owners` on an unbound folder stores a bounded
+`initialOwners` handle list locally; first submit resolves those handles under
+the authenticated account, updates the Archive owner list, verifies the result,
+and removes the provisional field before asking for the commit.
+
+Migration is closed rather than heuristic. `LEGACY_SUBMISSION_IDS` freezes the
+complete database id set at Archive commit
+`6e823d989aa4944dcd29f91fd1d01f3fca4f0919`; only those ids may acquire their
+historical issue-number binding without a manifest block. Commands from an old
+CLI that race the rollout are admitted only when the issue body is byte-for-byte
+the historical reservation body and the issue number still equals the numeric
+id. New locally generated ids never fall back to issue-number derivation.
+
+Spec touchpoints: Identifier and Package Namespace; manifest.yaml; Actions/Init
+and command routing; CLI init, owners, and submit; the trust model's repeated
+issue-binding check.
+
 ## Versioning: `supersedes` successor chains (implemented 2026-08-23; authorization tightened 2026-09-01)
 
 Submissions stay frozen in time (spec.md, Versioning), but work improves.
@@ -695,6 +750,8 @@ architecture, recorded here until the spec is reconciled:
   written through the GitHub API with a non-forced ref update
   (compare-and-swap) instead of the spec's single-writer server lock;
   dependency captures are published as immutable GitHub Releases.
+  (The issue-number identity rule in this historical entry is superseded by
+  the 2026-09-03 loginless-init entry above.)
 - **Auth model changed.** The CLI authenticates with a GitHub App user
   access token (`ghu_`) obtained via the App device flow; refresh tokens
   rotate in `~/.lax/credentials.json`. This supersedes the OAuth-App

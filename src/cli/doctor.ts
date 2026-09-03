@@ -854,7 +854,7 @@ function pageBuilderCheck(): Check {
 
 /** The id the author calls a registered folder by. A folder whose manifest has
  * lost its id still gets a row — the check behind it is the one that says so.
- * Offline scaffolds all share `lax-0`, so those are named by their folder. */
+ * Historical offline scaffolds share `lax-0`, so those are named by folder. */
 function submissionLabel(root: string): string {
   try {
     const id = submissionIdFromFolder(root);

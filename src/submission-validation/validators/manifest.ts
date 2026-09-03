@@ -1,6 +1,8 @@
 import { parse } from "yaml";
 import type { PaperManifest, SubmissionManifest, ValidationRuntimeIdentity } from "../contracts.js";
 import type { FindingCollector } from "../findings.js";
+import { HANDLE_PATTERN, LEGACY_SUBMISSION_IDS, MAX_OWNERS } from "../../shared/constants.js";
+import type { IssueBinding } from "../../shared/types.js";
 import {
   normalizeSubmissionId,
   normalizeTitle,
@@ -10,7 +12,7 @@ import {
 } from "../../shared/validation.js";
 import { isValidBibtex } from "./bibtex.js";
 
-const MANIFEST_KEYS = new Set([
+const REQUIRED_MANIFEST_KEYS = new Set([
   "specVersion",
   "id",
   "leanVersion",
@@ -19,7 +21,7 @@ const MANIFEST_KEYS = new Set([
   "authors",
   "bibEntries",
 ]);
-const OPTIONAL_MANIFEST_KEYS = new Set(["supersedes", "paper"]);
+const OPTIONAL_MANIFEST_KEYS = new Set(["supersedes", "paper", "issue", "initialOwners"]);
 const PAPER_KEYS = new Set(["folder", "main", "engine", "web"]);
 const AUTHOR_KEYS = new Set(["name", "orcid", "github"]);
 
@@ -28,6 +30,8 @@ export function validateManifest(
   submissionId: string,
   runtime: ValidationRuntimeIdentity,
   findings: FindingCollector,
+  expectedIssue?: IssueBinding,
+  legacyManifestWithoutIssue?: true,
 ): SubmissionManifest | undefined {
   if (Buffer.byteLength(content, "utf8") > 256 * 1024) {
     findings.violate("manifest", "manifest.yaml exceeds 256 KiB");
@@ -45,11 +49,69 @@ export function validateManifest(
     return undefined;
   }
   for (const key of Object.keys(value)) {
-    if (!MANIFEST_KEYS.has(key) && !OPTIONAL_MANIFEST_KEYS.has(key))
+    if (!REQUIRED_MANIFEST_KEYS.has(key) && !OPTIONAL_MANIFEST_KEYS.has(key))
       findings.violate("manifest", `manifest.yaml: unknown key \`${key}\``);
   }
-  for (const key of MANIFEST_KEYS) {
+  for (const key of REQUIRED_MANIFEST_KEYS) {
     if (!(key in value)) findings.violate("manifest", `manifest.yaml: missing key \`${key}\``);
+  }
+
+  let manifestIssue: IssueBinding | undefined;
+  if (value.issue !== undefined) {
+    if (
+      !plainObject(value.issue) ||
+      Object.keys(value.issue).sort().join(",") !== "number,repositoryId" ||
+      !Number.isSafeInteger(value.issue.repositoryId) ||
+      (value.issue.repositoryId as number) <= 0 ||
+      !Number.isSafeInteger(value.issue.number) ||
+      (value.issue.number as number) <= 0
+    ) {
+      findings.violate("manifest", "manifest.yaml: issue binding is invalid");
+    } else {
+      manifestIssue = {
+        repositoryId: value.issue.repositoryId as number,
+        number: value.issue.number as number,
+      };
+    }
+  }
+  if (expectedIssue !== undefined) {
+    if (manifestIssue === undefined) {
+      const legacyIssueNumber = Number(submissionId.slice("lax-".length));
+      const allowlisted = LEGACY_SUBMISSION_IDS.has(submissionId);
+      const authorizedOldCli = legacyManifestWithoutIssue === true;
+      if ((!allowlisted && !authorizedOldCli) || expectedIssue.number !== legacyIssueNumber) {
+        findings.violate("manifest", "manifest.yaml: issue binding is required for a remote submit");
+      }
+    } else if (
+      manifestIssue.repositoryId !== expectedIssue.repositoryId ||
+      manifestIssue.number !== expectedIssue.number
+    ) {
+      findings.violate("manifest", "manifest.yaml: issue binding does not match the submit issue");
+    }
+  }
+  if (value.initialOwners !== undefined) {
+    if (!Array.isArray(value.initialOwners) || value.initialOwners.length > MAX_OWNERS) {
+      findings.violate(
+        "manifest",
+        `manifest.yaml: initialOwners must be a list of at most ${MAX_OWNERS} GitHub handles`,
+      );
+    } else {
+      const seen = new Set<string>();
+      for (const [index, owner] of value.initialOwners.entries()) {
+        if (typeof owner !== "string" || !HANDLE_PATTERN.test(owner)) {
+          findings.violate(
+            "manifest",
+            `manifest.yaml: initialOwners[${index}] is not a valid GitHub handle`,
+          );
+          continue;
+        }
+        const canonical = owner.toLowerCase();
+        if (seen.has(canonical)) {
+          findings.violate("manifest", `manifest.yaml: duplicate initial owner ${owner}`);
+        }
+        seen.add(canonical);
+      }
+    }
   }
 
   const stringField = (key: string, limit: number): string | undefined => {
@@ -71,10 +133,9 @@ export function validateManifest(
   let id: string | undefined;
   if (rawId !== undefined) {
     try {
-      // `lax-0` is a well-formed id here so that an offline scaffold gets the
-      // equality violation below rather than a syntax one. In the trusted path
-      // `submissionId` comes from the issue number, so a `lax-0` manifest is
-      // refused either way — this only decides which sentence the author reads.
+      // `lax-0` is well-formed here so a historical offline scaffold gets the
+      // equality violation below rather than a syntax one. Trusted requests
+      // cannot carry `lax-0`, so this only decides which sentence is shown.
       id = normalizeSubmissionId(rawId, { placeholder: true });
     } catch (error) {
       findings.violate("manifest", `manifest.yaml: ${(error as Error).message}`);

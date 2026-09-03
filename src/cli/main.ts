@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { Command, Help } from "commander";
+import { Command, Help, Option } from "commander";
 import type { ValidationScope } from "../submission-validation/contracts.js";
 import { logout } from "./auth.js";
 import { buildSubmission } from "./build.js";
@@ -45,10 +45,10 @@ const overview = (): string => `
 
   Getting started
     ${ui.cmd("lax doctor")}            check your setup
-    ${ui.cmd("lax login")}             sign in with GitHub
+    ${ui.cmd("lax login")}             sign in when you are ready to submit
 
   Making a submission
-    ${ui.cmd("lax init my-work")}      reserve an id and set up the folder
+    ${ui.cmd("lax init my-work")}      create a local id and set up the folder
     ${ui.cmd("lax build my-work")}     check it on your machine
     ${ui.cmd("lax serve my-work")}     preview the pages
     ${ui.cmd("lax submit my-work")}    send it to the archive as a draft
@@ -71,8 +71,10 @@ program
   .command("init")
   .argument("[folder]", "target folder", ".")
   .option("--title <title>", "submission title (defaults to the folder name)")
-  .option("--offline", "set up the folder under the placeholder id lax-0, reserving nothing")
-  .description("start a submission: reserve its id and set up the folder")
+  // Compatibility for scripts written while loginless init was opt-in. Every
+  // init is now local, so the flag deliberately has no distinct behavior.
+  .addOption(new Option("--offline").hideHelp())
+  .description("generate a local six-digit id and scaffold without signing in")
   .action(
     run((folder: string, options: { title?: string; offline?: boolean }) =>
       initializeSubmission(folder, { title: options.title, offline: options.offline }),

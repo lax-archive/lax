@@ -1,50 +1,86 @@
 import fs from "node:fs";
 import path from "node:path";
-import { parse } from "yaml";
-import { PLACEHOLDER_SUBMISSION_ID } from "../shared/constants.js";
-import { normalizeSubmissionId } from "../shared/validation.js";
+import { parse, parseDocument } from "yaml";
+import {
+  CONTROL_REPOSITORY_ID,
+  HANDLE_PATTERN,
+  LEGACY_SUBMISSION_IDS,
+  MAX_OWNERS,
+  PLACEHOLDER_SUBMISSION_ID,
+} from "../shared/constants.js";
+import type { IssueBinding } from "../shared/types.js";
+import {
+  isObject,
+  normalizeSubmissionId,
+  validateNewSubmissionId,
+  ValidationError,
+} from "../shared/validation.js";
 import * as ui from "./ui.js";
 
-/**
- * The id a local submission folder carries.
- *
- * `lax-0` is one of the answers: `lax init --offline` scaffolds with it, and
- * everything that runs on this machine — `lax build`, `lax serve`,
- * `lax doctor` — works with it unchanged. The commands that reach the archive
- * go through `issueNumberFromFolder` instead, which refuses it.
- */
-export function submissionIdFromFolder(folder: string): string {
-  const root = path.resolve(folder);
-  const filename = path.join(root, "manifest.yaml");
-  let value: unknown;
-  try {
-    value = parse(fs.readFileSync(filename, "utf8"), {
-      maxAliasCount: 0,
-      merge: false,
-      uniqueKeys: true,
-    });
-  } catch (error) {
-    throw new Error(`could not read ${filename}: ${(error as Error).message}`);
-  }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${filename} must be a YAML mapping`);
-  }
-  const id = (value as Record<string, unknown>).id;
-  if (typeof id !== "string")
+export interface LocalSubmissionManifest {
+  filename: string;
+  id: string;
+  title?: string;
+  authors: Array<{ github?: string }>;
+  issue?: IssueBinding;
+  initialOwners: string[];
+}
+
+/** Read the local fields the CLI needs before the full validation pipeline runs. */
+export function readLocalSubmissionManifest(folder: string): LocalSubmissionManifest {
+  const filename = path.join(path.resolve(folder), "manifest.yaml");
+  const document = readDocument(filename);
+  const value = document.toJS({ maxAliasCount: 0 }) as unknown;
+  if (!isObject(value)) throw new Error(`${filename} must be a YAML mapping`);
+  if (typeof value.id !== "string") {
     throw new Error(`${filename} must contain an id of the form lax-N or LaxN`);
+  }
+  let id: string;
   try {
-    return normalizeSubmissionId(id, { placeholder: true });
+    // Keep the last released offline placeholder readable so first submission
+    // can rekey it instead of stranding the folder.
+    id = normalizeSubmissionId(value.id, { placeholder: true });
   } catch {
     throw new Error(`${filename} must contain an id of the form lax-N or LaxN`);
   }
+  const title =
+    typeof value.title === "string" && value.title.trim() !== "" ? value.title : undefined;
+  const authors = Array.isArray(value.authors)
+    ? value.authors.flatMap((author) =>
+        isObject(author) && (author.github === undefined || typeof author.github === "string")
+          ? [{ ...(typeof author.github === "string" ? { github: author.github } : {}) }]
+          : [],
+      )
+    : [];
+  const initialOwners = parseInitialOwners(value.initialOwners, filename);
+  const issue = value.issue === undefined ? undefined : parseManifestIssue(value.issue, filename);
+  return { filename, id, ...(title === undefined ? {} : { title }), authors, issue, initialOwners };
 }
 
-/**
- * Whether a submission folder's manifest declares a paper — decided from the
- * raw YAML before a build, so the step list can show the row up front. The
- * block's shape is the validator's business; this only asks whether it is
- * there at all, and an unreadable manifest simply has none.
- */
+/** The id a local submission folder carries, including the historical lax-0 placeholder. */
+export function submissionIdFromFolder(folder: string): string {
+  return readLocalSubmissionManifest(folder).id;
+}
+
+/** Resolve the authoritative issue number recorded after first submission. */
+export function issueNumberFromFolder(folder: string): number {
+  const manifest = readLocalSubmissionManifest(folder);
+  if (manifest.issue !== undefined) return manifest.issue.number;
+  if (LEGACY_SUBMISSION_IDS.has(manifest.id)) {
+    return Number(manifest.id.slice("lax-".length));
+  }
+  if (manifest.id === PLACEHOLDER_SUBMISSION_ID) {
+    throw new Error(
+      `${ui.tilde(path.resolve(folder))} carries the old placeholder id ${PLACEHOLDER_SUBMISSION_ID}.\n` +
+        `Run ${ui.cmd("lax submit")} for this folder; it will assign a real local id before creating an issue.`,
+    );
+  }
+  throw new Error(
+    `${manifest.filename} has no issue binding; run ${ui.cmd("lax submit")} for this folder first`,
+  );
+}
+
+/** Whether a raw manifest declares a paper, for composing the CLI's rows. */
 export function declaresPaper(folder: string): boolean {
   try {
     const value = parse(fs.readFileSync(path.join(path.resolve(folder), "manifest.yaml"), "utf8"), {
@@ -52,29 +88,119 @@ export function declaresPaper(folder: string): boolean {
       merge: false,
       uniqueKeys: true,
     }) as unknown;
-    return value !== null && typeof value === "object" && !Array.isArray(value) &&
-      (value as Record<string, unknown>).paper !== undefined;
+    return isObject(value) && value.paper !== undefined;
   } catch {
     return false;
   }
 }
 
-/**
- * The issue number behind a submission folder, for the commands that post to
- * the archive.
- *
- * An offline scaffold has none: nothing was ever reserved for it, so the
- * placeholder is refused here rather than turned into issue 0.
- */
-export function issueNumberFromFolder(folder: string): number {
-  const id = submissionIdFromFolder(folder);
-  if (id === PLACEHOLDER_SUBMISSION_ID) {
+export function setManifestIssue(folder: string, issue: IssueBinding): void {
+  if (
+    issue.repositoryId !== CONTROL_REPOSITORY_ID ||
+    !Number.isSafeInteger(issue.number) ||
+    issue.number <= 0
+  ) {
+    throw new ValidationError("manifest issue binding is invalid");
+  }
+  updateDocument(folder, (document) => {
+    document.set("issue", { repositoryId: issue.repositoryId, number: issue.number });
+  });
+}
+
+export function clearManifestIssue(folder: string): void {
+  updateDocument(folder, (document) => document.delete("issue"));
+}
+
+export function setInitialOwners(folder: string, handles: string[]): void {
+  const byLowercase = new Map(handles.map((handle) => [handle.toLowerCase(), handle]));
+  const normalized = [...byLowercase.values()].sort((left, right) =>
+    left.localeCompare(right, "en", { sensitivity: "base" }),
+  );
+  if (normalized.length > MAX_OWNERS) {
+    throw new Error(`initial owner list may contain at most ${MAX_OWNERS} GitHub users`);
+  }
+  for (const handle of normalized) {
+    if (!HANDLE_PATTERN.test(handle)) throw new Error(`invalid GitHub handle: ${handle}`);
+  }
+  updateDocument(folder, (document) => document.set("initialOwners", normalized));
+}
+
+export function clearInitialOwners(folder: string): void {
+  updateDocument(folder, (document) => document.delete("initialOwners"));
+}
+
+export function setManifestId(folder: string, id: string): void {
+  validateNewSubmissionId(id);
+  updateDocument(folder, (document) => {
+    document.set("id", id);
+    document.delete("issue");
+  });
+}
+
+function parseManifestIssue(value: unknown, filename: string): IssueBinding {
+  if (
+    !isObject(value) ||
+    Object.keys(value).sort().join(",") !== "number,repositoryId" ||
+    value.repositoryId !== CONTROL_REPOSITORY_ID ||
+    !Number.isSafeInteger(value.number) ||
+    (value.number as number) <= 0
+  ) {
     throw new Error(
-      `${ui.tilde(path.resolve(folder))} carries the placeholder id ${PLACEHOLDER_SUBMISSION_ID}.\n` +
-        "It was scaffolded offline, so the archive never allocated an id for it — and\n" +
-        `there is no issue to post to. Run ${ui.cmd("lax init")} in a fresh folder for a real id\n` +
-        "and move the sources across: package names, imports and namespaces carry it.",
+      `${filename} issue must contain the authoritative repositoryId and a positive number`,
     );
   }
-  return Number(id.slice("lax-".length));
+  return { repositoryId: value.repositoryId as number, number: value.number as number };
+}
+
+function parseInitialOwners(value: unknown, filename: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_OWNERS) {
+    throw new Error(
+      `${filename} initialOwners must be a list of at most ${MAX_OWNERS} GitHub handles`,
+    );
+  }
+  const handles = value.map((entry) => {
+    if (typeof entry !== "string" || !HANDLE_PATTERN.test(entry)) {
+      throw new Error(`${filename} initialOwners contains an invalid GitHub handle`);
+    }
+    return entry;
+  });
+  if (new Set(handles.map((handle) => handle.toLowerCase())).size !== handles.length) {
+    throw new Error(`${filename} initialOwners contains duplicate GitHub handles`);
+  }
+  return handles;
+}
+
+function updateDocument(
+  folder: string,
+  mutate: (document: ReturnType<typeof parseDocument>) => void,
+): void {
+  const filename = path.join(path.resolve(folder), "manifest.yaml");
+  const document = readDocument(filename);
+  mutate(document);
+  const temporary = `${filename}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporary, document.toString(), { flag: "wx" });
+    fs.renameSync(temporary, filename);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+function readDocument(filename: string): ReturnType<typeof parseDocument> {
+  let document: ReturnType<typeof parseDocument>;
+  try {
+    document = parseDocument(fs.readFileSync(filename, "utf8"), {
+      merge: false,
+      uniqueKeys: true,
+    });
+  } catch (error) {
+    throw new Error(`could not read ${filename}: ${(error as Error).message}`);
+  }
+  if (document.errors.length > 0) {
+    throw new Error(
+      `could not read ${filename}: ${document.errors.map((error) => error.message).join("; ")}`,
+    );
+  }
+  return document;
 }

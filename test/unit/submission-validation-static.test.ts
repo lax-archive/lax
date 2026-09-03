@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { CONTROL_REPOSITORY_ID } from "../../src/shared/constants.js";
 import { FindingCollector } from "../../src/submission-validation/findings.js";
 import { deriveInventory } from "../../src/submission-validation/phases/inventory.js";
 import { runStaticValidation } from "../../src/submission-validation/phases/static.js";
@@ -102,9 +103,10 @@ describe("submission static validation retained from main", () => {
     }
   });
 
-  it("gates the offline placeholder id on what the request is for", () => {
-    // `lax init --offline` writes `id: lax-0`, and a local build passes its own
-    // id in, so the whole static gate is happy with it …
+  it("gates the historical offline placeholder id on what the request is for", () => {
+    // Released opt-in offline scaffolds used `id: lax-0`; a local build passes
+    // its own id in, so the compatibility path remains usable until submit
+    // rekeys it …
     const root = makeSubmission("lax-0");
     initializeGit(root);
     const local = runStaticValidation(request("lax-0"), root, RUNTIME);
@@ -132,6 +134,71 @@ describe("submission static validation retained from main", () => {
 
     expect(findings.violations).toEqual([]);
     expect(parsed?.authors).toEqual([]);
+  });
+
+  it("requires the manifest issue binding to match remote submits", () => {
+    const binding = { repositoryId: CONTROL_REPOSITORY_ID, number: 42 };
+    const missing = new FindingCollector("static");
+    validateManifest(manifest("lax-123456"), "lax-123456", RUNTIME, missing, binding);
+    expect(missing.violations.map((finding) => finding.message).join("\n")).toContain(
+      "issue binding is required",
+    );
+
+    const content =
+      `${manifest("lax-123456")}issue:\n` +
+      `  repositoryId: ${CONTROL_REPOSITORY_ID}\n` +
+      "  number: 42\n";
+    const accepted = new FindingCollector("static");
+    validateManifest(content, "lax-123456", RUNTIME, accepted, binding);
+    expect(accepted.violations).toEqual([]);
+
+    const mismatch = new FindingCollector("static");
+    validateManifest(content, "lax-123456", RUNTIME, mismatch, { ...binding, number: 43 });
+    expect(mismatch.violations.map((finding) => finding.message).join("\n")).toContain(
+      "does not match the submit issue",
+    );
+
+    const allowlisted = new FindingCollector("static");
+    validateManifest(manifest("lax-3"), "lax-3", RUNTIME, allowlisted, {
+      repositoryId: CONTROL_REPOSITORY_ID,
+      number: 3,
+    });
+    expect(allowlisted.violations).toEqual([]);
+
+    for (const [submissionId, number] of [["lax-7", 7], ["lax-3", 4]] as const) {
+      const rejected = new FindingCollector("static");
+      validateManifest(manifest(submissionId), submissionId, RUNTIME, rejected, {
+        repositoryId: CONTROL_REPOSITORY_ID,
+        number,
+      });
+      expect(rejected.violations.map((finding) => finding.message).join("\n")).toContain(
+        "issue binding is required",
+      );
+    }
+
+    const oldCli = new FindingCollector("static");
+    validateManifest(
+      manifest("lax-63"),
+      "lax-63",
+      RUNTIME,
+      oldCli,
+      { repositoryId: CONTROL_REPOSITORY_ID, number: 63 },
+      true,
+    );
+    expect(oldCli.violations).toEqual([]);
+
+    const oldCliWrongIssue = new FindingCollector("static");
+    validateManifest(
+      manifest("lax-63"),
+      "lax-63",
+      RUNTIME,
+      oldCliWrongIssue,
+      { repositoryId: CONTROL_REPOSITORY_ID, number: 64 },
+      true,
+    );
+    expect(oldCliWrongIssue.violations.map((finding) => finding.message).join("\n")).toContain(
+      "issue binding is required",
+    );
   });
 
   it("requires manifest string fields to be YAML strings", () => {

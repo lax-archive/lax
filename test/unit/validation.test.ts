@@ -64,7 +64,7 @@ describe("shared input validation", () => {
     expect(() => normalizeTitle("one\u2029two")).toThrow("one line");
   });
 
-  it("derives the only accepted id spelling from the issue number", () => {
+  it("retains issue-number id derivation for the legacy migration path", () => {
     expect(submissionId(42)).toBe("lax-42");
     expect(packageNameForSubmission("lax-42")).toBe("Lax42");
     expect(() => submissionId(0)).toThrow("positive integer");
@@ -77,8 +77,8 @@ describe("shared input validation", () => {
     expect(() => normalizeSubmissionId("lax-0")).toThrow("lax-<positive decimal>");
   });
 
-  it("admits the offline placeholder only where a caller asks for it", () => {
-    // `lax init --offline` scaffolds under lax-0. Refusing it stays the
+  it("admits the historical offline placeholder only where a caller asks for it", () => {
+    // Older `lax init --offline` scaffolds used lax-0. Refusing it stays the
     // default — every archive path keeps the two throws above — and opting in
     // buys exactly that one id, in the two spellings a manifest may use.
     expect(isPlaceholderSubmissionId("lax-0")).toBe(true);

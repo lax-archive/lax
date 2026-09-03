@@ -499,7 +499,19 @@ describe("trusted Archive publisher modes", () => {
         { ...request({ action: "create", initialFiles: initial }), id: "lax-43" },
         issue.repositoryId,
       ),
-    ).toThrow("derived as lax-42");
+    ).toThrow("initialization files do not exactly match");
+    const randomIdInitial = initialFiles(
+      "lax-123456",
+      issue,
+      alice,
+      "2026-07-30T10:00:00Z",
+    );
+    expect(
+      parsePublishRequest(
+        { ...request({ action: "create", initialFiles: randomIdInitial }), id: "lax-123456" },
+        issue.repositoryId,
+      ).id,
+    ).toBe("lax-123456");
     expect(() =>
       parsePublishRequest(
         request({
@@ -511,6 +523,30 @@ describe("trusted Archive publisher modes", () => {
         issue.repositoryId,
       ),
     ).toThrow("action and command action do not match");
+
+    const oldCli = request({
+      action: "submit",
+      commentId: 77,
+      command: {
+        action: "submit",
+        repository: "https://github.com/alice/example",
+        commit: "b".repeat(40),
+        folder: ".",
+      },
+      preconditions: fileDigests(initial),
+    });
+    expect(
+      parsePublishRequest(
+        { ...oldCli, legacyManifestWithoutIssue: true },
+        issue.repositoryId,
+      ).legacyManifestWithoutIssue,
+    ).toBe(true);
+    expect(() =>
+      parsePublishRequest(
+        { ...oldCli, legacyManifestWithoutIssue: false },
+        issue.repositoryId,
+      ),
+    ).toThrow("legacy manifest compatibility flag is invalid");
 
     const mismatchedInitializationFiles = [
       initialFiles(

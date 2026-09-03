@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { commandWord, parseCommand } from "../../src/shared/commands.js";
+import {
+  commandSubmissionId,
+  commandWord,
+  parseCommand,
+  parseRoutedCommand,
+} from "../../src/shared/commands.js";
 import { MAX_COMMAND_BYTES, MAX_OWNERS } from "../../src/shared/constants.js";
 
 describe("issue command parser", () => {
@@ -20,6 +25,37 @@ describe("issue command parser", () => {
       commit: "0123456789abcdef0123456789abcdef01234567",
       folder: ".",
     });
+  });
+
+  it("routes current commands by their embedded six-digit submission id", () => {
+    const source =
+      '{"repository":"https://github.com/alice/formalization","commit":"0123456789abcdef0123456789abcdef01234567","folder":"."}';
+    expect(commandSubmissionId(`/lax submit lax-123456 ${source}`, "lax-42")).toBe(
+      "lax-123456",
+    );
+    expect(parseRoutedCommand(`/lax submit lax-123456 ${source}`, "lax-42")).toEqual({
+      id: "lax-123456",
+      command: {
+        action: "submit",
+        repository: "https://github.com/alice/formalization",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+        folder: ".",
+      },
+    });
+    expect(parseRoutedCommand("/lax delete lax-123456", "lax-42")).toEqual({
+      id: "lax-123456",
+      command: { action: "delete" },
+    });
+  });
+
+  it("retains issue-derived routing for commands emitted by older CLIs", () => {
+    expect(parseRoutedCommand("/lax delete", "lax-42")).toEqual({
+      id: "lax-42",
+      command: { action: "delete" },
+    });
+    expect(() => commandSubmissionId("/lax delete lax-012345", "lax-42")).toThrow(
+      "command submission id is invalid",
+    );
   });
 
   it("rejects unknown JSON fields and trailing command arguments", () => {

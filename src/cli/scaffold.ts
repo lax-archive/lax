@@ -10,6 +10,8 @@ import {
   seedOverrides,
 } from "../submission-validation/host/warmstore.js";
 import { hostValidationRuntime } from "../submission-validation/pins.js";
+import { PLACEHOLDER_SUBMISSION_ID } from "../shared/constants.js";
+import { normalizeSubmissionId, validateNewSubmissionId } from "../shared/validation.js";
 import * as ui from "./ui.js";
 
 const runtime = hostValidationRuntime();
@@ -22,27 +24,15 @@ export function ensureEmptyFolder(folder: string): string {
   return root;
 }
 
-/**
- * The author entry a fresh manifest starts with. Online that is the GitHub
- * account that opened the issue; offline there is no handle to use, so the
- * name Git knows stands in — and when Git has none either, the list starts
- * empty (which the spec allows) rather than carrying an invented author.
- */
-export interface ScaffoldAuthor {
-  name: string;
-  github?: string;
-}
-
-/** Scaffold the source layout after the issue number has allocated the id. */
+/** Scaffold a local source layout before any GitHub issue exists. */
 export function scaffoldSubmission(
   folder: string,
-  issueNumber: number,
+  id: string,
   title: string,
-  author: ScaffoldAuthor | undefined,
 ): void {
+  validateNewSubmissionId(id);
   const root = ensureEmptyFolder(folder);
-  const id = `lax-${issueNumber}`;
-  const concepts = `Lax${issueNumber}`;
+  const concepts = `Lax${id.slice("lax-".length)}`;
   const proofs = `${concepts}Proofs`;
   const write = (relative: string, content: string): void => {
     const filename = path.join(root, relative);
@@ -54,7 +44,7 @@ export function scaffoldSubmission(
     "manifest.yaml",
     `specVersion: "1"\nid: ${id}\nleanVersion: ${JSON.stringify(runtime.leanVersion)}\n` +
       `mathlibVersion: ${JSON.stringify(runtime.mathlibCommit)}\n` +
-      `title: ${JSON.stringify(title)}\n${authorsBlock(author)}bibEntries: []\n`,
+      `title: ${JSON.stringify(title)}\nauthors: []\nbibEntries: []\n`,
   );
   write("abstract.md", "TODO: describe this submission.\n");
   write("LICENSE", fs.readFileSync(asset("apache-2.0.txt"), "utf8"));
@@ -91,12 +81,14 @@ export type ProvisionResult = { ok: true } | { ok: false; reason?: string };
  */
 export async function provisionScaffold(
   root: string,
-  issueNumber: number,
+  idInput: string,
 ): Promise<ProvisionResult> {
   try {
     const warm = await ensureLocalWarm({ echo: ui.isVerbose() });
     if (warm === undefined) return { ok: false };
-    const concepts = `Lax${issueNumber}`;
+    const id = normalizeSubmissionId(idInput, { placeholder: true });
+    if (id !== PLACEHOLDER_SUBMISSION_ID) validateNewSubmissionId(id);
+    const concepts = `Lax${id.slice("lax-".length)}`;
     for (const kind of ["concepts", "proofs"] as const) {
       const pkgDir = path.join(root, kind);
       seedOverrides(warm, pkgDir);
@@ -110,14 +102,6 @@ export async function provisionScaffold(
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
-}
-
-function authorsBlock(author: ScaffoldAuthor | undefined): string {
-  if (author === undefined) return "authors: []\n";
-  return (
-    `authors:\n  - name: ${JSON.stringify(author.name)}\n` +
-    (author.github === undefined ? "" : `    github: ${JSON.stringify(author.github)}\n`)
-  );
 }
 
 function lakefile(packageName: string, conceptsName: string, proofs: boolean): string {

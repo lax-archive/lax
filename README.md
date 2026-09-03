@@ -1,9 +1,10 @@
 # Lax
 
 This repository is the issue-driven control plane and npm CLI for the Lax
-archive. GitHub issues allocate submission ids, `/lax` issue comments request
-state changes, and trusted GitHub Actions jobs publish those changes to the
-public [`lax-archive/lax-database`](https://github.com/lax-archive/lax-database)
+archive. The CLI generates submission ids locally, a marked GitHub issue binds
+one of those ids on first submit, `/lax` issue comments request state changes,
+and trusted GitHub Actions jobs publish those changes to the public
+[`lax-archive/lax-database`](https://github.com/lax-archive/lax-database)
 repository. Every successful database commit dispatches a complete rebuild to
 `lax-archive/lax-website`.
 
@@ -16,11 +17,11 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 
 | Event or command | Result |
 | --- | --- |
-| New ordinary issue | Allocates `lax-<issue number>` and creates `record.json`, `build-output.json`, and `owner-list.json` stubs. |
-| `/lax owners <JSON>` | Replaces the complete owner list after numeric-id authorization and GitHub identity resolution. |
-| `/lax delete` | Replaces an init/draft record with a permanent three-file tombstone. |
-| `/lax register` | Makes an init/draft record immutable. |
-| `/lax submit <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. |
+| New marked reservation issue | Binds its locally generated `lax-<six digits>` id and creates `record.json`, `build-output.json`, and `owner-list.json` stubs. Ordinary project issues are ignored. |
+| `/lax owners <id> <JSON>` | Replaces the complete owner list after numeric-account authorization and GitHub identity resolution. |
+| `/lax delete <id>` | Replaces an init/draft record with a permanent three-file tombstone. |
+| `/lax register <id>` | Makes an init/draft record immutable. |
+| `/lax submit <id> <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. |
 
 **Versioning.** A new version of a registered submission is an ordinary new
 submission whose `manifest.yaml` carries the optional `supersedes: lax-N`
@@ -169,8 +170,8 @@ npm test
 npm run lax -- --help
 ```
 
-The CLI creates issues and posts exact command comments; it never writes the
-database directly:
+The CLI creates a control issue when a local submission is first submitted and
+posts exact command comments thereafter; it never writes the database directly:
 
 ```sh
 lax init submission
@@ -198,7 +199,7 @@ prints once — same words, still complete, which is what agents driving the CLI
 read. Elapsed time appears on anything over three seconds, so four silent
 minutes read as work rather than as a hang.
 
-`lax submit <issue|folder> --repository ... --commit ... --folder ...` is the
+`lax submit <id|folder> --repository ... --commit ... --folder ...` is the
 explicit source-triple form of `lax submit [folder]`. Every issue-protocol verb
 is the CLI verb that posts it — `submit`, `owners`, `delete`, `register` — and
 each meaning has exactly one word, so `lax update` is once again only the CLI
@@ -222,14 +223,21 @@ pushed-`HEAD` check, and the validation build — and posts the issue command
 straight away; the trusted workflow is then the only thing that validates the
 submission, so an unpushed commit fails there instead of here.
 
-`lax init --offline` sets a folder up without reserving anything: it signs in
-to nothing, opens no issue, and scaffolds under the placeholder id `lax-0`
-(packages `Lax0` and `Lax0Proofs`). GitHub numbers issues from 1, so no record
-can ever carry that id. `lax build`, `lax serve` and `lax doctor` work with it
-unchanged; `lax submit`, `lax register`, `lax owners` and `lax delete` refuse
-it, because there is no issue to post to. Moving such a folder to the archive
-means `lax init` in a fresh one and carrying the sources across — the id is
-part of every package name, import and namespace.
+Every `lax init` is loginless. It generates a random six-digit id locally,
+scaffolds the matching `LaxNNNNNN` and `LaxNNNNNNProofs` packages, and opens no
+issue. On the first `lax submit`, the CLI signs in, checks that the id is still
+unused, creates a marked control issue, writes the authoritative issue binding
+into `manifest.yaml`, and asks the author to commit and push that binding before
+submitting again. A rare id collision is resolved by safely rekeying the
+manifest, generated paths, package names, imports, and namespaces before any
+issue is created. `lax owners` used before that first submit stores provisional
+handles locally and authenticates and synchronizes them when the issue is bound.
+
+Folders created by releases that used `lax init --offline` and the `lax-0`
+placeholder are rekeyed on their first submit. Existing issue-number-based
+submissions retain their original ids; the CLI records their historical issue
+binding when it next touches a local manifest. The hidden `--offline` option is
+still accepted for script compatibility, but it no longer changes `init`.
 
 `lax submit --resume` reattaches to an interrupted submit. The durable job
 record is the Actions run, correlated to the originating `/lax submit` comment

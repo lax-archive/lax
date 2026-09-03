@@ -24,7 +24,6 @@ import {
   isObject,
   normalizeTitle,
   requireExactKeys,
-  submissionId,
   validateCommit,
   validateIdentity,
   validateSource,
@@ -371,6 +370,9 @@ export function parsePublishRequest(value: unknown, expectedRepositoryId: number
         ? []
         : ["commentId", "command", "preconditions"]),
     ...(action === "delete" && "dependents" in value ? ["dependents"] : []),
+    ...(action === "submit" && "legacyManifestWithoutIssue" in value
+      ? ["legacyManifestWithoutIssue"]
+      : []),
   ];
   problems.capture(() => requireExactKeys(value, expectedKeys, "publication request"));
 
@@ -378,14 +380,10 @@ export function parsePublishRequest(value: unknown, expectedRepositoryId: number
   if (issue !== undefined && issue.repositoryId !== expectedRepositoryId) {
     problems.add("publication request repository id does not match the authoritative lax repository");
   }
-  const derivedId = issue === undefined ? undefined : problems.capture(() => submissionId(issue.number));
   const id = problems.capture(() => {
     if (typeof value.id !== "string") throw new ValidationError("publication request id must be a string");
     return validateSubmissionId(value.id);
   });
-  if (id !== undefined && derivedId !== undefined && id !== derivedId) {
-    problems.add(`publication request id must be derived as ${derivedId}`);
-  }
   const actor = problems.capture(() => {
     if (!isObject(value.actor)) throw new ValidationError("publication request actor is missing");
     requireExactKeys(value.actor, ["githubId", "handle"], "publication request actor");
@@ -401,6 +399,7 @@ export function parsePublishRequest(value: unknown, expectedRepositoryId: number
   let command: ParsedCommand | undefined;
   let preconditions: FilePreconditions | undefined;
   let dependents: string[] | undefined;
+  let legacyManifestWithoutIssue: true | undefined;
   if (action === "create") {
     title = problems.capture(() => {
       if (typeof value.title !== "string") throw new ValidationError("publication title must be a string");
@@ -430,6 +429,13 @@ export function parsePublishRequest(value: unknown, expectedRepositoryId: number
     if (action === "delete" && "dependents" in value) {
       dependents = problems.capture(() => trustedDependents(value.dependents));
     }
+    if (action === "submit" && "legacyManifestWithoutIssue" in value) {
+      if (value.legacyManifestWithoutIssue !== true) {
+        problems.add("publication request legacy manifest compatibility flag is invalid");
+      } else {
+        legacyManifestWithoutIssue = true;
+      }
+    }
   }
   problems.throwIfAny();
 
@@ -452,6 +458,7 @@ export function parsePublishRequest(value: unknown, expectedRepositoryId: number
     command: command!,
     preconditions: preconditions!,
     ...(dependents === undefined ? {} : { dependents }),
+    ...(legacyManifestWithoutIssue === undefined ? {} : { legacyManifestWithoutIssue }),
   };
 }
 

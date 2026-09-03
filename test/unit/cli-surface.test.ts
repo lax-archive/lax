@@ -33,12 +33,14 @@ describe("CLI compatibility surface", () => {
     expect(help.output).toContain("lax <command> --help for options");
   });
 
-  it("offers `init` the offline placeholder scaffold", () => {
+  it("makes every `init` loginless without exposing the retired opt-in", () => {
     const init = cli(["init", "--help"]);
     expect(init.code).toBe(0);
     expect(init.output).toContain("--title <title>");
-    expect(init.output).toContain("--offline");
-    expect(init.output).toContain("lax-0");
+    expect(init.output).toContain("local six-digit id");
+    expect(init.output).toContain("without signing in");
+    expect(init.output).not.toContain("--offline");
+    expect(init.output).not.toContain("lax-0");
   });
 
   it("keeps the build iteration options discoverable", () => {
@@ -139,11 +141,11 @@ describe("CLI compatibility surface", () => {
     // an empty LAX_HOME keeps the register preflight off the developer's ~/.lax
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "lax-home-"));
     try {
-      const result = cli(["register", "lax-42"], { LAX_HOME: home });
+      const result = cli(["register", "lax-41"], { LAX_HOME: home });
       expect(result.code).toBe(1);
       expect(result.output).toContain("Registering is permanent");
       expect(result.output).toContain("There is no local copy of the archive");
-      expect(result.output).toContain("registering lax-42 needs a confirmation");
+      expect(result.output).toContain("registering lax-41 needs a confirmation");
       expect(result.output).toContain("Rerun with --yes");
       expect(result.output).not.toContain("no GitHub App login found");
     } finally {

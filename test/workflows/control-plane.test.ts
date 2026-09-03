@@ -3,6 +3,10 @@ import { ArchiveRepository } from "../../src/shared/archive.js";
 import { initialFiles, registeredFiles } from "../../src/shared/archive-schema.js";
 import { ControlPlane } from "../../src/shared/control-plane.js";
 import { GitHubClient } from "../../src/shared/github.js";
+import {
+  issueReservationBody,
+  LEGACY_ISSUE_RESERVATION_BODY,
+} from "../../src/shared/issue-reservation.js";
 
 const repositoryId = 123456789;
 const issueNumber = 42;
@@ -52,6 +56,37 @@ describe("submission control-plane routing", () => {
     );
   });
 
+  it("routes a current command through the id reserved in its issue marker", async () => {
+    const currentId = "lax-123456";
+    const currentFiles = initialFiles(
+      currentId,
+      { repositoryId, number: issueNumber },
+      alice,
+      "2026-07-30T10:00:00Z",
+    );
+    installArchiveFetch(alice, currentFiles, {
+      issueBody: issueReservationBody(currentId),
+      submissionId: currentId,
+    });
+    const result = await controlPlane().route(
+      "issue_comment",
+      commentEvent(
+        `/lax submit ${currentId} ${JSON.stringify({
+          repository: "https://github.com/alice/formalization",
+          commit: "0123456789abcdef0123456789abcdef01234567",
+          folder: ".",
+        })}`,
+        alice,
+      ),
+    );
+    expect(result).toMatchObject({
+      kind: "validate",
+      request: { id: currentId, command: { action: "submit", folder: "." } },
+    });
+    if (result.kind !== "validate") throw new Error("unexpected route result");
+    expect(result.request.legacyManifestWithoutIssue).toBeUndefined();
+  });
+
   it("applies the owner gate before parsing command arguments", async () => {
     installArchiveFetch({ githubId: 20, handle: "bob" });
     const control = controlPlane();
@@ -85,7 +120,7 @@ describe("submission control-plane routing", () => {
   });
 
   it("constructs and schema-checks initialization stubs in the route job", async () => {
-    installCreateFetch();
+    installCreateFetch({ body: issueReservationBody("lax-123456") });
     const result = await controlPlane().route("issues", {
       action: "opened",
       repository: { id: repositoryId, full_name: "lax-archive/lax" },
@@ -99,6 +134,7 @@ describe("submission control-plane routing", () => {
     expect(result.kind).toBe("publish");
     if (result.kind !== "publish") throw new Error("unexpected result");
     expect(result.request.action).toBe("create");
+    expect(result.request.id).toBe("lax-123456");
     expect(result.preview).toContain("lax-initialization-preview-issue:42");
     expect(Object.keys(result.request.initialFiles ?? {}).sort()).toEqual([
       "build-output.json",
@@ -106,6 +142,33 @@ describe("submission control-plane routing", () => {
       "record.json",
     ]);
     expect(result.request.initialFiles?.["owner-list.json"]).toContain('"githubId": 10');
+  });
+
+  it("ignores ordinary project issues before constructing archive state", async () => {
+    const fetchMock = installCreateFetch({ body: "A normal project issue." });
+    await expect(
+      controlPlane().route("issues", {
+        action: "opened",
+        repository: { id: repositoryId, full_name: "lax-archive/lax" },
+        issue: { number: issueNumber },
+      }),
+    ).resolves.toEqual({ kind: "ignore" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores commands on ordinary project issues before reading archive state", async () => {
+    const fetchMock = installArchiveFetch(alice, files, { issueBody: "A normal project issue." });
+    await expect(
+      controlPlane().route("issue_comment", commentEvent("/lax register", alice)),
+    ).resolves.toEqual({ kind: "ignore" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires current commands to match the id reserved in the issue marker", async () => {
+    installArchiveFetch(alice, files, { issueBody: issueReservationBody("lax-123456") });
+    await expect(
+      controlPlane().route("issue_comment", commentEvent("/lax register lax-654321", alice)),
+    ).rejects.toThrow("does not match the submission id reserved by this issue");
   });
 
   it("aggregates independent initialization event and current-issue errors", async () => {
@@ -325,7 +388,12 @@ function commentEvent(body: string, actor: { githubId: number; handle: string })
 function installArchiveFetch(
   actor = alice,
   archiveFiles: Record<string, string> = files,
-  options: { comments?: unknown[]; fileMode?: string } = {},
+  options: {
+    comments?: unknown[];
+    fileMode?: string;
+    issueBody?: string;
+    submissionId?: string;
+  } = {},
 ): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
     const url = new URL(String(input));
@@ -336,6 +404,7 @@ function installArchiveFetch(
         node_id: "I_kwDOexample",
         state: "open",
         title: "Example",
+        body: options.issueBody ?? LEGACY_ISSUE_RESERVATION_BODY,
         created_at: "2026-07-30T10:00:00Z",
         user: { id: 10, login: "alice", type: "User" },
       });
@@ -352,7 +421,12 @@ function installArchiveFetch(
       if (url.searchParams.get("recursive") === "1") return json({ truncated: false, tree: [] });
       return json({
         truncated: false,
-        tree: [{ path: "lax-42", mode: "040000", type: "tree", sha: "submission-tree" }],
+        tree: [{
+          path: options.submissionId ?? "lax-42",
+          mode: "040000",
+          type: "tree",
+          sha: "submission-tree",
+        }],
       });
     }
     if (path === "/repos/lax-archive/lax-database/git/trees/submission-tree") {
@@ -396,6 +470,7 @@ function installCreateFetch(
         node_id: "I_kwDOexample",
         state: "open",
         title: "Example",
+        body: LEGACY_ISSUE_RESERVATION_BODY,
         created_at: "2026-07-30T10:00:00Z",
         user: { id: 10, login: "alice", type: "User" },
         ...issueOverrides,

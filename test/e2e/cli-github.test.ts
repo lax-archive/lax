@@ -169,10 +169,11 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     expect(during.map((r) => r.path)).toContain("/repos/lax-archive/lax/issues?per_page=1");
   });
 
-  it("scaffolds under the placeholder id without asking GitHub for one", async () => {
+  it("scaffolds under a local six-digit id without asking GitHub", async () => {
     // The login above is stored and valid, so anything this command sends
     // would be sent successfully — which is what makes an unchanged request
-    // log evidence about `--offline` rather than about a missing credential.
+    // log evidence that init itself is loginless rather than evidence about a
+    // missing credential. The hidden flag remains accepted for old scripts.
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "lax-offline-"));
     const folder = path.join(parent, "work");
     try {
@@ -181,20 +182,15 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
 
       expect(result.status).toBe(0);
       expect(github.requests.length).toBe(before);
-      // The two rows that exist only to reach the archive are not drawn at all
+      // The rows that exist only to reach the archive are not drawn at all.
       expect(result.stdout).not.toContain("Signed in as");
       expect(result.stdout).not.toContain("Reserving");
       expect(result.stdout).toContain("✓ Created the files");
-      expect(result.stdout).toContain("lax-0 · Offline draft");
-      expect(result.stdout).toContain("lax-0 is a placeholder, not an archive id");
-      expect(fs.readFileSync(path.join(folder, "manifest.yaml"), "utf8")).toContain("id: lax-0");
-
-      // and the commands that would post to an issue say why they cannot,
-      // before reaching for the network
-      const submit = await lax(["submit", folder], env);
-      expect(submit.status).toBe(1);
-      expect(`${submit.stdout}${submit.stderr}`).toContain("placeholder id lax-0");
-      expect(github.requests.length).toBe(before);
+      expect(result.stdout).toMatch(/lax-[1-9][0-9]{5} · Offline draft/u);
+      expect(result.stdout).toContain("Nothing was sent to GitHub and no login was needed.");
+      expect(fs.readFileSync(path.join(folder, "manifest.yaml"), "utf8")).toMatch(
+        /^id: lax-[1-9][0-9]{5}$/mu,
+      );
     } finally {
       removeTree(parent);
     }
@@ -210,7 +206,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
         id: comment.id + 500_000,
         body:
           "Publication failed; lax-database was not changed by this command.\n\n" +
-          "- lax-42 is registered and immutable\n\n" +
+          "- lax-41 is registered and immutable\n\n" +
           resultMarker(comment.id) +
           "\n" +
           outcomeMarker("failure"),
@@ -218,7 +214,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       });
     };
     try {
-      const result = await lax(["delete", "lax-42", "--yes"], {
+      const result = await lax(["delete", "lax-41", "--yes"], {
         ...env,
         LAX_POLL_INTERVAL_MS: "25",
         LAX_WORKFLOW_TIMEOUT_MS: "30000",
@@ -229,15 +225,15 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       // the comment URL that carried them is a --verbose internal.
       expect(result.stdout).toContain("✗ the archive refused this command");
       expect(result.stdout).toContain("Publication failed");
-      expect(result.stdout).toContain("lax-42 is registered and immutable");
+      expect(result.stdout).toContain("lax-41 is registered and immutable");
       expect(result.stdout).not.toContain("command posted:");
       // the exit code carries the failure, so nothing is said twice
       expect(result.stderr).toBe("");
       // the hidden correlation marker never reaches the author's terminal
       expect(result.stdout).not.toContain("lax-result-comment-id");
       // and the command itself was posted as the logged-in author
-      const posted = github.state.issueComments.get(42)!.find((c) => c.user.login === "alice");
-      expect(posted?.body).toBe("/lax delete");
+      const posted = github.state.issueComments.get(41)!.find((c) => c.user.login === "alice");
+      expect(posted?.body).toBe("/lax delete lax-41");
     } finally {
       delete github.state.onComment;
     }
@@ -251,7 +247,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "lax-delete-"));
     fs.mkdirSync(path.join(parent, "work"));
     const folder = fs.realpathSync(path.join(parent, "work"));
-    fs.writeFileSync(path.join(folder, "manifest.yaml"), "id: lax-43\n");
+    writeBoundManifest(folder, 43);
     const registryFile = path.join(home, "submissions.json");
     const registered: string[] = fs.existsSync(registryFile)
       ? (JSON.parse(fs.readFileSync(registryFile, "utf8")) as string[])
@@ -305,7 +301,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       github.state.issueComments.get(issue)!.push({
         id: comment.id + 500_000,
         body:
-          "Deleted **lax-44**; the id is permanently retired.\n\n" +
+          "Deleted **lax-46**; the id is permanently retired.\n\n" +
           resultMarker(comment.id) +
           "\n" +
           outcomeMarker("success"),
@@ -314,7 +310,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     };
     github.state.issuePatchStatus = 403;
     try {
-      const result = await lax(["delete", "lax-44", "--yes"], {
+      const result = await lax(["delete", "lax-46", "--yes"], {
         ...env,
         LAX_POLL_INTERVAL_MS: "25",
         LAX_WORKFLOW_TIMEOUT_MS: "30000",
@@ -322,9 +318,9 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
 
       // The delete itself succeeded; the leftover issue is a note, not a failure.
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("lax-44 is gone.");
+      expect(result.stdout).toContain("lax-46 is gone.");
       expect(result.stdout).toContain("! The tracking issue could not be closed");
-      expect(result.stdout).toContain("issues/44");
+      expect(result.stdout).toContain("issues/46");
     } finally {
       delete github.state.onComment;
       delete github.state.issuePatchStatus;
@@ -346,7 +342,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       {
         id: 5001,
         body: upsertCommandContext(
-          `/lax submit ${source}`,
+          `/lax submit lax-77 ${source}`,
           5001,
           appendWorkflowRun(`Parsed source preview for lax-77.\n\n${previewMarker(5001)}`, {
             id: "777",
@@ -374,7 +370,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     // the run status and the job list in parallel, and flipping between them
     // would hand the job/step assertion an already-emptied job list.
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
-    fs.writeFileSync(path.join(folder, "manifest.yaml"), "id: lax-77\n");
+    writeBoundManifest(folder, 77);
     const finish = setInterval(() => {
       const polled =
         github.requests.some(
@@ -778,7 +774,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       {
         id: 5001,
         body: upsertCommandContext(
-          `/lax submit ${source}`,
+          `/lax submit lax-${issue} ${source}`,
           5001,
           appendWorkflowRun(`Parsed source preview for lax-${issue}.\n\n${previewMarker(5001)}`, {
             id: runId,
@@ -790,13 +786,13 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     ]);
     github.state.actionsRuns.set(runId, run);
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
-    fs.writeFileSync(path.join(folder, "manifest.yaml"), `id: lax-${issue}\n`);
+    writeBoundManifest(folder, issue);
     return folder;
   }
 
   it("refuses to resume an issue that carries no submit of yours", async () => {
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
-    fs.writeFileSync(path.join(folder, "manifest.yaml"), "id: lax-78\n");
+    writeBoundManifest(folder, 78);
     try {
       const result = await lax(["submit", "--resume", folder], env);
       expect(result.status).toBe(1);
@@ -809,7 +805,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
 
   it("names the exact recovery command when it loses contact with GitHub", async () => {
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
-    fs.writeFileSync(path.join(folder, "manifest.yaml"), "id: lax-79\n");
+    writeBoundManifest(folder, 79);
     try {
       // port 1 is refused: a transport failure, not an authoritative HTTP answer
       const result = await lax(["submit", "--resume", folder], {
@@ -838,4 +834,11 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     expect(revoke?.method).toBe("POST");
     expect(revoke?.authorization).toBeUndefined();
   });
+
+  function writeBoundManifest(folder: string, issue: number): void {
+    fs.writeFileSync(
+      path.join(folder, "manifest.yaml"),
+      `id: lax-${issue}\nissue:\n  repositoryId: ${CONTROL_REPOSITORY_ID}\n  number: ${issue}\n`,
+    );
+  }
 });

@@ -89,7 +89,7 @@ function escape(value: string): string {
 function makeSubmission(name: string, issue: number): string {
   const root = path.join(home, name);
   fs.mkdirSync(root, { recursive: true });
-  scaffoldSubmission(root, issue, "Registry test", { name: "alice", github: "alice" });
+  scaffoldSubmission(root, `lax-${100_000 + issue}`, "Registry test");
   return root;
 }
 
@@ -135,13 +135,13 @@ describe("submission registry", () => {
       ),
     );
 
-    expect(forgetSubmissionsById("lax-7")).toEqual([fs.realpathSync(deleted)]);
+    expect(forgetSubmissionsById("lax-100007")).toEqual([fs.realpathSync(deleted)]);
     const remaining = JSON.parse(fs.readFileSync(registryFile(), "utf8")) as string[];
     expect(remaining.sort()).toEqual([fs.realpathSync(kept), unreadable].sort());
     expect(fs.existsSync(path.join(deleted, "manifest.yaml"))).toBe(true);
 
     // Nothing carried the id: the registry file is untouched.
-    expect(forgetSubmissionsById("lax-9")).toEqual([]);
+    expect(forgetSubmissionsById("lax-100009")).toEqual([]);
     expect((JSON.parse(fs.readFileSync(registryFile(), "utf8")) as string[]).sort()).toEqual(
       [fs.realpathSync(kept), unreadable].sort(),
     );
@@ -152,7 +152,7 @@ describe("init provisioning", () => {
   it("seeds overrides and manifests for both packages against the warm store", async () => {
     const warm = makeWarmStore();
     const root = makeSubmission("seeded", 42);
-    expect(await provisionScaffold(root, 42)).toEqual({ ok: true });
+    expect(await provisionScaffold(root, "lax-100042")).toEqual({ ok: true });
     for (const kind of ["concepts", "proofs"]) {
       const overrides = JSON.parse(
         fs.readFileSync(path.join(root, kind, ".lake", "package-overrides.json"), "utf8"),
@@ -165,7 +165,7 @@ describe("init provisioning", () => {
         fs.readFileSync(path.join(root, kind, "lake-manifest.json"), "utf8"),
       ) as { packages: Array<{ name: string; type: string }> };
       expect(manifest.packages.map((pkg) => pkg.name)).toEqual(
-        kind === "proofs" ? ["Lax42", "mathlib"] : ["mathlib"],
+        kind === "proofs" ? ["Lax100042", "mathlib"] : ["mathlib"],
       );
     }
   });
@@ -177,7 +177,7 @@ describe("init provisioning", () => {
     const root = makeSubmission("unprovisioned", 43);
     // The reason is returned rather than printed: the caller owns the screen,
     // and this is one row of its report.
-    const provisioned = await provisionScaffold(root, 43);
+    const provisioned = await provisionScaffold(root, "lax-100043");
     expect(provisioned.ok).toBe(false);
     expect(provisioned).toHaveProperty("reason");
     expect(fs.existsSync(path.join(root, "concepts", ".lake", "package-overrides.json"))).toBe(
@@ -201,23 +201,20 @@ describe("lax doctor submission checks", () => {
   it("reports a provisioned submission as its id and its folder", async () => {
     makeWarmStore();
     const root = makeSubmission("healthy", 42);
-    await provisionScaffold(root, 42);
+    await provisionScaffold(root, "lax-100042");
     recordSubmission(root);
     const report = await doctorReport();
     // the author's noun for the folder is the id it was reserved under
-    expect(report).toMatch(new RegExp(`✓ lax-42\\s+${escape(root)}`, "u"));
+    expect(report).toMatch(new RegExp(`✓ lax-100042\\s+${escape(fs.realpathSync(root))}`, "u"));
   });
 
-  it("names an offline scaffold by its folder, since every one of them is lax-0", async () => {
+  it("names a loginless scaffold by its locally generated id", async () => {
     makeWarmStore();
     const root = makeSubmission("offline-draft", 0);
-    await provisionScaffold(root, 0);
+    await provisionScaffold(root, "lax-100000");
     recordSubmission(root);
     const report = await doctorReport();
-    // `lax-0` is a placeholder every offline scaffold shares, so three of them
-    // in the registry would be three identical rows. The folder distinguishes.
-    expect(report).toMatch(new RegExp(`✓ offline-draft\\s+${escape(root)}`, "u"));
-    expect(report).not.toContain("lax-0");
+    expect(report).toMatch(new RegExp(`✓ lax-100000\\s+${escape(fs.realpathSync(root))}`, "u"));
   });
 
   it("flags missing overrides, stale clones, and pin drift", async () => {
@@ -230,7 +227,7 @@ describe("lax doctor submission checks", () => {
     });
     fs.writeFileSync(path.join(root, "proofs", "lean-toolchain"), "leanprover/lean4:v0.0.1\n");
     const report = await doctorReport();
-    expect(report).toMatch(/! lax-42\s/u);
+    expect(report).toMatch(/! lax-100042\s/u);
     expect(report).toContain("has no package overrides");
     expect(report).toContain("pre-overrides era");
     expect(report).toContain("lean-toolchain is leanprover/lean4:v0.0.1");
@@ -239,13 +236,13 @@ describe("lax doctor submission checks", () => {
   it("flags overrides that point at a deleted warm store", async () => {
     const warm = makeWarmStore();
     const root = makeSubmission("orphaned", 42);
-    await provisionScaffold(root, 42);
+    await provisionScaffold(root, "lax-100042");
     recordSubmission(root);
     fs.chmodSync(warm, 0o755);
     fs.rmSync(warm, { recursive: true, force: true });
     const report = await doctorReport();
-    expect(report).toMatch(/! lax-42\s/u);
-    expect(report).toContain("point at a missing mathlib store");
+    expect(report).toMatch(/! lax-100042\s/u);
+    expect(report).toContain("package overrides point at missing folders");
     // The fixture has to survive the report that reads it: doctor provisions a
     // missing store, and with a toolchain in reach it would rebuild this one
     // mid-test — leaving the override valid, the assertion above false, and a

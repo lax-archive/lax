@@ -1,4 +1,4 @@
-import type { SourceLocation } from "../shared/types.js";
+import type { IssueBinding, SourceLocation } from "../shared/types.js";
 import {
   isObject,
   requireExactKeys,
@@ -28,6 +28,10 @@ export interface ValidationRequest {
   id: string;
   source: SourceLocation;
   archiveSha: string;
+  /** Trusted remote validation binds the manifest to its control-plane issue. */
+  issue?: IssueBinding;
+  /** Narrow migration flag for commands emitted by an issue-number-based CLI. */
+  legacyManifestWithoutIssue?: true;
 }
 
 export interface ValidationFinding {
@@ -411,7 +415,20 @@ export interface ValidationReport {
 
 export function validationRequestFromUnknown(value: unknown): ValidationRequest {
   if (!isObject(value)) throw new ValidationError("validation request must be an object");
-  requireExactKeys(value, ["requestVersion", "id", "source", "archiveSha"], "validation request");
+  requireExactKeys(
+    value,
+    [
+      "requestVersion",
+      "id",
+      "source",
+      "archiveSha",
+      ...(Object.hasOwn(value, "issue") ? ["issue"] : []),
+      ...(Object.hasOwn(value, "legacyManifestWithoutIssue")
+        ? ["legacyManifestWithoutIssue"]
+        : []),
+    ],
+    "validation request",
+  );
   if (value.requestVersion !== 1) throw new ValidationError("validation requestVersion must be 1");
   if (typeof value.id !== "string") throw new ValidationError("validation request id must be a string");
   validateSubmissionId(value.id);
@@ -424,17 +441,47 @@ export function validationRequestFromUnknown(value: unknown): ValidationRequest 
   };
   if (typeof value.archiveSha !== "string") throw new ValidationError("archiveSha must be a string");
   const archiveSha = validateCommit(value.archiveSha);
-  return { requestVersion: 1, id: value.id, source, archiveSha };
+  let issue: IssueBinding | undefined;
+  if (Object.hasOwn(value, "issue")) {
+    if (
+      !isObject(value.issue) ||
+      Object.keys(value.issue).sort().join(",") !== "number,repositoryId" ||
+      !Number.isSafeInteger(value.issue.repositoryId) ||
+      (value.issue.repositoryId as number) <= 0 ||
+      !Number.isSafeInteger(value.issue.number) ||
+      (value.issue.number as number) <= 0
+    ) {
+      throw new ValidationError("validation request issue binding is invalid");
+    }
+    issue = {
+      repositoryId: value.issue.repositoryId as number,
+      number: value.issue.number as number,
+    };
+  }
+  let legacyManifestWithoutIssue: true | undefined;
+  if (Object.hasOwn(value, "legacyManifestWithoutIssue")) {
+    if (value.legacyManifestWithoutIssue !== true) {
+      throw new ValidationError("validation request legacy manifest compatibility flag is invalid");
+    }
+    legacyManifestWithoutIssue = true;
+  }
+  return {
+    requestVersion: 1,
+    id: value.id,
+    source,
+    archiveSha,
+    ...(issue === undefined ? {} : { issue }),
+    ...(legacyManifestWithoutIssue === undefined ? {} : { legacyManifestWithoutIssue }),
+  };
 }
 
 /**
  * Lean and Lake identifiers cannot contain the hyphen used by Archive ids.
  *
- * The offline placeholder is a legal input here — an offline scaffold's
+ * The historical offline placeholder is a legal input here — those scaffolds'
  * packages really are named `Lax0` — because naming a package is not a
- * decision about the archive. Whether an id may name a *record* is settled
- * before this: the trusted path takes `request.id` from the issue number, and
- * `validationRequestFromUnknown` refuses `lax-0` on the way in.
+ * decision about the archive. Whether an id may name a *record* is settled by
+ * the request parser, which refuses `lax-0` on the way in.
  */
 export function packageNameForSubmission(id: string): string {
   validateSubmissionId(id, { placeholder: true });
