@@ -307,6 +307,13 @@ function fixtures(): SmokeFixture[] {
         const converted = Object.keys(index.fonts).filter((name) => /^ec-lmr10\.reflowtex-[0-9a-f]{8}\.otf$/u.test(name));
         assert.equal(converted.length, 1, `no converted ec-lmr10 in the font map: ${Object.keys(index.fonts).join(", ")}`);
         assert(entries.includes(index.fonts[converted[0]!]!), "the converted face is mapped but not carried");
+        // \mathcal is a *virtual* font (BOONDOX-r-cal drawing from zxxrw7z):
+        // pdftex.map names no outline for it, so the export has to follow the
+        // virtual font to its base and address the slots the two share. It
+        // was every lipics paper's red boxes until 2026-09-03.
+        const virtual = Object.keys(index.fonts).filter((name) => /^BOONDOX-r-cal\.reflowtex-[0-9a-f]{8}\.otf$/u.test(name));
+        assert.equal(virtual.length, 1, `no converted BOONDOX-r-cal in the font map: ${Object.keys(index.fonts).join(", ")}`);
+        assert(entries.includes(index.fonts[virtual[0]!]!), "the calligraphic face is mapped but not carried");
         // The PDF path is untouched beside it.
         assert.equal(paper.pdf.pages, 1);
       },
@@ -527,9 +534,12 @@ end Lax45Proofs
 \\usepackage[T1]{fontenc}
 \\usepackage{lmodern}
 \\usepackage{amsthm}
+\\usepackage{BOONDOX-cal}
 \\usepackage{tikz}
 \\newtheorem{theorem}{Theorem}
 \\begin{document}
+Every lipics paper's $\\mathcal{P}$ is drawn by a virtual font, which the
+export must follow to the real outline behind it.
 The picture below has an arrow and a box drawn by tikz, externalized by
 the web compile into its own sub-run and converted to inline vector
 graphics for the reflow surface, while this paragraph provides the

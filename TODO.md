@@ -157,6 +157,22 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   `jan3er/lax-paper-roundtrip-20260902` from the lax-61 stage-3 round trip
   (`history/paper-roundtrip-20260902.md`): `gh auth refresh -h github.com
   -s delete_repo`, then `gh repo delete … --yes`.
+- **Virtual fonts in the web view** (done 2026-09-03, kept as the record):
+  `\mathcal` in a lipics paper is `BOONDOX-r-cal`, a *virtual* font —
+  pdftex.map names no outline for it, so every calligraphic letter was a
+  red metric box (lax-65 throughout its statements). The export now
+  follows a nameless face to the font its program draws from (`vftovp`,
+  MAPFONT 0 → `zxxrw7z` → `zxxrw8a.pfb`) and exports that outline under
+  the virtual name; the host keeps only the slots the two share
+  (`sharedSlots`), naming them from the base's own vector — its map
+  `.enc`, else `8a.enc` where the outline says StandardEncoding, else the
+  outline's own `dup … put` lines — so a slot the virtual font borrows
+  elsewhere (BOONDOX takes its digits from cmr10) stays a metric box
+  instead of becoming the base's glyph for that code. A face whose
+  program or vector cannot be read loses its outline entirely. Still
+  open: a virtual font that *composes* (accents built from two glyphs)
+  keeps metric boxes for those slots, and BOONDOX bold/fraktur/
+  doublestruck are untested.
 - **Transparency in a tikz picture is flattened in the web view**: the
   in-image conversion has to go PDF → EPS → SVG (dvisvgm cannot read PDF
   against the pinned image's Ghostscript 10.07, and there is no mutool),

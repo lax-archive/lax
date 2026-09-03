@@ -18,8 +18,13 @@ import { latexmkArguments } from "../../src/submission-validation/paper/compile.
 import { PAPER_CONTAINER_PATHS } from "../../src/submission-validation/paper/container.js";
 import {
   containerWebDeriver,
+  encodingFile,
   normalizePictureBoxes,
+  outlineEncoding,
+  parseEncoding,
   pictureAtOrigin,
+  resolveVirtualFonts,
+  sharedSlots,
   webExportProblem,
   webExportScript,
   webFlattenedPictures,
@@ -481,6 +486,14 @@ describe("export helpers", () => {
     expect(script).toContain("-dNOTRANSPARENCY");
     expect(script).toContain(`: > "\${pdf%.pdf}.${WEB_EXPORT_FLAT_SUFFIX}"`);
     expect(script).toContain("picture redrawn without transparency");
+    // A face pdftex.map does not name may be virtual: it is followed to the
+    // base font it draws from, whose outline is exported under the virtual
+    // name with the program and the base's vector beside it for the host.
+    expect(script).toContain("vftovp");
+    expect(script).toContain('kpsewhich "$name.vf"');
+    expect(script).toContain("(MAPFONT D 0");
+    expect(script).toContain("8a.enc");
+    expect(script).toContain("t1disasm");
     expect(script).toContain("--tmpdir=");
     expect(script).toContain(`${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}`);
   });
@@ -501,6 +514,100 @@ describe("export helpers", () => {
       "web-export-cap",
     );
     expect(webExportProblem(webSrc, [FONT, "missing.otf"], DEFAULT_LIMITS)?.rule).toBe("web-font-export");
+  });
+
+  it("keeps only the slots a virtual font shares with the outline it is drawn from", () => {
+    // vftovp's text form, in the shape BOONDOX-r-cal has: letters drawn from
+    // the base font at their own code (a move for the side bearing), digits
+    // borrowed from a second mapped font, and a slot remapped to another
+    // code — which no base-font glyph may answer.
+    const vpl = `(VTITLE test)
+(MAPFONT D 0
+   (FONTNAME zxxrw7z)
+   )
+(MAPFONT D 1
+   (FONTNAME cmr10)
+   )
+(CHARACTER C P
+   (CHARWD R 0.88)
+   (MAP
+      (SETCHAR C P)
+      (MOVERIGHT R -0.03)
+      )
+   )
+(CHARACTER C Q
+   (CHARWD R 0.88)
+   (MAP
+      (SETCHAR C Q)
+      )
+   )
+(CHARACTER C 0
+   (CHARWD R 0.5)
+   (MAP
+      (SELECTFONT D 1)
+      (SETCHAR C 0)
+      )
+   )
+(CHARACTER O 100
+   (CHARWD R 0.5)
+   (MAP
+      (SETCHAR C Z)
+      )
+   )
+`;
+    const shared = sharedSlots(vpl);
+    expect([...shared].sort((a, b) => a - b)).toEqual(["P".codePointAt(0), "Q".codePointAt(0)]);
+    expect(shared.has("0".codePointAt(0)!)).toBe(false); // borrowed from cmr10
+    expect(shared.has(0o100)).toBe(false); // drawn at another code
+
+    const names = parseEncoding("% a vector\n/BaseEncoding [\n/.notdef /A\n] def\n")!;
+    expect(names[0]).toBeUndefined();
+    expect(names[1]).toBe("A");
+    expect(parseEncoding("/NoArray def")).toBeUndefined();
+
+    const enc = encodingFile("BOONDOX-r-cal", parseEncoding(`/Base [${Array.from({ length: 256 }, (_, slot) => `/g${slot}`).join(" ")}] def`)!, shared);
+    expect(enc).toContain("/BOONDOX-r-cal [");
+    expect(enc).toContain(`/g${"P".codePointAt(0)}`);
+    expect(enc).not.toContain(`/g${"0".codePointAt(0)}`); // the borrowed slot stays a box
+    expect(enc.match(/\/g\d+/gu)).toHaveLength(2);
+
+    // A Type1 outline's own vector, when the export left no base one.
+    const pfb = Buffer.from("%!PS\ndup 80 /P put\ndup 81 /.notdef put\neexec\ndup 82 /R put\n", "latin1");
+    const own = outlineEncoding(pfb)!;
+    expect(own[80]).toBe("P");
+    expect(own[81]).toBeUndefined();
+    expect(own[82]).toBeUndefined(); // past eexec: encrypted, not the vector
+    expect(outlineEncoding(Buffer.from("%!PS\n/Encoding StandardEncoding def\n", "latin1"))).toBeUndefined();
+  });
+
+  it("finishes a virtual face the export followed, and refuses one it cannot read", () => {
+    const webSrc = tmpDir("lax-web-vf-");
+    const fonts = path.join(webSrc, WEB_EXPORT_FONTS_DIR);
+    fs.mkdirSync(fonts, { recursive: true });
+    const vpl = (body: string) => `(MAPFONT D 0\n   (FONTNAME base)\n   )\n${body}`;
+    const character = `(CHARACTER C P\n   (CHARWD R 0.5)\n   (MAP\n      (SETCHAR C P)\n      )\n   )\n`;
+
+    // Followed, with the base's own vector beside it: filtered and kept.
+    fs.writeFileSync(path.join(fonts, "Good.vpl"), vpl(character));
+    fs.writeFileSync(path.join(fonts, "Good.base-enc"), `/Base [${Array.from({ length: 256 }, (_, slot) => `/g${slot}`).join(" ")}] def`);
+    fs.writeFileSync(path.join(fonts, "Good.pfb"), "%!PS");
+    // No vector at all, and none in the outline: the outline goes rather
+    // than address slots by guesswork.
+    fs.writeFileSync(path.join(fonts, "Blind.vpl"), vpl(character));
+    fs.writeFileSync(path.join(fonts, "Blind.pfb"), "%!PS\n/Encoding StandardEncoding def\n");
+    // A program sharing nothing with its base is no better than no outline.
+    fs.writeFileSync(path.join(fonts, "Alien.vpl"), vpl(`(CHARACTER C P\n   (CHARWD R 0.5)\n   (MAP\n      (SETCHAR C Z)\n      )\n   )\n`));
+    fs.writeFileSync(path.join(fonts, "Alien.base-enc"), "/Base [/A] def");
+    fs.writeFileSync(path.join(fonts, "Alien.pfb"), "%!PS");
+
+    expect(resolveVirtualFonts(webSrc)).toEqual({ resolved: ["Good"], refused: ["Alien", "Blind"] });
+    expect(fs.readFileSync(path.join(fonts, "Good.enc"), "utf8")).toContain(`/g${"P".codePointAt(0)}`);
+    expect(fs.existsSync(path.join(fonts, "Good.pfb"))).toBe(true);
+    expect(fs.existsSync(path.join(fonts, "Blind.pfb"))).toBe(false);
+    expect(fs.existsSync(path.join(fonts, "Alien.pfb"))).toBe(false);
+    // Neither the program nor the unfiltered vector belongs in the export set.
+    expect(fs.readdirSync(fonts).filter((name) => /\.(?:vpl|base-enc)$/u.test(name))).toEqual([]);
+    expect(resolveVirtualFonts(tmpDir("lax-web-vf-none-"))).toEqual({ resolved: [], refused: [] });
   });
 
   it("moves a picture's box to the origin, which EPS input never puts there", () => {

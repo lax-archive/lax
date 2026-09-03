@@ -106,6 +106,23 @@ export function webExportScript(): string {
     "# lax paper-web export (written by the trusted deriver after the compile).",
     "set -u",
     `mkdir -p '${fontsDir}'`,
+    "# The files a pdftex.map line names, as its `<file` tokens give them.",
+    "map_files() {",
+    "  pfb=\"\"; enc=\"\"",
+    "  [ -n \"$map\" ] && [ -f \"$map\" ] || return 0",
+    "  for tok in $(awk -v n=\"$1\" '$1 == n { print; exit }' \"$map\"); do",
+    "    case \"$tok\" in",
+    "      '<<'*) f=\"${tok#<<}\" ;;",
+    "      '<['*) f=\"${tok#<[}\" ;;",
+    "      '<'*) f=\"${tok#<}\" ;;",
+    "      *) continue ;;",
+    "    esac",
+    "    case \"$f\" in",
+    "      *.enc) enc=\"$f\" ;;",
+    "      *.pfb|*.pfa) pfb=\"$f\" ;;",
+    "    esac",
+    "  done",
+    "}",
     "while IFS= read -r name; do",
     "  [ -n \"$name\" ] || continue",
     "  src=\"$(kpsewhich \"$name\" || true)\"",
@@ -116,20 +133,26 @@ export function webExportScript(): string {
     "map=\"$(kpsewhich pdftex.map || true)\"",
     "while IFS= read -r name; do",
     "  [ -n \"$name\" ] || continue",
-    "  pfb=\"\"; enc=\"\"",
-    "  if [ -n \"$map\" ] && [ -f \"$map\" ]; then",
-    "    for tok in $(awk -v n=\"$name\" '$1 == n { print; exit }' \"$map\"); do",
-    "      case \"$tok\" in",
-    "        '<<'*) f=\"${tok#<<}\" ;;",
-    "        '<['*) f=\"${tok#<[}\" ;;",
-    "        '<'*) f=\"${tok#<}\" ;;",
-    "        *) continue ;;",
-    "      esac",
-    "      case \"$f\" in",
-    "        *.enc) enc=\"$f\" ;;",
-    "        *.pfb|*.pfa) pfb=\"$f\" ;;",
-    "      esac",
-    "    done",
+    "  map_files \"$name\"",
+    "  # A face pdftex.map does not name may be a *virtual* font: TeX's own",
+    "  # indirection, drawing most of its slots from one real font (the",
+    "  # calligraphic BOONDOX-r-cal every lipics paper's \\mathcal reaches",
+    "  # for is zxxrw7z) and borrowing the rest elsewhere. Follow it to that",
+    "  # base font and export its outline under the *virtual* name, with the",
+    "  # program (vpl) and the base's encoding beside it: the host keeps only",
+    "  # the slots the two share, so a borrowed slot stays a metric box",
+    "  # rather than becoming the base font's glyph for that slot.",
+    "  if [ -z \"$pfb\" ]; then",
+    "    vf=\"$(kpsewhich \"$name.vf\" || true)\"",
+    "    tfm=\"$(kpsewhich \"$name.tfm\" || true)\"",
+    `    vpl='${fontsDir}/'"$name.vpl"`,
+    "    if [ -n \"$vf\" ] && [ -n \"$tfm\" ] && vftovp \"$vf\" \"$tfm\" \"$vpl\" >/dev/null 2>&1; then",
+    "      base=\"$(awk '/^\\(MAPFONT D 0/ { getline; gsub(/[()]/, \"\"); sub(/^ *FONTNAME */, \"\"); print; exit }' \"$vpl\")\"",
+    "      if [ -n \"$base\" ]; then map_files \"$base\"; fi",
+    "      if [ -z \"$pfb\" ]; then rm -f \"$vpl\"; fi",
+    "    else",
+    "      rm -f \"$vpl\"",
+    "    fi",
     "  fi",
     "  [ -n \"$pfb\" ] || pfb=\"$name.pfb\"",
     "  src=\"$(kpsewhich \"$pfb\" || true)\"",
@@ -138,6 +161,18 @@ export function webExportScript(): string {
     "    esrc=\"$(kpsewhich \"$enc\" || true)\"",
     "    [ -n \"$esrc\" ] && [ -f \"$esrc\" ] || continue",
     `    cp -- "$esrc" '${fontsDir}/'"$name.enc"`,
+    "  fi",
+    `  if [ -f '${fontsDir}/'"$name.vpl" ]; then`,
+    "    # The base's slot names, for the host to filter: its own vector",
+    "    # where the map line names one, else 8a.enc where the outline says",
+    "    # StandardEncoding (the same table under TeX's name for it); an",
+    "    # outline that carries its own vector is read from the pfb itself.",
+    `    if [ -f '${fontsDir}/'"$name.enc" ]; then`,
+    `      mv '${fontsDir}/'"$name.enc" '${fontsDir}/'"$name.base-enc"`,
+    "    elif t1disasm \"$src\" 2>/dev/null | grep -q '^/Encoding StandardEncoding def'; then",
+    "      std=\"$(kpsewhich 8a.enc || true)\"",
+    `      [ -n "$std" ] && cp -- "$std" '${fontsDir}/'"$name.base-enc"`,
+    "    fi",
     "  fi",
     `  cp -- "$src" '${fontsDir}/'"$name.pfb"`,
     `done < '${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_PFB_LIST}'`,
@@ -167,6 +202,150 @@ export function webExportScript(): string {
     "exit 0",
     "",
   ].join("\n");
+}
+
+// ── virtual fonts ──────────────────────────────────────────────────────────
+//
+// A virtual font is a program: per slot, a little list of instructions over
+// the real fonts it maps in. The export follows it to the font it draws most
+// of its slots from (MAPFONT 0) and exports that outline under the virtual
+// name; what is left is deciding which slots the two actually share.
+//
+// A slot is shared when its program draws exactly one character, from the
+// base font, at its own code — moves are ignored, since the advance a
+// reflowed line uses is the one TeX recorded in the node list, not the
+// outline's. A slot drawn from another mapped font (BOONDOX-r-cal takes its
+// digits from cmr10, having none of its own) or drawn at a different code is
+// not shared, and keeps the metric box it has today: the encoding written
+// here names the base's glyph for shared slots and `.notdef` for the rest,
+// so no slot can quietly become the base font's glyph for a code the
+// virtual font meant for someone else.
+
+/** A character in a vpl (vftovp's text form of a virtual font). */
+const VPL_CHARACTER = /\(CHARACTER\s+([CDOH])\s+(\S+?)\s*\n(.*?)\n {3}\)/gsu;
+/** The instructions of that character's MAP, innermost list only. */
+const VPL_MAP = /\(MAP\s*(.*?)\s*\)\s*$/su;
+const VPL_SETCHAR = /^\(SETCHAR\s+([CDOH])\s+(\S+?)\s*\)$/u;
+const VPL_SELECTFONT = /^\(SELECTFONT\s+([CDOH])\s+(\S+?)\s*\)$/u;
+const VPL_MOVE = /^\((?:MOVERIGHT|MOVELEFT|MOVEUP|MOVEDOWN)\s/u;
+
+/** A vpl number: `C x` a character, `D n` decimal, `O n` octal, `H n` hex. */
+function vplNumber(kind: string, value: string): number | undefined {
+  if (kind === "C") return value.length === 1 ? value.codePointAt(0) : undefined;
+  const parsed = Number.parseInt(value, kind === "D" ? 10 : kind === "O" ? 8 : 16);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed < 256 ? parsed : undefined;
+}
+
+/** The slots a virtual font draws from its base font at their own code. */
+export function sharedSlots(vpl: string): Set<number> {
+  const shared = new Set<number>();
+  for (const character of vpl.matchAll(VPL_CHARACTER)) {
+    const slot = vplNumber(character[1]!, character[2]!);
+    if (slot === undefined) continue;
+    const map = VPL_MAP.exec(character[3]!);
+    if (map === null) continue;
+    let base = true;
+    let drawn: number | undefined;
+    for (const raw of map[1]!.split("\n")) {
+      const instruction = raw.trim();
+      if (instruction === "" || VPL_MOVE.test(instruction)) continue;
+      const font = VPL_SELECTFONT.exec(instruction);
+      if (font !== null) {
+        base = vplNumber(font[1]!, font[2]!) === 0;
+        continue;
+      }
+      const setchar = VPL_SETCHAR.exec(instruction);
+      if (setchar === null || drawn !== undefined) {
+        drawn = undefined; // anything else drawn, or a second glyph: not shared
+        break;
+      }
+      drawn = base ? vplNumber(setchar[1]!, setchar[2]!) : undefined;
+      if (drawn === undefined) break;
+    }
+    if (drawn === slot) shared.add(slot);
+  }
+  return shared;
+}
+
+/** The 256 slot names of a dvips/pdftex `.enc` vector — `/Name [ /g … ] def`,
+ * `%` comments stripped — or undefined when the text is not one. */
+export function parseEncoding(text: string): (string | undefined)[] | undefined {
+  const body = /\[([^\]]*)\]/su.exec(text.replace(/%[^\n]*/gu, ""));
+  if (body === null) return undefined;
+  const names = [...body[1]!.matchAll(/\/([^\s/[\]{}()<>]+)/gu)].map((name) => name[1]!);
+  if (names.length === 0 || names.length > 256) return undefined;
+  return Array.from({ length: 256 }, (_, slot) => {
+    const name = names[slot];
+    return name === undefined || name === ".notdef" ? undefined : name;
+  });
+}
+
+/** A Type1 outline's own encoding, from the `dup <slot> /<name> put` lines of
+ * its cleartext header — undefined when it names a standard vector instead
+ * (the export leaves that one beside it) or carries none. */
+export function outlineEncoding(pfb: Buffer): (string | undefined)[] | undefined {
+  const header = pfb.subarray(0, 16_384).toString("latin1");
+  const eexec = header.indexOf("eexec");
+  const cleartext = eexec === -1 ? header : header.slice(0, eexec);
+  const names: (string | undefined)[] = Array.from({ length: 256 }, () => undefined);
+  let found = false;
+  for (const entry of cleartext.matchAll(/\bdup\s+(\d{1,3})\s*\/([^\s/[\]{}()<>]+)\s+put/gu)) {
+    const slot = Number(entry[1]);
+    if (slot < 0 || slot > 255 || entry[2] === ".notdef") continue;
+    names[slot] = entry[2];
+    found = true;
+  }
+  return found ? names : undefined;
+}
+
+/** The `.enc` text naming `names` at the slots in `shared`, `.notdef`
+ * elsewhere — the vector the encode addresses the outline through. */
+export function encodingFile(vector: string, names: (string | undefined)[], shared: ReadonlySet<number>): string {
+  const slots = Array.from({ length: 256 }, (_, slot) => {
+    const name = shared.has(slot) ? names[slot] : undefined;
+    return `/${name ?? ".notdef"}`;
+  });
+  const lines: string[] = [];
+  for (let slot = 0; slot < 256; slot += 8) lines.push(`  ${slots.slice(slot, slot + 8).join(" ")}`);
+  return `% written by lax: the slots ${vector} shares with the outline it is drawn from.\n/${vector} [\n${lines.join("\n")}\n] def\n`;
+}
+
+/**
+ * Every virtual face the export followed to a base outline, finished: its
+ * encoding filtered to the slots the two share. A face whose program or
+ * base encoding cannot be read loses its outline instead — metric boxes, as
+ * before, never another font's glyphs — and is named in the return value.
+ * The vpl and the unfiltered vector are removed either way; neither belongs
+ * in the export set the caps count.
+ */
+export function resolveVirtualFonts(webSrc: string): { resolved: string[]; refused: string[] } {
+  const fontsDir = path.join(webSrc, WEB_EXPORT_FONTS_DIR);
+  if (!fs.existsSync(fontsDir)) return { resolved: [], refused: [] };
+  const resolved: string[] = [];
+  const refused: string[] = [];
+  for (const entry of fs.readdirSync(fontsDir).sort()) {
+    if (!entry.endsWith(".vpl")) continue;
+    const name = entry.slice(0, -".vpl".length);
+    const vpl = path.join(fontsDir, entry);
+    const baseEnc = path.join(fontsDir, `${name}.base-enc`);
+    const pfb = path.join(fontsDir, `${name}.pfb`);
+    const shared = sharedSlots(fs.readFileSync(vpl, "utf8"));
+    const names = fs.existsSync(baseEnc)
+      ? parseEncoding(fs.readFileSync(baseEnc, "utf8"))
+      : fs.existsSync(pfb)
+        ? outlineEncoding(fs.readFileSync(pfb))
+        : undefined;
+    if (names === undefined || shared.size === 0) {
+      fs.rmSync(pfb, { force: true });
+      refused.push(name);
+    } else {
+      fs.writeFileSync(path.join(fontsDir, `${name}.enc`), encodingFile(name, names, shared));
+      resolved.push(name);
+    }
+    fs.rmSync(vpl, { force: true });
+    fs.rmSync(baseEnc, { force: true });
+  }
+  return { resolved, refused };
 }
 
 /** The root `<svg viewBox='x y w h'>` of a dvisvgm conversion, single-quoted
@@ -395,6 +574,7 @@ export function containerWebDeriver(
     }
     const exportProblem = webExportProblem(webSrc, fontNames, input.limits);
     if (exportProblem !== undefined) return skip(exportProblem.rule, exportProblem.message);
+    resolveVirtualFonts(webSrc);
     normalizePictureBoxes(webSrc);
     const flattened = webFlattenedPictures(webSrc);
     if (flattened.length > 0) {
