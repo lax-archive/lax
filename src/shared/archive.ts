@@ -10,6 +10,7 @@ import {
 } from "./archive-schema.js";
 import { DATABASE_REPOSITORY } from "./constants.js";
 import { GitHubClient, GitHubError, repositoryPath } from "./github.js";
+import { packageNameForSubmission } from "../submission-validation/contracts.js";
 import type { ArchiveFiles, FilePreconditions } from "./types.js";
 import { ValidationError } from "./validation.js";
 import { decodeUtf8 } from "./validation.js";
@@ -125,6 +126,7 @@ export class ArchiveRepository {
   }
 
   async listDependents(id: string, snapshot: ArchiveSnapshot): Promise<string[]> {
+    const packageName = packageNameForSubmission(id);
     const commit = await this.github.request<GitCommit>("GET", `${this.base}/git/commits/${snapshot.sha}`);
     const tree = await this.github.request<GitTree>(
       "GET",
@@ -142,7 +144,7 @@ export class ArchiveRepository {
       const output = JSON.parse(decodeBase64(blob.content)) as Record<string, unknown>;
       const concepts = Array.isArray(output.requiredByConcepts) ? output.requiredByConcepts : [];
       const proofs = Array.isArray(output.requiredByProofs) ? output.requiredByProofs : [];
-      if ([...concepts, ...proofs].includes(id)) dependents.push(candidateId);
+      if (concepts.includes(packageName) || proofs.includes(`${packageName}Proofs`)) dependents.push(candidateId);
     }
     return dependents.sort();
   }
