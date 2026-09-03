@@ -21,6 +21,7 @@
     "prepack": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:prooftree": "tsx test/smoke/prooftree.ts",
     "smoke:submission-validation": "tsx test/smoke/submission-validation.ts",
     "lax": "tsx src/cli/main.ts",
     "workflow": "tsx src/workflows/submission.ts",

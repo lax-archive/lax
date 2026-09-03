@@ -209,9 +209,8 @@ partial def copyInductive
     | some (.inductInfo value) => pure value
     | _ => throw <| IO.userError s!"cannot find mutual proof-local inductive {name}"
   for info in infos do
-    if info.numNested != 0 then
-      throw <| IO.userError s!"nested proof-local inductive {info.name} is unsupported"
     if info.levelParams != root.levelParams || info.numParams != root.numParams ||
+        info.numNested != root.numNested ||
         info.isUnsafe != root.isUnsafe then
       throw <| IO.userError s!"inconsistent proof-local inductive family containing {info.name}"
 
@@ -224,6 +223,12 @@ partial def copyInductive
       values.insert (info.name.appendCore `rec) (generatedType.appendCore `rec)
     for constructor in info.ctors do
       ctx.copied.modify fun values => values.insert constructor (ctx.helperPrefix ++ constructor)
+  if let some rootName := root.all.head? then
+    let generatedRoot := ctx.helperPrefix ++ rootName
+    for index in [:root.numNested] do
+      let sourceRecursor := (rootName.appendCore `rec).appendIndexAfter (index + 1)
+      let generatedRecursor := (generatedRoot.appendCore `rec).appendIndexAfter (index + 1)
+      ctx.copied.modify fun values => values.insert sourceRecursor generatedRecursor
 
   let types ← infos.mapM fun info => do
     let rewrittenType ← rewriteExpr ctx replacements (copying.insert info.name) info.type
