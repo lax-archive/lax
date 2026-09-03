@@ -56,18 +56,30 @@ export interface WorkflowProgress {
 interface CommentMatch {
   preview?: string;
   result?: string;
+  resultStatus?: "success" | "failure";
   runId?: string;
   runUrl?: string;
 }
 
 const base = repositoryPath(CONTROL_REPOSITORY);
 
-export async function followInitialization(client: GitHubClient, issueNumber: number): Promise<void> {
-  await follow(client, issueNumber, (parsed) => {
-    const preview = parsed.initializationPreviewIssue === issueNumber;
-    const result = parsed.initializationIssue === issueNumber;
-    return preview || result ? { preview, result } : undefined;
-  });
+export async function followInitialization(
+  client: GitHubClient,
+  issueNumber: number,
+  since?: string,
+): Promise<void> {
+  await follow(
+    client,
+    issueNumber,
+    (parsed) => {
+      const preview = parsed.initializationPreviewIssue === issueNumber;
+      const result = parsed.initializationIssue === issueNumber;
+      return preview || result ? { preview, result } : undefined;
+    },
+    undefined,
+    undefined,
+    since,
+  );
 }
 
 export async function followCommand(
@@ -75,6 +87,7 @@ export async function followCommand(
   issueNumber: number,
   triggeringCommentId: number,
   acceptSuccessReaction = false,
+  since?: string,
 ): Promise<void> {
   await follow(
     client,
@@ -87,6 +100,7 @@ export async function followCommand(
     },
     triggeringCommentId,
     acceptSuccessReaction ? triggeringCommentId : undefined,
+    since,
   );
 }
 
@@ -127,6 +141,7 @@ async function follow(
   ) => { preview: boolean; result: boolean } | undefined,
   sourceCommentId?: number,
   successReactionCommentId?: number,
+  since?: string,
 ): Promise<void> {
   const interval = positiveEnv("LAX_POLL_INTERVAL_MS", 3_000);
   const timeout = positiveEnv("LAX_WORKFLOW_TIMEOUT_MS", 6 * 60 * 60 * 1_000);
@@ -138,12 +153,14 @@ async function follow(
   let runUrl: string | undefined;
   let completedWithoutResult = 0;
   let actionsStatusAvailable = true;
+  const commentPath = `${base}/issues/${issueNumber}/comments` +
+    (since === undefined ? "" : `?since=${encodeURIComponent(since)}`);
 
   loading.update("GitHub Actions · waiting for workflow");
   try {
     while (Date.now() <= deadline) {
       const [comments, successReaction] = await Promise.all([
-        client.paginate<IssueComment>(`${base}/issues/${issueNumber}/comments`),
+        client.paginate<IssueComment>(commentPath),
         successReactionCommentId === undefined
           ? Promise.resolve(false)
           : hasSuccessReaction(client, successReactionCommentId),
@@ -170,6 +187,14 @@ async function follow(
           console.log(`Workflow run #${runId}: ${runUrl}`);
         }
         console.log(visibleComment(matched.result));
+        if (matched.resultStatus !== "success") {
+          if (matched.resultStatus === undefined) {
+            throw new Error(
+              `workflow result on issue #${issueNumber} did not include an authenticated status`,
+            );
+          }
+          throw new Error(`workflow rejected the command on issue #${issueNumber}`);
+        }
         return;
       }
       if (successReaction) {
@@ -211,7 +236,7 @@ async function follow(
   } finally {
     loading.clear();
   }
-  throw new Error(`timed out waiting for the workflow result on lax-${issueNumber}`);
+  throw new Error(`timed out waiting for the workflow result on issue #${issueNumber}`);
 }
 
 function matchComments(
@@ -231,11 +256,20 @@ function matchComments(
       comment.user.login === GITHUB_ACTIONS_BOT_LOGIN &&
       comment.user.type === "Bot";
     if (!trustedSource && !trustedBot) continue;
-    const parsed = parseWorkflowComment(comment.body);
+    const workflowOwnedBody = trustedSource
+      ? readCommandContext(comment.body, comment.id)
+      : comment.body;
+    if (workflowOwnedBody === undefined) continue;
+    const parsed = parseWorkflowComment(workflowOwnedBody);
     const kind = matches(parsed, comment.id);
     if (kind === undefined) continue;
-    if (kind.preview) matched.preview = readCommandContext(comment.body, comment.id) ?? comment.body;
-    if (kind.result) matched.result = comment.body;
+    if (kind.preview) matched.preview = workflowOwnedBody;
+    // A result is authoritative only as a standalone GitHub Actions bot
+    // comment. The triggering user still owns and can edit their command body.
+    if (kind.result && trustedBot) {
+      matched.result = comment.body;
+      matched.resultStatus = parsed.resultStatus;
+    }
     matched.runId = parsed.runId ?? matched.runId;
     matched.runUrl = parsed.runUrl ?? matched.runUrl;
   }

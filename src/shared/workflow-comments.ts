@@ -3,8 +3,14 @@ export interface WorkflowRunRef {
   url: string;
 }
 
+export type WorkflowResultStatus = "success" | "failure";
+
 export function resultMarker(commentId: number): string {
   return `<!-- lax-result-comment-id:${commentId} -->`;
+}
+
+export function resultStatusMarker(status: WorkflowResultStatus): string {
+  return `<!-- lax-result-status:${status} -->`;
 }
 
 export function previewMarker(commentId: number): string {
@@ -65,28 +71,43 @@ export interface ParsedWorkflowComment {
   initializationPreviewIssue?: number;
   previewCommentId?: number;
   resultCommentId?: number;
+  resultStatus?: WorkflowResultStatus;
   runId?: string;
   runUrl?: string;
 }
 
 /** Parse the stable, hidden correlation markers emitted by the control plane. */
 export function parseWorkflowComment(body: string): ParsedWorkflowComment {
-  const initialization = /<!-- lax-initialization-issue:([1-9][0-9]*) -->/u.exec(body);
-  const initializationPreview = /<!-- lax-initialization-preview-issue:([1-9][0-9]*) -->/u.exec(body);
-  const preview = /<!-- lax-preview-comment-id:([1-9][0-9]*) -->/u.exec(body);
-  const result = /<!-- lax-result-comment-id:([1-9][0-9]*) -->/u.exec(body);
-  const run = /<!-- lax-workflow-run-id:([0-9]+) -->/u.exec(body);
-  const runLink = /Workflow run:\s*\[#([0-9]+)\]\((https:\/\/[^\s)]+)\)/u.exec(body);
+  // Workflow-owned markers are appended after visible text. Read the final
+  // occurrence so text echoed from a validation error cannot shadow them.
+  const initialization = lastMatch(body, /<!-- lax-initialization-issue:([1-9][0-9]*) -->/gu);
+  const initializationPreview = lastMatch(
+    body,
+    /<!-- lax-initialization-preview-issue:([1-9][0-9]*) -->/gu,
+  );
+  const preview = lastMatch(body, /<!-- lax-preview-comment-id:([1-9][0-9]*) -->/gu);
+  const result = lastMatch(body, /<!-- lax-result-comment-id:([1-9][0-9]*) -->/gu);
+  const resultStatus = lastMatch(body, /<!-- lax-result-status:(success|failure) -->/gu);
+  const run = lastMatch(body, /<!-- lax-workflow-run-id:([0-9]+) -->/gu);
+  const runLink = lastMatch(
+    body,
+    /Workflow run:\s*\[#([0-9]+)\]\((https:\/\/[^\s)]+)\)/gu,
+  );
   return {
-    ...(initialization === null ? {} : { initializationIssue: Number(initialization[1]) }),
-    ...(initializationPreview === null
+    ...(initialization === undefined ? {} : { initializationIssue: Number(initialization[1]) }),
+    ...(initializationPreview === undefined
       ? {}
       : { initializationPreviewIssue: Number(initializationPreview[1]) }),
-    ...(preview === null ? {} : { previewCommentId: Number(preview[1]) }),
-    ...(result === null ? {} : { resultCommentId: Number(result[1]) }),
-    ...(run === null ? {} : { runId: run[1] }),
-    ...(runLink === null ? {} : { runUrl: runLink[2] }),
+    ...(preview === undefined ? {} : { previewCommentId: Number(preview[1]) }),
+    ...(result === undefined ? {} : { resultCommentId: Number(result[1]) }),
+    ...(resultStatus === undefined ? {} : { resultStatus: resultStatus[1] as WorkflowResultStatus }),
+    ...(run === undefined ? {} : { runId: run[1] }),
+    ...(runLink === undefined ? {} : { runUrl: runLink[2] }),
   };
+}
+
+function lastMatch(body: string, pattern: RegExp): RegExpMatchArray | undefined {
+  return [...body.matchAll(pattern)].at(-1);
 }
 
 export function visibleComment(body: string): string {

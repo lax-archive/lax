@@ -4,7 +4,6 @@ import type { ValidationScope } from "../submission-validation/contracts.js";
 import { logout } from "./auth.js";
 import { buildSubmission } from "./build.js";
 import {
-  createSubmission,
   initializeSubmission,
   replaceOwners,
   requestDelete,
@@ -31,11 +30,12 @@ program.addHelpText(
   "after",
   `
 Typical workflow:
-  lax init my-work --title "My formalization"   allocate an issue and scaffold locally
+  lax init my-work --title "My formalization"   scaffold locally without a GitHub login
+  lax set-owners my-work --new-list alice bob    optionally record provisional owners
   lax build my-work                              validate the local submission
   lax serve my-work                              preview it with the current Website renderer
   git commit && git push                         publish an immutable source commit
-  lax submit my-work                             request the issue-backed import
+  lax submit my-work                             reserve its issue on first use; import on the next
   lax register my-work                           make the accepted record immutable
 
 \`lax doctor\` checks your setup; \`lax <command> --help\` shows command options.
@@ -43,16 +43,10 @@ Typical workflow:
 );
 
 program
-  .command("create")
-  .argument("<title>", "submission title")
-  .description("open the authoritative submission issue and allocate a provisional lax-N id")
-  .action(run("lax create", createSubmission));
-
-program
   .command("init")
   .argument("[folder]", "target folder", ".")
   .option("--title <title>", "submission title (defaults to the folder name)")
-  .description("allocate an issue and scaffold a complete local submission")
+  .description("generate a six-digit id and scaffold locally without GitHub authentication")
   .action(
     run("lax init", (folder: string, options: { title?: string }) =>
       initializeSubmission(folder, options.title),
@@ -92,15 +86,15 @@ program
 program
   .command("set-owners")
   .alias("owners")
-  .argument("<target>", "issue number, lax-N id, issue URL, or submission folder")
+  .argument("<target>", "submission folder, id, or legacy issue reference")
   .requiredOption("--new-list <handles...>", "complete replacement list of GitHub handles")
-  .description("replace the owner set of an init or draft submission")
+  .description("store provisional local owners or replace a bound submission's owner set")
   .action(run("lax set-owners", (target: string, options: { newList: string[] }) => replaceOwners(target, options.newList)));
 
 program
   .command("update")
-  .argument("<issue>", "issue number, lax-N id, or issue URL")
-  .requiredOption("--repository <url>", "canonical public HTTPS GitHub repository URL")
+  .argument("<target>", "submission folder (or a legacy issue reference)")
+  .requiredOption("--repository <url>", "canonical public HTTPS URL on a supported Git host")
   .requiredOption("--commit <sha>", "full immutable lowercase commit SHA")
   .option("--folder <path>", "submission folder relative to repository root", ".")
   .description("submit an explicit source triple to the issue-backed validation workflow")
@@ -108,9 +102,9 @@ program
     run(
       "lax update",
       (
-        issue: string,
+        target: string,
         options: { repository: string; commit: string; folder: string },
-      ) => requestUpdate(issue, options.repository, options.commit, options.folder),
+      ) => requestUpdate(target, options.repository, options.commit, options.folder),
     ),
   );
 
@@ -129,7 +123,7 @@ program
 
 program
   .command("delete")
-  .argument("<target>", "issue number, lax-N id, issue URL, or submission folder")
+  .argument("<target>", "submission folder, id, or legacy issue reference")
   .option("--yes", "skip the irreversible-action confirmation prompt")
   .description("permanently retire an init or draft submission")
   .action(
@@ -140,7 +134,7 @@ program
 
 program
   .command("register")
-  .argument("<target>", "issue number, lax-N id, issue URL, or submission folder")
+  .argument("<target>", "submission folder, id, or legacy issue reference")
   .option("--yes", "skip the irreversible-action confirmation prompt")
   .description("make an init or draft Archive record immutable")
   .action(run("lax register", (target: string, options: { yes?: boolean }) =>

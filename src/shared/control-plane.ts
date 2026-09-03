@@ -1,12 +1,16 @@
 import { ArchiveRepository } from "./archive.js";
 import { initialFiles } from "./archive-schema.js";
-import { commandWord, parseCommand } from "./commands.js";
+import { commandSubmissionId, commandWord, parseRoutedCommand } from "./commands.js";
 import {
   CONTROL_REPOSITORY,
   GITHUB_ACTIONS_BOT_ID,
   GITHUB_ACTIONS_BOT_LOGIN,
 } from "./constants.js";
 import { GitHubClient, repositoryPath } from "./github.js";
+import {
+  isLegacyIssueReservationBody,
+  submissionIdFromIssueBody,
+} from "./issue-reservation.js";
 import type { GitHubIdentity, ParsedCommand, PublishRequest } from "./types.js";
 import {
   isObject,
@@ -35,6 +39,7 @@ interface IssueResponse {
   state: string;
   title: string;
   created_at: string;
+  body: string | null;
   user: IssueUser | null;
   pull_request?: unknown;
 }
@@ -144,16 +149,16 @@ export class ControlPlane {
     );
   }
 
-  async resultExists(issueNumber: number, commentId: number): Promise<boolean> {
-    return this.markerExists(issueNumber, resultMarker(commentId));
+  async resultExists(issueNumber: number, commentId: number, since?: string): Promise<boolean> {
+    return this.markerExists(issueNumber, resultMarker(commentId), since);
   }
 
-  async previewExists(issueNumber: number, commentId: number): Promise<boolean> {
-    return this.markerExists(issueNumber, previewMarker(commentId));
+  async previewExists(issueNumber: number, commentId: number, since?: string): Promise<boolean> {
+    return this.markerExists(issueNumber, previewMarker(commentId), since);
   }
 
-  async initializationPreviewExists(issueNumber: number): Promise<boolean> {
-    return this.markerExists(issueNumber, initializationPreviewMarker(issueNumber));
+  async initializationPreviewExists(issueNumber: number, since?: string): Promise<boolean> {
+    return this.markerExists(issueNumber, initializationPreviewMarker(issueNumber), since);
   }
 
   async resolveOwnerPairs(owners: GitHubIdentity[]): Promise<GitHubIdentity[]> {
@@ -180,15 +185,21 @@ export class ControlPlane {
 
   private async routeCreate(event: Record<string, unknown>): Promise<RouteResult> {
     const problems = new ValidationCollector();
-    if (event.action !== "opened") problems.add("issue event action must be opened");
     const payloadIssue = object(event.issue, "event issue");
     const number = problems.capture(() => positiveInteger(payloadIssue.number, "issue number"));
     if (number === undefined) problems.throwIfAny();
     const issue = await this.github.request<IssueResponse>("GET", `${this.controlBase}/issues/${number!}`);
+    const markedId = problems.capture(() => submissionIdFromIssueBody(issue.body));
+    const id = markedId ?? (isLegacyIssueReservationBody(issue.body) ? submissionId(number!) : undefined);
+    if (id === undefined) {
+      problems.throwIfAny();
+      return { kind: "ignore" };
+    }
+    if (event.action !== "opened") problems.add("issue event action must be opened");
+    if (issue.number !== number) problems.add("fetched issue number does not match the event issue");
     if (issue.state !== "open") problems.add("submission allocation requires an open issue");
     if ("pull_request" in issue) problems.add("submission allocation requires an ordinary issue, not a pull request");
     const actor = problems.capture(() => eventIdentity(issue.user, "issue creator"));
-    const id = problems.capture(() => submissionId(number!));
     const title = problems.capture(() => normalizeTitle(issue.title));
     const issueNodeId = problems.capture(() => nodeId(issue.node_id));
     const eventCreatedAt = problems.capture(() => normalizeTimestamp(issue.created_at));
@@ -198,7 +209,7 @@ export class ControlPlane {
         : await problems.captureAsync(() => this.resolveIdentity(actor));
     // Construct and schema-check all stubs before checking publication state or minting an App token.
     const files =
-      id === undefined || currentActor === undefined || eventCreatedAt === undefined
+      currentActor === undefined || eventCreatedAt === undefined
         ? undefined
         : problems.capture(() =>
             initialFiles(
@@ -209,7 +220,7 @@ export class ControlPlane {
             ),
           );
     const snapshot = await problems.captureAsync(() => this.archive.snapshot());
-    if (id !== undefined && snapshot !== undefined) {
+    if (snapshot !== undefined) {
       const exists = await problems.captureAsync(() => this.archive.exists(id, snapshot));
       if (exists === true) {
         problems.add(`${id} already exists in lax-database; initialization is never replayed`);
@@ -223,7 +234,7 @@ export class ControlPlane {
         initializationPreviewMarker(number!),
       request: {
         action: "create",
-        id: id!,
+        id,
         issue: { repositoryId: this.repositoryId, number: number! },
         actor: currentActor!,
         issueNodeId: issueNodeId!,
@@ -254,8 +265,8 @@ export class ControlPlane {
     const issueNodeId = problems.capture(() => nodeId(issue.node_id));
     const eventCreatedAt = problems.capture(() => normalizeTimestamp(String(comment.created_at ?? "")));
     problems.throwIfAny();
-    if (await this.resultExists(number!, commentId!)) return { kind: "ignore" };
-    const id = submissionId(number!);
+    if (await this.resultExists(number!, commentId!, eventCreatedAt!)) return { kind: "ignore" };
+    const id = commandSubmissionId(body, submissionId(number!));
     const snapshot = await this.archive.snapshot();
     const loaded = await this.archive.load(id, snapshot);
     if (loaded === undefined) throw new ValidationError(`${id} does not exist in lax-database`);
@@ -279,7 +290,7 @@ export class ControlPlane {
     problems.throwIfAny();
 
     // Arguments are parsed only after the issue binding, owner and state gates.
-    let command = parseCommand(body);
+    let { command } = parseRoutedCommand(body, submissionId(number!));
     if (command.action === "owners") {
       const owners = await this.resolveOwnerPairs(command.owners);
       if (!owners.some((owner) => owner.githubId === actor!.githubId)) {
@@ -300,6 +311,9 @@ export class ControlPlane {
       archiveSha: snapshot.sha,
       preconditions: loaded.preconditions,
       dependents,
+      ...(command.action === "update" && isLegacyIssueReservationBody(issue.body)
+        ? { legacyManifestWithoutIssue: true as const }
+        : {}),
     };
     if (command.action === "update") {
       return {
@@ -328,9 +342,10 @@ export class ControlPlane {
     return { githubId: user.id, handle: user.login };
   }
 
-  private async markerExists(issueNumber: number, marker: string): Promise<boolean> {
+  private async markerExists(issueNumber: number, marker: string, since?: string): Promise<boolean> {
+    const query = since === undefined ? "" : `?since=${encodeURIComponent(since)}`;
     const comments = await this.github.paginate<CommentResponse>(
-      `${this.controlBase}/issues/${issueNumber}/comments`,
+      `${this.controlBase}/issues/${issueNumber}/comments${query}`,
     );
     return comments.some(
       (comment) =>

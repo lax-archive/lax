@@ -2,8 +2,10 @@ import { parse } from "yaml";
 import type { SubmissionManifest, ValidationRuntimeIdentity } from "../contracts.js";
 import type { FindingCollector } from "../findings.js";
 import { normalizeSubmissionId, normalizeTitle } from "../../shared/validation.js";
+import { HANDLE_PATTERN, LEGACY_SUBMISSION_IDS, MAX_OWNERS } from "../../shared/constants.js";
+import type { IssueBinding } from "../../shared/types.js";
 
-const MANIFEST_KEYS = new Set([
+const REQUIRED_MANIFEST_KEYS = new Set([
   "specVersion",
   "id",
   "leanVersion",
@@ -12,6 +14,7 @@ const MANIFEST_KEYS = new Set([
   "authors",
   "bibEntries",
 ]);
+const MANIFEST_KEYS = new Set([...REQUIRED_MANIFEST_KEYS, "issue", "initialOwners"]);
 const AUTHOR_KEYS = new Set(["name", "orcid", "github"]);
 
 export function validateManifest(
@@ -19,6 +22,8 @@ export function validateManifest(
   submissionId: string,
   runtime: ValidationRuntimeIdentity,
   findings: FindingCollector,
+  expectedIssue?: IssueBinding,
+  legacyManifestWithoutIssue?: true,
 ): SubmissionManifest | undefined {
   if (Buffer.byteLength(content, "utf8") > 256 * 1024) {
     findings.violate("manifest", "manifest.yaml exceeds 256 KiB");
@@ -38,8 +43,60 @@ export function validateManifest(
   for (const key of Object.keys(value)) {
     if (!MANIFEST_KEYS.has(key)) findings.violate("manifest", `manifest.yaml: unknown key \`${key}\``);
   }
-  for (const key of MANIFEST_KEYS) {
+  for (const key of REQUIRED_MANIFEST_KEYS) {
     if (!(key in value)) findings.violate("manifest", `manifest.yaml: missing key \`${key}\``);
+  }
+
+  let manifestIssue: IssueBinding | undefined;
+  if (value.issue !== undefined) {
+    if (
+      !plainObject(value.issue) ||
+      Object.keys(value.issue).sort().join(",") !== "number,repositoryId" ||
+      !Number.isSafeInteger(value.issue.repositoryId) ||
+      (value.issue.repositoryId as number) <= 0 ||
+      !Number.isSafeInteger(value.issue.number) ||
+      (value.issue.number as number) <= 0
+    ) findings.violate("manifest", "manifest.yaml: issue binding is invalid");
+    else manifestIssue = {
+      repositoryId: value.issue.repositoryId as number,
+      number: value.issue.number as number,
+    };
+  }
+  if (expectedIssue !== undefined) {
+    if (manifestIssue === undefined) {
+      const legacyIssueNumber = Number(submissionId.slice("lax-".length));
+      const allowlisted = LEGACY_SUBMISSION_IDS.has(submissionId);
+      const authorizedOldCli = legacyManifestWithoutIssue === true;
+      if ((!allowlisted && !authorizedOldCli) || expectedIssue.number !== legacyIssueNumber) {
+        findings.violate("manifest", "manifest.yaml: issue binding is required for a remote update");
+      }
+    } else if (
+      manifestIssue.repositoryId !== expectedIssue.repositoryId ||
+      manifestIssue.number !== expectedIssue.number
+    ) {
+      findings.violate("manifest", "manifest.yaml: issue binding does not match the update issue");
+    }
+  }
+  if (value.initialOwners !== undefined) {
+    if (!Array.isArray(value.initialOwners) || value.initialOwners.length > MAX_OWNERS) {
+      findings.violate(
+        "manifest",
+        `manifest.yaml: initialOwners must be a list of at most ${MAX_OWNERS} GitHub handles`,
+      );
+    } else {
+      const seen = new Set<string>();
+      for (const [index, owner] of value.initialOwners.entries()) {
+        if (typeof owner !== "string" || !HANDLE_PATTERN.test(owner)) {
+          findings.violate("manifest", `manifest.yaml: initialOwners[${index}] is not a valid GitHub handle`);
+          continue;
+        }
+        const canonical = owner.toLowerCase();
+        if (seen.has(canonical)) {
+          findings.violate("manifest", `manifest.yaml: duplicate initial owner ${owner}`);
+        }
+        seen.add(canonical);
+      }
+    }
   }
 
   const stringField = (key: string, limit: number): string | undefined => {

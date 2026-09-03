@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:22-bookworm-slim AS tooling
+FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS tooling
 
 ARG LEAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 ARG LEAN_VERSION=v4.30.0
@@ -82,13 +82,16 @@ RUN git_config=/opt/lax-runtime/warm-gitconfig && \
 ENV GIT_CONFIG_GLOBAL=/opt/lax-runtime/warm-gitconfig
 
 COPY src/submission-validation/runtime/fetch-source.mjs \
+     src/submission-validation/runtime/source-repository.mjs \
+     src/submission-validation/runtime/source-repository-hosts.json \
      src/submission-validation/runtime/download-capture.mjs \
      src/submission-validation/runtime/extract-capture.mjs \
      src/submission-validation/runtime/provision-workspace.mjs \
      src/submission-validation/runtime/run-check.mjs \
      /opt/lax-runtime/bin/
 
-RUN chmod 0555 /opt/lax-runtime/bin/* && \
+RUN chmod 0555 /opt/lax-runtime/bin/*.mjs && \
+    chmod 0444 /opt/lax-runtime/bin/source-repository-hosts.json && \
     LAYOUT_VERSION="${LAYOUT_VERSION}" \
       LEAN_TOOLCHAIN="${LEAN_TOOLCHAIN}" \
       LEAN_VERSION="${LEAN_VERSION}" \

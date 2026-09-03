@@ -178,6 +178,7 @@ describe("trusted Archive publisher modes", () => {
     ).rejects.toThrow("Website dispatch failed");
     expect(harness.comments[0]).toContain("Website rebuild was not dispatched");
     expect(harness.comments[0]).toContain("lax-initialization-issue:42");
+    expect(harness.comments[0]).toContain("lax-result-status:failure");
   });
 
   it("reports update title synchronization as a recoverable partial result", async () => {
@@ -205,6 +206,7 @@ describe("trusted Archive publisher modes", () => {
     );
     expect(harness.comments[0]).toContain("Updated **lax-42**");
     expect(harness.comments[0]).toContain("issue title was not synchronized");
+    expect(harness.comments[0]).toContain("lax-result-status:failure");
     expect(harness.comments[0]).toContain("Workflow run: [#123456789]");
     expect(harness.successes).toEqual([]);
     expect(harness.clearedProgress).toEqual([80]);
@@ -237,6 +239,7 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.comments).toHaveLength(1);
     expect(harness.comments[0]).toContain("Updated **lax-42**");
     expect(harness.comments[0]).toContain("lax-result-comment-id:80");
+    expect(harness.comments[0]).toContain("lax-result-status:success");
     expect(harness.successes).toEqual([80]);
     expect(harness.clearedProgress).toEqual([]);
   });
@@ -331,7 +334,14 @@ describe("trusted Archive publisher modes", () => {
         { ...request({ action: "create", initialFiles: initial }), id: "lax-43" },
         issue.repositoryId,
       ),
-    ).toThrow("derived as lax-42");
+    ).toThrow("initialization files do not exactly match");
+    const randomIdInitial = initialFiles("lax-123456", issue, alice, "2026-07-30T10:00:00Z");
+    expect(
+      parsePublishRequest(
+        { ...request({ action: "create", initialFiles: randomIdInitial }), id: "lax-123456" },
+        issue.repositoryId,
+      ).id,
+    ).toBe("lax-123456");
     expect(() =>
       parsePublishRequest(
         request({
@@ -343,6 +353,21 @@ describe("trusted Archive publisher modes", () => {
         issue.repositoryId,
       ),
     ).toThrow("action and command action do not match");
+
+    const historicalUpdate = request({
+      action: "update",
+      commentId: 77,
+      command: { action: "update", repository: "https://github.com/alice/example", commit: "b".repeat(40), folder: "." },
+      preconditions: fileDigests(initial),
+    });
+    expect(parsePublishRequest(
+      { ...historicalUpdate, legacyManifestWithoutIssue: true },
+      issue.repositoryId,
+    ).legacyManifestWithoutIssue).toBe(true);
+    expect(() => parsePublishRequest(
+      { ...historicalUpdate, legacyManifestWithoutIssue: false },
+      issue.repositoryId,
+    )).toThrow("legacy manifest compatibility flag is invalid");
 
     const mismatchedInitializationFiles = [
       initialFiles(

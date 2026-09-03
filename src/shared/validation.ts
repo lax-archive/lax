@@ -1,13 +1,29 @@
 import { TextDecoder } from "node:util";
+import sourceRepositoryHosts from "../submission-validation/runtime/source-repository-hosts.json" with {
+  type: "json",
+};
 import {
   COMMIT_PATTERN,
   HANDLE_PATTERN,
   LEGACY_SUBMISSION_ID_PATTERN,
   MAX_FOLDER_BYTES,
   MAX_FOLDER_SEGMENTS,
+  NEW_SUBMISSION_ID_PATTERN,
   SUBMISSION_ID_PATTERN,
 } from "./constants.js";
 import type { GitHubIdentity, SourceLocation } from "./types.js";
+
+interface SourceRepositoryHostPolicy {
+  minPathSegments: number;
+  maxPathSegments: number | null;
+  forbiddenSegments: string[];
+}
+
+const SOURCE_REPOSITORY_HOSTS = sourceRepositoryHosts as Record<
+  string,
+  SourceRepositoryHostPolicy
+>;
+const SOURCE_REPOSITORY_HOST_NAMES = Object.keys(SOURCE_REPOSITORY_HOSTS).sort();
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -105,6 +121,14 @@ export function validateSubmissionId(value: string): string {
   return value;
 }
 
+/** New locally allocated ids have exactly six ASCII decimal digits. */
+export function validateNewSubmissionId(value: string): string {
+  if (!NEW_SUBMISSION_ID_PATTERN.test(value)) {
+    throw new ValidationError(`new submission id must match lax-<six digits> without a leading zero, got ${value}`);
+  }
+  return value;
+}
+
 /** Accept a source-facing legacy LaxN id and return the canonical lax-N spelling. */
 export function normalizeSubmissionId(value: string): string {
   if (SUBMISSION_ID_PATTERN.test(value)) return value;
@@ -138,10 +162,12 @@ export function validateIdentity(value: unknown, label = "GitHub identity"): Git
 }
 
 export function validateRepositoryUrl(raw: unknown): string {
-  if (typeof raw !== "string") throw new ValidationError("repository must be an HTTPS GitHub URL");
+  if (typeof raw !== "string") {
+    throw new ValidationError("repository must be a canonical public HTTPS repository URL");
+  }
   const problems = new ValidationCollector();
   if (utf8Bytes(raw) > 2_048)
-    problems.add("repository must be an HTTPS GitHub URL of at most 2,048 bytes");
+    problems.add("repository URL must be at most 2,048 UTF-8 bytes");
   if (/\p{Cc}/u.test(raw)) problems.add("repository URL contains a control character");
   let url: URL;
   try {
@@ -151,25 +177,38 @@ export function validateRepositoryUrl(raw: unknown): string {
     problems.throwIfAny();
     throw new Error("unreachable URL validation state");
   }
+  const hostname = url.hostname.toLowerCase();
+  const policy = Object.hasOwn(SOURCE_REPOSITORY_HOSTS, hostname)
+    ? SOURCE_REPOSITORY_HOSTS[hostname]
+    : undefined;
   if (
-    !raw.startsWith("https://github.com/") ||
     url.protocol !== "https:" ||
-    url.hostname.toLowerCase() !== "github.com" ||
     url.username !== "" ||
     url.password !== "" ||
     url.search !== "" ||
     url.hash !== "" ||
     url.port !== ""
   ) {
-    problems.add("repository must be a canonical public HTTPS GitHub URL");
+    problems.add("repository must be a canonical public HTTPS repository URL");
   }
-  const match = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(url.pathname);
-  if (match === null || match[2]!.endsWith(".git")) {
-    problems.add("repository must have the form https://github.com/owner/repository");
+  if (policy === undefined) {
+    problems.add(`repository host must be one of: ${SOURCE_REPOSITORY_HOST_NAMES.join(", ")}`);
   }
+  const segments = url.pathname.slice(1).split("/");
+  if (
+    segments.some((segment) => !/^[A-Za-z0-9_.-]+$/u.test(segment)) ||
+    segments.at(-1)?.endsWith(".git") === true ||
+    policy === undefined ||
+    segments.length < policy.minPathSegments ||
+    (policy.maxPathSegments !== null && segments.length > policy.maxPathSegments) ||
+    segments.some((segment) => policy.forbiddenSegments.includes(segment))
+  ) {
+    problems.add(`repository path is not valid for ${hostname || "the selected host"}`);
+  }
+  const canonical = `https://${hostname}/${segments.join("/")}`;
+  if (raw !== canonical) problems.add("repository URL is not in canonical form");
   problems.throwIfAny();
-  if (match === null) throw new Error("unreachable repository path validation state");
-  return `https://github.com/${match![1]}/${match![2]}`;
+  return canonical;
 }
 
 export function validateCommit(raw: unknown): string {
@@ -190,6 +229,9 @@ export function validateFolder(raw: unknown): string {
   }
   if (raw === "" || raw.startsWith("/") || raw.includes("\\") || raw.includes("\0")) {
     problems.add("folder must be a relative POSIX path");
+  }
+  if (raw.includes(",")) {
+    problems.add("folder must not contain a comma because container mount paths are comma-delimited");
   }
   const segments = raw.split("/");
   if (

@@ -9,7 +9,7 @@ import { databaseDirectory } from "./database.js";
 import { formatLocalFindings } from "./findings.js";
 import { deriveLocalSource, repositoryRoot } from "./git.js";
 import { LoadingLine } from "./loading.js";
-import { submissionIdFromFolder } from "./manifest.js";
+import { readLocalSubmissionManifest, submissionIdFromFolder } from "./manifest.js";
 import { formatProfile, type ProfileSpan } from "./profile.js";
 import { localValidationRuntime } from "./runtime.js";
 import type { SourceLocation } from "../shared/types.js";
@@ -35,9 +35,11 @@ export async function buildSubmission(
     );
   }
   const archiveSha = git(database, ["rev-parse", "HEAD"]);
+  const localManifest = readLocalSubmissionManifest(submissionRoot);
   const request: ValidationRequest = {
     requestVersion: 1,
-    id: submissionIdFromFolder(submissionRoot),
+    id: localManifest.id,
+    ...(localManifest.issue === undefined ? {} : { issue: localManifest.issue }),
     source: deriveLocalSource(submissionRoot),
     archiveSha,
   };

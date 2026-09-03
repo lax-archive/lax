@@ -284,7 +284,7 @@ describe("validation runtime boundaries retained from main", () => {
     const source = temporary("lax-container-mount-");
     const record = path.join(temporary("lax-container-bin-"), "arguments.txt");
     installDockerRecorder(record);
-    const runner = new ContainerRunner(RUNTIME, DEFAULT_LIMITS, source);
+    const runner = new ContainerRunner(RUNTIME, { ...DEFAULT_LIMITS, minFreeDiskBytes: 0 }, source);
 
     const result = await runner.run({
       label: "Static Check!",
@@ -325,6 +325,18 @@ describe("validation runtime boundaries retained from main", () => {
         maxOutputBytes: 1_000,
       }),
     ).rejects.toThrow("invalid container environment name");
+
+    const injectedSource = path.join(source, "package,src=/home/runner/.docker");
+    fs.mkdirSync(injectedSource, { recursive: true });
+    await expect(
+      runner.run({
+        label: "bad-mount",
+        args: [],
+        mounts: [{ source: injectedSource, target: "/source/package,src=/home/runner/.docker" }],
+        timeoutMs: 1_000,
+        maxOutputBytes: 1_000,
+      }),
+    ).rejects.toThrow("Docker option delimiter");
   });
 
   it("bounds aggregate workspace bytes and filesystem entries", () => {
@@ -350,7 +362,12 @@ describe("validation runtime boundaries retained from main", () => {
     installWorkspaceGrowingDocker(executableRoot, workspace);
     const runner = new ContainerRunner(
       RUNTIME,
-      { ...DEFAULT_LIMITS, maxWorkspaceBytes: 1_024, maxWorkspaceEntries: 100 },
+      {
+        ...DEFAULT_LIMITS,
+        maxWorkspaceBytes: 1_024,
+        maxWorkspaceEntries: 100,
+        minFreeDiskBytes: 0,
+      },
       workspace,
     );
 

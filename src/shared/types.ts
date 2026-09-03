@@ -68,6 +68,8 @@ export interface PublishRequest {
   archiveSha: string;
   preconditions?: FilePreconditions;
   dependents?: string[];
+  /** Exact historical issue body authorized an issue-derived manifest without an issue field. */
+  legacyManifestWithoutIssue?: true;
   /** Validated initialization payload produced before privileged publication starts. */
   initialFiles?: Record<string, string>;
 }

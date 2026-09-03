@@ -63,6 +63,16 @@ interface KernelReport {
   theorems: KernelTheoremResult[];
 }
 
+interface KernelReportExpectation {
+  moduleName: string;
+  outputOlean: string;
+  entries: Array<{
+    statement: string;
+    proof: string;
+    generated: string;
+  }>;
+}
+
 export interface GenerateProofTreeOptions {
   output?: string;
 }
@@ -90,50 +100,87 @@ export function selectProofTree(
   for (const values of byConclusion.values()) values.sort((a, b) => a.id.localeCompare(b.id));
 
   const grounded = new Set<string>();
-  const groundedWitness = new Map<string, NetworkProof>();
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const statement of [...statementSet].sort()) {
-      if (grounded.has(statement)) continue;
-      const eligible = (byConclusion.get(statement) ?? [])
-        .filter((proof) => proof.assumptions.every((assumption) => grounded.has(assumption)));
-      if (eligible.length === 0) continue;
-      const witness = eligible[boundedChoice(eligible.length, choose)]!;
-      grounded.add(statement);
-      groundedWitness.set(statement, witness);
-      changed = true;
+  const remainingAssumptions = new Map<NetworkProof, number>();
+  const proofsByAssumption = new Map<string, NetworkProof[]>();
+  const ready: NetworkProof[] = [];
+  for (const candidates of byConclusion.values()) {
+    for (const proof of candidates) {
+      const assumptions = [...new Set(proof.assumptions)];
+      remainingAssumptions.set(proof, assumptions.length);
+      if (assumptions.length === 0) ready.push(proof);
+      for (const assumption of assumptions) {
+        const dependents = proofsByAssumption.get(assumption) ?? [];
+        dependents.push(proof);
+        proofsByAssumption.set(assumption, dependents);
+      }
     }
+  }
+  for (let index = 0; index < ready.length; index += 1) {
+    const proof = ready[index]!;
+    if (grounded.has(proof.conclusion)) continue;
+    grounded.add(proof.conclusion);
+    for (const dependent of proofsByAssumption.get(proof.conclusion) ?? []) {
+      const remaining = remainingAssumptions.get(dependent);
+      if (remaining === undefined || remaining === 0) continue;
+      remainingAssumptions.set(dependent, remaining - 1);
+      if (remaining === 1) ready.push(dependent);
+    }
+  }
+
+  // Select only after reaching the fixed point. Otherwise a statement visited
+  // early can see just one eligible proof even though more proofs become
+  // grounded later in the same pass.
+  const groundedWitness = new Map<string, NetworkProof>();
+  for (const statement of [...grounded].sort()) {
+    const eligible = (byConclusion.get(statement) ?? [])
+      .filter((proof) => proof.assumptions.every((assumption) => grounded.has(assumption)));
+    groundedWitness.set(statement, eligible[boundedChoice(eligible.length, choose)]!);
   }
 
   const selected = new Map<string, SelectedProof>();
   const unresolved = new Set<string>();
   const order: SelectedProof[] = [];
-  const visit = (statement: string, visiting: Set<string>): void => {
-    if (unresolved.has(statement)) return;
-    if (visiting.has(statement)) {
-      unresolved.add(statement);
-      return;
+  const active = new Set<string>();
+  type VisitFrame =
+    | { stage: "enter"; statement: string }
+    | { stage: "exit"; statement: string; proof: SelectedProof };
+  const visit = (root: string): void => {
+    const stack: VisitFrame[] = [{ stage: "enter", statement: root }];
+    while (stack.length > 0) {
+      const frame = stack.pop()!;
+      if (frame.stage === "exit") {
+        active.delete(frame.statement);
+        order.push(frame.proof);
+        continue;
+      }
+      const { statement } = frame;
+      if (unresolved.has(statement)) continue;
+      if (active.has(statement)) {
+        unresolved.add(statement);
+        continue;
+      }
+      if (selected.has(statement)) continue;
+      const groundedProof = groundedWitness.get(statement);
+      const candidates = byConclusion.get(statement) ?? [];
+      const proof = groundedProof ??
+        (candidates.length === 0 ? undefined : candidates[boundedChoice(candidates.length, choose)]);
+      if (proof === undefined) {
+        unresolved.add(statement);
+        continue;
+      }
+      const chosen: SelectedProof = {
+        ...proof,
+        selection: groundedProof === undefined ? "random" : "grounded",
+      };
+      selected.set(statement, chosen);
+      active.add(statement);
+      stack.push({ stage: "exit", statement, proof: chosen });
+      for (let index = proof.assumptions.length - 1; index >= 0; index -= 1) {
+        stack.push({ stage: "enter", statement: proof.assumptions[index]! });
+      }
     }
-    if (selected.has(statement)) return;
-    const groundedProof = groundedWitness.get(statement);
-    const candidates = byConclusion.get(statement) ?? [];
-    const proof = groundedProof ??
-      (candidates.length === 0 ? undefined : candidates[boundedChoice(candidates.length, choose)]);
-    if (proof === undefined) {
-      unresolved.add(statement);
-      return;
-    }
-    const chosen: SelectedProof = {
-      ...proof,
-      selection: groundedProof === undefined ? "random" : "grounded",
-    };
-    selected.set(statement, chosen);
-    const next = new Set(visiting).add(statement);
-    for (const assumption of proof.assumptions) visit(assumption, next);
-    order.push(chosen);
   };
-  for (const root of [...new Set(roots)].sort()) visit(root, new Set());
+  for (const root of [...new Set(roots)].sort()) visit(root);
   return { roots: [...new Set(roots)].sort(), order, unresolved: [...unresolved].sort() };
 }
 
@@ -234,7 +281,11 @@ export async function generateProofTree(
       staging,
       verificationLeanPath,
     );
-    kernelReport = readKernelReport(stagedKernelReport);
+    kernelReport = readKernelReport(stagedKernelReport, {
+      moduleName,
+      outputOlean: stagedOlean,
+      entries,
+    });
     fs.renameSync(stagedOlean, outputOlean);
     fs.writeFileSync(kernelReportFile, `${JSON.stringify({
       ...kernelReport,
@@ -651,20 +702,47 @@ function moduleFromConceptPath(value: string): string {
   return value.slice("concepts/".length, -".lean".length).split("/").join(".");
 }
 
-function readKernelReport(filename: string): KernelReport {
+function readKernelReport(
+  filename: string,
+  expected: KernelReportExpectation,
+): KernelReport {
   const value = readObject(filename);
   const theorems = objectArray(value.theorems, "kernel theorem results").map((theorem): KernelTheoremResult => ({
     statement: requiredString(theorem.statement, "kernel theorem statement"),
     proof: requiredString(theorem.proof, "kernel theorem proof"),
     generated: requiredString(theorem.generated, "kernel generated theorem"),
     axioms: stringArray(theorem.axioms, "kernel theorem axioms"),
-    clean: theorem.clean === true,
+    clean: requiredBoolean(theorem.clean, "kernel theorem clean"),
   }));
-  return {
+  const report = {
     moduleName: requiredString(value.moduleName, "kernel moduleName"),
     outputOlean: requiredString(value.outputOlean, "kernel outputOlean"),
     theorems,
   };
+  if (report.moduleName !== expected.moduleName) {
+    throw new Error(`kernel report names module ${report.moduleName}; expected ${expected.moduleName}`);
+  }
+  if (path.resolve(report.outputOlean) !== path.resolve(expected.outputOlean)) {
+    throw new Error("kernel report names the wrong output module");
+  }
+  if (report.theorems.length !== expected.entries.length) {
+    throw new Error("kernel report does not contain exactly the requested theorems");
+  }
+  for (let index = 0; index < expected.entries.length; index += 1) {
+    const actual = report.theorems[index]!;
+    const entry = expected.entries[index]!;
+    if (
+      actual.statement !== entry.statement ||
+      actual.proof !== entry.proof ||
+      actual.generated !== entry.generated
+    ) {
+      throw new Error(`kernel report theorem ${index + 1} does not match the compose request`);
+    }
+    if (actual.clean !== isBackgroundOnly(actual.axioms)) {
+      throw new Error(`kernel report clean flag disagrees with the axioms for ${actual.statement}`);
+    }
+  }
+  return report;
 }
 
 function readObject(filename: string): Record<string, unknown> {
@@ -689,6 +767,11 @@ function stringArray(value: unknown, label: string): string[] {
 
 function requiredString(value: unknown, label: string): string {
   if (typeof value !== "string" || value === "") throw new Error(`${label} must be a non-empty string`);
+  return value;
+}
+
+function requiredBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${label} must be a boolean`);
   return value;
 }
 

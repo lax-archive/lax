@@ -11,13 +11,16 @@ permissions:
   issues: write
 
 concurrency:
-  group: lax-submission-${{ github.repository_id }}-${{ github.event.issue.number }}
+  # Keep one user's commands ordered without letting an unrelated commenter
+  # fill the per-issue queue and block the submission owner.
+  group: lax-submission-${{ github.repository_id }}-${{ github.event.issue.number }}-${{ github.event.comment.user.id || github.event.issue.user.id || github.run_id }}
   queue: max
 
 jobs:
   # Reject unrelated issue comments before checkout or dependency installation.
   precheck:
     runs-on: ubuntu-latest
+    permissions: {}
     outputs:
       should_run: ${{ steps.command.outputs.should_run }}
     steps:
@@ -32,9 +35,19 @@ jobs:
 
           const bytes = fs.readFileSync(process.env.GITHUB_EVENT_PATH);
           const event = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-          const shouldRun = process.env.EVENT_NAME === "issues" ||
-            (process.env.EVENT_NAME === "issue_comment" &&
-              typeof event.comment?.body === "string" && event.comment.body.slice(0, 4) === "/lax");
+          const legacyBody =
+            "This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.";
+          const issueBody = event.issue?.body;
+          const reservedIssue = typeof issueBody === "string" &&
+            (/^<!-- lax-submission-id:lax-[1-9][0-9]{5} -->\n\n/u.test(issueBody) || issueBody === legacyBody);
+          const commentBody = event.comment?.body;
+          const commandComment = typeof commentBody === "string" &&
+            Buffer.byteLength(commentBody, "utf8") <= 16 * 1024 &&
+            /^\/lax(?:\s|$)/u.test(commentBody);
+          const shouldRun = process.env.EVENT_NAME === "issues"
+            ? event.issue?.user?.type === "User" && reservedIssue
+            : process.env.EVENT_NAME === "issue_comment" &&
+              event.comment?.user?.type === "User" && reservedIssue && commandComment;
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `should_run=${shouldRun}\n`, "utf8");
           NODE
 
@@ -56,7 +69,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Validate and route the event
         id: route
@@ -91,7 +104,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
 
       - name: Mint lax-database token
@@ -136,7 +149,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
@@ -150,6 +163,8 @@ jobs:
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull "$IMAGE"
           fi
+      - name: Remove registry credentials before validation
+        run: docker logout ghcr.io
       - name: Compile
         env:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
@@ -213,7 +228,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
@@ -227,6 +242,8 @@ jobs:
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull "$IMAGE"
           fi
+      - name: Remove registry credentials before validation
+        run: docker logout ghcr.io
       - name: Restore Compile handoff
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -302,7 +319,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
@@ -316,6 +333,8 @@ jobs:
           if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull "$IMAGE"
           fi
+      - name: Remove registry credentials before validation
+        run: docker logout ghcr.io
       - name: Restore Replay handoff
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -377,7 +396,7 @@ jobs:
           node-version: 22
           cache: npm
       - if: steps.outcome.outputs.should_publish != 'true'
-        run: npm ci
+        run: npm ci --ignore-scripts
       - if: steps.outcome.outputs.should_publish != 'true'
         run: npm run build
       - if: steps.outcome.outputs.should_publish != 'true'
@@ -424,7 +443,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -489,7 +508,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Mint lax-website dispatch token
         id: website-token
@@ -552,9 +571,10 @@ jobs:
               ? `<!-- lax-result-comment-id:${commentId} -->`
               : `<!-- lax-initialization-issue:${issueNumber} -->`;
             const runMarker = `<!-- lax-workflow-run-id:${context.runId} -->`;
+            const since = context.payload.comment?.created_at ?? context.payload.issue?.created_at;
             const comments = await github.paginate(
               github.rest.issues.listComments,
-              { ...context.repo, issue_number: issueNumber, per_page: 100 },
+              { ...context.repo, issue_number: issueNumber, per_page: 100, since },
             );
             if (["owners", "update"].includes(process.env.ACTION) && Number.isSafeInteger(commentId) && commentId > 0) {
               try {
@@ -599,5 +619,5 @@ jobs:
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: issueNumber,
-              body: `${summary}\n\nWorkflow run: [#${context.runId}](${runUrl}).\n\n${marker}\n${runMarker}`,
+              body: `${summary}\n\nWorkflow run: [#${context.runId}](${runUrl}).\n\n${marker}\n<!-- lax-result-status:failure -->\n${runMarker}`,
             });

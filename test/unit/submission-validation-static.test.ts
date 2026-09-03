@@ -7,6 +7,7 @@ import { runStaticValidation } from "../../src/submission-validation/phases/stat
 import { validateLakefile } from "../../src/submission-validation/validators/lakefile.js";
 import { isAcceptedLicense } from "../../src/submission-validation/validators/license.js";
 import { validateManifest } from "../../src/submission-validation/validators/manifest.js";
+import { CONTROL_REPOSITORY_ID } from "../../src/shared/constants.js";
 import {
   cleanupTemporary,
   COMMIT,
@@ -73,12 +74,74 @@ describe("submission static validation retained from main", () => {
     expect(parsed?.authors).toEqual([]);
   });
 
+  it("requires the manifest issue binding to match remote updates", () => {
+    const binding = { repositoryId: CONTROL_REPOSITORY_ID, number: 42 };
+    const missing = new FindingCollector("static");
+    validateManifest(manifest("lax-123456"), "lax-123456", RUNTIME, missing, binding);
+    expect(missing.violations.map((finding) => finding.message).join("\n")).toContain(
+      "issue binding is required",
+    );
+
+    const content = `${manifest("lax-123456")}issue:\n  repositoryId: ${CONTROL_REPOSITORY_ID}\n  number: 42\n`;
+    const accepted = new FindingCollector("static");
+    validateManifest(content, "lax-123456", RUNTIME, accepted, binding);
+    expect(accepted.violations).toEqual([]);
+
+    const mismatch = new FindingCollector("static");
+    validateManifest(content, "lax-123456", RUNTIME, mismatch, { ...binding, number: 43 });
+    expect(mismatch.violations.map((finding) => finding.message).join("\n")).toContain(
+      "does not match the update issue",
+    );
+
+    const legacy = new FindingCollector("static");
+    validateManifest(manifest("lax-3"), "lax-3", RUNTIME, legacy, {
+      repositoryId: CONTROL_REPOSITORY_ID,
+      number: 3,
+    });
+    expect(legacy.violations).toEqual([]);
+
+    for (const [submissionId, number] of [["lax-7", 7], ["lax-3", 4]] as const) {
+      const rejected = new FindingCollector("static");
+      validateManifest(manifest(submissionId), submissionId, RUNTIME, rejected, {
+        repositoryId: CONTROL_REPOSITORY_ID,
+        number,
+      });
+      expect(rejected.violations.map((finding) => finding.message).join("\n")).toContain(
+        "issue binding is required",
+      );
+    }
+
+    const historicalCli = new FindingCollector("static");
+    validateManifest(
+      manifest("lax-63"),
+      "lax-63",
+      RUNTIME,
+      historicalCli,
+      { repositoryId: CONTROL_REPOSITORY_ID, number: 63 },
+      true,
+    );
+    expect(historicalCli.violations).toEqual([]);
+
+    const historicalCliWrongIssue = new FindingCollector("static");
+    validateManifest(
+      manifest("lax-63"),
+      "lax-63",
+      RUNTIME,
+      historicalCliWrongIssue,
+      { repositoryId: CONTROL_REPOSITORY_ID, number: 64 },
+      true,
+    );
+    expect(historicalCliWrongIssue.violations.map((finding) => finding.message).join("\n")).toContain(
+      "issue binding is required",
+    );
+  });
+
   it("accepts concept and proof lakefiles and warns about proof-package dependencies", () => {
     const concepts = new FindingCollector("static");
     const concept = validateLakefile(
       lakefile("Lax261", {
         requirements: [
-          `name = "Lax42"\ngit = "https://github.com/alice/upstream"\nrev = "${COMMIT}"\nsubDir = "concepts"`,
+          `name = "Lax42"\ngit = "https://gitlab.com/research/archive/upstream"\nrev = "${COMMIT}"\nsubDir = "concepts"`,
         ],
       }),
       "concepts",
@@ -89,6 +152,7 @@ describe("submission static validation retained from main", () => {
     );
     expect(concepts.violations).toEqual([]);
     expect(concept?.gitRequires.map((requirement) => requirement.name)).toEqual(["Lax42"]);
+    expect(concept?.gitRequires[0]?.git).toBe("https://gitlab.com/research/archive/upstream");
 
     const proofs = new FindingCollector("static");
     const proof = validateLakefile(
@@ -128,6 +192,7 @@ describe("submission static validation retained from main", () => {
     for (const [requirement, kind, expected] of [
       ['name = "Lax7"\npath = "/abs/concepts"', "concepts", "relative POSIX"],
       ['name = "Lax7"\npath = "..\\\\other\\\\concepts"', "concepts", "relative POSIX"],
+      ['name = "Lax7"\npath = "../../other,src=/etc/concepts"', "concepts", "relative POSIX"],
       ['name = "Lax7"\npath = "../../other"', "concepts", "end in concepts or proofs"],
       ['name = "Lax7Proofs"\npath = "../../other/concepts"', "proofs", "target kind disagree"],
       ['name = "Lax7Proofs"\npath = "../../other/proofs"', "concepts", "cannot require proof"],

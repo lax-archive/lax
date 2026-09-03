@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { commandWord, parseCommand } from "../../src/shared/commands.js";
+import {
+  commandSubmissionId,
+  commandWord,
+  parseCommand,
+  parseRoutedCommand,
+} from "../../src/shared/commands.js";
 import { MAX_COMMAND_BYTES, MAX_OWNERS } from "../../src/shared/constants.js";
 
 describe("issue command parser", () => {
@@ -12,14 +17,35 @@ describe("issue command parser", () => {
   it("parses an exact immutable update request", () => {
     expect(
       parseCommand(
-        '/lax update {"repository":"https://github.com/alice/formalization","commit":"0123456789abcdef0123456789abcdef01234567","folder":"."}',
+        '/lax update {"repository":"https://gitlab.com/research/archive/formalization","commit":"0123456789abcdef0123456789abcdef01234567","folder":"."}',
       ),
     ).toEqual({
       action: "update",
-      repository: "https://github.com/alice/formalization",
+      repository: "https://gitlab.com/research/archive/formalization",
       commit: "0123456789abcdef0123456789abcdef01234567",
       folder: ".",
     });
+  });
+
+  it("carries a manifest id independently of the issue number", () => {
+    const body =
+      '/lax update lax-123456 {"repository":"https://github.com/alice/repo","commit":"0123456789abcdef0123456789abcdef01234567","folder":"."}';
+    expect(commandSubmissionId(body, "lax-42")).toBe("lax-123456");
+    expect(parseRoutedCommand(body, "lax-42")).toMatchObject({
+      id: "lax-123456",
+      command: { action: "update", folder: "." },
+    });
+    expect(parseRoutedCommand("/lax register lax-123456", "lax-42")).toEqual({
+      id: "lax-123456",
+      command: { action: "register" },
+    });
+    expect(commandSubmissionId("/lax register", "lax-42")).toBe("lax-42");
+  });
+
+  it("rejects a malformed routed submission id", () => {
+    expect(() => commandSubmissionId("/lax delete lax-012345", "lax-42")).toThrow(
+      "command submission id is invalid",
+    );
   });
 
   it("rejects unknown JSON fields and trailing command arguments", () => {

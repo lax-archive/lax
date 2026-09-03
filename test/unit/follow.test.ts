@@ -4,6 +4,7 @@ import {
   appendWorkflowRun,
   previewMarker,
   resultMarker,
+  resultStatusMarker,
   upsertCommandContext,
   workflowRunMarker,
 } from "../../src/shared/workflow-comments.js";
@@ -60,7 +61,7 @@ describe("GitHub Actions workflow progress", () => {
       { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
     );
     const result = appendWorkflowRun(
-      `Registered **lax-42**.\n\n${resultMarker(9001)}`,
+      `Registered **lax-42**.\n\n${resultMarker(9001)}\n${resultStatusMarker("success")}`,
       { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
     );
     const paginate = vi.fn()
@@ -129,6 +130,38 @@ describe("GitHub Actions workflow progress", () => {
     expect(paginate).toHaveBeenCalledTimes(2);
   });
 
+  it("returns a non-zero command result when the trusted workflow reports failure", async () => {
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "100";
+    const result = appendWorkflowRun(
+      `Validation failed.\n\n${resultMarker(9001)}\n${resultStatusMarker("failure")}`,
+      { id: "124", url: "https://github.com/lax-archive/lax/actions/runs/124" },
+    );
+    const paginate = vi.fn().mockResolvedValue([{ id: 2, body: result, user: bot }]);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await expect(
+      followCommand({ paginate } as unknown as GitHubClient, 42, 9001),
+    ).rejects.toThrow("workflow rejected the command on issue #42");
+  });
+
+  it("does not interpret an unsigned result status as success", async () => {
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "100";
+    const result = appendWorkflowRun(
+      `Ambiguous result.\n\n${resultMarker(9001)}`,
+      { id: "125", url: "https://github.com/lax-archive/lax/actions/runs/125" },
+    );
+    const paginate = vi.fn().mockResolvedValue([{ id: 2, body: result, user: bot }]);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await expect(
+      followCommand({ paginate } as unknown as GitHubClient, 42, 9001),
+    ).rejects.toThrow("did not include an authenticated status");
+  });
+
   it("follows an owner command through its hidden run marker and final bot thumbs-up", async () => {
     process.env.LAX_POLL_INTERVAL_MS = "1";
     process.env.LAX_WORKFLOW_TIMEOUT_MS = "100";
@@ -173,7 +206,7 @@ describe("GitHub Actions workflow progress", () => {
 
     await expect(
       followCommand({ paginate } as unknown as GitHubClient, 42, 9001),
-    ).rejects.toThrow("timed out waiting for the workflow result on lax-42");
+    ).rejects.toThrow("timed out waiting for the workflow result on issue #42");
     expect(paginate).toHaveBeenCalled();
   });
 });

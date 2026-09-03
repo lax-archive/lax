@@ -26,6 +26,7 @@ import {
   appendWorkflowRun,
   initializationMarker,
   resultMarker,
+  resultStatusMarker,
   workflowRunMarker,
   type WorkflowRunRef,
 } from "../shared/workflow-comments.js";
@@ -77,8 +78,15 @@ async function route(): Promise<void> {
     } else if (result.preview !== undefined) {
       const exists =
         result.request.commentId === undefined
-          ? await control.initializationPreviewExists(result.request.issue.number)
-          : await control.previewExists(result.request.issue.number, result.request.commentId);
+          ? await control.initializationPreviewExists(
+              result.request.issue.number,
+              result.request.eventCreatedAt,
+            )
+          : await control.previewExists(
+              result.request.issue.number,
+              result.request.commentId,
+              result.request.eventCreatedAt,
+            );
       if (!exists) {
         await control.postIssueComment(
           result.request.issue.number,
@@ -98,6 +106,7 @@ async function route(): Promise<void> {
         id: result.request.id,
         issueNumber: result.request.issue.number,
         commentId: result.request.commentId,
+        eventCreatedAt: result.request.eventCreatedAt,
       }));
       return;
     }
@@ -117,13 +126,14 @@ interface ValidationContext {
   id: string;
   issueNumber: number;
   commentId: number;
+  eventCreatedAt: string;
 }
 
 async function reportValidation(): Promise<void> {
   const context = parseValidationContext(decodeBase64Json(requiredEnv("VALIDATION_CONTEXT")));
   const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
   const control = new ControlPlane(client, new ArchiveRepository(client), repositoryId());
-  if (await control.resultExists(context.issueNumber, context.commentId)) {
+  if (await control.resultExists(context.issueNumber, context.commentId, context.eventCreatedAt)) {
     await clearCommandProgress(control, context.commentId);
     return;
   }
@@ -152,13 +162,13 @@ async function reportValidation(): Promise<void> {
   const marker = resultMarker(context.commentId);
   const body = report === undefined
     ? `Validation infrastructure failed for **${context.id}**; no trustworthy report was produced. ` +
-      `lax-database was not changed.\n\n${marker}`
+      `lax-database was not changed.\n\n${marker}\n${resultStatusMarker("failure")}`
     : report.ok
       ? `Submission validation passed for **${context.id}**, but the validation job failed before trusted ` +
         `publication could start. lax-database was not changed.\n\n` +
-        `${validationWarnings(report)}${marker}`
+        `${validationWarnings(report)}${marker}\n${resultStatusMarker("failure")}`
       : `Submission validation failed for **${context.id}**; lax-database was not changed.\n\n` +
-        `${validationProblems(report)}\n\n${marker}`;
+        `${validationProblems(report)}\n\n${marker}\n${resultStatusMarker("failure")}`;
   await clearCommandProgress(control, context.commentId);
   await control.postIssueComment(context.issueNumber, appendWorkflowRun(body, workflowRun()));
 }
@@ -194,9 +204,9 @@ async function publish(): Promise<void> {
     const body = appendWorkflowRun(
       committed !== undefined
         ? `lax-database changed at commit \`${committed}\`, but workflow continuation failed. ` +
-          `The Archive commit must not be replayed.\n\n${marker}`
+          `The Archive commit must not be replayed.\n\n${marker}\n${resultStatusMarker("failure")}`
         : `Publication failed; lax-database was not changed by this command.\n\n` +
-          `${problems(error)}\n\n${marker}`,
+          `${problems(error)}\n\n${marker}\n${resultStatusMarker("failure")}`,
       workflowRun(),
     );
     await control.postIssueComment(request.issue.number, body);
@@ -316,9 +326,9 @@ async function postPublicationFailure(
   const body = appendWorkflowRun(
     committed !== undefined
       ? `lax-database changed at commit \`${committed}\`, but workflow continuation failed. ` +
-        `The Archive commit must not be replayed.\n\n${markerText}`
+        `The Archive commit must not be replayed.\n\n${markerText}\n${resultStatusMarker("failure")}`
       : `Publication failed; lax-database was not changed by this command.\n\n` +
-        `${problems(error)}\n\n${markerText}`,
+        `${problems(error)}\n\n${markerText}\n${resultStatusMarker("failure")}`,
     workflowRun(),
   );
   try {
@@ -349,7 +359,8 @@ async function postFailure(
       ? initializationMarker(number)
       : resultMarker(triggeringComment);
   const body = appendWorkflowRun(
-    `${label}; no lax-database commit was created.\n\n${problems(error)}\n\n${markerText}`,
+    `${label}; no lax-database commit was created.\n\n${problems(error)}\n\n` +
+      `${markerText}\n${resultStatusMarker("failure")}`,
     workflowRun(),
   );
   try {
@@ -430,12 +441,16 @@ function validationRequest(request: PublishRequest): ValidationRequest {
   return {
     requestVersion: 1,
     id: request.id,
+    issue: request.issue,
     source: {
       repository: request.command.repository,
       commit: request.command.commit,
       folder: request.command.folder,
     },
     archiveSha: request.archiveSha,
+    ...(request.legacyManifestWithoutIssue === undefined
+      ? {}
+      : { legacyManifestWithoutIssue: request.legacyManifestWithoutIssue }),
   };
 }
 
@@ -503,16 +518,30 @@ function sha256File(filename: string): string {
 }
 
 function parseValidationContext(value: unknown): ValidationContext {
-  if (!isObject(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(["commentId", "id", "issueNumber"]))
+  if (
+    !isObject(value) ||
+    JSON.stringify(Object.keys(value).sort()) !==
+      JSON.stringify(["commentId", "eventCreatedAt", "id", "issueNumber"])
+  )
     throw new ValidationError("validation context is malformed");
   if (typeof value.id !== "string" || !/^lax-[1-9][0-9]*$/u.test(value.id))
     throw new ValidationError("validation context id is malformed");
   for (const key of ["issueNumber", "commentId"] as const)
     if (!Number.isSafeInteger(value[key]) || (value[key] as number) <= 0)
       throw new ValidationError(`validation context ${key} is malformed`);
-  if (value.id !== `lax-${value.issueNumber as number}`)
-    throw new ValidationError("validation context id does not match its issue");
-  return { id: value.id, issueNumber: value.issueNumber as number, commentId: value.commentId as number };
+  const eventCreatedAt = typeof value.eventCreatedAt === "string" ? value.eventCreatedAt : "";
+  const eventDate = new Date(eventCreatedAt);
+  if (
+    !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/u.test(eventCreatedAt) ||
+    Number.isNaN(eventDate.valueOf()) ||
+    eventDate.toISOString().replace(".000Z", "Z") !== eventCreatedAt
+  ) throw new ValidationError("validation context eventCreatedAt is malformed");
+  return {
+    id: value.id,
+    issueNumber: value.issueNumber as number,
+    commentId: value.commentId as number,
+    eventCreatedAt,
+  };
 }
 
 function validationProblems(report: ValidationReport): string {

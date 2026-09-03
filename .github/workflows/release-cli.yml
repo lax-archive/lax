@@ -5,22 +5,27 @@ on:
     tags: ["v*"]
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the tagged commit to be on main
+        run: |
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
           cache: npm
       # npm 12 changed `npm pack --json` and requires a newer Node 22 patch.
       # Keep trusted publishing on the latest compatible npm 11 release.
-      - run: npm install --global npm@11.19.0
-      - run: npm ci
+      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - run: npm ci --ignore-scripts
       - name: Check release tag
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -34,5 +39,37 @@ jobs:
           npm run page-builder:verify
       - name: Pack deterministic CLI artifact
         run: npm pack --ignore-scripts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cli-package
+          path: lax-archive-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cli-package
+          path: .release
+      - name: Verify the isolated release artifact
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          test "$(find .release -type f | wc -l)" -eq 1
+          test -f ".release/lax-archive-${version}.tgz"
       - name: Publish with npm trusted publishing
-        run: npm publish "lax-archive-${GITHUB_REF_NAME#v}.tgz"
+        env:
+          TAG: ${{ github.ref_name }}
+        run: npm publish ".release/lax-archive-${TAG#v}.tgz" --ignore-scripts

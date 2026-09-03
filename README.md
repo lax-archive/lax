@@ -1,7 +1,8 @@
 # Lax
 
 This repository is the issue-driven control plane and npm CLI for the Lax
-archive. GitHub issues allocate submission ids, `/lax` issue comments request
+archive. Local manifests allocate six-digit submission ids, GitHub issues bind
+those ids on the first authenticated update, `/lax` issue comments request
 state changes, and trusted GitHub Actions jobs publish those changes to the
 public [`lax-archive/lax-database`](https://github.com/lax-archive/lax-database)
 repository. Every successful database commit dispatches a complete rebuild to
@@ -16,11 +17,18 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 
 | Event or command | Result |
 | --- | --- |
-| New ordinary issue | Allocates `lax-<issue number>` and creates `record.json`, `build-output.json`, and `owner-list.json` stubs. |
-| `/lax owners <JSON>` | Replaces the complete owner list after numeric-id authorization and GitHub identity resolution. |
-| `/lax delete` | Replaces an init/draft record with a permanent three-file tombstone. |
-| `/lax register` | Makes an init/draft record immutable. |
-| `/lax update <JSON>` | Validates the immutable source, promotes its exact capture to immutable storage, and replaces only `record.json` and `build-output.json`. |
+| New issue with a valid Lax reservation marker | Binds its locally generated six-digit id and creates `record.json`, `build-output.json`, and `owner-list.json` stubs. Ordinary issues are ignored. |
+| `/lax owners <id> <JSON>` | Replaces the complete owner list after issue-binding authorization and GitHub identity resolution. |
+| `/lax delete <id>` | Replaces an init/draft record with a permanent three-file tombstone. |
+| `/lax register <id>` | Makes an init/draft record immutable. |
+| `/lax update <id> <JSON>` | Validates the immutable source, promotes its exact capture to immutable storage, and replaces only `record.json` and `build-output.json`. |
+
+For migration, the exact issue body and issue-derived command format emitted
+by the previous CLI remain recognized. Manifests from the frozen set of
+submissions present at database commit
+`1ee20b170def7503088a1a4eeb502b6bc6518f6a` may omit `issue`; the current CLI
+verifies the Archive binding and records it locally before continuing. No
+later submission receives that permanent exemption.
 
 The Lean validation job has no App key, installation token, or Archive write
 credential. Its successful workflow artifact contains `validation-report.json`,
@@ -65,7 +73,11 @@ Configure the workflow with:
 - Website Dispatcher installation access only to `lax-website`, with
   repository `Contents: write`;
 - the repository Actions policy **Require actions to be pinned to a full-length
-  commit SHA** enabled; and
+  commit SHA** enabled;
+- a `main` ruleset that requires pull requests and Code Owner approval, blocks
+  force-pushes/deletion, and does not allow non-maintainers to bypass review;
+- a tag ruleset that restricts creation or movement of `v*` release tags to
+  maintainers; and
 - immutable releases enabled for `lax-database`. Publication fails closed
   before any database commit if this repository setting is disabled.
 
@@ -88,11 +100,14 @@ workflow remains responsive.
 
 `validation-runtime.yml` is intentionally not issue-triggered: it builds
 trusted infrastructure only when its reviewed runtime sources change on
-`main`, or when a maintainer dispatches it manually. It builds and pushes the
+`main`, or when a maintainer dispatches the `main` workflow manually. It builds
+and pushes the
 runtime, smoke-tests the pushed digest, and uploads `validation-image.txt`.
 Only promote that exact `ghcr.io/...@sha256:<digest>` value after review.
-`release-cli.yml` is similarly restricted to version tags, while CI runs for
-pushes.
+`release-cli.yml` additionally requires a version tag's commit to be contained
+in `main`. Its credential-free build job transfers one tested package artifact
+to a minimal npm publishing job; only that second job receives OIDC permission.
+CI runs for pushes.
 
 `lax-database` must also have an initial commit and a real default branch before
 the control plane can pin a snapshot. An empty newly created repository has no
@@ -137,11 +152,20 @@ lax delete submission
 lax update-db
 ```
 
-`lax create <title>` remains available when only issue allocation is wanted.
-`lax update <issue> --repository ... --commit ... --folder ...` remains the
-explicit source-triple form of `lax submit [folder]`. Submit derives the issue
-from `manifest.yaml`, derives the source triple from Git, rejects dirty work
-unless `--allow-dirty` is passed, and requires HEAD to be present on `origin`.
+`lax init` generates a random `lax-NNNNNN` id and all local files without a
+GitHub login. `lax update <folder> --repository ... --commit ... --folder ...`
+is the explicit source-triple form of `lax submit [folder]`. On the first
+authenticated update or submit, the CLI checks the id against the current
+Archive, rekeys the still-local scaffold if it collides, creates the issue,
+stores its immutable binding in `manifest.yaml`, and stops so that binding can
+be committed. The next invocation requests the import. Submit derives the issue
+binding from `manifest.yaml`, derives the source triple from Git, rejects dirty
+work unless `--allow-dirty` is passed, and requires HEAD to be present on `origin`.
+Source repositories must be publicly fetchable over HTTPS from GitHub,
+GitLab.com, Codeberg, or Bitbucket Cloud. The CLI normalizes the providers'
+standard SSH clone URLs, strips a trailing `.git`, and supports nested GitLab
+groups; GitHub still provides Lax authentication, issue commands, and owner
+identity independently of where the submitted source is hosted.
 Registration stays a separate `lax register` command; multi-folder submission
 is intentionally not supported yet. Before posting the issue command, submit
 reuses a full local build only when it matches the clean Git commit, folder,

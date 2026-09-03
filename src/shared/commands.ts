@@ -3,6 +3,7 @@ import { MAX_COMMAND_BYTES, MAX_OWNERS } from "./constants.js";
 import type { GitHubIdentity, ParsedCommand } from "./types.js";
 import {
   isObject,
+  normalizeSubmissionId,
   parseJson,
   requireExactKeys,
   validateIdentity,
@@ -12,6 +13,11 @@ import {
 } from "./validation.js";
 
 export type CommandWord = ParsedCommand["action"];
+
+export interface RoutedCommand {
+  id: string;
+  command: ParsedCommand;
+}
 
 /** Read only the closed command word. Arguments are deliberately parsed later. */
 export function commandWord(body: string): CommandWord | "unknown" | "ignore" {
@@ -73,4 +79,43 @@ export function parseCommand(body: string): ParsedCommand {
   problems.throwIfAny();
   owners.sort((left, right) => left.githubId - right.githubId);
   return { action: "owners", owners };
+}
+
+/**
+ * Parse the submission id carried by new commands and then parse the existing
+ * closed command grammar. The fallback keeps already-issued lax-N submissions
+ * compatible with command comments created by older CLIs.
+ */
+export function parseRoutedCommand(body: string, legacyId: string): RoutedCommand {
+  const word = commandWord(body);
+  if (word === "ignore" || word === "unknown") return { id: legacyId, command: parseCommand(body) };
+  const id = commandSubmissionId(body, legacyId);
+  const prefix = `/lax ${word}`;
+  const remainder = body.slice(prefix.length);
+  const match = /^\s+([^\s]+)/u.exec(remainder);
+  const candidate = match?.[1];
+  if (candidate === undefined || (!candidate.startsWith("lax-") && !candidate.startsWith("Lax"))) {
+    return { id: legacyId, command: parseCommand(body) };
+  }
+  const rewritten = `${prefix}${remainder.slice(match![0].length)}`;
+  return { id, command: parseCommand(rewritten) };
+}
+
+/** Read only the bounded routing id; command arguments stay unparsed until after authorization. */
+export function commandSubmissionId(body: string, legacyId: string): string {
+  if (Buffer.byteLength(body, "utf8") > MAX_COMMAND_BYTES) {
+    throw new ValidationError(`command exceeds ${MAX_COMMAND_BYTES} bytes`);
+  }
+  const word = commandWord(body);
+  if (word === "ignore" || word === "unknown") return legacyId;
+  const match = new RegExp(`^/lax\\s+${word}\\s+([^\\s]+)`, "u").exec(body);
+  const candidate = match?.[1];
+  if (candidate === undefined || (!candidate.startsWith("lax-") && !candidate.startsWith("Lax"))) {
+    return legacyId;
+  }
+  try {
+    return normalizeSubmissionId(candidate);
+  } catch (error) {
+    throw new ValidationError(`command submission id is invalid: ${(error as Error).message}`);
+  }
 }

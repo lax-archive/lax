@@ -1,14 +1,17 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { validateSourceRepositoryUrl } from "./source-repository.mjs";
 
 const [repository, commit, destination] = process.argv.slice(2);
 if (repository === undefined || commit === undefined || destination === undefined) {
   console.error("usage: fetch-source.mjs <repository> <commit> <destination>");
   process.exit(2);
 }
-if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
-  console.error("repository is not a canonical public GitHub URL");
+try {
+  validateSourceRepositoryUrl(repository);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(2);
 }
 if (!/^[0-9a-f]{40}$/u.test(commit)) {

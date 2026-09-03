@@ -7,6 +7,7 @@ import {
   validateCommit,
   validateFolder,
   validateIdentity,
+  validateNewSubmissionId,
   validateRepositoryUrl,
   validateSource,
 } from "../../src/shared/validation.js";
@@ -62,10 +63,18 @@ describe("shared input validation", () => {
     expect(() => normalizeTitle("one\u2029two")).toThrow("one line");
   });
 
-  it("derives the only accepted id spelling from the issue number", () => {
+  it("keeps legacy issue-derived ids available for compatibility", () => {
     expect(submissionId(42)).toBe("lax-42");
     expect(packageNameForSubmission("lax-42")).toBe("Lax42");
     expect(() => submissionId(0)).toThrow("positive integer");
+  });
+
+  it("requires exactly six non-zero-leading digits for newly allocated ids", () => {
+    expect(validateNewSubmissionId("lax-100000")).toBe("lax-100000");
+    expect(validateNewSubmissionId("lax-999999")).toBe("lax-999999");
+    for (const value of ["lax-012345", "lax-99999", "lax-1000000", "Lax123456"]) {
+      expect(() => validateNewSubmissionId(value)).toThrow("six digits");
+    }
   });
 
   it("normalizes legacy source ids without relaxing canonical archive ids", () => {
@@ -75,10 +84,14 @@ describe("shared input validation", () => {
     expect(() => normalizeSubmissionId("lax-0")).toThrow("lax-<positive decimal>");
   });
 
-  it("accepts only canonical HTTPS GitHub repository URLs", () => {
-    expect(validateRepositoryUrl("https://github.com/alice/repository")).toBe(
+  it("accepts canonical public repository URLs on the four supported hosts", () => {
+    for (const repository of [
       "https://github.com/alice/repository",
-    );
+      "https://gitlab.com/alice/repository",
+      "https://gitlab.com/research/formalization/repository",
+      "https://codeberg.org/alice/repository",
+      "https://bitbucket.org/alice/repository",
+    ]) expect(validateRepositoryUrl(repository)).toBe(repository);
     expect(() => validateRepositoryUrl("git@github.com:alice/repository.git")).toThrow();
     expect(() => validateRepositoryUrl("https://github.com/alice/repository.git")).toThrow();
     expect(() => validateRepositoryUrl("https://github.com/alice/repository?q=1")).toThrow();
@@ -87,6 +100,13 @@ describe("shared input validation", () => {
     expect(() => validateRepositoryUrl("https://github.com/alice/repository#readme")).toThrow();
     expect(() => validateRepositoryUrl("https://github.com/alice%2Frepository/name")).toThrow();
     expect(() => validateRepositoryUrl("https://github.com/alice/repository/extra")).toThrow();
+    expect(() => validateRepositoryUrl("https://example.com/alice/repository")).toThrow(
+      "repository host must be one of",
+    );
+    expect(() => validateRepositoryUrl("https://gitlab.com/alice/repository/-/tree/main")).toThrow();
+    expect(() => validateRepositoryUrl("https://GitLab.com/alice/repository")).toThrow(
+      "canonical form",
+    );
     for (const control of ["\n", "\r", "\t", "\u007f", "\u0085"]) {
       expect(() => validateRepositoryUrl(`https://github.com/alice/repository${control}`)).toThrow(
         "control character",
@@ -103,6 +123,7 @@ describe("shared input validation", () => {
     expect(() => validateFolder("../secret")).toThrow();
     expect(() => validateFolder("one//two")).toThrow();
     expect(() => validateFolder("one\\two")).toThrow();
+    expect(() => validateFolder("one,src=/etc")).toThrow("must not contain a comma");
     expect(validateFolder("a".repeat(512))).toHaveLength(512);
     expect(() => validateFolder("a".repeat(513))).toThrow("512");
     expect(validateFolder(Array.from({ length: 32 }, () => "a").join("/"))).toBe(

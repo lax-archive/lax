@@ -1,0 +1,22 @@
+{
+  "github.com": {
+    "minPathSegments": 2,
+    "maxPathSegments": 2,
+    "forbiddenSegments": []
+  },
+  "gitlab.com": {
+    "minPathSegments": 2,
+    "maxPathSegments": null,
+    "forbiddenSegments": ["-"]
+  },
+  "codeberg.org": {
+    "minPathSegments": 2,
+    "maxPathSegments": 2,
+    "forbiddenSegments": []
+  },
+  "bitbucket.org": {
+    "minPathSegments": 2,
+    "maxPathSegments": 2,
+    "forbiddenSegments": []
+  }
+}

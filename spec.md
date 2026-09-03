@@ -1048,15 +1048,19 @@ the regenerated checkpoint.
 
 **lax submit [folder]** derives the (repository, commit, folder) triple from
 the folder's git state — the remote URL, the HEAD commit, the folder's path
-within the repository — and hands it to the archive. The remote URL is first
-normalized to the archive's canonical spelling: ``git@host:owner/repo`` and
-``ssh://git@host/…`` become ``https://host/…``, and http(s) URLs drop a
-trailing slash and a trailing ``.git``; other schemes pass through
-untouched. A registered ``repository`` is therefore always in canonical
-form. It refuses if HEAD is not present on the remote. It also refuses a dirty
-worktree unless ``-f`` or ``--force`` is given; this permits submission but
-does not include local changes, because the source triple still identifies the
-committed HEAD. Without
+within the repository — and hands it to the archive. Source repositories must
+be publicly fetchable over HTTPS from ``github.com``, ``gitlab.com``,
+``codeberg.org``, or ``bitbucket.org``. GitHub, Codeberg, and Bitbucket paths
+contain exactly an owner/workspace and repository; GitLab paths may include
+nested groups. The remote URL is normalized to the archive's canonical
+spelling: the providers' ``git@host:path`` and ``ssh://git@host/path`` clone
+URLs become credential-free ``https://host/path`` URLs, with a trailing slash
+or ``.git`` removed. URLs containing credentials, ports, queries, or fragments
+are not accepted. A registered ``repository`` is therefore always in
+canonical form. It refuses if HEAD is not present on the remote. It also
+refuses a dirty worktree unless ``--allow-dirty`` is given; this permits
+submission of the committed tree but does not include local changes, because
+the source triple still identifies the committed HEAD. Without
 ``--register`` it requests the draft state, with it registration; on success
 the archive updates the record as described in Lifecycle. Once the server has
 accepted a job, a polling connection failure prints the job id and

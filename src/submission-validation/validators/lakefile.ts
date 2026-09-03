@@ -89,7 +89,7 @@ export function validateLakefile(
           else hasConceptPathRequire = true;
           return;
         }
-        if (raw.path.includes("\\") || path.posix.isAbsolute(raw.path)) {
+        if (raw.path.includes("\\") || raw.path.includes(",") || path.posix.isAbsolute(raw.path)) {
           findings.violate("lakefile", `${label}: sibling paths must be relative POSIX paths`);
           return;
         }

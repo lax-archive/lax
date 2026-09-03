@@ -135,6 +135,7 @@ describe("trusted update publisher", () => {
     expect(harness.load).not.toHaveBeenCalled();
     expect(harness.captureStore.promote).not.toHaveBeenCalled();
     expect(harness.clearProgress).toHaveBeenCalledWith(80);
+    expect(harness.resultExists).toHaveBeenCalledWith(42, 80, "2026-07-30T11:00:00Z");
   });
 });
 
@@ -147,11 +148,13 @@ function updateHarness(
   load: ReturnType<typeof vi.fn>;
   writeFiles: ReturnType<typeof vi.fn>;
   clearProgress: ReturnType<typeof vi.fn>;
+  resultExists: ReturnType<typeof vi.fn>;
   readonly changes: ArchiveChanges;
 } {
   const clearProgress = vi.fn();
+  const resultLookup = vi.fn().mockResolvedValue(resultExists);
   const control: PublisherControl = {
-    resultExists: vi.fn().mockResolvedValue(resultExists),
+    resultExists: resultLookup,
     successReactionExists: vi.fn().mockResolvedValue(false),
     resolveOwnerPairs: vi.fn(async (owners) => owners),
     postIssueComment: vi.fn(),
@@ -179,6 +182,7 @@ function updateHarness(
     load,
     writeFiles,
     clearProgress,
+    resultExists: resultLookup,
     get changes() { return changes; },
   };
 }

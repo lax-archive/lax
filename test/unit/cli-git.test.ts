@@ -46,7 +46,7 @@ describe("CLI Git source derivation retained from main", () => {
     writeFile(root, "tracked.txt", "changed\n");
 
     expect(() => deriveSubmittedSource(root)).toThrow("worktree is dirty");
-    expect(() => deriveSubmittedSource(root, true)).toThrow("no usable GitHub `origin`");
+    expect(() => deriveSubmittedSource(root, true)).toThrow("no usable supported `origin`");
   });
 
   it("requires HEAD to be present on origin and returns the immutable source triple", () => {

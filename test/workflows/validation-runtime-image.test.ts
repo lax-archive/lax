@@ -15,8 +15,17 @@ const checkRunner = fs.readFileSync(
 );
 
 describe("validation runtime image", () => {
+  it("pins the Node base image by digest", () => {
+    expect(containerfile).toMatch(/^FROM node:22-bookworm-slim@sha256:[0-9a-f]{64} AS tooling$/mu);
+  });
+
   it("makes the root-built warm cache readable by the validation user", () => {
     expect(containerfile).toContain("chmod -R a+rX /opt/lax-runtime/warm");
+  });
+
+  it("copies the reviewed source-host policy beside the runtime fetcher", () => {
+    expect(containerfile).toContain("source-repository.mjs");
+    expect(containerfile).toContain("source-repository-hosts.json");
   });
 
   it("pulls the pushed digest before exercising it", () => {

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { SourceLocation } from "../shared/types.js";
-import { validateCommit, validateRepositoryUrl } from "../shared/validation.js";
+import { validateCommit, validateRepositoryUrl, ValidationError } from "../shared/validation.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
@@ -14,10 +14,32 @@ function git(cwd: string, args: string[]): string {
 
 export function normalizeRepositoryUrl(value: string): string {
   let normalized = value.trim();
-  const scp = /^git@github\.com:([^/]+)\/(.+)$/u.exec(normalized);
-  const ssh = /^ssh:\/\/git@github\.com\/([^/]+)\/(.+)$/u.exec(normalized);
-  if (scp !== null) normalized = `https://github.com/${scp[1]}/${scp[2]}`;
-  if (ssh !== null) normalized = `https://github.com/${ssh[1]}/${ssh[2]}`;
+  const scp = /^git@([^/:]+):(.+)$/u.exec(normalized);
+  if (scp !== null) {
+    normalized = `https://${scp[1]!.toLowerCase()}/${scp[2]}`;
+  } else {
+    try {
+      const url = new URL(normalized);
+      if (
+        url.protocol === "ssh:" &&
+        url.username === "git" &&
+        url.password === "" &&
+        url.port === "" &&
+        url.search === "" &&
+        url.hash === ""
+      ) {
+        normalized = `https://${url.hostname.toLowerCase()}${url.pathname}`;
+      } else if (url.protocol === "https:" && url.username !== "" && url.password === "") {
+        // Bitbucket commonly includes a harmless username in HTTPS clone URLs.
+        // The public validation fetch never needs it, so keep credentials out of
+        // the submitted source triple.
+        url.username = "";
+        normalized = url.toString();
+      }
+    } catch {
+      // The canonical validator below supplies the user-facing failure.
+    }
+  }
   normalized = normalized.replace(/\/+$/u, "").replace(/\.git$/u, "");
   return validateRepositoryUrl(normalized);
 }
@@ -99,7 +121,7 @@ function originUrl(root: string): string {
   try {
     return normalizeRepositoryUrl(git(root, ["remote", "get-url", "origin"]));
   } catch (error) {
-    if (error instanceof Error && error.message.includes("canonical public HTTPS")) throw error;
-    throw new Error("the repository has no usable GitHub `origin` remote — add one and push");
+    if (error instanceof ValidationError) throw error;
+    throw new Error("the repository has no usable supported `origin` remote — add one and push");
   }
 }

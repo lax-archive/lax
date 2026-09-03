@@ -1020,10 +1020,12 @@ the output has not been generated yet; ``lax serve`` does not build.
 
 **lax submit [folder]** derives the (repository, commit, folder) triple from
 the folder's git state — the remote URL, the HEAD commit, the folder's path
-within the repository — and hands it to the archive. It refuses if the
-worktree is dirty or HEAD is not present on the remote. Without
-``--register`` it requests the draft state, with it registration; on success
-the archive updates the record as described in Lifecycle.
+within the repository — and hands it to the archive. The repository must be
+publicly fetchable over HTTPS from GitHub, GitLab.com, Codeberg, or Bitbucket
+Cloud; standard SSH clone URLs are normalized to credential-free HTTPS URLs.
+It refuses if the worktree is dirty or HEAD is not present on the remote.
+Without ``--register`` it requests the draft state, with it registration; on
+success the archive updates the record as described in Lifecycle.
 
 **lax pull-db** refreshes the local database checkout at ``~/.lax/db``, see
 Database Repository. It is read-only with respect to the archive and needs no authentication.

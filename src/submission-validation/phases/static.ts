@@ -20,7 +20,16 @@ export function runStaticValidation(
   if (!regularFile(manifestPath)) findings.violate("manifest", "manifest.yaml is missing");
   else {
     const content = readBounded(manifestPath, 256 * 1024, "manifest.yaml", findings);
-    if (content !== undefined) result.manifest = validateManifest(content, request.id, runtime, findings);
+    if (content !== undefined) {
+      result.manifest = validateManifest(
+        content,
+        request.id,
+        runtime,
+        findings,
+        request.issue,
+        request.legacyManifestWithoutIssue,
+      );
+    }
   }
 
   const abstractPath = path.join(root, "abstract.md");

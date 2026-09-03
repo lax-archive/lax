@@ -3,9 +3,11 @@ import { ArchiveRepository } from "../../src/shared/archive.js";
 import { initialFiles, registeredFiles } from "../../src/shared/archive-schema.js";
 import { ControlPlane } from "../../src/shared/control-plane.js";
 import { GitHubClient } from "../../src/shared/github.js";
+import { LEGACY_ISSUE_RESERVATION_BODY } from "../../src/shared/issue-reservation.js";
 
 const repositoryId = 123456789;
 const issueNumber = 42;
+const reservedId = "lax-123456";
 const archiveSha = "a".repeat(40);
 const alice = { githubId: 10, handle: "alice" };
 const files = initialFiles(
@@ -35,7 +37,7 @@ describe("submission control-plane routing", () => {
       "issue_comment",
       commentEvent(
         `/lax update ${JSON.stringify({
-          repository: "https://github.com/alice/formalization",
+          repository: "https://codeberg.org/alice/formalization",
           commit: "0123456789abcdef0123456789abcdef01234567",
           folder: ".",
         })}`,
@@ -45,11 +47,62 @@ describe("submission control-plane routing", () => {
     expect(result.kind).toBe("validate");
     if (result.kind !== "validate") throw new Error("unexpected route result");
     expect(result.request.id).toBe("lax-42");
-    expect(result.request.command).toMatchObject({ action: "update", folder: "." });
+    expect(result.request.command).toMatchObject({
+      action: "update",
+      repository: "https://codeberg.org/alice/formalization",
+      folder: ".",
+    });
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/users/alice"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([input]) => {
+      const url = new URL(String(input));
+      return url.pathname.endsWith("/issues/42/comments") &&
+        url.searchParams.get("since") === "2026-07-30T11:00:00Z";
+    })).toBe(true);
     expect(fetchMock.mock.calls.every(([url, init]) => (init as RequestInit | undefined)?.method !== "PATCH")).toBe(
       true,
     );
+  });
+
+  it("routes a six-digit submission independently of its issue number", async () => {
+    const randomFiles = initialFiles(
+      reservedId,
+      { repositoryId, number: issueNumber },
+      alice,
+      "2026-07-30T10:00:00Z",
+    );
+    installArchiveFetch(alice, randomFiles, { submissionId: reservedId });
+    const result = await controlPlane().route(
+      "issue_comment",
+      commentEvent(
+        `/lax update ${reservedId} ${JSON.stringify({
+          repository: "https://github.com/alice/formalization",
+          commit: "0123456789abcdef0123456789abcdef01234567",
+          folder: ".",
+        })}`,
+        alice,
+      ),
+    );
+    expect(result).toMatchObject({ kind: "validate", request: { id: reservedId } });
+  });
+
+  it("authorizes missing manifest bindings only from an exact historical issue body", async () => {
+    installArchiveFetch(alice, files, { issueBody: LEGACY_ISSUE_RESERVATION_BODY });
+    const result = await controlPlane().route(
+      "issue_comment",
+      commentEvent(
+        `/lax update ${JSON.stringify({
+          repository: "https://github.com/alice/formalization",
+          commit: "0123456789abcdef0123456789abcdef01234567",
+          folder: ".",
+        })}`,
+        alice,
+      ),
+    );
+
+    expect(result).toMatchObject({
+      kind: "validate",
+      request: { id: "lax-42", legacyManifestWithoutIssue: true },
+    });
   });
 
   it("applies the owner gate before parsing command arguments", async () => {
@@ -99,6 +152,7 @@ describe("submission control-plane routing", () => {
     expect(result.kind).toBe("publish");
     if (result.kind !== "publish") throw new Error("unexpected result");
     expect(result.request.action).toBe("create");
+    expect(result.request.id).toBe(reservedId);
     expect(result.preview).toContain("lax-initialization-preview-issue:42");
     expect(Object.keys(result.request.initialFiles ?? {}).sort()).toEqual([
       "build-output.json",
@@ -106,6 +160,24 @@ describe("submission control-plane routing", () => {
       "record.json",
     ]);
     expect(result.request.initialFiles?.["owner-list.json"]).toContain('"githubId": 10');
+  });
+
+  it("routes issues created by the historical CLI using its exact markerless body", async () => {
+    installCreateFetch({ body: LEGACY_ISSUE_RESERVATION_BODY });
+    const result = await controlPlane().route("issues", {
+      action: "opened",
+      repository: { id: repositoryId, full_name: "lax-archive/lax" },
+      issue: { number: issueNumber },
+    });
+
+    expect(result).toMatchObject({
+      kind: "publish",
+      request: {
+        action: "create",
+        id: "lax-42",
+        issue: { repositoryId, number: issueNumber },
+      },
+    });
   });
 
   it("aggregates independent initialization event and current-issue errors", async () => {
@@ -154,6 +226,17 @@ describe("submission control-plane routing", () => {
       error.message.includes("title must be one line") &&
       error.message.includes("already exists in lax-database"),
     );
+  });
+
+  it("ignores ordinary issues without a Lax reservation marker", async () => {
+    installCreateFetch({ body: "A normal project issue" });
+    await expect(
+      controlPlane().route("issues", {
+        action: "opened",
+        repository: { id: repositoryId, full_name: "lax-archive/lax" },
+        issue: { number: issueNumber },
+      }),
+    ).resolves.toEqual({ kind: "ignore" });
   });
 
   it("trusts replay markers only when GitHub Actions authored them", async () => {
@@ -325,7 +408,7 @@ function commentEvent(body: string, actor: { githubId: number; handle: string })
 function installArchiveFetch(
   actor = alice,
   archiveFiles: Record<string, string> = files,
-  options: { comments?: unknown[]; fileMode?: string } = {},
+  options: { comments?: unknown[]; fileMode?: string; submissionId?: string; issueBody?: string } = {},
 ): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
     const url = new URL(String(input));
@@ -337,6 +420,7 @@ function installArchiveFetch(
         state: "open",
         title: "Example",
         created_at: "2026-07-30T10:00:00Z",
+        body: options.issueBody ?? null,
         user: { id: 10, login: "alice", type: "User" },
       });
     }
@@ -352,7 +436,7 @@ function installArchiveFetch(
       if (url.searchParams.get("recursive") === "1") return json({ truncated: false, tree: [] });
       return json({
         truncated: false,
-        tree: [{ path: "lax-42", mode: "040000", type: "tree", sha: "submission-tree" }],
+        tree: [{ path: options.submissionId ?? "lax-42", mode: "040000", type: "tree", sha: "submission-tree" }],
       });
     }
     if (path === "/repos/lax-archive/lax-database/git/trees/submission-tree") {
@@ -398,6 +482,7 @@ function installCreateFetch(
         title: "Example",
         created_at: "2026-07-30T10:00:00Z",
         user: { id: 10, login: "alice", type: "User" },
+        body: `<!-- lax-submission-id:${reservedId} -->\n\nLax control plane.`,
         ...issueOverrides,
       });
     }
@@ -413,7 +498,7 @@ function installCreateFetch(
       return json({
         truncated: false,
         tree: existing
-          ? [{ path: "lax-42", mode: "040000", type: "tree", sha: "submission-tree" }]
+          ? [{ path: reservedId, mode: "040000", type: "tree", sha: "submission-tree" }]
           : [],
       });
     }

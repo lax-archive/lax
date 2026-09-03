@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import runtime from "../submission-validation/runtime/validation-runtime.lock.json" with { type: "json" };
+import { validateNewSubmissionId } from "../shared/validation.js";
 
 export function ensureEmptyFolder(folder: string): string {
   const root = path.resolve(folder);
@@ -11,16 +12,15 @@ export function ensureEmptyFolder(folder: string): string {
   return root;
 }
 
-/** Scaffold the source layout after the issue number has allocated the id. */
+/** Scaffold a local source layout before any GitHub issue exists. */
 export function scaffoldSubmission(
   folder: string,
-  issueNumber: number,
+  id: string,
   title: string,
-  ownerHandle: string,
 ): void {
+  validateNewSubmissionId(id);
   const root = ensureEmptyFolder(folder);
-  const id = `lax-${issueNumber}`;
-  const concepts = `Lax${issueNumber}`;
+  const concepts = `Lax${id.slice("lax-".length)}`;
   const proofs = `${concepts}Proofs`;
   const write = (relative: string, content: string): void => {
     const filename = path.join(root, relative);
@@ -32,8 +32,7 @@ export function scaffoldSubmission(
     "manifest.yaml",
     `specVersion: "1"\nid: ${id}\nleanVersion: ${JSON.stringify(runtime.leanVersion)}\n` +
       `mathlibVersion: ${JSON.stringify(runtime.mathlibCommit)}\n` +
-      `title: ${JSON.stringify(title)}\nauthors:\n  - name: ${JSON.stringify(ownerHandle)}\n` +
-      `    github: ${JSON.stringify(ownerHandle)}\nbibEntries: []\n`,
+      `title: ${JSON.stringify(title)}\nauthors: []\nbibEntries: []\n`,
   );
   write("abstract.md", "TODO: describe this submission.\n");
   write("LICENSE", fs.readFileSync(asset("apache-2.0.txt"), "utf8"));

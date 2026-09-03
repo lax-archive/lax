@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -10,6 +12,8 @@ describe("CLI compatibility surface", () => {
     const help = cli(["--help"]);
     expect(help.code).toBe(0);
     expect(help.output).toContain("set-owners|owners");
+    expect(help.output).not.toContain("\n  create ");
+    expect(help.output).toContain("without GitHub authentication");
     expect(help.output).toContain("update-db|pull-db");
     expect(help.output).toContain("serve [options]");
     expect(help.output).toContain("upgrade");
@@ -37,6 +41,23 @@ describe("CLI compatibility surface", () => {
     expect(result.code).toBe(1);
     expect(result.output).toContain("lax build: --only takes");
     expect(result.output).not.toContain("lax: --only takes");
+  });
+
+  it("runs lax init successfully with an empty credential home", () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "lax-cli-init-"));
+    try {
+      const folder = path.join(temporary, "submission");
+      const result = cli(["init", folder, "--title", "Loginless example"], {
+        LAX_HOME: path.join(temporary, "empty-home"),
+      });
+      expect(result.code).toBe(0);
+      expect(result.output).toContain("no GitHub login or issue was needed");
+      expect(fs.readFileSync(path.join(folder, "manifest.yaml"), "utf8")).toMatch(
+        /id: lax-[1-9][0-9]{5}/u,
+      );
+    } finally {
+      fs.rmSync(temporary, { recursive: true, force: true });
+    }
   });
 
   it("requires explicit confirmation before non-interactive registration", () => {
