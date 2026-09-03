@@ -165,6 +165,8 @@ describe("submission static validation retained from main", () => {
       "@article{missing-comma}",
       "@article{key, title = {unclosed}",
       "@article{key, title}",
+      '@string{journal = "Journal", other = "Other"}',
+      '@string{journal = "Journal",,}',
     ]) {
       const findings = new FindingCollector("static");
       validateManifest(
