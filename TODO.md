@@ -83,15 +83,6 @@ history/go-live.md). Still owed:
   renewal path is never entered, and the login lasts until it is revoked.
   Decide against the security trade-off (a leaked `ghu_` stops expiring on
   its own; `lax logout` and GitHub's revocation page still kill it).
-- **`lax doctor` blames the wrong era for cross-submission clones**: the
-  `.lake/packages` check intersects override *names* with materialized
-  clones, so a hand-added relative override for a `LaxN` git require makes
-  its correctly-pinned clone report as a "mathlib-closure clone from the
-  pre-overrides era". Only the warm closure is ours to call dead weight;
-  a `LaxN` clone is live the moment the overrides file is regenerated
-  (`seedOverrides` rewrites it wholesale from the warm manifest, dropping
-  every hand-added entry). Narrow the check to the warm-closure names, and
-  say what deleting costs (a re-clone) when a `LaxN` entry is involved.
 
 ## Paper layer (paper-plan.md + paper-web-plan.md — code stages landed 2026-09-02; Jan-owned gates remain)
 
@@ -269,9 +260,10 @@ initial batch verification over every record in dependency order.
 - **Stale `.lake/packages/<LaxN>` clones** linger in author trees once a
   require is dropped or re-pinned (since 2026-08-06 local builds
   materialize dependency clones there *by design* — full repo clones, so
-  potentially large); nothing collects entries the current manifest no
-  longer names. Candidate: `lax build` collects packages absent from the
-  manifest it just wrote, or `lax doctor` gains a fix.
+  potentially large). `lax doctor` now names the ones the manifest no
+  longer lists, but nothing collects them: the pipeline knows the exact
+  name set at `seedManifest` time, so `lax build` deleting packages absent
+  from the manifest it just wrote is the better home for the sweep.
 - **Registered submission depending on a deleted draft**: deletion only
   warns about stranded dependents; nothing prunes or blocks the registered
   side. Verify the rewrite's publisher has the same gap, then decide.

@@ -866,8 +866,8 @@ function submissionLabel(root: string): string {
 
 /**
  * Local-only health of one registered submission (`lax init`/`lax build`
- * record them; see registry.ts): pins, seeded Lake files, hardlink-farm-era
- * leftovers, and git hygiene. Deliberately no network and no subprocess
+ * record them; see registry.ts): pins, seeded Lake files, clones no current
+ * dependency uses, and git hygiene. Deliberately no network and no subprocess
  * beyond a local `git ls-files`, so a long registry cannot stall the report.
  */
 async function submissionCheck(root: string, label: string): Promise<Check> {
@@ -897,25 +897,34 @@ async function submissionCheck(root: string, label: string): Promise<Check> {
     // mathlib; validate their targets so a pin bump (new warm store) or a
     // deleted store surfaces here instead of as a surprise download.
     const overrides = tryRead(path.join(pkg, ".lake", "package-overrides.json"));
-    let overrideNames: string[] = [];
+    const warmRoot = path.dirname(warmDir());
+    // Names the warm store owns. The overrides that point into it say so
+    // first-hand, but they are exactly what an author loses by deleting
+    // `.lake` — and `lake-manifest.json` lives outside it, so the next bare
+    // `lake build` clones the whole closure. Hence the store's own locked
+    // names too, and mathlib as the floor when neither file can be read.
+    const warmNames = new Set<string>(["mathlib", ...warmClosureNames()]);
     if (overrides === undefined) {
       problems.push(`${kind}/ has no package overrides — a bare \`lake build\` would download mathlib`);
       fixes.add("run `lax build`");
     } else {
       try {
         const parsed = JSON.parse(overrides) as { packages: Array<{ name: string; dir: string }> };
-        overrideNames = parsed.packages.map((pkgEntry) => pkgEntry.name);
         // Lake resolves a relative override dir against the package root, so
         // probe it the same way: our own entries are absolute, but an author
         // may add a relative one (it then survives the package being copied),
         // and probing that against the process cwd invents dead entries.
-        const dead = parsed.packages
-          .map((pkgEntry) => ({ ...pkgEntry, dir: path.resolve(pkg, pkgEntry.dir) }))
-          .filter((pkgEntry) => !fs.existsSync(pkgEntry.dir));
+        const resolved = parsed.packages.map((pkgEntry) => ({
+          ...pkgEntry,
+          dir: path.resolve(pkg, pkgEntry.dir),
+        }));
+        for (const pkgEntry of resolved) {
+          if (pkgEntry.dir.startsWith(warmRoot + path.sep)) warmNames.add(pkgEntry.name);
+        }
+        const dead = resolved.filter((pkgEntry) => !fs.existsSync(pkgEntry.dir));
         // A warm store is `<warm root>/<pins>/.lake/packages/<name>`, so the
         // store of a dead entry is three levels up. Only entries below the
         // warm root are ours to blame on a pin bump or a deleted store.
-        const warmRoot = path.dirname(warmDir());
         const stores = new Set(
           dead
             .filter((pkgEntry) => pkgEntry.dir.startsWith(warmRoot + path.sep))
@@ -939,15 +948,33 @@ async function submissionCheck(root: string, label: string): Promise<Check> {
         fixes.add("run `lax build`");
       }
     }
+    // What may legitimately sit under `.lake/packages`: nothing from the warm
+    // closure (the overrides redirect those to the store), and one clone per
+    // git entry of the manifest — the local build materializes each
+    // cross-submission dependency there and rebuilds it incrementally, so
+    // those are working state, not leftovers, even while a sibling path
+    // override shadows them. Everything else is a dependency the manifest has
+    // since dropped or renamed.
     const packagesDir = path.join(pkg, ".lake", "packages");
-    const staleNames = (overrideNames.length > 0 ? overrideNames : ["mathlib"]).filter((dep) =>
-      fs.existsSync(path.join(packagesDir, dep)),
-    );
-    if (staleNames.length > 0 || fs.existsSync(path.join(packagesDir, ".lax-warm-generation"))) {
+    const present = packageClones(packagesDir);
+    const warmClones = present.filter((dep) => warmNames.has(dep));
+    if (warmClones.length > 0 || fs.existsSync(path.join(packagesDir, ".lax-warm-generation"))) {
       problems.push(
-        `${kind}/.lake/packages holds mathlib-closure clones from the pre-overrides era (${staleNames.join(", ") || ".lax-warm-generation"})`,
+        `${kind}/.lake/packages holds mathlib-closure clones the warm store replaces (${warmClones.join(", ") || ".lax-warm-generation"})`,
       );
-      fixes.add("delete the listed clones — the overrides make them dead weight");
+      fixes.add(DEAD_CLONE_FIX);
+    }
+    // No manifest is not evidence of an orphan: `lax build` writes one from
+    // the pins and makes today's clones live again.
+    const gitNames = manifestGitNames(pkg);
+    if (gitNames !== undefined) {
+      const orphans = present.filter((dep) => !warmNames.has(dep) && !gitNames.has(dep));
+      if (orphans.length > 0) {
+        problems.push(
+          `${kind}/.lake/packages holds clones of dependencies the manifest no longer lists (${orphans.join(", ")})`,
+        );
+        fixes.add(DEAD_CLONE_FIX);
+      }
     }
   }
   for (const tracked of await trackedGeneratedFiles(root)) {
@@ -968,6 +995,57 @@ async function submissionCheck(root: string, label: string): Promise<Check> {
     fix: [...fixes],
     internal: root,
   };
+}
+
+/** One fix line for every kind of clone nothing reads any more: the advice is
+ * the same and doctor lists a fix once, however many problems produced it. */
+const DEAD_CLONE_FIX =
+  "delete the listed folders under .lake/packages — nothing reads them and `lax build` will not fetch them again";
+
+/** The package folders lake has materialized under `.lake/packages`, sorted so
+ * the report reads the same twice. The `.lax-warm-generation` marker a legacy
+ * CLI left there is a file, not a package, and is reported separately. */
+function packageClones(packagesDir: string): string[] {
+  try {
+    return fs
+      .readdirSync(packagesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** The warm store's own locked package names — the closure a bare `lake build`
+ * would clone into the submission when the overrides are missing. Empty when
+ * this machine has no store yet, which leaves the caller's mathlib floor. */
+function warmClosureNames(): string[] {
+  try {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(warmDir(), "lake-manifest.json"), "utf8"),
+    ) as { packages: Array<{ name: string }> };
+    return manifest.packages.map((pkgEntry) => pkgEntry.name);
+  } catch {
+    return [];
+  }
+}
+
+/** Names of the package's git-type manifest entries — the dependencies lake is
+ * entitled to clone into `.lake/packages` on the next build. `undefined` when
+ * there is no readable manifest, which is a different thing from none: with
+ * nothing to compare against, no clone can be called an orphan. */
+function manifestGitNames(pkgDir: string): Set<string> | undefined {
+  const raw = tryRead(path.join(pkgDir, "lake-manifest.json"));
+  if (raw === undefined) return undefined;
+  try {
+    const manifest = JSON.parse(raw) as { packages: Array<{ name: string; type?: string }> };
+    return new Set(
+      manifest.packages.filter((pkgEntry) => pkgEntry.type === "git").map((pkgEntry) => pkgEntry.name),
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 function tryRead(filename: string): string | undefined {

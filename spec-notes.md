@@ -1246,9 +1246,15 @@ warns and stays valid; `lax build` retries.
 Companion: `lax init` and `lax build` record every submission root they
 touch in `~/.lax/submissions.json` (pruned when a manifest.yaml vanishes),
 and `lax doctor` runs local-only health checks over the registry — pin
-drift against pins.ts, missing/dead package overrides, hardlink-farm-era
-mathlib clones under `.lake/packages`, and git-tracked generated files.
+drift against pins.ts, missing/dead package overrides, clones under
+`.lake/packages` that nothing reads, and git-tracked generated files.
 No filesystem scanning: only roots lax has touched are checked.
+The clone check reads the package's own manifest (updated 2026-09-03):
+a warm-closure name there is dead weight (the overrides redirect it to the
+store), and so is a name the manifest no longer lists, but every other
+clone is the local build's materialized cross-submission dependency and
+its incremental build tree — working state, not a leftover, even while a
+hand-added sibling path override shadows it.
 
 Spec touchpoint: the CLI init/scaffold description (init is no longer a
 pure scaffold step) and the doctor command summary.

@@ -7,7 +7,9 @@
 // file on every `lake build` (verified at the pinned v4.30.0) and substitutes
 // the entries after manifest validation, so the build replays the store's
 // prebuilt artifacts where they live — no clone, no hardlinks, no writes to
-// the store, and no `.lake/packages` tree in the submission at all. Overrides
+// the store, and no warm-closure package under the submission's own
+// `.lake/packages` (which since 2026-08-06 holds the local build's
+// cross-submission dependency clones instead; see below). Overrides
 // do *not* apply during `lake update`, which is irrelevant here: authors
 // never run `lake update`.
 //

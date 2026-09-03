@@ -221,7 +221,9 @@ describe("lax doctor submission checks", () => {
     makeWarmStore();
     const root = makeSubmission("stale", 42);
     recordSubmission(root);
-    // hardlink-farm era leftovers, no overrides
+    // a warm-closure clone the store supersedes, and no overrides to redirect
+    // it — deleting `.lake` leaves the manifest, so a bare `lake build` clones
+    // the closure back into the submission
     fs.mkdirSync(path.join(root, "concepts", ".lake", "packages", "mathlib"), {
       recursive: true,
     });
@@ -229,8 +231,115 @@ describe("lax doctor submission checks", () => {
     const report = await doctorReport();
     expect(report).toMatch(/! lax-100042\s/u);
     expect(report).toContain("has no package overrides");
-    expect(report).toContain("pre-overrides era");
+    expect(report).toContain("mathlib-closure clones the warm store replaces (mathlib)");
     expect(report).toContain("lean-toolchain is leanprover/lean4:v0.0.1");
+  });
+
+  /** A locked git entry for `name`, as `lax build` writes for a
+   * cross-submission require — and as lake reads it: its licence to clone the
+   * dependency into `.lake/packages` and build it there. */
+  function requireDependency(pkgDir: string, name: string): void {
+    const file = path.join(pkgDir, "lake-manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      packages: Array<Record<string, unknown>>;
+    };
+    manifest.packages.unshift({
+      url: "https://github.com/lax-archive/lax-submissions",
+      type: "git",
+      subDir: "upstream/concepts",
+      scope: "",
+      rev: "0".repeat(40),
+      name,
+      manifestFile: "lake-manifest.json",
+      inputRev: "0".repeat(40),
+      inherited: false,
+      configFile: "lakefile.toml",
+    });
+    fs.writeFileSync(file, JSON.stringify(manifest, null, 1));
+  }
+
+  /** The relative path override an author's local loop adds by hand to build a
+   * cross-submission dependency from the folder next door instead of its pin. */
+  function siblingOverride(pkgDir: string, name: string, dir: string): void {
+    const file = path.join(pkgDir, ".lake", "package-overrides.json");
+    const overrides = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      packages: Array<Record<string, unknown>>;
+    };
+    overrides.packages.unshift({ type: "path", name, inherited: false, scope: "", dir });
+    fs.writeFileSync(file, JSON.stringify(overrides, null, 1));
+  }
+
+  /** What lake materializes for a git manifest entry. */
+  function clonePackage(pkgDir: string, name: string): void {
+    fs.mkdirSync(path.join(pkgDir, ".lake", "packages", name), { recursive: true });
+  }
+
+  it("leaves a dependency clone alone while a sibling override shadows it", async () => {
+    makeWarmStore();
+    const root = makeSubmission("shadowed", 42);
+    await provisionScaffold(root, "lax-100042");
+    recordSubmission(root);
+    const proofs = path.join(root, "proofs");
+    const sibling = path.join(home, "upstream", "concepts");
+    fs.mkdirSync(sibling, { recursive: true });
+    requireDependency(proofs, "Lax67");
+    clonePackage(proofs, "Lax67");
+    siblingOverride(proofs, "Lax67", path.relative(proofs, sibling));
+    const report = await doctorReport();
+    // The clone is the local build's own incremental workspace: the override
+    // shadows it only until the next `lax build` rewrites the overrides from
+    // the pins, and deleting it would cost a re-clone and a full rebuild.
+    expect(report).toMatch(new RegExp(`✓ lax-100042\\s+${escape(fs.realpathSync(root))}`, "u"));
+  });
+
+  it("names the clones the manifest no longer lists, and only those", async () => {
+    makeWarmStore();
+    const root = makeSubmission("renamed", 42);
+    await provisionScaffold(root, "lax-100042");
+    recordSubmission(root);
+    const proofs = path.join(root, "proofs");
+    requireDependency(proofs, "Lax67");
+    clonePackage(proofs, "Lax67");
+    // Lax13 named the same submission before a superseding revision renamed it
+    // throughout: still on disk, no longer required, never read again.
+    clonePackage(proofs, "Lax13");
+    clonePackage(proofs, "Lax13Proofs");
+    const report = await doctorReport();
+    expect(report).toMatch(/! lax-100042\s/u);
+    expect(report).toContain("no longer lists (Lax13, Lax13Proofs)");
+    expect(report).toContain("delete the listed folders under .lake/packages");
+    expect(report).not.toContain("Lax67");
+  });
+
+  it("calls no clone an orphan without a manifest to compare it against", async () => {
+    makeWarmStore();
+    const root = makeSubmission("unbuilt", 42);
+    recordSubmission(root);
+    // `lax build` writes the manifest; until it has, a clone left by an
+    // earlier one is as likely to be live as dead.
+    clonePackage(path.join(root, "proofs"), "Lax67");
+    const report = await doctorReport();
+    expect(report).not.toContain("no longer lists");
+  });
+
+  it("flags a warm-closure clone and the legacy generation marker", async () => {
+    makeWarmStore();
+    const root = makeSubmission("legacy", 42);
+    await provisionScaffold(root, "lax-100042");
+    recordSubmission(root);
+    // mathlib belongs in the store the overrides point at, never here
+    clonePackage(path.join(root, "concepts"), "mathlib");
+    const packages = path.join(root, "proofs", ".lake", "packages");
+    fs.mkdirSync(packages, { recursive: true });
+    fs.writeFileSync(path.join(packages, ".lax-warm-generation"), "1\n");
+    const report = await doctorReport();
+    expect(report).toMatch(/! lax-100042\s/u);
+    expect(report).toContain(
+      "concepts/.lake/packages holds mathlib-closure clones the warm store replaces (mathlib)",
+    );
+    expect(report).toContain(
+      "proofs/.lake/packages holds mathlib-closure clones the warm store replaces (.lax-warm-generation)",
+    );
   });
 
   it("flags overrides that point at a deleted warm store", async () => {
