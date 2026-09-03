@@ -52,6 +52,54 @@ interface SmokeFixture {
   check(report: ValidationReport, jobRoot: string): void;
 }
 
+// The fixture byte blobs live above the driver below: the driver calls
+// `fixtures()` while the module is still evaluating, so anything a fixture
+// reads has to be initialized by then (a `const` declared further down is
+// in its temporal dead zone and the smoke dies before docker is touched).
+
+/** Marker for a fixture file given as bytes rather than text. */
+const BASE64_FILE = "base64:";
+
+/** A 8x8 checkerboard PNG — the raster `\includegraphics` case, small enough
+ * that its whole data: URI is a couple of hundred bytes in the bundle. */
+const SMOKE_PNG =
+  `${BASE64_FILE}iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAGElEQVR42mNgYPj/n4EB` +
+  "C4ldFCw8CHUAAOkwP8H8I6eUAAAAAElFTkSuQmCC";
+
+/** A one-page PDF drawing a filled rectangle and a line, uncompressed so the
+ * fixture stays text — the vector `\includegraphics` case (an ORCID icon, a
+ * class logo), which reaches the serializer through graphics.sty and not
+ * through tikz's externalization. */
+const SMOKE_PDF = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 20] /Contents 4 0 R /Resources << >> >>
+endobj
+4 0 obj
+<< /Length 56 >>
+stream
+0 0.4 0.8 rg 2 2 36 16 re f 1 0 0 RG 1 w 2 2 m 38 18 l S
+endstream
+endobj
+xref
+0 5
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000217 00000 n 
+trailer
+<< /Size 5 /Root 1 0 R >>
+startxref
+323
+%%EOF
+`;
+
 assert(
   process.env.LAX_MATHLIB_URL === undefined && process.env.LAX_MATHLIB_REV === undefined,
   "the smoke runs against the real pins; unset the LAX_MATHLIB_* test seam",
@@ -513,49 +561,6 @@ end Lax44Proofs
 `,
   };
 }
-
-/** Marker for a fixture file given as bytes rather than text. */
-const BASE64_FILE = "base64:";
-
-/** A 8x8 checkerboard PNG — the raster `\includegraphics` case, small enough
- * that its whole data: URI is a couple of hundred bytes in the bundle. */
-const SMOKE_PNG =
-  `${BASE64_FILE}iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAGElEQVR42mNgYPj/n4EB` +
-  "C4ldFCw8CHUAAOkwP8H8I6eUAAAAAElFTkSuQmCC";
-
-/** A one-page PDF drawing a filled rectangle and a line, uncompressed so the
- * fixture stays text — the vector `\includegraphics` case (an ORCID icon, a
- * class logo), which reaches the serializer through graphics.sty and not
- * through tikz's externalization. */
-const SMOKE_PDF = `%PDF-1.4
-1 0 obj
-<< /Type /Catalog /Pages 2 0 R >>
-endobj
-2 0 obj
-<< /Type /Pages /Kids [3 0 R] /Count 1 >>
-endobj
-3 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 20] /Contents 4 0 R /Resources << >> >>
-endobj
-4 0 obj
-<< /Length 56 >>
-stream
-0 0.4 0.8 rg 2 2 36 16 re f 1 0 0 RG 1 w 2 2 m 38 18 l S
-endstream
-endobj
-xref
-0 5
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000217 00000 n 
-trailer
-<< /Size 5 /Root 1 0 R >>
-startxref
-323
-%%EOF
-`;
 
 function paperWebFiles(): Record<string, string> {
   return {
