@@ -31,8 +31,24 @@ export function runResolution(
   const proofs: ResolvedDependency[] = [];
   const byPackage = new Map<string, ResolvedDependency>();
   const resolving = new Set<string>();
+  // Who asked for each package, for the superseded-dependency warning: a
+  // direct require names itself, a transitive one names the package whose
+  // closure pulled it in. Recorded on every call, before the memoised
+  // return, so a package reached twice knows both of its requirers.
+  const directPackages = new Set<string>();
+  const requirers = new Map<string, Set<string>>();
 
-  const resolve = (packageName: string, expected: { repository: string; commit: string; subDir: string } | undefined): ResolvedDependency | undefined => {
+  const resolve = (
+    packageName: string,
+    expected: { repository: string; commit: string; subDir: string } | undefined,
+    requiredBy?: string,
+  ): ResolvedDependency | undefined => {
+    if (expected !== undefined) directPackages.add(packageName);
+    else if (requiredBy !== undefined) {
+      const seen = requirers.get(packageName) ?? new Set<string>();
+      seen.add(requiredBy);
+      requirers.set(packageName, seen);
+    }
     const existing = byPackage.get(packageName);
     if (existing !== undefined) {
       if (resolving.has(packageName))
@@ -101,8 +117,8 @@ export function runResolution(
     };
     byPackage.set(packageName, dependency);
     resolving.add(packageName);
-    for (const child of dependency.requiredPackages) resolve(child, undefined);
-    if (kind === "proofs") resolve(packageName.slice(0, -"Proofs".length), undefined);
+    for (const child of dependency.requiredPackages) resolve(child, undefined, packageName);
+    if (kind === "proofs") resolve(packageName.slice(0, -"Proofs".length), undefined, packageName);
     resolving.delete(packageName);
     return dependency;
   };
@@ -124,6 +140,7 @@ export function runResolution(
     if (dependency !== undefined) proofs.push(dependency);
   }
 
+  warnSupersededDependencies(request, archive, byPackage, directPackages, requirers, findings);
   checkSupersedes(request, staticResult, archive, findings);
 
   return {
@@ -134,6 +151,97 @@ export function runResolution(
     },
     findings,
   };
+}
+
+/**
+ * A dependency whose submission a *registered* successor replaces still
+ * builds — requires are rev-pinned and the old record is immutable — so this
+ * is a nudge, never a refusal. "Superseded" is derived exactly as the website
+ * derives it (`supersededBy`/`latestVersion` in its site generator): only a
+ * registered claimant counts, a draft claim is still provisional, and should
+ * stale data ever show two claimants the lowest id wins so the warning is the
+ * same everywhere. One warning per superseded submission, direct or
+ * transitive, in id order.
+ */
+function warnSupersededDependencies(
+  request: ValidationRequest,
+  archive: ArchiveSnapshot,
+  byPackage: ReadonlyMap<string, ResolvedDependency>,
+  directPackages: ReadonlySet<string>,
+  requirers: ReadonlyMap<string, Set<string>>,
+  findings: FindingCollector,
+): void {
+  const successors = registeredSuccessors(archive);
+  if (successors.size === 0) return;
+  const bySubmission = new Map<string, { packages: string[]; requirers: Set<string>; direct: boolean }>();
+  for (const dependency of byPackage.values()) {
+    const entry = bySubmission.get(dependency.submissionId) ?? {
+      packages: [],
+      requirers: new Set<string>(),
+      direct: false,
+    };
+    entry.packages.push(dependency.packageName);
+    if (directPackages.has(dependency.packageName)) entry.direct = true;
+    for (const requirer of requirers.get(dependency.packageName) ?? []) entry.requirers.add(requirer);
+    bySubmission.set(dependency.submissionId, entry);
+  }
+  for (const [id, entry] of [...bySubmission].sort((a, b) => compareIds(a[0], b[0]))) {
+    const successor = successors.get(id);
+    // A submission may require the very work it supersedes; being told to
+    // build on itself would be nonsense.
+    if (successor === undefined || successor === request.id) continue;
+    const packages = [...entry.packages].sort();
+    // The nearest requirers, minus this dependency's own packages: a proof
+    // package pulling in its concept package says nothing about who wanted it.
+    const from = [...entry.requirers].filter((name) => !packages.includes(name)).sort();
+    const where =
+      entry.direct || from.length === 0
+        ? packages.join(", ")
+        : `${packages.join(", ")}, required by ${list(from)}`;
+    const latest = latestVersion(successors, id);
+    const tip = latest === successor || latest === request.id ? "" : `; the latest version is ${latest}`;
+    findings.warn(
+      "superseded-dependency",
+      `${id} (${where}) is superseded by ${successor}${tip} — consider building on the latest version`,
+    );
+  }
+}
+
+/** Superseded id → the registered successor claiming it. */
+function registeredSuccessors(archive: ArchiveSnapshot): Map<string, string> {
+  const successors = new Map<string, string>();
+  for (const record of archive.all()) {
+    if (record.state !== "registered") continue;
+    const target = archive.supersedes(record);
+    if (target === undefined || target === record.id || archive.get(target) === undefined) continue;
+    const existing = successors.get(target);
+    if (existing === undefined || compareIds(record.id, existing) < 0) successors.set(target, record.id);
+  }
+  return successors;
+}
+
+/** Follow bound successors to the newest version; `id` itself when current.
+ * Cycles are structurally impossible (a claim binds against an immutable
+ * record), but a copy of the archive is untrusted data: never loop forever. */
+function latestVersion(successors: ReadonlyMap<string, string>, id: string): string {
+  const seen = new Set([id]);
+  let current = id;
+  for (;;) {
+    const next = successors.get(current);
+    if (next === undefined || seen.has(next)) return current;
+    seen.add(next);
+    current = next;
+  }
+}
+
+function compareIds(left: string, right: string): number {
+  return Number(left.slice("lax-".length)) - Number(right.slice("lax-".length));
+}
+
+/** `Lax7`, `Lax7 and Lax8`, `Lax7, Lax8 and Lax9`. */
+function list(values: readonly string[]): string {
+  if (values.length <= 1) return values[0] ?? "";
+  return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]!}`;
 }
 
 /**

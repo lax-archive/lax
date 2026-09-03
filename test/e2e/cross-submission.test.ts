@@ -36,6 +36,7 @@ import { sharedWarmBase } from "../paths.js";
 import {
   archiveWith,
   publishLocalCapture,
+  withSuccessor,
   type PublishedUpstream,
 } from "../support/captures.js";
 import {
@@ -403,5 +404,18 @@ end Lax14.Top
     expect(report.violations).toEqual([]);
     expect(report.warnings.map((warning) => warning.message).join("\n"))
       .toContain("dependency Lax11 belongs to draft submission lax-11");
+  });
+
+  it("accepts a superseded upstream with a warning", async () => {
+    // A newer version of lax-11 exists; the rev-pinned require keeps
+    // building, so the author is nudged rather than stopped.
+    const report = await buildOnHost(down, {
+      id: "lax-12",
+      archive: withSuccessor(archiveWith(upstream, middle), "lax-11", "lax-20"),
+    });
+    expect(report.violations).toEqual([]);
+    expect(report.warnings.map((warning) => warning.message).join("\n")).toContain(
+      "lax-11 (Lax11) is superseded by lax-20 — consider building on the latest version",
+    );
   });
 });

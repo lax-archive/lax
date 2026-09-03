@@ -192,6 +192,43 @@ describe("local command preflights", () => {
     });
   });
 
+  it("notes a superseded dependency, direct or further up the chain", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-3", "registered", []);
+    writeRecord(database, "lax-7", "registered", ["Lax3"]);
+    writeRecord(database, "lax-8", "draft", ["Lax3"]);
+    writeRecord(database, "lax-9", "draft", ["Lax7"]);
+    writeRecord(database, "lax-12", "registered", [], { supersedes: "lax-3" });
+    writeRecord(database, "lax-13", "registered", [], { supersedes: "lax-12" });
+
+    // Registering is admitted — the note is a nudge, not a blocker.
+    expect(checkRegisterLocally("lax-8", "refreshed")).toEqual({
+      warnings: [
+        {
+          text: "lax-3, which lax-8 builds on, is superseded by lax-12; the latest version is lax-13.",
+          fix: "Registered submissions can never be changed — consider building on the latest version first.",
+        },
+      ],
+    });
+    expect(checkRegisterLocally("lax-9", "refreshed").warnings.map((warning) => warning.text)).toEqual([
+      "lax-3, which lax-9 builds on (through lax-7), is superseded by lax-12; " +
+        "the latest version is lax-13.",
+    ]);
+  });
+
+  it("keeps quiet while the successor is still a draft", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-3", "registered", []);
+    writeRecord(database, "lax-8", "draft", ["Lax3"]);
+    writeRecord(database, "lax-12", "draft", [], { supersedes: "lax-3" });
+
+    expect(checkRegisterLocally("lax-8", "refreshed")).toEqual({ warnings: [] });
+  });
+
   it("refuses superseding a deleted target and degrades supersedes refusals when stale", () => {
     const home = temporary("lax-home-");
     process.env.LAX_HOME = home;

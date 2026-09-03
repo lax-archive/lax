@@ -100,6 +100,39 @@ export function archiveWith(
   return new ArchiveSnapshot(root, "a".repeat(40));
 }
 
+/**
+ * The same archive with one more registered record claiming `supersedes:
+ * target` — the only thing "superseded" is ever derived from. The claimant
+ * needs no content: nothing resolves it, the scan only reads its state and
+ * its build output.
+ */
+export function withSuccessor(
+  archive: ArchiveSnapshot,
+  target: string,
+  successor: string,
+): ArchiveSnapshot {
+  const directory = path.join(archive.root, successor);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(
+    path.join(directory, "record.json"),
+    JSON.stringify({
+      id: successor,
+      specVersion: "1",
+      state: "registered",
+      source: {
+        repository: "https://github.com/lax-e2e/successor",
+        commit: "b".repeat(40),
+        folder: ".",
+      },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(directory, "build-output.json"),
+    JSON.stringify({ id: successor, specVersion: "1", inputs: { manifest: { supersedes: target } } }),
+  );
+  return new ArchiveSnapshot(archive.root, archive.sha);
+}
+
 function sha256File(filename: string): string {
   return createHash("sha256").update(fs.readFileSync(filename)).digest("hex");
 }

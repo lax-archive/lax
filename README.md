@@ -31,7 +31,10 @@ successor (first to register wins; competing drafts merely race). The superseded
 record itself is never modified — the
 website derives the version chain from the successors' build outputs and
 nudges readers to the latest version. Fresh ids keep both versions usable in
-one dependency graph and keep old citations meaningful. Details and accepted
+one dependency graph and keep old citations meaningful. A submission that
+builds on superseded work keeps building — its requires are rev-pinned — and
+`lax build`, `lax submit`, and `lax register` say that a newer version exists
+rather than refusing anything. Details and accepted
 limitations: spec-notes.md, "Versioning: `supersedes` successor chains".
 
 The Lean validation job has no App key, installation token, or Archive write

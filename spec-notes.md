@@ -278,6 +278,21 @@ current work in the library, and its BibTeX gains a `note = {superseded by
 lax-N}`. Endorsements do **not** carry over — they attest specific code —
 so both versions' standing stays visible.
 
+Addendum (2026-09-03), the other direction — building *on* superseded work:
+the resolution phase warns once per superseded dependency **submission**
+(`superseded-dependency`), for direct and transitive dependencies alike,
+naming its packages, the nearest requirer of a transitive one, the successor,
+and the tip of a longer chain; `lax register`'s local preflight adds the same
+fact as a note before the typed confirmation, walking the dependency closure
+of the local copy. Both derive "superseded" exactly as the site generator
+does — from **registered** claims only (a draft claim stays provisional),
+lowest id winning a stale-data tie, following successors to the tip — and
+neither ever blocks: requires are rev-pinned and the superseded record is
+immutable, so every dependent keeps building. The nudge is only that a newer
+version exists. Since the local build and the trusted gate run the same
+resolution, `lax submit` now collects both runs' warnings into a single
+deduplicated block instead of printing each of them twice.
+
 Accepted limitations, on record: no retro-linking (two already-registered
 submissions can never be joined into a chain afterwards — the claim lives in
 the immutable manifest) and no undo (a bound claim is as permanent as

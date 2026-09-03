@@ -116,6 +116,40 @@ describe("the submit report's paper row", () => {
   });
 });
 
+describe("the submit report's warnings", () => {
+  beforeEach(() => {
+    ui.configure({ color: false });
+  });
+
+  it("prints a warning both runs found exactly once", async () => {
+    const superseded = {
+      phase: "resolution",
+      rule: "superseded-dependency",
+      message: "lax-3 (Lax3) is superseded by lax-12 — consider building on the latest version",
+    };
+    const output = capture();
+    try {
+      const submit = new SubmitReport("lax-61", { local: false, account: false, source: false });
+      // The local build and the archive check the same things against the
+      // same archive, so the same warning arrives twice.
+      submit.carry([superseded]);
+      const follow = submit.follow();
+      await follow.onValidationReport?.(
+        okReport({
+          warnings: [superseded, { phase: "inspect", rule: "abstract", message: "short" }],
+        }),
+      );
+      submit.succeed();
+    } finally {
+      output.restore();
+    }
+    const text = output.lines.join("\n");
+    expect(text.split(superseded.message).length - 1).toBe(1);
+    expect(text).toContain("2 warnings");
+    expect(text).not.toContain("1 warning\n");
+  });
+});
+
 describe("the paper summary vocabulary", () => {
   it("matches the local build's row and names the web view's fate", () => {
     expect(paperSummary({ pages: 1, marks: 1 }, [])).toBe("1 page · 1 mark");

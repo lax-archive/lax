@@ -381,3 +381,91 @@ describe("supersedes resolution", () => {
     );
   });
 });
+
+/**
+ * The mirror image of the claim checks above: what a submission is told when
+ * the work it *builds on* has been replaced. Nothing breaks — requires are
+ * rev-pinned and the old record is immutable — so this is a nudge, and it is
+ * derived from registered claims only, exactly as the website derives its
+ * version chains.
+ */
+describe("superseded dependencies", () => {
+  function withRequires(requires: { concepts?: string[]; proofs?: string[] }): StaticResult {
+    const result = staticResult("lax-9");
+    const gitRequire = (name: string) => ({
+      name,
+      git: REPOSITORY,
+      rev: COMMIT,
+      subDir: name.endsWith("Proofs") ? "proofs" : "concepts",
+    });
+    result.concepts!.lakefile.gitRequires = (requires.concepts ?? []).map(gitRequire);
+    result.proofs!.lakefile.gitRequires = (requires.proofs ?? []).map(gitRequire);
+    return result;
+  }
+
+  function nudges(staticCheck: StaticResult, archive: ArchiveSnapshot): string[] {
+    const outcome = resolve(staticCheck, archive);
+    expect(outcome.findings.violations).toEqual([]);
+    return outcome.findings.warnings
+      .filter((finding) => finding.rule === "superseded-dependency")
+      .map((finding) => finding.message);
+  }
+
+  it("names the successor of a direct dependency", () => {
+    const root = temporary("lax-superseded-archive-");
+    writeArchiveRecord(root, "lax-3", {});
+    writeArchiveRecord(root, "lax-12", { supersedes: "lax-3" });
+    expect(nudges(withRequires({ concepts: ["Lax3"] }), new ArchiveSnapshot(root, "a".repeat(40)))).toEqual([
+      "lax-3 (Lax3) is superseded by lax-12 — consider building on the latest version",
+    ]);
+  });
+
+  it("follows a chain to its latest version", () => {
+    const root = temporary("lax-superseded-archive-");
+    writeArchiveRecord(root, "lax-3", {});
+    writeArchiveRecord(root, "lax-4", { supersedes: "lax-3" });
+    writeArchiveRecord(root, "lax-5", { supersedes: "lax-4" });
+    expect(nudges(withRequires({ concepts: ["Lax3"] }), new ArchiveSnapshot(root, "a".repeat(40)))).toEqual([
+      "lax-3 (Lax3) is superseded by lax-4; the latest version is lax-5 — " +
+        "consider building on the latest version",
+    ]);
+  });
+
+  it("says nothing about a provisional claim or about superseding it oneself", () => {
+    const draft = temporary("lax-superseded-archive-");
+    writeArchiveRecord(draft, "lax-3", {});
+    writeArchiveRecord(draft, "lax-12", { state: "draft", supersedes: "lax-3" });
+    expect(nudges(withRequires({ concepts: ["Lax3"] }), new ArchiveSnapshot(draft, "a".repeat(40)))).toEqual([]);
+
+    // This submission is itself the successor: telling it to build on itself
+    // would be nonsense.
+    const own = temporary("lax-superseded-archive-");
+    writeArchiveRecord(own, "lax-3", {});
+    writeArchiveRecord(own, "lax-9", { supersedes: "lax-3" });
+    expect(nudges(withRequires({ concepts: ["Lax3"] }), new ArchiveSnapshot(own, "a".repeat(40)))).toEqual([]);
+  });
+
+  it("names the nearest requirer of a transitive dependency", () => {
+    const root = temporary("lax-superseded-archive-");
+    writeArchiveRecord(root, "lax-3", {});
+    writeArchiveRecord(root, "lax-7", { concepts: ["Lax3"] });
+    writeArchiveRecord(root, "lax-12", { supersedes: "lax-3" });
+    expect(nudges(withRequires({ concepts: ["Lax7"] }), new ArchiveSnapshot(root, "a".repeat(40)))).toEqual([
+      "lax-3 (Lax3, required by Lax7) is superseded by lax-12 — consider building on the latest version",
+    ]);
+  });
+
+  it("warns once per submission, whatever it contributes", () => {
+    const root = temporary("lax-superseded-archive-");
+    writeArchiveRecord(root, "lax-3", {});
+    writeArchiveRecord(root, "lax-12", { supersedes: "lax-3" });
+    expect(
+      nudges(
+        withRequires({ concepts: ["Lax3"], proofs: ["Lax3Proofs"] }),
+        new ArchiveSnapshot(root, "a".repeat(40)),
+      ),
+    ).toEqual([
+      "lax-3 (Lax3, Lax3Proofs) is superseded by lax-12 — consider building on the latest version",
+    ]);
+  });
+});

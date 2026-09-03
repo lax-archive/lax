@@ -145,7 +145,84 @@ export function checkRegisterLocally(id: string, refresh: DatabaseRefreshResult)
     if (!stale) return { refusal: supersedesProblem, warnings };
     warnings.push({ text: supersedesProblem });
   }
+  noteSupersededDependencies(current, records, warnings);
   return { warnings };
+}
+
+/**
+ * Registering freezes what this submission builds on, so a dependency — its
+ * own, or one further up the chain — that a registered successor has replaced
+ * belongs in front of the author now. A note, never a refusal: the pinned
+ * requires keep working, and the archive admits the registration either way.
+ * "Superseded" is derived the way the archive and the website derive it, from
+ * registered claims only; a draft claimant is still provisional.
+ */
+function noteSupersededDependencies(
+  current: LocalRecord,
+  records: LocalRecord[],
+  warnings: PreflightNote[],
+): void {
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const successors = new Map<string, string>();
+  for (const record of records) {
+    const target = record.supersedes;
+    if (record.state !== "registered" || target === undefined) continue;
+    if (target === record.id || !byId.has(target)) continue;
+    const existing = successors.get(target);
+    if (existing === undefined || compareIds(record.id, existing) < 0) successors.set(target, record.id);
+  }
+  if (successors.size === 0) return;
+  // Breadth-first, so the recorded path to each dependency is the shortest
+  // one — the fewest submissions to name in the note.
+  const cameFrom = new Map<string, string>();
+  const queue = [current.id];
+  const seen = new Set([current.id]);
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const record = byId.get(id);
+    if (record === undefined) continue;
+    for (const dependency of dependencyIds(id, record.requirements)) {
+      if (seen.has(dependency)) continue;
+      seen.add(dependency);
+      cameFrom.set(dependency, id);
+      queue.push(dependency);
+    }
+  }
+  const reached = [...seen].filter((id) => id !== current.id).sort(compareIds);
+  for (const id of reached) {
+    const successor = successors.get(id);
+    // This submission superseding what it builds on is not a thing to fix.
+    if (successor === undefined || successor === current.id) continue;
+    const through: string[] = [];
+    for (let step = cameFrom.get(id); step !== undefined && step !== current.id; step = cameFrom.get(step)) {
+      through.unshift(step);
+    }
+    const latest = latestVersion(successors, id);
+    warnings.push({
+      text:
+        `${id}, which ${current.id} builds on` +
+        `${through.length === 0 ? "" : ` (through ${list(through)})`}, ` +
+        `is superseded by ${successor}` +
+        `${latest === successor || latest === current.id ? "" : `; the latest version is ${latest}`}.`,
+      fix: "Registered submissions can never be changed — consider building on the latest version first.",
+    });
+  }
+}
+
+/** Follow bound successors to the newest version; `id` itself when current. */
+function latestVersion(successors: ReadonlyMap<string, string>, id: string): string {
+  const seen = new Set([id]);
+  let current = id;
+  for (;;) {
+    const next = successors.get(current);
+    if (next === undefined || seen.has(next)) return current;
+    seen.add(next);
+    current = next;
+  }
+}
+
+function compareIds(left: string, right: string): number {
+  return Number(left.slice("lax-".length)) - Number(right.slice("lax-".length));
 }
 
 /**
@@ -215,7 +292,7 @@ function dependencyIds(id: string, requirements: string[]): string[] {
     const dependency = submissionIdForPackage(name);
     if (dependency !== undefined && dependency !== id) ids.add(dependency);
   }
-  return [...ids].sort((left, right) => Number(left.slice("lax-".length)) - Number(right.slice("lax-".length)));
+  return [...ids].sort(compareIds);
 }
 
 function readRecords(root: string): LocalRecord[] {

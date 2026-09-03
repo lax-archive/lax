@@ -366,6 +366,13 @@ export async function resumeSubmit(target: string): Promise<void> {
 export class SubmitReport {
   readonly steps = new ui.Steps();
   readonly notes = new ui.Notes();
+  /**
+   * Every warning the submit collected — the local build's and the archive's
+   * — rendered as one block at the end. Both runs check the same things
+   * against the same archive, so most warnings arrive twice; `groupFindings`
+   * already drops the duplicates, and one block is also one count.
+   */
+  private readonly warnings: ValidationFinding[] = [];
   /** Whether the step list carries a "Compiling the paper" row of its own —
    * declared only when the caller knows the manifest declares one. */
   readonly paperRow: boolean;
@@ -423,7 +430,7 @@ export class SubmitReport {
         if (report.ok) {
           this.settleArchive();
           this.settlePaperRow(report.paper, report.warnings);
-          carryWarnings(this.notes, report.warnings);
+          this.carry(report.warnings);
           return;
         }
         this.steps.settle("archive", { status: "fail" });
@@ -489,6 +496,11 @@ export class SubmitReport {
     this.steps.settle("paper", { label: "Compiled the paper", detail: summary, time: false });
   }
 
+  /** Warnings do not block anything, so they wait for the notes block. */
+  carry(warnings: readonly ValidationFinding[]): void {
+    this.warnings.push(...warnings);
+  }
+
   succeed(): void {
     this.settleArchive();
     this.settlePaperRow(undefined, []);
@@ -500,6 +512,8 @@ export class SubmitReport {
     ui.verdict(`${this.id} is a draft in the archive`);
     ui.link(submissionUrl(this.id));
     if (this.paperAside !== undefined) ui.aside("Paper", this.paperAside);
+    const warnings = groupFindings(this.warnings, "warning");
+    if (warnings !== undefined) this.notes.add(warnings.headline, ...warnings.body);
     this.notes.print();
     ui.done();
   }
@@ -521,12 +535,6 @@ export function paperSummary(
   }
   const skipped = warnings.some((warning) => warning.rule.startsWith("web-"));
   return skipped ? `${counts} · web view skipped` : counts;
-}
-
-/** Warnings do not block anything, so they wait for the notes block. */
-function carryWarnings(notes: ui.Notes, warnings: readonly ValidationFinding[]): void {
-  const group = groupFindings(warnings, "warning");
-  if (group !== undefined) notes.add(group.headline, ...group.body);
 }
 
 export async function requestDelete(reference: string, yes = false): Promise<number> {
@@ -740,7 +748,7 @@ async function checkLocally(
     throw new CommandFailedError("the local build failed");
   }
   submit.steps.settle("local", { label: "Built on your machine" });
-  carryWarnings(submit.notes, outcome.warnings);
+  submit.carry(outcome.warnings);
 }
 
 async function buildCommittedTree(
