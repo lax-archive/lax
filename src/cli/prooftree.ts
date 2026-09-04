@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createHash, randomInt } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,7 +40,7 @@ interface ArchiveSubmission {
 }
 
 export interface SelectedProof extends NetworkProof {
-  selection: "grounded" | "random";
+  selection: "grounded" | "fallback";
 }
 
 export interface ProofTreeSelection {
@@ -78,28 +78,40 @@ export interface GenerateProofTreeOptions {
 }
 
 /**
- * Select a proof forest. A least-fixed-point pass records one randomly chosen
- * grounded witness for every provable statement. Traversal uses those
- * witnesses preferentially; only an unprovable statement falls back to a
- * random proof, with cycles broken into unresolved leaves.
+ * Select a proof forest. A least-fixed-point pass records the order in which
+ * every provable statement becomes grounded, and each statement's witness is
+ * then its first proof whose assumptions all became grounded strictly earlier.
+ * Traversal uses those witnesses preferentially; only an unprovable statement
+ * falls back to a proof of its own, with cycles broken into unresolved leaves.
  */
 export function selectProofTree(
   roots: string[],
   statements: Iterable<string>,
   proofs: NetworkProof[],
-  choose: (length: number) => number = randomInt,
 ): ProofTreeSelection {
   const statementSet = new Set(statements);
-  const byConclusion = new Map<string, NetworkProof[]>();
+  const grouped = new Map<string, NetworkProof[]>();
   for (const proof of proofs) {
     if (!statementSet.has(proof.conclusion)) continue;
-    const values = byConclusion.get(proof.conclusion) ?? [];
+    const values = grouped.get(proof.conclusion) ?? [];
     values.push(proof);
-    byConclusion.set(proof.conclusion, values);
+    grouped.set(proof.conclusion, values);
   }
-  for (const values of byConclusion.values()) values.sort((a, b) => a.id.localeCompare(b.id));
+  // The archive arrives in the order the database directory happened to be
+  // read, which is a property of the filesystem rather than of the records, so
+  // every pass below walks conclusions and candidates in sorted order instead.
+  // Statement and proof ids are unique across the whole Archive, which makes
+  // that a total order and the selection a function of the records alone: the
+  // same database picks the same proofs on every machine and every run, and a
+  // report naming an unresolved leaf can be reproduced by whoever reads it.
+  for (const values of grouped.values()) values.sort((a, b) => a.id.localeCompare(b.id));
+  const byConclusion = new Map([...grouped].sort(([left], [right]) => left.localeCompare(right)));
 
-  const grounded = new Set<string>();
+  // A proof reaches `ready` only once every one of its assumptions is already
+  // grounded, so the rank recorded here — a statement's position in the
+  // grounding order — is strictly greater than the rank of every assumption of
+  // the proof that grounded it.
+  const groundedRank = new Map<string, number>();
   const remainingAssumptions = new Map<NetworkProof, number>();
   const proofsByAssumption = new Map<string, NetworkProof[]>();
   const ready: NetworkProof[] = [];
@@ -117,8 +129,8 @@ export function selectProofTree(
   }
   for (let index = 0; index < ready.length; index += 1) {
     const proof = ready[index]!;
-    if (grounded.has(proof.conclusion)) continue;
-    grounded.add(proof.conclusion);
+    if (groundedRank.has(proof.conclusion)) continue;
+    groundedRank.set(proof.conclusion, groundedRank.size);
     for (const dependent of proofsByAssumption.get(proof.conclusion) ?? []) {
       const remaining = remainingAssumptions.get(dependent);
       if (remaining === undefined || remaining === 0) continue;
@@ -129,12 +141,23 @@ export function selectProofTree(
 
   // Select only after reaching the fixed point. Otherwise a statement visited
   // early can see just one eligible proof even though more proofs become
-  // grounded later in the same pass.
+  // grounded later in the same pass. Eligibility is then restricted to the
+  // proofs whose assumptions all became grounded strictly before the
+  // conclusion did: two statements that prove each other are both grounded as
+  // soon as either one is on its own, and taking the other's proof as a
+  // witness would build a witness cycle that the traversal below could only
+  // report as an unresolved leaf. Rank strictly decreases along every witness
+  // edge, so the witness relation is acyclic by construction and a grounded
+  // statement is never unresolved. The proof that grounded a statement always
+  // satisfies the restriction, so it never costs a statement its witness.
   const groundedWitness = new Map<string, NetworkProof>();
-  for (const statement of [...grounded].sort()) {
-    const eligible = (byConclusion.get(statement) ?? [])
-      .filter((proof) => proof.assumptions.every((assumption) => grounded.has(assumption)));
-    groundedWitness.set(statement, eligible[boundedChoice(eligible.length, choose)]!);
+  for (const [statement, rank] of groundedRank) {
+    const witness = (byConclusion.get(statement) ?? []).find((candidate) =>
+      candidate.assumptions.every((assumption) => {
+        const assumptionRank = groundedRank.get(assumption);
+        return assumptionRank !== undefined && assumptionRank < rank;
+      }));
+    groundedWitness.set(statement, witness!);
   }
 
   const selected = new Map<string, SelectedProof>();
@@ -162,15 +185,14 @@ export function selectProofTree(
       if (selected.has(statement)) continue;
       const groundedProof = groundedWitness.get(statement);
       const candidates = byConclusion.get(statement) ?? [];
-      const proof = groundedProof ??
-        (candidates.length === 0 ? undefined : candidates[boundedChoice(candidates.length, choose)]);
+      const proof = groundedProof ?? candidates[0];
       if (proof === undefined) {
         unresolved.add(statement);
         continue;
       }
       const chosen: SelectedProof = {
         ...proof,
-        selection: groundedProof === undefined ? "random" : "grounded",
+        selection: groundedProof === undefined ? "fallback" : "grounded",
       };
       selected.set(statement, chosen);
       active.add(statement);
@@ -339,15 +361,6 @@ export async function generateProofTree(
   console.log(`Generated module: ${outputOlean}`);
   console.log(`Proof-tree report: ${finalReportFile}`);
   return clean ? 0 : 1;
-}
-
-function boundedChoice(length: number, choose: (length: number) => number): number {
-  if (length <= 0) throw new Error("cannot choose from an empty proof set");
-  const value = choose(length);
-  if (!Number.isInteger(value) || value < 0 || value >= length) {
-    throw new Error(`proof chooser returned ${value} for ${length} candidates`);
-  }
-  return value;
 }
 
 function loadArchive(directory: string): Map<string, ArchiveSubmission> {
