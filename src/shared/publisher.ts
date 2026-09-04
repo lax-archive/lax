@@ -11,7 +11,7 @@ import {
   type ArchiveFilename,
 } from "./archive-schema.js";
 import { samePreconditions, type ArchiveSnapshot, type LoadedSubmission } from "./archive.js";
-import { submissionIdForPackage } from "../submission-validation/contracts.js";
+import { compareSubmissionIds, requiredSubmissionIds } from "../submission-validation/contracts.js";
 import { WEBSITE_REPOSITORY } from "./constants.js";
 import { repositoryPath } from "./github.js";
 import type {
@@ -205,7 +205,7 @@ export class Publisher {
       // Registration admits only registered dependencies (spec.md). States
       // are read at the snapshot the non-forced ref update commits against,
       // so a passing check cannot be overtaken before the CAS succeeds.
-      for (const dependency of requiredSubmissionIds(current)) {
+      for (const dependency of requiredSubmissionIds(current.files.buildOutput, current.files.record.id)) {
         const state = (await this.archive.load(dependency, current.snapshot))?.files.record.state;
         if (state === "registered") continue;
         problems.push(
@@ -580,31 +580,11 @@ function trustedDependents(value: unknown): string[] {
     if (typeof entry !== "string") throw new ValidationError("publication dependent id must be a string");
     return validateSubmissionId(entry);
   });
-  const sorted = [...new Set(dependents)].sort((left, right) =>
-    Number(left.slice(4)) - Number(right.slice(4)),
-  );
+  const sorted = [...new Set(dependents)].sort(compareSubmissionIds);
   if (sorted.length !== dependents.length || sorted.some((entry, index) => entry !== dependents[index])) {
     throw new ValidationError("publication dependents must be unique and sorted by submission number");
   }
   return dependents;
-}
-
-/**
- * The submissions whose packages this record's build requires. The
- * requiredByConcepts/requiredByProofs entries are package names; non-Lax
- * packages (mathlib and friends) carry no Archive record and drop out.
- */
-function requiredSubmissionIds(current: LoadedSubmission): string[] {
-  const names = [current.files.buildOutput.requiredByConcepts, current.files.buildOutput.requiredByProofs]
-    .flatMap((value) =>
-      Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [],
-    );
-  const ids = new Set<string>();
-  for (const name of names) {
-    const id = submissionIdForPackage(name);
-    if (id !== undefined && id !== current.files.record.id) ids.add(id);
-  }
-  return [...ids].sort((left, right) => Number(left.slice("lax-".length)) - Number(right.slice("lax-".length)));
 }
 
 function sameOwners(left: GitHubIdentity[], right: GitHubIdentity[]): boolean {

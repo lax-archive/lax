@@ -495,3 +495,43 @@ export function submissionIdForPackage(name: string): string | undefined {
   const match = /^Lax([1-9][0-9]*)$/u.exec(base);
   return match === null ? undefined : `lax-${match[1]}`;
 }
+
+/**
+ * Archive ids order by their number, never as text: `lax-5` comes before
+ * `lax-12`. The trusted publisher demands exactly this order of the dependent
+ * list a delete carries (`parsePublishRequest` refuses any other and does so
+ * before the publishing job's own error reporting can run), so every producer
+ * of an id list sorts with this comparator rather than with `Array.sort`'s
+ * lexicographic default.
+ */
+export function compareSubmissionIds(left: string, right: string): number {
+  return Number(left.slice("lax-".length)) - Number(right.slice("lax-".length));
+}
+
+/**
+ * The submissions whose packages a record's build requires, numerically
+ * ordered and never including the record's own id.
+ *
+ * `requiredByConcepts` and `requiredByProofs` hold *package* names, and either
+ * list may hold either spelling: a proofs package requiring another
+ * submission's concepts package (`Lax13` under `requiredByProofs`) is the
+ * commonest cross-submission edge there is, so matching one list against one
+ * spelling silently loses real dependents. The question a caller can safely
+ * ask is only ever "does some required package belong to that submission",
+ * which is what `submissionIdForPackage` answers. Non-Lax packages (mathlib
+ * and friends) carry no Archive record and drop out, as does anything that is
+ * not a string — a caller may be reading a database blob it has not parsed.
+ */
+export function requiredSubmissionIds(buildOutput: unknown, self: string): string[] {
+  const ids = new Set<string>();
+  for (const key of ["requiredByConcepts", "requiredByProofs"] as const) {
+    const names = isObject(buildOutput) ? buildOutput[key] : undefined;
+    if (!Array.isArray(names)) continue;
+    for (const name of names) {
+      if (typeof name !== "string") continue;
+      const id = submissionIdForPackage(name);
+      if (id !== undefined && id !== self) ids.add(id);
+    }
+  }
+  return [...ids].sort(compareSubmissionIds);
+}

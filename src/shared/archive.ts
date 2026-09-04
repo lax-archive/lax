@@ -10,7 +10,7 @@ import {
 } from "./archive-schema.js";
 import { DATABASE_REPOSITORY } from "./constants.js";
 import { GitHubClient, GitHubError, repositoryPath } from "./github.js";
-import { packageNameForSubmission } from "../submission-validation/contracts.js";
+import { compareSubmissionIds, requiredSubmissionIds } from "../submission-validation/contracts.js";
 import type { ArchiveFiles, FilePreconditions } from "./types.js";
 import { ValidationError } from "./validation.js";
 import { decodeUtf8 } from "./validation.js";
@@ -125,8 +125,16 @@ export class ArchiveRepository {
     return (await this.rootEntry(id, snapshot.sha)) !== undefined;
   }
 
+  /**
+   * The records whose build requires some package of `id`, read at the
+   * snapshot the publication commits against. Deletion is permanent and
+   * retires the id, so this list is what warns the author — and what the
+   * trusted publisher re-checks — before the stranding happens; missing a
+   * dependent here strands it silently, since resolution then refuses it
+   * forever. Membership is by submission, not by package spelling, because
+   * either required-package list may name either of a submission's packages.
+   */
   async listDependents(id: string, snapshot: ArchiveSnapshot): Promise<string[]> {
-    const packageName = packageNameForSubmission(id);
     const commit = await this.github.request<GitCommit>("GET", `${this.base}/git/commits/${snapshot.sha}`);
     const tree = await this.github.request<GitTree>(
       "GET",
@@ -141,12 +149,10 @@ export class ArchiveRepository {
       const candidateId = entry.path.split("/")[0]!;
       if (candidateId === id) continue;
       const blob = await this.github.request<GitBlob>("GET", `${this.base}/git/blobs/${entry.sha}`);
-      const output = JSON.parse(decodeBase64(blob.content)) as Record<string, unknown>;
-      const concepts = Array.isArray(output.requiredByConcepts) ? output.requiredByConcepts : [];
-      const proofs = Array.isArray(output.requiredByProofs) ? output.requiredByProofs : [];
-      if (concepts.includes(packageName) || proofs.includes(`${packageName}Proofs`)) dependents.push(candidateId);
+      const output = JSON.parse(decodeBase64(blob.content)) as unknown;
+      if (requiredSubmissionIds(output, candidateId).includes(id)) dependents.push(candidateId);
     }
-    return dependents.sort();
+    return dependents.sort(compareSubmissionIds);
   }
 
   /**
@@ -185,9 +191,7 @@ export class ArchiveRepository {
       const record = JSON.parse(decodeBase64(recordBlob.content)) as Record<string, unknown>;
       if (record.state === "registered") superseders.push(candidateId);
     }
-    return superseders.sort(
-      (left, right) => Number(left.slice("lax-".length)) - Number(right.slice("lax-".length)),
-    );
+    return superseders.sort(compareSubmissionIds);
   }
 
   async writeFiles(args: {

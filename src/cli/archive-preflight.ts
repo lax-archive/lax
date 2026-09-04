@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { packageNameForSubmission, submissionIdForPackage } from "../submission-validation/contracts.js";
+import { compareSubmissionIds, requiredSubmissionIds } from "../submission-validation/contracts.js";
 import { SUBMISSION_ID_PATTERN } from "../shared/constants.js";
 import { databaseDirectory, type DatabaseRefreshResult } from "./database.js";
 import { cmd, tilde } from "./ui.js";
@@ -8,7 +8,8 @@ import { cmd, tilde } from "./ui.js";
 interface LocalRecord {
   id: string;
   state: string;
-  requirements: string[];
+  /** The submissions this record's build requires, numerically ordered. */
+  requiredIds: string[];
   /** Numeric owner ids; empty when the copy carries no readable owner list. */
   owners: number[];
   /** The successor claim in the record's build output, when it carries one. */
@@ -62,18 +63,10 @@ export function checkDeleteLocally(id: string, refresh: DatabaseRefreshResult): 
     if (!stale) return { refusal: message, warnings };
     warnings.push({ text: message });
   }
-  const packageName = packageNameForSubmission(id);
   const dependents = records
-    .filter(
-      (record) =>
-        record.id !== id &&
-        record.state !== "deleted" &&
-        record.requirements.some(
-          (requirement) => requirement === packageName || requirement === `${packageName}Proofs`,
-        ),
-    )
+    .filter((record) => record.id !== id && record.state !== "deleted" && record.requiredIds.includes(id))
     .map((record) => record.id)
-    .sort();
+    .sort(compareSubmissionIds);
   if (dependents.length > 0) {
     warnings.push({
       text:
@@ -121,7 +114,7 @@ export function checkRegisterLocally(id: string, refresh: DatabaseRefreshResult)
     warnings.push({ text: message });
   }
   const states = new Map(records.map((record) => [record.id, record.state]));
-  const blockers = dependencyIds(id, current.requirements)
+  const blockers = current.requiredIds
     .map((dependency) => ({ dependency, state: states.get(dependency) }))
     .filter((entry) => entry.state !== "registered");
   if (blockers.length > 0) {
@@ -169,7 +162,9 @@ function noteSupersededDependencies(
     if (record.state !== "registered" || target === undefined) continue;
     if (target === record.id || !byId.has(target)) continue;
     const existing = successors.get(target);
-    if (existing === undefined || compareIds(record.id, existing) < 0) successors.set(target, record.id);
+    if (existing === undefined || compareSubmissionIds(record.id, existing) < 0) {
+      successors.set(target, record.id);
+    }
   }
   if (successors.size === 0) return;
   // Breadth-first, so the recorded path to each dependency is the shortest
@@ -181,14 +176,14 @@ function noteSupersededDependencies(
     const id = queue.shift()!;
     const record = byId.get(id);
     if (record === undefined) continue;
-    for (const dependency of dependencyIds(id, record.requirements)) {
+    for (const dependency of record.requiredIds) {
       if (seen.has(dependency)) continue;
       seen.add(dependency);
       cameFrom.set(dependency, id);
       queue.push(dependency);
     }
   }
-  const reached = [...seen].filter((id) => id !== current.id).sort(compareIds);
+  const reached = [...seen].filter((id) => id !== current.id).sort(compareSubmissionIds);
   for (const id of reached) {
     const successor = successors.get(id);
     // This submission superseding what it builds on is not a thing to fix.
@@ -219,10 +214,6 @@ function latestVersion(successors: ReadonlyMap<string, string>, id: string): str
     seen.add(next);
     current = next;
   }
-}
-
-function compareIds(left: string, right: string): number {
-  return Number(left.slice("lax-".length)) - Number(right.slice("lax-".length));
 }
 
 /**
@@ -285,16 +276,6 @@ function list(values: readonly string[]): string {
   return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]!}`;
 }
 
-/** The requirements are package names; non-Lax packages carry no record. */
-function dependencyIds(id: string, requirements: string[]): string[] {
-  const ids = new Set<string>();
-  for (const name of requirements) {
-    const dependency = submissionIdForPackage(name);
-    if (dependency !== undefined && dependency !== id) ids.add(dependency);
-  }
-  return [...ids].sort(compareIds);
-}
-
 function readRecords(root: string): LocalRecord[] {
   return fs
     .readdirSync(root, { withFileTypes: true })
@@ -303,14 +284,11 @@ function readRecords(root: string): LocalRecord[] {
       const directory = path.join(root, entry.name);
       const record = readObject(path.join(directory, "record.json"));
       const output = readObject(path.join(directory, "build-output.json"));
-      const requirements = [output.requiredByConcepts, output.requiredByProofs].flatMap((value) =>
-        Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [],
-      );
       const supersedes = readSupersedes(output);
       return {
         id: entry.name,
         state: typeof record.state === "string" ? record.state : "invalid",
-        requirements,
+        requiredIds: requiredSubmissionIds(output, entry.name),
         owners: readLocalOwners(directory),
         ...(supersedes === undefined ? {} : { supersedes }),
       };
