@@ -15,18 +15,12 @@ caught it; the spec-relevant behaviour changes are in spec-notes.md
 (2026-09-04). What the audit deliberately left, and what the fixes left
 behind:
 
-- **Two production leftovers.** lax-3's submit failed 2026-09-02 19:29 on
-  the stale-dependency guard, racing the chain-resubmit sweep, and was
-  never retried — one `/lax submit` fixes it; its live record still says
-  2026-09-02. And the pre-2026-09-03 paper records still carry blank
-  figures (below): the re-validation sweep that item calls for is exactly
-  the input shape that used to lose a publication, which is now fixed, so
-  the sweep is safe to run — but a record that committed a `paper-web.tar`
-  will newly fail the generated-file rule.
-- **Possible stranded dependents in production.** `listDependents` missed
-  the commonest edge for as long as it existed, so a delete executed on
-  its say-so may have stranded records that resolution now refuses forever.
-  Sweep `lax-database` for deleted records some live record still requires.
+- **Production checked 2026-09-04.** lax-3's stale-dependency failure
+  (2026-09-03 19:29, racing the chain sweep) was retried the same evening
+  and published at 20:10 (`0d5dc53`), so nothing is owed there. The
+  stranded-dependents sweep found none: the three deleted records
+  (lax-15, lax-55, lax-61) are required by no live record. The one
+  pre-2026-09-03 paper record is lax-48 (below).
 - **Recorded and not fixed** (the audit's "record and move on"): `lax
   register`'s preflight prints the permanence note and demands a typed
   confirmation for a supersession the archive will refuse, and
@@ -119,21 +113,6 @@ permission the report download needs.
 - **Org domain verification** for laxarchive.org (lax-archive Settings →
   Pages → verified domains) against domain takeover.
 
-## Old deployment (the box) — stopped 2026-08-06, decommission owed
-
-The box is powered off and its irreplaceable state exported to
-`~/lax-box-final-20260806-153311.tar.gz` on Jan's machine (see
-history/go-live.md). Still owed:
-
-- **Move the final export somewhere durable.**
-- **Delete the server** (`lax-server`, id 154491090) in the Hetzner
-  console — a powered-off server still bills.
-- Revoke the old Hetzner API token in the console (pasted into a chat
-  transcript 2026-07-26; deleting the file did not kill the credential)
-  and rotate/retire the S3 credentials for the same reason. The
-  `lax-ops-backup` bucket still holds the last `ops.sql`; decide
-  keep-or-delete when the final export has a durable home.
-
 ## CLI
 
 - **The CLI cannot renew a login, so `lax login` is due every 8 hours**
@@ -223,14 +202,15 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   open: a virtual font that *composes* (accents built from two glyphs)
   keeps metric boxes for those slots, and BOONDOX bold/fraktur/
   doublestruck are untested.
-- **Re-validate the records derived before 2026-09-03**: until that day
-  the in-image picture conversion went through Ghostscript, which
-  rasterized every page carrying transparency into a JPEG the sanitizer
-  then dropped (lax-65's two figures arrived *blank*), and every plain
-  `\includegraphics` was dropped to a kern. Both are fixed in the
-  derivation, not the site, so **anything already in `lax-database` keeps
-  its blank figures and missing icons until it is re-validated**. Needs
-  the admin `revalidate` verb, or a sweep.
+- **Re-validate lax-48**, the only paper record derived before
+  2026-09-03 (checked 2026-09-04; lax-65 was re-validated that day and
+  lax-61 is deleted). Until that day the in-image picture conversion went
+  through Ghostscript, which rasterized every page carrying transparency
+  into a JPEG the sanitizer then dropped, and every plain
+  `\includegraphics` was dropped to a kern; both are fixed in the
+  derivation, not the site, so lax-48 keeps its blank figures and missing
+  icons. It is *registered*, so `/lax submit` refuses it: this needs the
+  admin `revalidate` verb (admin-plan.md), or a superseding submission.
 - **Cache the PyMuPDF wheel in the Validate job** (optional): `npm run
   reflowtex:fetch` now downloads 25 MB per paper-bearing run. The existing
   `actions/cache` pair covers `reflowtex/venv`, keyed on
