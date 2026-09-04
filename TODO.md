@@ -241,14 +241,15 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   digest is not recorded in the report's runtime identity (the pin lives
   in `pins.ts`, so a bump is a reviewed edit).
 
-## Archive environments (environments-plan.md — stages 1 and 2 landed 2026-09-04)
+## Archive environments (environments-plan.md — stages 1, 2 and 4 landed 2026-09-04)
 
 Several Lean/mathlib versions: a yearly **epoch** as the default, monthly
 mathlib `vX.Y.0` release tags as admitted environments authors may stray
 to after a typed confirmation. Stage 1 (the table, selection,
-per-environment provisioning) and stage 2 (the trusted workflow selecting
-per environment) are in; the table holds one row, so nothing is
-author-visible yet. Stages in the plan; 3 finishes the feature.
+per-environment provisioning), stage 2 (the trusted workflow selecting per
+environment) and stage 4 (the CLI surface) are in; the table holds one row,
+so nothing an author sees changes until stage 3 admits a second. Stages in
+the plan; 3 finishes the feature.
 
 - **Stage 0 spike ran 2026-09-04** (`spike/environments/REPORT.md`): GO.
   The inspector compiles unchanged under v4.33.0 with byte-identical
@@ -286,11 +287,19 @@ author-visible yet. Stages in the plan; 3 finishes the feature.
   tests a new mathlib `vX.Y.0` tag and opens a PR adding its row. The
   admission job must run the prooftree smoke and the golden test: the
   spike showed unit + fake-mathlib e2e alone miss a composer break.
-- **Stage 4**: `lax init --env <id>` with the typed confirmation and
-  `--yes`, doctor reporting the epoch and which environments are
-  installed (the `// stage 4:` comments in `cli/doctor.ts` and
-  `cli/scaffold.ts` mark what still assumes the epoch), `lax port`, and
-  the `lax print instructions` sentence.
+- **Stage 4 is done** (2026-09-04, unreleased): `lax init [--env <id>]
+  [--yes]` scaffolds in the environment it names, after a typed
+  confirmation and the two populations when that is not the epoch;
+  `lax doctor` grew an `Environments` row (hidden while the table admits
+  one) and an `--env <id>` that points the whole Lean chain at another
+  environment and provisions it, disk statement first; `lax port lax-N
+  [folder] [--env <id>]` scaffolds the cross-environment successor. Docs
+  in README and `assets/instructions.md`. Two things the plan's CLI
+  section did not say, decided here: a port assigns a **fresh id** and
+  rekeys the folder (package names derive from the id and both versions
+  have to coexist), and it repoints requires by editing the require block
+  in place rather than reserializing the author's lakefile — a require
+  not in one-key-per-line form is reported instead of rewritten.
 - **Stage 5**: the website's environment notice, facet and grouping, the
   epoch in lax-website's config, `index.json`/`environments.json`, and
   `lax serve` passing the epoch. Renderer release; re-pin page-builder.

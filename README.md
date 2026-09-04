@@ -23,6 +23,18 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 | `/lax register <id>` | Makes an init/draft record immutable. |
 | `/lax submit <id> <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. |
 
+**Environments.** A submission is built in one **archive environment** — a
+Lean toolchain plus the mathlib commit it builds, named by the Lean version
+(`v4.30.0`) — and one of them is the **epoch**, the environment the archive
+recommends this year and the one `lax init` scaffolds against. Only submissions
+in the same environment can cite one another, so an author who needs a newer
+mathlib passes `lax init --env <id>` and confirms by typing the id (`--yes`
+non-interactively); `lax doctor` lists the admitted environments and which are
+installed on the machine, and `lax doctor --env <id>` provisions one ahead of
+time. Old environments stay valid forever: moving work forward is a new
+submission that supersedes the old one, which `lax port lax-N [folder] --env
+<id>` scaffolds. Design and stages: environments-plan.md.
+
 **Versioning.** A new version of a registered submission is an ordinary new
 submission whose `manifest.yaml` carries the optional `supersedes: lax-N`
 key. The claim binds when the new submission registers: the target must be
@@ -174,7 +186,7 @@ The CLI creates a control issue when a local submission is first submitted and
 posts exact command comments thereafter; it never writes the database directly:
 
 ```sh
-lax init submission
+lax init submission            # --env <id> to work outside the epoch
 lax build submission
 lax serve submission
 lax generate-prooftree lax-N
@@ -183,6 +195,7 @@ lax submit submission
 lax owners submission --new-list alice bob
 lax register submission
 lax delete submission
+lax port lax-N submission-v2  # --env <id>; default the epoch
 lax sync
 ```
 
@@ -337,6 +350,20 @@ are `paper-plan.md` and `paper-web-plan.md` (all code stages are
 implemented; the rehearsal, renderer release, and production round trips
 are pending — see TODO.md).
 
+`lax port lax-N [folder]` scaffolds the successor that moves a submission into
+another archive environment (`--env <id>`, default the epoch). It clones the
+record's published source triple at its commit, gives the folder a fresh
+six-digit id (package names derive from the id, and both versions must coexist
+in one dependency graph), rewrites both `lean-toolchain` files, both lakefiles'
+mathlib `rev` and the manifest's two version fields to the target environment,
+adds `supersedes: lax-N`, and repoints every cross-submission require at the
+dependency's own port — found by walking the supersedes chain in the local
+`~/.lax/lax-database` copy. A dependency with no port yet keeps its existing
+pin and is named ("port lax-M first"), so ports flow bottom-up exactly as the
+chain workflow does. It is scaffolding only: no Lean is ported, and `lax build`
+and `lax submit` are the author's next steps. It refuses a record already in
+the target environment.
+
 `lax generate-prooftree lax-N` reads the local Archive database, selects one
 recursively grounded proof for each reachable statement when possible, and
 composes replacement theorems from the leaves upward. If no grounded proof is
@@ -359,7 +386,12 @@ toolchain, running every check concurrently and spinning on a line per check
 until it answers; it also provisions what it can, installing elan and
 the pinned Lean toolchain when they are missing and bringing the local
 `lax-database` checkout up to date rather than only reporting that they are
-stale. On a bare machine `npm i -g lax-archive && lax doctor` is therefore the
+stale. An `Environments` row names every admitted environment, marks the epoch,
+and says which are installed here; it stays hidden while the table admits one,
+because the `Lean` and `Mathlib` rows above it are that environment. `lax
+doctor --env <id>` points the whole Lean chain at another environment and
+provisions it, stating the disk it costs (roughly 10 GB) before the download
+starts when it is the machine's second. On a bare machine `npm i -g lax-archive && lax doctor` is therefore the
 whole setup: elan (the pinned bootstrap installer, into `~/.elan`, without
 touching your shell profile), the pinned toolchain under it, the warm mathlib
 workspace under `~/.lax/warm`, and the database clone. The store is the one

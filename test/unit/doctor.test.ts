@@ -15,6 +15,7 @@ import {
   warmDir,
   warmReady,
 } from "../../src/submission-validation/host/warmstore.js";
+import { withTestEnvironmentsAsync } from "../support/environments.js";
 import { removeTree } from "../support/tmp.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -604,6 +605,68 @@ describe("lax doctor", () => {
     expect(store).toContain("✗");
     expect(store).toContain(`no ${TOOLCHAIN_VERSION} to build it with`);
     expect(fs.existsSync(warmDir(epoch()))).toBe(false);
+  });
+
+  it("says nothing about environments while the table admits one", async () => {
+    // The Lean and Mathlib rows *are* that environment; a third row repeating
+    // them under another name is the duplication a collapsed report avoids.
+    const { log } = quiet();
+
+    await doctor({ dry: true });
+
+    expect(row(printed(log), "Environments")).toBeUndefined();
+  });
+
+  it("names every admitted environment, the epoch, and which are installed", async () => {
+    provision();
+    seedWarmStore();
+    const { log } = quiet();
+
+    await withTestEnvironmentsAsync([{ id: "v4.99.0" }], () => doctor({ dry: true }));
+
+    expect(row(printed(log), "Environments")).toBe(
+      `  ✓ Environments        ${epoch().id} (epoch, installed) · v4.99.0 (not installed)`,
+    );
+  });
+
+  it("--env checks and provisions the environment it names, not the epoch", async () => {
+    provision();
+    const { log } = quiet();
+
+    const code = await withTestEnvironmentsAsync([{ id: "v4.99.0" }], () =>
+      doctor({ dry: true, env: "v4.99.0" }),
+    );
+
+    const lines = printed(log);
+    expect(lines[0]).toBe("  Checking your setup for v4.99.0");
+    // The epoch's own store is beside the point: the row is about the store the
+    // named environment needs, which this machine has not got.
+    expect(row(lines, "Mathlib")).toContain("not downloaded yet");
+    expect(code).toBe(1);
+  });
+
+  it("states what a second environment costs before it starts downloading it", async () => {
+    // The first environment is what every machine downloads anyway and doctor
+    // already narrates; the second is a cost the author chose by naming it.
+    provision();
+    seedWarmStore();
+    const { log } = quiet();
+
+    await withTestEnvironmentsAsync(
+      [{ id: "v4.99.0", leanToolchain: "leanprover/lean4:v4.99.0" }],
+      () => doctor({ env: "v4.99.0" }),
+    );
+
+    const lines = printed(log);
+    expect(lines.some((line) => line.includes("v4.99.0 is a second environment on this machine"))).toBe(true);
+    expect(lines.some((line) => line.includes("roughly 10 GB"))).toBe(true);
+    expect(lines.some((line) => line.includes(`Installed: ${epoch().id}.`))).toBe(true);
+  });
+
+  it("refuses an --env the table does not admit, before it probes anything", async () => {
+    await expect(doctor({ env: "v9.9.9" })).rejects.toThrow(
+      /v9\.9\.9 is not an archive environment/u,
+    );
   });
 
   it("keeps the row shape (title, mark, label, detail, aligned fix)", async () => {

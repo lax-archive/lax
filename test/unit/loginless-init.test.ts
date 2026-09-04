@@ -13,6 +13,7 @@ import {
   setManifestId,
   setManifestIssue,
 } from "../../src/cli/manifest.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 import { scaffoldSubmission } from "../../src/cli/scaffold.js";
 import { initialFiles } from "../../src/shared/archive-schema.js";
 import {
@@ -341,7 +342,7 @@ describe("loginless submission initialization", () => {
 
 function scaffold(): string {
   const root = temp();
-  scaffoldSubmission(root, id, "Local theorem");
+  scaffoldSubmission(root, id, "Local theorem", epoch());
   return root;
 }
 

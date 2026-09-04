@@ -10,6 +10,7 @@ import {
   setManifestIssue,
   submissionIdFromFolder,
 } from "../../src/cli/manifest.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 import { ensureEmptyFolder, scaffoldSubmission } from "../../src/cli/scaffold.js";
 
 const temporary: string[] = [];
@@ -39,7 +40,7 @@ describe("CLI issue references", () => {
   it("resolves a local submission folder through manifest.yaml", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-cli-test-"));
     temporary.push(root);
-    scaffoldSubmission(root, "lax-123456", "Local example");
+    scaffoldSubmission(root, "lax-123456", "Local example", epoch());
     setManifestIssue(root, { repositoryId: CONTROL_REPOSITORY_ID, number: 42 });
     expect(issueNumberFromFolder(root)).toBe(42);
     expect(resolveIssueReference(root)).toBe(42);
@@ -61,7 +62,7 @@ describe("CLI issue references", () => {
   it("reads an offline scaffold locally and refuses it every way to the archive", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-cli-test-"));
     temporary.push(root);
-    scaffoldSubmission(root, "lax-123456", "Offline example");
+    scaffoldSubmission(root, "lax-123456", "Offline example", epoch());
     fs.writeFileSync(
       path.join(root, "manifest.yaml"),
       fs.readFileSync(path.join(root, "manifest.yaml"), "utf8").replace(

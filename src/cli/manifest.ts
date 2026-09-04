@@ -161,6 +161,29 @@ export function clearInitialOwners(folder: string): void {
   updateDocument(folder, (document) => document.delete("initialOwners"));
 }
 
+/**
+ * Repin a folder to an archive environment: the manifest's two version fields
+ * become the entry's, and nothing else in the document moves. `lax port` is
+ * the only writer — an ordinary folder gets its pins from the scaffold and
+ * never changes environment, because a submission has exactly one for life.
+ */
+export function setManifestEnvironment(folder: string, environment: ArchiveEnvironment): void {
+  updateDocument(folder, (document) => {
+    document.set("leanVersion", environment.id);
+    document.set("mathlibVersion", environment.mathlibCommit);
+  });
+}
+
+/** Claim the registered submission this folder replaces. The claim is checked
+ * where every other one is — the manifest validator, resolution, and both
+ * trusted publishers; writing it here only saves the author a line of YAML. */
+export function setManifestSupersedes(folder: string, id: string): void {
+  const target = normalizeSubmissionId(id);
+  updateDocument(folder, (document) => {
+    document.set("supersedes", target);
+  });
+}
+
 export function setManifestId(folder: string, id: string): void {
   validateNewSubmissionId(id);
   updateDocument(folder, (document) => {

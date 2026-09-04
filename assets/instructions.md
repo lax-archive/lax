@@ -32,6 +32,17 @@ result with Lax. On a high level, this proceeds as follows.
 
 # Additional Info
 
+Every submission is built in one **archive environment** — a Lean toolchain
+together with the mathlib commit it builds — and the archive recommends one of
+them, the **epoch**, which moves once a year. Use the default: `lax init` picks
+the epoch, and only submissions in the same environment can cite one another,
+so the default is what keeps the citation graph connected. Pass `lax init
+--env <id>` only when the user asked for a specific environment (they need a
+mathlib newer than the epoch's, say); it prints what that costs and asks you to
+type the environment id back, or `--yes` when you are not on a terminal. `lax
+doctor` lists the environments this CLI admits and which are installed here,
+and `lax doctor --env <id>` installs one ahead of time.
+
 To publish an improved version of a submission that is already registered,
 do not edit it — registered submissions are immutable. Instead create a new
 submission (`lax init`) and add `supersedes: lax-N` to its `manifest.yaml`,
@@ -42,6 +53,17 @@ then point readers from the old version to the new one. If a submission you
 build on is superseded, nothing breaks — your require is pinned to a commit —
 but `lax build`, `lax submit` and `lax register` will point out that a newer
 version exists, so you can decide whether to build on that one instead.
+
+`lax port lax-N [folder]` scaffolds that new version for you when the point of
+the new version is a different environment — after an epoch bump, say. It
+clones the record's published source, gives it a fresh id, repins the manifest,
+both `lean-toolchain` files and both lakefiles to the target environment
+(`--env`, default the epoch), adds `supersedes: lax-N`, and repoints every
+cross-submission require at the dependency's own port, following the supersedes
+chain. A dependency that has not been ported yet is left as it is and named:
+ports flow bottom-up exactly as the chain workflow does. It ports no Lean —
+fixing the sources for the new mathlib is your work, and `lax build` is where
+you start.
 
 A submission may carry the paper itself: a LaTeX document the archive
 compiles and shows beside cards for the concepts and proofs the text marks.

@@ -28,7 +28,7 @@ describe("CLI compatibility surface", () => {
     expect(positions.every((index) => index >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
     // and the rest are named without being explained twice
-    expect(help.output).toContain("lax owners · lax delete · lax sync · lax update · lax logout");
+    expect(help.output).toContain("lax owners · lax delete · lax port · lax sync · lax update · lax logout");
     expect(help.output).toContain("lax print spec · lax print instructions");
     expect(help.output).toContain("lax <command> --help for options");
   });
@@ -41,6 +41,23 @@ describe("CLI compatibility surface", () => {
     expect(init.output).toContain("without signing in");
     expect(init.output).not.toContain("--offline");
     expect(init.output).not.toContain("lax-0");
+    // Straying off the epoch is an option an author has to find before they
+    // can be nudged about it, so it is on init's own help page with the
+    // confirmation escape beside it.
+    expect(init.output).toContain("--env <id>");
+    expect(init.output).toContain("--yes");
+  });
+
+  it("offers `lax port` as the way into another environment", () => {
+    const port = cli(["port", "--help"]);
+    expect(port.code).toBe(0);
+    expect(port.output).toContain("<submission>");
+    expect(port.output).toContain("[folder]");
+    expect(port.output).toContain("--env <id>");
+    expect(port.output).toContain("supersedes");
+
+    const doctorHelp = cli(["doctor", "--help"]);
+    expect(doctorHelp.output).toContain("--env <id>");
   });
 
   it("keeps the build iteration options discoverable", () => {

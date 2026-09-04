@@ -24,6 +24,7 @@ import {
   upsertCommandContext,
 } from "../../src/shared/workflow-comments.js";
 import { GITHUB_APP_CLIENT_ID } from "../../src/cli/github-app.js";
+import { EPOCH } from "../../src/submission-validation/environments.js";
 import { linkSharedDirs } from "../support/host.js";
 import { removeTree } from "../support/tmp.js";
 import {
@@ -191,6 +192,32 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       expect(fs.readFileSync(path.join(folder, "manifest.yaml"), "utf8")).toMatch(
         /^id: lax-[1-9][0-9]{5}$/mu,
       );
+    } finally {
+      removeTree(parent);
+    }
+  });
+
+  it("scaffolds in the environment --env names, and refuses one it does not admit", async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "lax-env-"));
+    try {
+      // Naming the epoch is the default said out loud: no block, no prompt,
+      // and the same folder either way.
+      const folder = path.join(parent, "epoch");
+      const chosen = await lax(["init", folder, "--env", EPOCH, "--title", "Epoch draft"], env);
+      expect(chosen.status).toBe(0);
+      expect(chosen.stdout).not.toContain("can cite this work");
+      expect(fs.readFileSync(path.join(folder, "manifest.yaml"), "utf8")).toContain(
+        `leanVersion: "${EPOCH}"`,
+      );
+
+      // An environment this CLI does not know is a CLI that is behind, and the
+      // message an agent reads says exactly that plus what it may choose from.
+      const unknown = await lax(["init", path.join(parent, "future"), "--env", "v9.9.9"], env);
+      expect(unknown.status).toBe(1);
+      expect(unknown.stderr).toContain("v9.9.9 is not an archive environment");
+      expect(unknown.stderr).toContain(`${EPOCH} (epoch)`);
+      expect(unknown.stderr).toContain("Update lax if the environment is newer than this CLI.");
+      expect(fs.existsSync(path.join(parent, "future"))).toBe(false);
     } finally {
       removeTree(parent);
     }

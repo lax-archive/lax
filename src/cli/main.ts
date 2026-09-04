@@ -22,6 +22,7 @@ import { updateCli } from "./update.js";
 import { serveWebsite } from "./website.js";
 import { checkForCliUpdate } from "./update-check.js";
 import { generateProofTree } from "./prooftree.js";
+import { portSubmission } from "./port.js";
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 // The background release probe caches its result in ~/.lax/update-check.json,
@@ -55,7 +56,7 @@ const overview = (): string => `
     ${ui.cmd("lax register my-work")}  make it permanent and citable
 
   Also
-    lax owners · lax delete · lax sync · lax update · lax logout
+    lax owners · lax delete · lax port · lax sync · lax update · lax logout
     lax print spec · lax print instructions
 
   ${ui.dim("lax <command> --help for options")}
@@ -71,13 +72,20 @@ program
   .command("init")
   .argument("[folder]", "target folder", ".")
   .option("--title <title>", "submission title (defaults to the folder name)")
+  .option("--env <id>", "archive environment to work in (default: the epoch)")
+  .option("--yes", "skip the confirmation a non-epoch --env asks for")
   // Compatibility for scripts written while loginless init was opt-in. Every
   // init is now local, so the flag deliberately has no distinct behavior.
   .addOption(new Option("--offline").hideHelp())
   .description("generate a local six-digit id and scaffold without signing in")
   .action(
-    run((folder: string, options: { title?: string; offline?: boolean }) =>
-      initializeSubmission(folder, { title: options.title, offline: options.offline }),
+    run((folder: string, options: { title?: string; offline?: boolean; env?: string; yes?: boolean }) =>
+      initializeSubmission(folder, {
+        title: options.title,
+        offline: options.offline,
+        env: options.env,
+        yes: options.yes,
+      }),
     ),
   );
 
@@ -232,8 +240,26 @@ program
 program
   .command("doctor")
   .option("--dry", "report only: install nothing, refresh nothing, write nothing")
+  .option("--env <id>", "check and provision this archive environment (default: the epoch)")
   .description("check your setup, with fixes")
-  .action(run((options: { dry?: boolean }) => doctor({ dry: options.dry === true })));
+  .action(
+    run((options: { dry?: boolean; env?: string }) =>
+      doctor({ dry: options.dry === true, env: options.env }),
+    ),
+  );
+
+program
+  .command("port")
+  .argument("<submission>", "lax-N submission id")
+  .argument("[folder]", "target folder (defaults to ./port-lax-N)")
+  .option("--env <id>", "archive environment to port into (default: the epoch)")
+  .description("scaffold a new submission that supersedes lax-N in another environment")
+  .action(
+    run((submission: string, folder: string | undefined, options: { env?: string }) => {
+      preflight(["git"]);
+      return portSubmission(submission, folder, { env: options.env });
+    }),
+  );
 
 program
   .command("update")

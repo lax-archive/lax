@@ -5,23 +5,17 @@ import { generatedFilesGitignore } from "../submission-validation/generated-file
 // The environment table is the single home of the archive pins, so scaffolds
 // always match what the host build and the trusted container validate against
 // (and follow the fake-mathlib test seam).
-import { epoch } from "../submission-validation/environments.js";
+import type { ArchiveEnvironment } from "../submission-validation/environments.js";
 import {
   ensureLocalWarm,
   seedManifest,
   seedOverrides,
 } from "../submission-validation/host/warmstore.js";
+import type { ValidationRuntimeIdentity } from "../submission-validation/contracts.js";
 import { hostValidationRuntime } from "../submission-validation/pins.js";
 import { PLACEHOLDER_SUBMISSION_ID } from "../shared/constants.js";
 import { normalizeSubmissionId, validateNewSubmissionId } from "../shared/validation.js";
 import * as ui from "./ui.js";
-
-/** A new submission is scaffolded in the epoch. Read per call, never frozen at
- * import: the test seam substitutes the fake mathlib after this module loads,
- * and stage 4 gives `lax init` an `--env` of its own. */
-function epochRuntime(): ReturnType<typeof hostValidationRuntime> {
-  return hostValidationRuntime(epoch());
-}
 
 export function ensureEmptyFolder(folder: string): string {
   const root = path.resolve(folder);
@@ -31,11 +25,16 @@ export function ensureEmptyFolder(folder: string): string {
   return root;
 }
 
-/** Scaffold a local source layout before any GitHub issue exists. */
+/** Scaffold a local source layout before any GitHub issue exists, in the
+ * environment `lax init` selected — the epoch unless `--env` said otherwise.
+ * The entry is passed rather than read here so the manifest, both
+ * `lean-toolchain` files and both lakefiles cannot disagree about which
+ * environment this folder is in. */
 export function scaffoldSubmission(
   folder: string,
   id: string,
   title: string,
+  environment: ArchiveEnvironment,
 ): void {
   validateNewSubmissionId(id);
   const root = ensureEmptyFolder(folder);
@@ -46,7 +45,7 @@ export function scaffoldSubmission(
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     fs.writeFileSync(filename, content);
   };
-  const runtime = epochRuntime();
+  const runtime = hostValidationRuntime(environment);
   fs.mkdirSync(root, { recursive: true });
   write(
     "manifest.yaml",
@@ -63,12 +62,12 @@ export function scaffoldSubmission(
   write("concepts/lean-toolchain", `${runtime.leanToolchain}\n`);
   write(
     "concepts/lakefile.toml",
-    lakefile(concepts, concepts, false),
+    lakefile(runtime, concepts, concepts, false),
   );
   write(`concepts/${concepts}.lean`, "");
   fs.mkdirSync(path.join(root, "concepts", concepts), { recursive: true });
   write("proofs/lean-toolchain", `${runtime.leanToolchain}\n`);
-  write("proofs/lakefile.toml", lakefile(proofs, concepts, true));
+  write("proofs/lakefile.toml", lakefile(runtime, proofs, concepts, true));
   write(`proofs/${proofs}.lean`, "");
   fs.mkdirSync(path.join(root, "proofs", proofs), { recursive: true });
 }
@@ -90,10 +89,10 @@ export type ProvisionResult = { ok: true } | { ok: false; reason?: string };
 export async function provisionScaffold(
   root: string,
   idInput: string,
+  environment: ArchiveEnvironment,
 ): Promise<ProvisionResult> {
   try {
-    // stage 4: `lax init --env` selects the environment; today it is the epoch.
-    const warm = await ensureLocalWarm(epoch(), { echo: ui.isVerbose() });
+    const warm = await ensureLocalWarm(environment, { echo: ui.isVerbose() });
     if (warm === undefined) return { ok: false };
     const id = normalizeSubmissionId(idInput, { placeholder: true });
     if (id !== PLACEHOLDER_SUBMISSION_ID) validateNewSubmissionId(id);
@@ -113,8 +112,12 @@ export async function provisionScaffold(
   }
 }
 
-function lakefile(packageName: string, conceptsName: string, proofs: boolean): string {
-  const runtime = epochRuntime();
+function lakefile(
+  runtime: ValidationRuntimeIdentity,
+  packageName: string,
+  conceptsName: string,
+  proofs: boolean,
+): string {
   return (
     `name = ${JSON.stringify(packageName)}\ndefaultTargets = [${JSON.stringify(packageName)}]\n\n` +
     "[leanOptions]\nautoImplicit = false\n\n" +

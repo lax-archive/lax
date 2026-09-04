@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkGeneratedFilesIgnored, showFindings } from "../../src/cli/build.js";
 import { groupFindings } from "../../src/cli/findings.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 import { scaffoldSubmission } from "../../src/cli/scaffold.js";
 import { LAX_GENERATED_FILES } from "../../src/submission-validation/generated-files.js";
 import { removeTree } from "../support/tmp.js";
@@ -69,7 +70,7 @@ const PRE_PAPER_GITIGNORE = "build-output.json\nlake-manifest.json\n.lake/\n";
 describe("the generated files lax owns", () => {
   it("leaves a scaffolded worktree clean after a build has written every one of them", () => {
     const root = repository();
-    scaffoldSubmission(root, "lax-123456", "Scaffolded");
+    scaffoldSubmission(root, "lax-123456", "Scaffolded", epoch());
     commitAll(root);
 
     writeBuildOutputs(root);
@@ -80,7 +81,7 @@ describe("the generated files lax owns", () => {
 
   it("names the files a pre-paper-layer ignore file never heard of", () => {
     const root = repository();
-    scaffoldSubmission(root, "lax-123456", "Scaffolded");
+    scaffoldSubmission(root, "lax-123456", "Scaffolded", epoch());
     fs.writeFileSync(path.join(root, ".gitignore"), PRE_PAPER_GITIGNORE);
     commitAll(root);
     writeBuildOutputs(root);
@@ -103,7 +104,7 @@ describe("the generated files lax owns", () => {
 
   it("says nothing about a name the ignore file covers another way", () => {
     const root = repository();
-    scaffoldSubmission(root, "lax-123456", "Scaffolded");
+    scaffoldSubmission(root, "lax-123456", "Scaffolded", epoch());
     fs.writeFileSync(path.join(root, ".gitignore"), "build-output.json\n*.pdf\n*.tar\n.lake/\n");
     commitAll(root);
     writeBuildOutputs(root);
@@ -113,7 +114,7 @@ describe("the generated files lax owns", () => {
 
   it("leaves a committed generated file to the validator that rejects it", () => {
     const root = repository();
-    scaffoldSubmission(root, "lax-123456", "Scaffolded");
+    scaffoldSubmission(root, "lax-123456", "Scaffolded", epoch());
     fs.writeFileSync(path.join(root, ".gitignore"), "build-output.json\n");
     fs.writeFileSync(path.join(root, "paper.pdf"), "%PDF-1.5\n");
     commitAll(root);
@@ -126,7 +127,7 @@ describe("the generated files lax owns", () => {
 
   it("says nothing outside a repository, where no worktree can go dirty", () => {
     const root = repository();
-    scaffoldSubmission(root, "lax-123456", "Scaffolded");
+    scaffoldSubmission(root, "lax-123456", "Scaffolded", epoch());
     fs.rmSync(path.join(root, ".gitignore"));
 
     expect(checkGeneratedFilesIgnored(root, LAX_GENERATED_FILES.root)).toEqual([]);
@@ -138,7 +139,7 @@ describe("the generated files lax owns", () => {
     // into it dies with the worktree, and a repair reported from there would
     // describe a change their repository never received.
     const author = repository();
-    scaffoldSubmission(author, "lax-123456", "Scaffolded");
+    scaffoldSubmission(author, "lax-123456", "Scaffolded", epoch());
     fs.writeFileSync(path.join(author, ".gitignore"), PRE_PAPER_GITIGNORE);
     commitAll(author);
     const scratch = path.join(repository(), "checkout");
@@ -160,7 +161,7 @@ describe("the generated files lax owns", () => {
     // build and carries the same array into its notes. One list, so the
     // finding cannot be visible in one command and lost in the other.
     const root = repository();
-    scaffoldSubmission(root, "lax-123456", "Scaffolded");
+    scaffoldSubmission(root, "lax-123456", "Scaffolded", epoch());
     fs.writeFileSync(path.join(root, ".gitignore"), PRE_PAPER_GITIGNORE);
     commitAll(root);
     writeBuildOutputs(root);

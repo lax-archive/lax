@@ -28,6 +28,7 @@ import {
 } from "../shared/validation.js";
 import type { GitHubIdentity, IssueBinding, SourceLocation } from "../shared/types.js";
 import type { ValidationFinding } from "../submission-validation/contracts.js";
+import { environments } from "../submission-validation/environments.js";
 import { checkDeleteLocally, checkRegisterLocally } from "./archive-preflight.js";
 import { AuthenticationError, ensureLoggedIn, githubAppUserToken } from "./auth.js";
 import {
@@ -37,6 +38,7 @@ import {
   showValidationFailure,
 } from "./build.js";
 import { confirmTyped } from "./confirm.js";
+import { confirmEnvironment, diskCostLines, requestedEnvironment } from "./environments.js";
 import { databaseDirectory, tryRefreshDatabase } from "./database.js";
 import { groupFindings } from "./findings.js";
 import { installHint, toolVersion } from "./doctor.js";
@@ -92,12 +94,19 @@ export interface InitOptions {
   title?: string;
   /** Accepted temporarily for scripts written while loginless init was opt-in. */
   offline?: boolean;
+  /** The archive environment to scaffold in; the epoch when absent. */
+  env?: string;
+  /** Skip the typed confirmation an off-epoch `--env` needs. */
+  yes?: boolean;
 }
 
 export async function initializeSubmission(
   folder: string,
   options: InitOptions = {},
-): Promise<void> {
+): Promise<number> {
+  // Before anything is written: an id the table does not admit is a mistake
+  // about which lax is installed, not about this folder.
+  const environment = requestedEnvironment(options.env);
   const root = ensureEmptyFolder(folder);
   // No title given means the folder name stands in for one — which is a thing
   // the author will want to fix, so the identity block says so once.
@@ -106,21 +115,31 @@ export async function initializeSubmission(
   const id = generateSubmissionId();
   const notes = new ui.Notes();
 
+  // Straying off the epoch is allowed, and nudged: the island it puts the work
+  // on is the one consequence that cannot be undone later, so it is confirmed
+  // before a single file exists.
+  if (!(await confirmEnvironment(environment, { yes: options.yes }))) return 1;
+
   ui.title("Creating a submission");
+  // The second environment on a machine is a cost the author chose with
+  // `--env`, so it is stated before the download starts rather than after.
+  for (const cost of diskCostLines(environment)) ui.faint(cost);
   const steps = new ui.Steps();
   steps.add("files", "Creating the files");
   steps.add("mathlib", "Preparing mathlib");
   try {
-    scaffoldSubmission(root, id, title);
+    scaffoldSubmission(root, id, title, environment);
     recordSubmission(root);
     steps.settle("files", { label: "Created the files" });
 
     // Provision mathlib right away: a bare `lake build` straight after init
     // (agents do this) must replay the shared store, not clone mathlib.
-    const provisioned = await provisionScaffold(root, id);
+    const provisioned = await provisionScaffold(root, id, environment);
     steps.settle("mathlib", {
       status: provisioned.ok ? "ok" : "warn",
       label: provisioned.ok ? "Prepared mathlib" : "Could not prepare mathlib",
+      // Which environment's mathlib, once there is more than one to confuse.
+      ...(environments().length > 1 ? { detail: environment.id } : {}),
     });
     if (!provisioned.ok) {
       notes.add(
@@ -152,6 +171,7 @@ export async function initializeSubmission(
   } finally {
     steps.finish();
   }
+  return 0;
 }
 
 export async function replaceOwners(reference: string, handles: string[]): Promise<void> {

@@ -6,7 +6,7 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
-## Archive environments: a table, and the epoch (stages 1 and 2 implemented, 2026-09-04)
+## Archive environments: a table, and the epoch (stages 1, 2 and 4 implemented, 2026-09-04)
 
 The single archive-wide Lean/mathlib pin becomes a **table of environments**
 (`src/submission-validation/environments.ts`). An environment is a Lean
@@ -83,18 +83,69 @@ the table rather than trusting the report's pins. `ci.yml` and
 under the same key the validate job would use for it. Nothing is
 spec-visible; the record schema is untouched.
 
+**2026-09-04, later still (stage 4).** The CLI now has the author-facing
+half, which is the first part of this that the spec can see.
+
+- **`lax init [folder] [--env <id>] [--yes]`.** No `--env`, or one naming
+  the epoch, is what init always did: the epoch, no prompt, no network.
+  Another admitted id prints the epoch, the chosen environment, the number
+  of registered submissions in each (counted from the local database
+  copy's `manifest.leanVersion` values; "run `lax sync` to count" when
+  there is no copy) and the sentence "Only submissions in `<id>` can cite
+  this work", then asks for the environment id typed back through the same
+  `confirmTyped` `lax delete` and `lax register` use — and refuses without
+  a terminal, naming `--yes`, in their words. `--yes` skips the prompt and
+  keeps the block, so an agent's log still records which island the work
+  landed on. An unadmitted id fails before anything is written, with the
+  admitted list and "Update lax if the environment is newer than this
+  CLI"; there is no `latest`. The scaffold then writes *that* environment's
+  pins into the manifest, both `lean-toolchain` files and both lakefiles,
+  and provisions it — with the disk cost (roughly 10 GB) stated first when
+  it is the machine's second, "installed" meaning its warm store is ready.
+- **`lax doctor`** gained an `Environments` row naming every admitted
+  environment, marking the epoch and saying which are installed. It stays
+  hidden while the table admits one, because the `Lean` and `Mathlib` rows
+  above it *are* that environment and a third row repeating them is the
+  duplication a collapsed report exists to avoid. `lax doctor --env <id>`
+  points the whole Lean chain — toolchain, lake, warm store — at another
+  environment and provisions it, disk statement first. The per-submission
+  row reads the submission's own environment, so an off-epoch folder is no
+  longer reported as mispinned.
+- **`lax port <lax-N> [folder] [--env <id>]`** is new: the scaffolding half
+  of moving work between environments. It clones the record's published
+  source triple at its commit, gives the folder a **fresh six-digit id**
+  and rekeys every spelling of the old one, rewrites both `lean-toolchain`
+  files, both lakefiles' mathlib `rev` and the manifest's two version
+  fields to the target environment (default: the epoch), adds `supersedes:
+  lax-N`, and repoints every cross-submission require at the dependency's
+  own port — the member of that dependency's supersedes chain that lives in
+  the target environment, found in the local copy. A dependency with no
+  such member keeps its pin and is named ("port lax-M first"), so ports
+  flow bottom-up exactly as the chain workflow does. It refuses a record
+  already in the target environment. No Lean is ported: the author fixes
+  the sources and submits, and the result is an ordinary successor that the
+  existing supersedes rules govern unchanged.
+
+The fresh id is a deviation from the plan's sketch and a consequence of the
+supersedes entry below: package names derive from the id, and both versions
+have to coexist in one dependency graph. Requires are repointed by editing
+the require block in place rather than reserializing the lakefile — the
+author's file is theirs — so a require that is not in the one-key-per-line
+form every submission uses is reported for hand editing rather than
+rewritten.
+
 Still to come, and not yet spec-visible: the scheduled admission workflow
-that adds a row per monthly mathlib tag (stage 3), `lax init --env <id>`
-with a typed confirmation and `lax port` (stage 4), and the website's
+that adds a row per monthly mathlib tag (stage 3), and the website's
 environment notice, facet, and emitted index (stage 5).
 
 Spec touchpoints: "Archive Environment" (a table with the epoch marked), the
 manifest field descriptions for `leanVersion`/`mathlibVersion`, the pinned
 toolchain and mathlib require rules ("the submission's environment" rather
-than "the archive-wide" pin), the dependency rules (same environment), and —
-when stage 4 lands — `lax init`'s options and the new `lax port`. The
-supersedes entry below gains a sentence: a port across environments is an
-ordinary successor and needs no rule of its own.
+than "the archive-wide" pin), the dependency rules (same environment), and
+the CLI section: `lax init` gains `--env` and `--yes`, `lax doctor` gains
+`--env`, and `lax port` is a new command. The supersedes entry below gains a
+sentence: a port across environments is an ordinary successor and needs no
+rule of its own.
 
 ## Hardening pass after the 0.1.35 audit (implemented, 2026-09-04)
 
@@ -490,6 +541,12 @@ runs the structural checks in its local preflight and names the permanence in
 its notes before the typed confirmation. `lax submit` refuses a claim from a
 non-owner actor, or one that can never bind because the target is unregistered
 or its slot is occupied, while the author still holds a fresh build.
+
+A port across environments is an ordinary successor and needs no rule of its
+own: the manifest key, the owner and slot checks, and the site's chain views
+all work unchanged when the two versions sit in different environments —
+which is exactly what makes an epoch bump a migration authors can perform
+one submission at a time. `lax port` (2026-09-04) writes such a successor.
 
 The website (lax-archive/lax-website) derives the chains: a superseded
 submission's pages carry a prominent banner linking to the latest version, a

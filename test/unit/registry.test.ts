@@ -90,7 +90,7 @@ function escape(value: string): string {
 function makeSubmission(name: string, issue: number): string {
   const root = path.join(home, name);
   fs.mkdirSync(root, { recursive: true });
-  scaffoldSubmission(root, `lax-${100_000 + issue}`, "Registry test");
+  scaffoldSubmission(root, `lax-${100_000 + issue}`, "Registry test", epoch());
   return root;
 }
 
@@ -153,7 +153,7 @@ describe("init provisioning", () => {
   it("seeds overrides and manifests for both packages against the warm store", async () => {
     const warm = makeWarmStore();
     const root = makeSubmission("seeded", 42);
-    expect(await provisionScaffold(root, "lax-100042")).toEqual({ ok: true });
+    expect(await provisionScaffold(root, "lax-100042", epoch())).toEqual({ ok: true });
     for (const kind of ["concepts", "proofs"]) {
       const overrides = JSON.parse(
         fs.readFileSync(path.join(root, kind, ".lake", "package-overrides.json"), "utf8"),
@@ -178,7 +178,7 @@ describe("init provisioning", () => {
     const root = makeSubmission("unprovisioned", 43);
     // The reason is returned rather than printed: the caller owns the screen,
     // and this is one row of its report.
-    const provisioned = await provisionScaffold(root, "lax-100043");
+    const provisioned = await provisionScaffold(root, "lax-100043", epoch());
     expect(provisioned.ok).toBe(false);
     expect(provisioned).toHaveProperty("reason");
     expect(fs.existsSync(path.join(root, "concepts", ".lake", "package-overrides.json"))).toBe(
@@ -202,7 +202,7 @@ describe("lax doctor submission checks", () => {
   it("reports a provisioned submission as its id and its folder", async () => {
     makeWarmStore();
     const root = makeSubmission("healthy", 42);
-    await provisionScaffold(root, "lax-100042");
+    await provisionScaffold(root, "lax-100042", epoch());
     recordSubmission(root);
     const report = await doctorReport();
     // the author's noun for the folder is the id it was reserved under
@@ -212,7 +212,7 @@ describe("lax doctor submission checks", () => {
   it("names a loginless scaffold by its locally generated id", async () => {
     makeWarmStore();
     const root = makeSubmission("offline-draft", 0);
-    await provisionScaffold(root, "lax-100000");
+    await provisionScaffold(root, "lax-100000", epoch());
     recordSubmission(root);
     const report = await doctorReport();
     expect(report).toMatch(new RegExp(`✓ lax-100000\\s+${escape(fs.realpathSync(root))}`, "u"));
@@ -278,7 +278,7 @@ describe("lax doctor submission checks", () => {
   it("leaves a dependency clone alone while a sibling override shadows it", async () => {
     makeWarmStore();
     const root = makeSubmission("shadowed", 42);
-    await provisionScaffold(root, "lax-100042");
+    await provisionScaffold(root, "lax-100042", epoch());
     recordSubmission(root);
     const proofs = path.join(root, "proofs");
     const sibling = path.join(home, "upstream", "concepts");
@@ -296,7 +296,7 @@ describe("lax doctor submission checks", () => {
   it("names the clones the manifest no longer lists, and only those", async () => {
     makeWarmStore();
     const root = makeSubmission("renamed", 42);
-    await provisionScaffold(root, "lax-100042");
+    await provisionScaffold(root, "lax-100042", epoch());
     recordSubmission(root);
     const proofs = path.join(root, "proofs");
     requireDependency(proofs, "Lax67");
@@ -326,7 +326,7 @@ describe("lax doctor submission checks", () => {
   it("flags a warm-closure clone and the legacy generation marker", async () => {
     makeWarmStore();
     const root = makeSubmission("legacy", 42);
-    await provisionScaffold(root, "lax-100042");
+    await provisionScaffold(root, "lax-100042", epoch());
     recordSubmission(root);
     // mathlib belongs in the store the overrides point at, never here
     clonePackage(path.join(root, "concepts"), "mathlib");
@@ -346,7 +346,7 @@ describe("lax doctor submission checks", () => {
   it("flags overrides that point at a deleted warm store", async () => {
     const warm = makeWarmStore();
     const root = makeSubmission("orphaned", 42);
-    await provisionScaffold(root, "lax-100042");
+    await provisionScaffold(root, "lax-100042", epoch());
     recordSubmission(root);
     fs.chmodSync(warm, 0o755);
     fs.rmSync(warm, { recursive: true, force: true });
