@@ -298,6 +298,100 @@ def ppType (env : Environment) (e : Expr) : IO String := do
   let fmt ← runCoreIO env (Meta.ppExpr e).run'
   return fmt.pretty
 
+/-!
+## Shape guards for the persisted extension entries
+
+The three readers below reinterpret raw olean extension entries with
+`unsafeCast`. That is a cast of memory, not of values: when a core type changes
+shape the cast still compiles and the inspector silently reports nonsense. So
+each reader is preceded by an elaboration-time guard that resolves the entry
+type's constructor and compares its signature with the text recorded beside the
+reader. A Lean release that changes one of them fails the inspector *build* —
+which is what the admission run watches — instead of the report.
+
+The rendering is deliberately notation-free: delaborators, notation, and the
+pretty-printer's layout are all free to change between releases, so the guards
+pin the raw term structure instead. The recorded texts were taken on 2026-09-04
+and are identical under `leanprover/lean4:v4.30.0` and `v4.33.0`.
+-/
+
+namespace ShapeGuard
+open Lean Elab Command
+
+def binderShape : BinderInfo → String
+  | .default => "explicit"
+  | .implicit => "implicit"
+  | .strictImplicit => "strictImplicit"
+  | .instImplicit => "instImplicit"
+
+/-- A notation-free rendering of a term: every constant fully qualified, every
+binder named and tagged with its binder info, nothing hidden. -/
+partial def exprShape (e : Expr) : String :=
+  match e with
+  | .bvar i => s!"#{i}"
+  | .fvar _ => "<fvar>"
+  | .mvar _ => "<mvar>"
+  | .sort _ => "Sort"
+  | .const n _ => n.toString
+  | .app f a => s!"({exprShape f} {exprShape a})"
+  | .lam n t b _ => s!"(fun ({n} : {exprShape t}) => {exprShape b})"
+  | .forallE n t b bi => s!"({binderShape bi} {n} : {exprShape t}) -> {exprShape b}"
+  | .letE n t v b _ => s!"(let {n} : {exprShape t} := {exprShape v}; {exprShape b})"
+  | .lit (.natVal v) => toString v
+  | .lit (.strVal s) => s!"\"{s}\""
+  | .mdata _ b => exprShape b
+  | .proj s i b => s!"({exprShape b}.{s}.{i})"
+
+/-- The constructors of an inductive type, one `name : signature` per line, in
+declaration order. -/
+def declShape (env : Environment) (typeName : Name) : Except String String := do
+  match env.find? typeName with
+  | none => throw s!"{typeName} does not exist under this toolchain"
+  | some (.inductInfo info) => do
+      let mut lines : Array String := #[]
+      for ctor in info.ctors do
+        match env.find? ctor with
+        | some ci => lines := lines.push s!"{ctor} : {exprShape ci.type}"
+        | none => throw s!"constructor {ctor} of {typeName} does not exist"
+      return String.intercalate "\n" lines.toList
+  | some _ => throw s!"{typeName} is not an inductive type any more"
+
+def drifted (reader what expected actual : String) : String :=
+  "lax inspector shape guard: " ++ what ++ " changed shape under this toolchain, so the "
+    ++ "unsafeCast in `" ++ reader ++ "` is no longer sound.\n  recorded: " ++ expected
+    ++ "\n  found:    " ++ actual
+    ++ "\nUpdate the reader and the recorded shape together; see \"The inspector\" in "
+    ++ "environments-plan.md before admitting this environment."
+
+/-- Fail elaboration unless `typeName` is still an inductive whose constructors
+have exactly the recorded signatures. -/
+def checkType (reader : String) (typeName : Name) (expected : String) : CommandElabM Unit := do
+  match declShape (← getEnv) typeName with
+  | .error e => throwError "lax inspector shape guard (`{reader}`): {e}"
+  | .ok actual =>
+    if actual != expected then
+      let msg := drifted reader s!"the persisted entry type {typeName}" expected actual
+      throwError "{msg}"
+
+/-- Fail elaboration unless a constant still has the recorded type. Used for an
+extension itself, whose type is what fixes the shape of its persisted entries. -/
+def checkConst (reader : String) (name : Name) (expected : String) : CommandElabM Unit := do
+  let some info := (← getEnv).find? name
+    | throwError "lax inspector shape guard (`{reader}`): {name} does not exist under this toolchain"
+  let actual := exprShape info.type
+  if actual != expected then
+    let msg := drifted reader s!"the type of {name}" expected actual
+    throwError "{msg}"
+
+end ShapeGuard
+
+-- `moduleDocsOf` casts each `Lean.moduleDocExt` entry to `ModuleDoc` and reads
+-- its first field. (The extension itself is private to `Lean.DocString.Extension`
+-- and cannot be named here, so only the entry type is guarded.)
+run_cmd do
+  ShapeGuard.checkType "moduleDocsOf" `Lean.ModuleDoc
+    "Lean.ModuleDoc.mk : (explicit doc : String) -> (explicit declarationRange : Lean.DeclarationRange) -> Lean.ModuleDoc"
+
 /-- Module docstrings, read from the raw olean extension entries. We import
 with `loadExts := false` — loading extensions would require enabling
 initializer execution, i.e. running imported code — so we read the persisted
@@ -311,6 +405,20 @@ unsafe def moduleDocsOf (data : ModuleData) : Array ModuleDoc := Id.run do
         out := out.push (unsafeCast e : ModuleDoc)
   return out
 
+-- `declarationRangesOf` casts each `Lean.declRangeExt` entry to
+-- `Name × DeclarationRanges` and reads two line numbers out of it. The
+-- extension's own type is guarded as well: `MapDeclarationExtension α` is what
+-- makes its persisted entries `Name × α`.
+run_cmd do
+  ShapeGuard.checkConst "declarationRangesOf" `Lean.declRangeExt
+    "(Lean.MapDeclarationExtension Lean.DeclarationRanges)"
+  ShapeGuard.checkType "declarationRangesOf" `Lean.DeclarationRanges
+    "Lean.DeclarationRanges.mk : (explicit range : Lean.DeclarationRange) -> (explicit selectionRange : Lean.DeclarationRange) -> Lean.DeclarationRanges"
+  ShapeGuard.checkType "declarationRangesOf" `Lean.DeclarationRange
+    "Lean.DeclarationRange.mk : (explicit pos : Lean.Position) -> (explicit charUtf16 : Nat) -> (explicit endPos : Lean.Position) -> (explicit endCharUtf16 : Nat) -> Lean.DeclarationRange"
+  ShapeGuard.checkType "declarationRangesOf" `Lean.Position
+    "Lean.Position.mk : (explicit line : Nat) -> (explicit column : Nat) -> Lean.Position"
+
 /-- Declaration ranges are persisted extension data too. Inspect keeps
 imported extension initialization disabled, so read only these inert olean
 entries, just as `moduleDocsOf` does for module documentation. -/
@@ -322,6 +430,13 @@ unsafe def declarationRangesOf (data : ModuleData) : NameMap DeclarationRanges :
         let (name, ranges) := (unsafeCast e : Name × DeclarationRanges)
         out := out.insert name ranges
   return out
+
+-- `matcherNamesOf` casts each `Lean.Meta.Match.Extension.extension` entry to
+-- `Meta.Match.Extension.Entry` and reads its first field. (The extension itself
+-- is private to `Lean.Meta.Match.MatcherInfo`; only the entry type is guarded.)
+run_cmd do
+  ShapeGuard.checkType "matcherNamesOf" `Lean.Meta.Match.Extension.Entry
+    "Lean.Meta.Match.Extension.Entry.mk : (explicit name : Lean.Name) -> (explicit info : Lean.Meta.Match.MatcherInfo) -> Lean.Meta.Match.Extension.Entry"
 
 /-- Matcher names, read from the raw `Match.Extension` olean entries of every
 loaded module — upstream and submission alike. Inspect keeps imported
