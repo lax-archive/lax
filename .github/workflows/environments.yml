@@ -136,13 +136,29 @@ jobs:
         run: npx vitest run test/e2e/inspector-golden.test.ts
       - name: Run the proof-tree composer smoke
         run: npm run smoke:prooftree
+      # The smoke's `paper-web` fixture drives the trusted web derivation,
+      # whose host-side encode runs over the fetched ReflowTeX fork — the same
+      # fetch ci.yml's smoke job and the validate job perform. Without it the
+      # fixture reports a `web-toolchain` skip and the smoke asserts against
+      # that, which is how the first admission run (2026-09-04) ended.
+      - name: Restore the reflowtex encode venv
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: reflowtex/venv
+          key: lax-reflowtex-venv-v1-${{ runner.os }}-${{ hashFiles('reflowtex/requirements.lock') }}
+      - name: Fetch the pinned ReflowTeX fork
+        run: npm run reflowtex:fetch
       # The real thing: the container pipeline against real mathlib at the
       # candidate's commit. Cold `lake exe cache get` is about ten minutes on a
       # hosted runner, and there is nothing to cache — this environment has
-      # never been provisioned here before.
+      # never been provisioned here before. `pipefail`, because the tee must
+      # not turn a crashed smoke into a green step with no measurement — which
+      # is exactly what the first admission run's admit job then committed.
       - name: Run the real-container smoke against the candidate
         id: container
-        run: npm run smoke:submission-validation | tee "$RUNNER_TEMP/smoke.json"
+        run: |
+          set -euo pipefail
+          npm run smoke:submission-validation | tee "$RUNNER_TEMP/smoke.json"
       # The last JSON line carries the heaviest span's peak memory, sampled
       # from the container's own cgroup by the runner. It becomes the entry's
       # `limits` so the environment carries a budget measured on its own
