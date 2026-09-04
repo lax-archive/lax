@@ -56,3 +56,29 @@ export async function withTestEnvironmentsAsync<T>(
     else process.env.LAX_TEST_ENVIRONMENTS = previous;
   }
 }
+
+/**
+ * Run `body` against the compiled table alone. The admission workflow sets
+ * LAX_TEST_ENVIRONMENTS for its whole test run, so a test that asserts the
+ * table's *own* shape has to clear the seam first rather than assume it.
+ */
+export function withoutTestEnvironments<T>(body: () => T): T {
+  const previous = process.env.LAX_TEST_ENVIRONMENTS;
+  delete process.env.LAX_TEST_ENVIRONMENTS;
+  try {
+    return body();
+  } finally {
+    if (previous !== undefined) process.env.LAX_TEST_ENVIRONMENTS = previous;
+  }
+}
+
+/** The async form of `withoutTestEnvironments`. */
+export async function withoutTestEnvironmentsAsync<T>(body: () => Promise<T>): Promise<T> {
+  const previous = process.env.LAX_TEST_ENVIRONMENTS;
+  delete process.env.LAX_TEST_ENVIRONMENTS;
+  try {
+    return await body();
+  } finally {
+    if (previous !== undefined) process.env.LAX_TEST_ENVIRONMENTS = previous;
+  }
+}

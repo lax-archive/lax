@@ -16,7 +16,7 @@ import {
   EPOCH,
 } from "../../src/submission-validation/environments.js";
 import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
-import { withTestEnvironments } from "../support/environments.js";
+import { withTestEnvironments, withoutTestEnvironments } from "../support/environments.js";
 import {
   cleanupTemporary,
   COMMIT,
@@ -918,14 +918,18 @@ describe("archive environment selection", () => {
   });
 
   it("keeps the epoch in the table and grows only through the test seam", () => {
-    expect(epoch().id).toBe(EPOCH);
-    expect(environments().map((entry) => entry.id)).toContain(EPOCH);
-    withTestEnvironments([{ id: "v4.31.0" }], () => {
-      expect(environments().map((entry) => entry.id)).toEqual([EPOCH, "v4.31.0"]);
-      // an injected entry borrows the installed toolchain, so one Lean
-      // install serves every environment a test invents
-      expect(environment("v4.31.0")?.leanToolchain).toBe(epoch().leanToolchain);
+    // the admission workflow runs the suite with a candidate injected, so the
+    // baseline is the compiled table with the seam cleared, not the ambient one
+    withoutTestEnvironments(() => {
+      expect(epoch().id).toBe(EPOCH);
+      expect(environments().map((entry) => entry.id)).toContain(EPOCH);
+      withTestEnvironments([{ id: "v4.31.0" }], () => {
+        expect(environments().map((entry) => entry.id)).toEqual([EPOCH, "v4.31.0"]);
+        // an injected entry borrows the installed toolchain, so one Lean
+        // install serves every environment a test invents
+        expect(environment("v4.31.0")?.leanToolchain).toBe(epoch().leanToolchain);
+      });
+      expect(environments().map((entry) => entry.id)).toEqual([EPOCH]);
     });
-    expect(environments().map((entry) => entry.id)).toEqual([EPOCH]);
   });
 });

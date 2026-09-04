@@ -15,7 +15,7 @@ import {
   warmDir,
   warmReady,
 } from "../../src/submission-validation/host/warmstore.js";
-import { withTestEnvironmentsAsync } from "../support/environments.js";
+import { withoutTestEnvironmentsAsync, withTestEnvironmentsAsync } from "../support/environments.js";
 import { removeTree } from "../support/tmp.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -612,7 +612,9 @@ describe("lax doctor", () => {
     // them under another name is the duplication a collapsed report avoids.
     const { log } = quiet();
 
-    await doctor({ dry: true });
+    // the compiled table alone: an admission run injects its candidate for
+    // the whole suite, and then the row is exactly what should appear
+    await withoutTestEnvironmentsAsync(() => doctor({ dry: true }));
 
     expect(row(printed(log), "Environments")).toBeUndefined();
   });

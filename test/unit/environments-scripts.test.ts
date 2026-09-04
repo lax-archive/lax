@@ -30,6 +30,7 @@ import {
   // @ts-expect-error -- a plain .mjs script, deliberately untyped like scripts/port-db
 } from "../../scripts/environments/table.mjs";
 import { environments } from "../../src/submission-validation/environments.js";
+import { withoutTestEnvironments } from "../support/environments.js";
 
 const TAGS = [
   "v4.29.0",
@@ -222,9 +223,12 @@ describe("table.mjs: the parser the CI gate reads the table with", () => {
       leanToolchain: string;
       inspector: string;
     }>).map(({ id, leanToolchain, inspector }) => ({ id, leanToolchain, inspector }));
-    expect(parsed).toEqual(
+    // the source text has no seam: compare against the compiled table with
+    // LAX_TEST_ENVIRONMENTS cleared, which an admission run sets suite-wide
+    const compiled = withoutTestEnvironments(() =>
       environments().map(({ id, leanToolchain, inspector }) => ({ id, leanToolchain, inspector })),
     );
+    expect(parsed).toEqual(compiled);
   });
 
   it("fails loudly rather than returning a short table", () => {

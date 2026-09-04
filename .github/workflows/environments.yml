@@ -114,9 +114,21 @@ jobs:
         env:
           LEAN_TOOLCHAIN: ${{ matrix.leanToolchain }}
         run: node scripts/environments/install-toolchain.mjs "$LEAN_TOOLCHAIN"
-      # The unit and fake-mathlib e2e suites under the candidate's toolchain:
-      # the fake mathlib has no closure, so this proves the plumbing, not the
-      # environment.
+      # The suite is pinned to the epoch: test/global-setup.ts pre-builds the
+      # shared fake-mathlib store for the epoch's toolchain and skips it for a
+      # toolchain the runner lacks, after which every test that needs the store
+      # fails rather than skips (the first admission run, 2026-09-04). So the
+      # epoch's toolchain is installed beside the candidate's — one more elan
+      # install, no mathlib — and the suite runs the way ci.yml runs it, with
+      # the candidate admitted through the seam. The fake mathlib has no
+      # closure, so this proves the plumbing under a two-row table, not the
+      # environment; the two steps after it are the ones that run the
+      # candidate's own Lean.
+      - name: Install the epoch's toolchain
+        run: |
+          set -euo pipefail
+          toolchain="$(node --input-type=module -e 'import("./dist/submission-validation/environments.js").then((m) => console.log(m.epoch().leanToolchain))')"
+          node scripts/environments/install-toolchain.mjs "$toolchain"
       - run: npm test
       # The inspector's output contract. Its build carries the shape guards,
       # so a moved core type fails here as a compile error.
