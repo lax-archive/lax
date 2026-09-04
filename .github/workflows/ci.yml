@@ -6,8 +6,8 @@ on:
   # The inspector-matrix job below is the only guard the non-epoch
   # environments have, and an environment stays open forever, so it also runs
   # on a schedule: a Lean or mathlib change that breaks an old inspector must
-  # not wait for someone to touch this repository. The other jobs answer to
-  # pushes only.
+  # not wait for someone to touch this repository. The other jobs sit the
+  # scheduled run out.
   schedule:
     - cron: "23 5 * * 1"
 
@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   check:
-    if: github.event_name == 'push'
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -134,7 +134,7 @@ jobs:
   # push, in a real container, against the real pins.
   smoke:
     name: Container smoke
-    if: github.event_name == 'push'
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read

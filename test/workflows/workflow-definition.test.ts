@@ -680,8 +680,8 @@ describe("CI workflow wiring", () => {
     // weekly cron the inspector matrix needs is declared here and the two
     // push-only jobs opt out of it by hand.
     expect(ciParsed.on).toMatchObject({ push: null, pull_request: null });
-    expect(requireJob(ciJobs, "check").if).toBe("github.event_name == 'push'");
-    expect(requireJob(ciJobs, "smoke").if).toBe("github.event_name == 'push'");
+    expect(requireJob(ciJobs, "check").if).toBe("github.event_name != 'schedule'");
+    expect(requireJob(ciJobs, "smoke").if).toBe("github.event_name != 'schedule'");
     for (const [name, job] of Object.entries(ciJobs)) {
       expect(job.permissions, name).toEqual({ contents: "read" });
       const checkout = job.steps.find((step) => step.uses?.startsWith("actions/checkout"));
