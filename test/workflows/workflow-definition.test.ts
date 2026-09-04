@@ -594,7 +594,7 @@ describe("CI workflow wiring", () => {
     expect(Object.keys(ciJobs).sort()).toEqual(["check", "smoke"]);
     // Workflow-level `on:`, so both jobs answer to the same events; a per-job
     // trigger cannot exist in Actions, but a second workflow file could drift.
-    expect(ciParsed.on).toEqual({ push: null });
+    expect(ciParsed.on).toEqual({ push: null, pull_request: null });
     for (const [name, job] of Object.entries(ciJobs)) {
       expect(job.permissions, name).toEqual({ contents: "read" });
       const checkout = job.steps.find((step) => step.uses?.startsWith("actions/checkout"));
@@ -663,6 +663,19 @@ describe("CI workflow wiring", () => {
     for (const tree of ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]) {
       expect(project.include, tree).toContain(tree);
     }
+  });
+
+  it("installs dependencies without lifecycle scripts", () => {
+    for (const [name, job] of Object.entries(ciJobs)) {
+      const installs = job.steps.filter((step) => step.run?.startsWith("npm ci"));
+      expect(installs, name).toHaveLength(1);
+      expect(installs[0]?.run, name).toBe("npm ci --ignore-scripts");
+    }
+    const action = YAML.parse(setupAction) as {
+      runs: { steps: Array<{ run?: string }> };
+    };
+    const install = action.runs.steps.find((step) => step.run?.startsWith("npm ci"));
+    expect(install?.run).toBe("npm ci --ignore-scripts && npm run build");
   });
 
   it("saves the warm-store cache before the smoke runs a container", () => {

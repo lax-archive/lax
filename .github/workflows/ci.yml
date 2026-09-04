@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+  pull_request:
 
 permissions:
   contents: read
@@ -23,7 +24,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       # `npm run build` compiles only what ships (tsconfig.json includes
       # src/**), so without this step nothing ever typechecks test/** or
       # scripts/**: a call that lost an argument, a fake whose shape drifted
@@ -135,7 +136,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       # The `paper-web` fixture drives the trusted web derivation, whose
       # host-side encode runs over the fetched ReflowTeX fork (the same

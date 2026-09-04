@@ -41,7 +41,7 @@ runs:
     - name: Install and build
       if: steps.dist-cache.outputs.cache-hit != 'true'
       shell: bash
-      run: npm ci && npm run build
+      run: npm ci --ignore-scripts && npm run build
     - name: Save dependencies and the compiled tree
       if: inputs.save == 'true' && steps.dist-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
