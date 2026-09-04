@@ -288,16 +288,18 @@ second. What remains is listed per stage below, then stage 6 (docs).
     override it, so the admit job pushes its branch and then fails at
     `gh pr create`; the 2026-09-04 pull request was opened by hand.
     Until it is on, every scheduled admission ends the same way.
-  - **What the admission measures is not a budget.** The smoke's
-    heaviest-span peak over its fixtures (1.15 GiB for v4.33.0) is what
-    `admit.mjs` writes as the entry's `limits.memoryBytes`, and that
-    becomes the container's `--memory` cap — a real submission imports
-    far more of mathlib (~5.6 GiB per replay thread at the epoch) and
-    would be refused. The entry was merged without `limits`, inheriting
-    `DEFAULT_LIMITS` like the epoch. Decide what the run should measure
-    (a full-mathlib import, as the plan's checklist assumed) or record
-    the figure as a note rather than a cap, then fix `environments.yml`
-    and `admit.mjs` together.
+  - **The admission's measurement is a note, not a cap** (decided
+    2026-09-04, after the first run). The smoke's heaviest-span peak over
+    its fixtures (1.15 GiB for v4.33.0) used to become the entry's
+    `limits.memoryBytes`, hence the container's `--memory` cap, which a
+    real submission (~5.6 GiB per replay thread at the epoch) would have
+    blown straight through. Now the admit job records the peak in the
+    pull request body and passes no `--memory-bytes`; the entry inherits
+    `DEFAULT_LIMITS`, and `limits` is written by hand only after a
+    full-mathlib replay has been measured in the environment (typically
+    `leanThreads: 1` once an import no longer fits twice). A
+    workflow-definition test pins it. The plan's checklist, spec-notes,
+    and `admit.mjs` say the same.
   - **Epoch fixture in the admission job**: the job now installs the
     epoch's toolchain beside the candidate's so the fake-mathlib suite
     runs the way `ci.yml` runs it; the suite therefore proves the

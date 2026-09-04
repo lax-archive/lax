@@ -11,6 +11,8 @@ name: Environments
 # It runs mathlib and this repository's own tests, and nothing else: no App
 # key, no database-repository access, no author code. The only write it can perform
 # is a branch and a pull request in this repository, and only in the last job.
+# The entry it proposes carries no `limits`: what the run measures is the
+# smoke's peak, which is not a submission budget (see the measurement step).
 
 on:
   schedule:
@@ -160,9 +162,16 @@ jobs:
           set -euo pipefail
           npm run smoke:submission-validation | tee "$RUNNER_TEMP/smoke.json"
       # The last JSON line carries the heaviest span's peak memory, sampled
-      # from the container's own cgroup by the runner. It becomes the entry's
-      # `limits` so the environment carries a budget measured on its own
-      # mathlib rather than one measured on the epoch's.
+      # from the container's own cgroup by the runner. It is a *fixture*
+      # figure — the smoke's submissions import a sliver of mathlib (1.15 GiB
+      # at v4.33.0, against ~5.6 GiB per replay thread for a real full-mathlib
+      # import at the epoch) — so it goes into the pull request as a note and
+      # never into the entry's `limits`, which is the container's cgroup cap
+      # and would refuse every real submission. The entry inherits
+      # DEFAULT_LIMITS; a maintainer who has measured a full-mathlib replay in
+      # the environment writes `limits` by hand (admit.mjs --memory-bytes /
+      # --lean-threads, or an edit). Decided 2026-09-04 after the first
+      # admission run (TODO.md, archive environments).
       - name: Record the measurement
         env:
           ID: ${{ matrix.id }}
@@ -226,12 +235,13 @@ jobs:
             id="$(node -p "JSON.parse(require('node:fs').readFileSync('$file','utf8')).id")"
             commit="$(node -p "JSON.parse(require('node:fs').readFileSync('$file','utf8')).mathlibCommit")"
             peak="$(node -p "JSON.parse(require('node:fs').readFileSync('$file','utf8')).peakMemoryBytes ?? ''")"
+            # No limits flag: the smoke's peak is a note, not a budget (see
+            # the measurement step). The entry inherits DEFAULT_LIMITS.
+            node scripts/environments/admit.mjs --id "$id" --commit "$commit"
             if [ -n "$peak" ]; then
-              node scripts/environments/admit.mjs --id "$id" --commit "$commit" --memory-bytes "$peak"
-              summary="$summary- \`$id\` at \`$commit\`, peak $peak bytes"$'\n'
+              summary="$summary- \`$id\` at \`$commit\`; the container smoke's heaviest span peaked at $peak bytes (a fixture figure, not a budget: the entry inherits DEFAULT_LIMITS)"$'\n'
             else
-              node scripts/environments/admit.mjs --id "$id" --commit "$commit"
-              summary="$summary- \`$id\` at \`$commit\`, no memory measurement"$'\n'
+              summary="$summary- \`$id\` at \`$commit\`; the container smoke produced no memory figure (the entry inherits DEFAULT_LIMITS)"$'\n'
             fi
           done
           {

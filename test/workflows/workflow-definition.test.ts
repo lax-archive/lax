@@ -941,7 +941,8 @@ describe("environments workflow wiring", () => {
     expect(golden).toBeGreaterThan(unit);
     expect(composer).toBeGreaterThan(unit);
     expect(container).toBeGreaterThan(composer);
-    // The measurement the entry's `limits` is written from.
+    // The smoke's peak is read off the log after the container step and
+    // travels to the admit job as a note for the pull request.
     const measure = runs.findIndex((run) => run.includes("peakMemoryBytes"));
     expect(measure).toBeGreaterThan(container);
     expect(runs.some((run) => run.startsWith("actions/upload-artifact"))).toBe(true);
@@ -956,6 +957,14 @@ describe("environments workflow wiring", () => {
     const runs = admit.steps.map((step) => step.run ?? step.uses ?? "");
     expect(runs.some((run) => run.includes("admit.mjs"))).toBe(true);
     expect(runs.some((run) => run.includes("gh pr create"))).toBe(true);
+    // The smoke's peak is a fixture figure, not a budget: it reaches the pull
+    // request body as a note and never the entry's `limits`, which would
+    // become the container cap that refuses every real submission (the first
+    // admission run, 2026-09-04, nearly merged 1.15 GiB as exactly that).
+    const append = runs.find((run) => run.includes("admit.mjs"));
+    expect(append).not.toContain("--memory-bytes");
+    expect(append).not.toContain("--lean-threads");
+    expect(append).toContain("peak");
     // The table is the only file an admission may touch.
     const commit = runs.find((run) => run.includes("git commit"));
     expect(commit).toContain("src/submission-validation/environments.ts");

@@ -71,7 +71,8 @@ const TABLE: readonly ArchiveEnvironment[] = [
     // the admission run (2026-09-04, run 33870950217) measured a 1.15 GiB
     // heaviest-span peak over the smoke fixtures, which import little of
     // mathlib: a fixture figure, not a submission budget, so the entry
-    // inherits DEFAULT_LIMITS like the epoch (TODO.md, archive environments)
+    // inherits DEFAULT_LIMITS like the epoch (environments.yml, "Record the
+    // measurement", and the plan's admission checklist)
     admittedAt: "2026-09-04",
     inspector: "inspector",
   },

@@ -124,9 +124,11 @@ const runtime: RuntimePins = {
 };
 assert(await ensureValidationHost({ environment, echo: true }), "validation host setup failed");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-submission-validation-smoke-"));
-// `peakMemoryBytes` is the figure an admission run reads back off the log to
-// write the new environment's `limits`: the container runner samples the
-// cgroup, so it is the container's own peak, not this process's.
+// `peakMemoryBytes` is the figure an admission run reads back off the log and
+// records in its pull request as a note (never as the entry's `limits`: these
+// fixtures import a sliver of mathlib, so the peak is not a submission
+// budget). The container runner samples the cgroup, so it is the container's
+// own peak, not this process's.
 const completed: Array<{
   name: string;
   ok: boolean;

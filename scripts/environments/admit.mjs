@@ -11,9 +11,16 @@
 //
 // The table only grows and an entry is never edited afterwards except to add
 // `limits` or `closedAt` (environments-plan.md, "The environment table"), so
-// admitting an id that is already there is an error, not an update. `limits`
-// is written only when the run measured something; without a measurement the
-// entry inherits DEFAULT_LIMITS, which is the honest state.
+// admitting an id that is already there is an error, not an update.
+//
+// `--memory-bytes` and `--lean-threads` write `limits`, which override
+// DEFAULT_LIMITS for the environment: the container's cgroup cap and the
+// replay thread budget. They are for a maintainer who has measured a
+// full-mathlib replay in the environment (the way the epoch's defaults were
+// measured, config.ts DEFAULT_LIMITS) — the workflow never passes them,
+// because the figure its smoke produces is a fixture peak, not a budget
+// (environments.yml, "Record the measurement"). Without them the entry
+// inherits DEFAULT_LIMITS, which is the honest state.
 
 import fs from "node:fs";
 import path from "node:path";

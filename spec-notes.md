@@ -142,9 +142,13 @@ names the Lean release of the same name, then runs the whole gate under that
 toolchain with the candidate injected as an environment: the unit and
 fake-mathlib suites, a golden inspector report over a fixture that imports
 only `Init`, the proof-tree composer smoke, and the real-container smoke
-against mathlib at the candidate's commit — the last of which measures the
-peak memory the new entry's `limits` records. On green it appends the entry
-and opens a pull request; on red it opens an issue. It holds no App key and
+against mathlib at the candidate's commit — the last of which reports the
+smoke's peak memory, which the pull request records as a note. The entry
+carries no `limits` (it inherits `DEFAULT_LIMITS`): the smoke's fixtures
+import a sliver of mathlib, so their peak is not a submission budget, and a
+per-environment `limits` is written by hand once a full-mathlib replay has
+been measured there. On green it appends the entry and opens a pull request;
+on red it opens an issue. It holds no App key and
 never touches the database, and a merged pull request reaches authors with the
 next CLI release. Between admissions an `inspector-matrix` job builds every
 admitted environment's inspector weekly and on any change to the Lean sources
