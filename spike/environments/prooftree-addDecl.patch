@@ -1,0 +1,60 @@
+--- a/assets/prooftree/Main.lean
++++ b/assets/prooftree/Main.lean
+@@ -52,6 +52,18 @@
+ 
+ def unlimitedOptions : Options := maxHeartbeats.set {} 0
+ 
++/-- Version-agnostic checked declaration addition: `Environment.addDeclCore`
++gained a `maxRecDepth` argument in Lean 4.33, `Lean.addDecl` did not change. -/
++def addCheckedDecl (env : Environment) (decl : Declaration) : IO (Option Environment) := do
++  let coreCtx : Core.Context :=
++    { fileName := "<laxprooftree>", fileMap := default, options := unlimitedOptions }
++  try
++    let (_, s) ← (Lean.addDecl decl).toIO coreCtx { env }
++    return some s.env
++  catch _ =>
++    return none
++
++
+ structure RewriteContext where
+   sourceEnv : Environment
+   outputEnv : IO.Ref Environment
+@@ -147,9 +159,9 @@
+           throw <| IO.userError s!"proof helper {name} is an unresolved axiom"
+         | _ => unreachable!
+       let env ← ctx.outputEnv.get
+-      let env ← match Environment.addDeclCore env ctx.maxHeartbeats declaration none with
+-        | .ok checked => pure checked
+-        | .error _ => throw <| IO.userError s!"kernel rejected copied proof helper {generatedName}"
++      let env ← match ← addCheckedDecl env declaration with
++        | some checked => pure checked
++        | none => throw <| IO.userError s!"kernel rejected copied proof helper {generatedName}"
+       ctx.outputEnv.set env
+       ctx.copied.modify fun values => values.insert name generatedName
+       return .const generatedName levels
+@@ -249,9 +261,9 @@
+ 
+   let declaration := Declaration.inductDecl root.levelParams root.numParams types root.isUnsafe
+   let env ← ctx.outputEnv.get
+-  let env ← match Environment.addDeclCore env ctx.maxHeartbeats declaration none with
+-    | .ok checked => pure checked
+-    | .error _ =>
++  let env ← match ← addCheckedDecl env declaration with
++    | some checked => pure checked
++    | none =>
+       throw <| IO.userError s!"kernel rejected copied proof-local inductive {inductiveName}"
+   ctx.outputEnv.set env
+ 
+@@ -332,9 +344,9 @@
+       value := rewritten
+     }
+     let env ← outputEnv.get
+-    let env ← match Environment.addDeclCore env rewriteContext.maxHeartbeats declaration none with
+-      | .ok checked => pure checked
+-      | .error _ =>
++    let env ← match ← addCheckedDecl env declaration with
++      | some checked => pure checked
++      | none =>
+         throw <| IO.userError s!"kernel rejected generated theorem {generatedName}"
+     outputEnv.set env
+     replacements := replacements.insert statementName generatedName
