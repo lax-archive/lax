@@ -2,7 +2,9 @@
 // .github/workflows/ci.yml, and .github/workflows/release.yml. Everything here
 // is structure that only exists
 // in YAML: job graph shape, per-job token grants, action pins, and step
-// ordering that separates credentials from untrusted input. All *logic*
+// ordering that separates credentials from untrusted input — plus the npm
+// scripts those jobs invoke, because a gate that exists only as a script no
+// job runs is the same drift as a job that went missing. All *logic*
 // (routing, reporting, marker text, idempotence, credential-free preflight)
 // lives in TS entry points and is tested behaviorally in
 // submission-entry.test.ts and its siblings.
@@ -30,6 +32,13 @@ const releaseWorkflow = fs.readFileSync(
   new URL("../../.github/workflows/release.yml", import.meta.url),
   "utf8",
 );
+const packageScripts = (
+  JSON.parse(fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+    scripts: Record<string, string>;
+  }
+).scripts;
+/** The second TypeScript project: everything in the repository, emitting nothing. */
+const TYPECHECK_PROJECT = "tsconfig.typecheck.json";
 
 interface WorkflowJob {
   needs?: string | string[];
@@ -60,6 +69,19 @@ const releaseParsed = YAML.parse(releaseWorkflow) as {
   jobs: Record<string, WorkflowJob>;
 };
 
+/**
+ * Look a job up by name. Every assertion below dereferences jobs this way, and
+ * a record lookup is optional in this project's type settings for a reason: a
+ * renamed or deleted job is exactly the drift these tests exist to catch, so it
+ * should fail once, naming the job it could not find, rather than as a pile of
+ * reads off `undefined` in whichever assertion ran first.
+ */
+function requireJob<T>(all: Record<string, T>, name: string): T {
+  const found = all[name];
+  if (found === undefined) throw new Error(`the workflow declares no ${name} job`);
+  return found;
+}
+
 /** The one cache identity both the trusted validate job and the CI smoke use. */
 const HOST_CACHE_KEY =
   "lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}";
@@ -76,8 +98,8 @@ describe("GitHub Actions dependency pins", () => {
     ["actions/setup-lax/action.yml", String(setupActionPath)] as const];
   it.each(pinned)("pins every external action in %s to a full commit SHA", (_label, path) => {
     const definition = fs.readFileSync(new URL(path), "utf8");
-    const references = [...definition.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/gmu)].map(
-      (match) => match[1],
+    const references = [...definition.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/gmu)].flatMap(
+      (match) => match[1] ?? [],
     );
 
     for (const reference of references) {
@@ -133,8 +155,9 @@ describe("submission workflow wiring", () => {
       "route",
       "validate",
     ]);
-    expect(jobs.validate.needs).toBe("route");
-    expect(jobs.validate.if).toBe("needs.route.outputs.operation == 'validate'");
+    const validate = requireJob(jobs, "validate");
+    expect(validate.needs).toBe("route");
+    expect(validate.if).toBe("needs.route.outputs.operation == 'validate'");
     // The three-stage machinery must not resurface: no stage entry points,
     // no tarball handoffs, no per-job stitching, no registry login.
     expect(workflow).not.toMatch(/run\.js (compile|replay|inspect|cleanup)/u);
@@ -156,11 +179,12 @@ describe("submission workflow wiring", () => {
     // New issue events must carry the private reservation marker (or the exact
     // historical body during migration), and comments must be commands on one
     // of those issues. Ordinary project issues never allocate a runner.
-    expect(jobs.route.needs).toBeUndefined();
-    expect(jobs.route.if).toContain("startsWith(github.event.issue.body, '<!-- lax-submission-id:')");
-    expect(jobs.route.if).toContain("github.event_name == 'issue_comment'");
-    expect(jobs.route.if).toContain("startsWith(github.event.comment.body, '/lax')");
-    expect(jobs.route.if).toContain("This issue is the control plane for one Lax submission.");
+    const route = requireJob(jobs, "route");
+    expect(route.needs).toBeUndefined();
+    expect(route.if).toContain("startsWith(github.event.issue.body, '<!-- lax-submission-id:')");
+    expect(route.if).toContain("github.event_name == 'issue_comment'");
+    expect(route.if).toContain("startsWith(github.event.comment.body, '/lax')");
+    expect(route.if).toContain("This issue is the control plane for one Lax submission.");
     expect(workflow).not.toContain("precheck");
     expect(workflow).not.toContain("should_run");
   });
@@ -215,10 +239,11 @@ describe("submission workflow wiring", () => {
   it("gives the job that executes submission code a read-only token and nothing else", () => {
     // Trust rule 1: no App key, no installation token, no issue write where
     // submission code runs; everything leaves as a credential-free artifact.
-    expect(jobs.validate.permissions).toEqual({ contents: "read" });
-    const checkout = jobs.validate.steps.find((step) => step.uses?.startsWith("actions/checkout"));
+    const validate = requireJob(jobs, "validate");
+    expect(validate.permissions).toEqual({ contents: "read" });
+    const checkout = validate.steps.find((step) => step.uses?.startsWith("actions/checkout"));
     expect(checkout?.with).toMatchObject({ "persist-credentials": false });
-    for (const step of jobs.validate.steps) {
+    for (const step of validate.steps) {
       expect(JSON.stringify(step.env ?? {})).not.toContain("secrets.");
     }
   });
@@ -229,7 +254,7 @@ describe("submission workflow wiring", () => {
     // poison every later run (rewrite-plan.md stage 3 execution notes). The
     // static gate ahead of the restore only fetches and parses; it executes
     // nothing, and it writes only into the job dir.
-    const steps = jobs.validate.steps;
+    const steps = requireJob(jobs, "validate").steps;
     const gate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js --gate");
     const restore = steps.findIndex(
       (step) => step.uses?.startsWith("actions/cache/restore") === true && step.with?.key === HOST_CACHE_KEY,
@@ -248,7 +273,7 @@ describe("submission workflow wiring", () => {
     // Two cache identities exist in the job, each keyed by reviewed inputs:
     // the host store by the pins module plus a layout salt, the reflowtex
     // encode venv by the hash-pinned requirements lock. Nothing else.
-    for (const step of jobs.validate.steps) {
+    for (const step of steps) {
       if (step.uses?.startsWith("actions/cache/") !== true) continue;
       if (step.with?.key === HOST_CACHE_KEY) {
         for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
@@ -265,7 +290,7 @@ describe("submission workflow wiring", () => {
     // the web view, never a failed validation — so every step tolerates
     // failure. The venv save sits before the lean restore, i.e. before any
     // submission code can execute, same doctrine as the warm-store cache.
-    const steps = jobs.validate.steps;
+    const steps = requireJob(jobs, "validate").steps;
     const restore = steps.find((step) => step.name === "Restore the reflowtex encode venv");
     const fetch = steps.find((step) => step.name === "Fetch the pinned ReflowTeX fork");
     const save = steps.find((step) => step.name === "Save the reflowtex encode venv");
@@ -294,7 +319,7 @@ describe("submission workflow wiring", () => {
     // outputs.ts exactly or the re-validation reads nothing. The report-only
     // one is the reader's copy — the author's CLI and the failure reporter —
     // so neither has to pull the capture to learn what went wrong.
-    const uploads = jobs.validate.steps.filter((step) =>
+    const uploads = requireJob(jobs, "validate").steps.filter((step) =>
       step.uses?.startsWith("actions/upload-artifact"),
     );
     expect(uploads).toHaveLength(2);
@@ -326,7 +351,8 @@ describe("submission workflow wiring", () => {
       "publish-submit": "submission-validation-${{ github.event.issue.number }}",
     };
     for (const [name, artifact] of Object.entries(downloads)) {
-      const download = jobs[name].steps.find((step) => step.uses?.startsWith("actions/download-artifact"));
+      const steps = requireJob(jobs, name).steps;
+      const download = steps.find((step) => step.uses?.startsWith("actions/download-artifact"));
       expect(download?.with?.name, name).toBe(artifact);
       expect(download?.with?.path, name).toBe(".build/submission-validation");
     }
@@ -334,7 +360,7 @@ describe("submission workflow wiring", () => {
     // env names their credential-free re-validation reads
     // (readSuccessfulArtifacts), keyed off the workspace copy the download
     // step above populated.
-    const submit = jobs["publish-submit"];
+    const submit = requireJob(jobs, "publish-submit");
     for (const stepName of [
       "Parse artifacts and revalidate current state without Archive credentials",
       "Promote capture, publish trusted submit, and dispatch Website",
@@ -357,13 +383,14 @@ describe("submission workflow wiring", () => {
     // verdict; success unlocks publication and failure goes to the reporter,
     // with no bridging job and no output to forge in between. The publisher
     // still re-parses the report before it mints anything.
-    expect(jobs["publish-submit"].needs).toEqual(["route", "validate"]);
-    expect(jobs["publish-submit"].if).toContain("needs.route.outputs.operation == 'validate'");
-    expect(jobs["publish-submit"].if).toContain("needs.validate.result == 'success'");
+    const submit = requireJob(jobs, "publish-submit");
+    expect(submit.needs).toEqual(["route", "validate"]);
+    expect(submit.if).toContain("needs.route.outputs.operation == 'validate'");
+    expect(submit.if).toContain("needs.validate.result == 'success'");
     expect(workflow).not.toContain("should_publish=");
     expect(workflow).not.toContain("validation-result");
 
-    const reporter = jobs["report-validation-failure"];
+    const reporter = requireJob(jobs, "report-validation-failure");
     expect(reporter.needs).toEqual(["route", "validate"]);
     // always(), so a failed validate still reports; the failure test keeps it
     // off skipped and cancelled runs.
@@ -398,12 +425,12 @@ describe("submission workflow wiring", () => {
     expect(submit).toContain("environment: lax-database-publish");
     // Only the trusted submit publisher pushes captures to ghcr, with the
     // job's own GITHUB_TOKEN; no other job holds a packages grant.
-    expect(jobs["publish-submit"].permissions).toEqual({
+    expect(requireJob(jobs, "publish-submit").permissions).toEqual({
       contents: "read",
       issues: "write",
       packages: "write",
     });
-    expect(jobs.publish.permissions).toEqual({ contents: "read", issues: "write" });
+    expect(requireJob(jobs, "publish").permissions).toEqual({ contents: "read", issues: "write" });
   });
 
   it("keeps both publisher keys in the publishing jobs and out of every other one", () => {
@@ -413,7 +440,7 @@ describe("submission workflow wiring", () => {
     // that survives is trust rule 1 — no job holding an App key checks out or
     // executes submission code.
     for (const name of ["publish", "publish-submit"]) {
-      const job = jobs[name]!;
+      const job = requireJob(jobs, name);
       const steps = job.steps.filter((step) =>
         step.uses?.startsWith("actions/create-github-app-token"),
       );
@@ -450,7 +477,7 @@ describe("submission workflow wiring", () => {
     // All logic lives in src/workflows/submission.ts (tested behaviorally in
     // submission-entry.test.ts); YAML only wires the job in after every
     // failure-capable branch and hands it the outputs the summary needs.
-    const fallback = jobs["report-workflow-failure"];
+    const fallback = requireJob(jobs, "report-workflow-failure");
     // validate is deliberately absent: a failed validate job is
     // report-validation-failure's case, and a second dependency here would
     // double-post on it.
@@ -516,17 +543,77 @@ describe("CI workflow wiring", () => {
       const checkout = job.steps.find((step) => step.uses?.startsWith("actions/checkout"));
       expect(checkout?.with, name).toMatchObject({ "persist-credentials": false });
     }
-    expect(ciJobs.smoke.steps.at(-1)?.run).toBe("npm run smoke:submission-validation");
+    const smoke = requireJob(ciJobs, "smoke");
+    expect(smoke.steps.at(-1)?.run).toBe("npm run smoke:submission-validation");
     // A hung container must not burn the six-hour default budget.
-    expect(ciJobs.smoke["timeout-minutes"]).toBeGreaterThan(0);
-    expect(ciJobs.smoke["timeout-minutes"]).toBeLessThanOrEqual(60);
+    expect(smoke["timeout-minutes"]).toBeGreaterThan(0);
+    expect(smoke["timeout-minutes"]).toBeLessThanOrEqual(60);
+  });
+
+  it("runs every smoke script the package declares", () => {
+    // A smoke driver nothing invokes is a smoke that does not exist, and not
+    // merely unrun: vitest collects `test/**/*.test.ts`, so the drivers under
+    // test/smoke/ are loaded by no suite at all — an unwired one is never even
+    // parsed, and a crash on its first line reads exactly like a green tree.
+    // Every one the package declares therefore owes a step here.
+    const scripts = Object.keys(packageScripts).filter((name) => name.startsWith("smoke:"));
+    expect(scripts).not.toHaveLength(0);
+    const runs = Object.values(ciJobs).flatMap((job) => job.steps.map((step) => step.run ?? ""));
+    for (const script of scripts) {
+      expect(runs.some((run) => run.includes(`npm run ${script}`)), script).toBe(true);
+    }
+  });
+
+  it("hands the proof-tree smoke the pinned toolchain it drives", () => {
+    // test/smoke/prooftree.ts runs `lean` out of PATH, and elan is installed
+    // with --no-modify-path (host/setup.ts), so nothing the provisioning step
+    // installed is on a later step's PATH: the step has to name the toolchain
+    // directory, and leanenv.ts is the module that decides where it is. The
+    // smoke compiles fixture Lean, so it also sits after the cache save, for
+    // the reason the container smoke does.
+    const runs = requireJob(ciJobs, "check").steps.map((step) => step.run ?? step.uses ?? "");
+    const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
+    const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
+    const prooftree = runs.findIndex((run) => run.includes("npm run smoke:prooftree"));
+    expect(setup).toBeGreaterThanOrEqual(0);
+    expect(save).toBeGreaterThan(setup);
+    expect(prooftree).toBeGreaterThan(save);
+    expect(runs[prooftree]).toContain("host/leanenv.js");
+    expect(runs[prooftree]).toContain("toolchainBinDir");
+    expect(runs[prooftree]).toContain('PATH="$bin:$PATH"');
+  });
+
+  it("typechecks the trees it never compiles", () => {
+    // `npm run build` compiles tsconfig.json, which includes src/** and
+    // nothing else, so a type error in test/** or scripts/** — an argument
+    // dropped from a call, a fake that drifted from the interface it stands
+    // in for — stays invisible until the file happens to run, and a file no
+    // suite imports never does. The second project closes that, and is worth
+    // having only while it extends the shipped one (same strictness, same
+    // module resolution) and keeps the two unshipped trees in scope.
+    const runs = requireJob(ciJobs, "check").steps.map((step) => step.run ?? "");
+    expect(runs).toContain("npm run typecheck");
+    // `npm run check` is what a developer runs before pushing; CI must not be
+    // the first place a broken test file is typechecked.
+    expect(packageScripts.check).toContain("npm run typecheck");
+    expect(packageScripts.typecheck).toBe(`tsc -p ${TYPECHECK_PROJECT}`);
+    const project = JSON.parse(
+      fs.readFileSync(new URL(`../../${TYPECHECK_PROJECT}`, import.meta.url), "utf8"),
+    ) as { extends: string; compilerOptions: { noEmit: boolean }; include: string[] };
+    expect(project.extends).toBe("./tsconfig.json");
+    // Emitting would fight `npm run build` over dist/, which is what ships.
+    expect(project.compilerOptions.noEmit).toBe(true);
+    for (const tree of ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]) {
+      expect(project.include, tree).toContain(tree);
+    }
   });
 
   it("saves the warm-store cache before the smoke runs a container", () => {
     // The smoke shares its cache key with the trusted validate job, so it owes
     // the same discipline: only trusted provisioning may ever write the store.
     // Sandboxed fixture builds happen in the final step, after the save.
-    const runs = ciJobs.smoke.steps.map((step) => step.run ?? step.uses ?? "");
+    const smokeJob = requireJob(ciJobs, "smoke");
+    const runs = smokeJob.steps.map((step) => step.run ?? step.uses ?? "");
     const restore = runs.findIndex((run) => run.startsWith("actions/cache/restore"));
     const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
     const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
@@ -535,11 +622,11 @@ describe("CI workflow wiring", () => {
     expect(restore).toBeLessThan(setup);
     expect(setup).toBeLessThan(save);
     expect(save).toBeLessThan(smoke);
-    expect(ciJobs.smoke.steps[save]?.if).toBe("steps.lean-cache.outputs.cache-hit != 'true'");
+    expect(smokeJob.steps[save]?.if).toBe("steps.lean-cache.outputs.cache-hit != 'true'");
     // Same store identity as submission.yml: a divergent key would double the
     // provisioning cost and let the two paths drift onto different pins.
     let cacheSteps = 0;
-    for (const step of ciJobs.smoke.steps) {
+    for (const step of smokeJob.steps) {
       if (step.uses?.startsWith("actions/cache/") !== true) continue;
       cacheSteps += 1;
       expect(step.with?.key).toBe(HOST_CACHE_KEY);
@@ -553,7 +640,8 @@ describe("CI workflow wiring", () => {
     // dvisvgm with the mutool PDF backend, fontspec's Latin Modern OTFs, and
     // the hash-pinned encode venv from `reflowtex:fetch` — installed before
     // `npm test`, with the venv cached on the lock so warm runs stay fast.
-    const runs = ciJobs.check.steps.map((step) => step.run ?? step.uses ?? "");
+    const check = requireJob(ciJobs, "check");
+    const runs = check.steps.map((step) => step.run ?? step.uses ?? "");
     const tex = runs.findIndex((run) => run.includes("texlive-luatex"));
     const fetch = runs.findIndex((run) => run.includes("npm run reflowtex:fetch"));
     const test = runs.indexOf("npm test");
@@ -565,7 +653,7 @@ describe("CI workflow wiring", () => {
     expect(test).toBeGreaterThan(fetch);
     // the fork e2es gate on the reference clone; the fetch step exports it
     expect(runs[fetch]).toContain("LAX_REFLOWTEX_SOURCE");
-    const venvCache = ciJobs.check.steps.find((step) => step.with?.path === "reflowtex/venv");
+    const venvCache = check.steps.find((step) => step.with?.path === "reflowtex/venv");
     expect(venvCache?.uses?.startsWith("actions/cache")).toBe(true);
     expect(venvCache?.with?.key).toContain("hashFiles('reflowtex/requirements.lock')");
   });
@@ -584,7 +672,7 @@ describe("release workflow wiring", () => {
   // The npm trusted-publisher registration names this repository and the
   // workflow *file*, so the filename itself is load-bearing: renaming
   // release.yml silently breaks publishing until the registration follows.
-  const job = releaseParsed.jobs.publish!;
+  const job = requireJob(releaseParsed.jobs, "publish");
 
   it("publishes only from version tags, with OIDC and nothing else", () => {
     expect(Object.keys(releaseParsed.jobs)).toEqual(["publish"]);

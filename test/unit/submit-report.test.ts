@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { paperSummary, SubmitReport } from "../../src/cli/commands.js";
 import * as ui from "../../src/cli/ui.js";
 import type { RemoteValidationReport } from "../../src/cli/run-artifacts.js";
+import type { ValidationFinding } from "../../src/submission-validation/contracts.js";
 
 function okReport(overrides: Partial<RemoteValidationReport> = {}): RemoteValidationReport {
   return { ok: true, warnings: [], violations: [], ...overrides };
@@ -122,7 +123,7 @@ describe("the submit report's warnings", () => {
   });
 
   it("prints a warning both runs found exactly once", async () => {
-    const superseded = {
+    const superseded: ValidationFinding = {
       phase: "resolution",
       rule: "superseded-dependency",
       message: "lax-3 (Lax3) is superseded by lax-12 — consider building on the latest version",

@@ -15,7 +15,7 @@ afterEach(cleanupTemporary);
 // Mirrors the production fetch environment (isolated HOME, no system or user
 // config, no prompts) but admits the file transport so the tests can serve
 // fixture remotes from the local disk instead of the network.
-function isolatedEnv(home: string): Record<string, string> {
+function isolatedEnv(home: string) {
   return {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: home,
@@ -101,10 +101,17 @@ afterAll(() => {
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
 });
 
+/** The commit `index` steps behind main's tip in the origin fixture. */
+function commitAt(index: number): string {
+  const commit = commits[index];
+  if (commit === undefined) throw new Error(`the origin fixture has no commit ${index}`);
+  return commit;
+}
+
 describe("source fetch fallback", () => {
   it("finds a commit buried behind the branch tip through bounded deepening", async () => {
     const { destination, git, calls } = workspace();
-    const target = commits[30]; // 30 commits behind the tip of main
+    const target = commitAt(30); // 30 commits behind the tip of main
     await checkoutRemoteCommit(git, origin, target);
 
     const head = (await git(["rev-parse", "HEAD"])).output.trim();
@@ -118,7 +125,7 @@ describe("source fetch fallback", () => {
 
   it("stops at the depth cap and reports resource exhaustion rather than absence", async () => {
     const { git, calls } = workspace();
-    const target = commits[30];
+    const target = commitAt(30);
     await expect(checkoutRemoteCommit(git, origin, target, 8)).rejects.toThrow(
       "requested commit is deeper than the validation fetch limit of 8 commits",
     );

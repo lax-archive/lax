@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type Mock } from "vitest";
 import type { LoadedSubmission } from "../../src/shared/archive.js";
 import {
   deletedFiles,
@@ -16,6 +16,7 @@ import {
   Publisher,
   type PublisherArchive,
   type PublisherControl,
+  type PublisherWebsite,
 } from "../../src/shared/publisher.js";
 import type { GitHubIdentity, PublishRequest } from "../../src/shared/types.js";
 
@@ -595,7 +596,7 @@ function publisherHarness(
   load: ReturnType<typeof vi.fn>;
   listRegisteredSuperseders: ReturnType<typeof vi.fn>;
   writeFiles: ReturnType<typeof vi.fn>;
-  website: { request: ReturnType<typeof vi.fn> };
+  website: PublisherWebsite & { request: Mock };
 } {
   let changes: ArchiveChanges = {};
   const comments: string[] = [];
@@ -624,7 +625,13 @@ function publisherHarness(
   const load = vi.fn(async (id: string) => (id === "lax-42" ? current : dependencies[id]));
   const listRegisteredSuperseders = vi.fn(async () => registeredSuperseders);
   const archive: PublisherArchive = { load, listRegisteredSuperseders, writeFiles };
-  const website = { request: vi.fn().mockResolvedValue(undefined) };
+  // `PublisherWebsite.request` is generic in the response type it parses, and
+  // no mock can honestly hand back a `Promise<T>` for a T it never sees — the
+  // dispatch under test discards the response. So the spy is a plain mock and
+  // stands in for the interface deliberately.
+  const website = { request: vi.fn().mockResolvedValue(undefined) } as PublisherWebsite & {
+    request: Mock;
+  };
   return {
     publisher: new Publisher(control, archive, issue.repositoryId),
     control,

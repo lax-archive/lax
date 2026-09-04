@@ -24,6 +24,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # `npm run build` compiles only what ships (tsconfig.json includes
+      # src/**), so without this step nothing ever typechecks test/** or
+      # scripts/**: a call that lost an argument, a fake whose shape drifted
+      # from the interface it stands in for, survives until the file happens
+      # to run — and a driver no suite imports never does. The typecheck
+      # project covers all three trees under the same strictness and emits
+      # nothing, so it runs first, ahead of the provisioning minutes below.
+      - run: npm run typecheck
       - run: npm run build
       # The fast suite is docker-free but not toolchain-free: the real-lake
       # e2e tests (test/e2e/host-pipeline.test.ts and friends) drive elan/lake
@@ -50,6 +58,19 @@ jobs:
             ~/.lax/warm
             ~/.lax/tools
           key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+      # The proof-tree composer (assets/prooftree/) is Lean that only the
+      # pinned toolchain can run, and only end to end: the smoke composes the
+      # eight-theorem fixture, replays it in a fresh process, and reads the
+      # kernel's own `#print axioms`. It needs no container and no mathlib, so
+      # it belongs to this job, right after the provisioning it depends on —
+      # and after the cache save, because it is the first step here that
+      # compiles fixture code. `lean` is not on PATH: elan is installed with
+      # --no-modify-path (host/setup.ts), so the toolchain directory has to be
+      # named, and leanenv.ts is the one place that knows where it is.
+      - name: Run the proof-tree composer smoke
+        run: |
+          bin="$(node --input-type=module -e 'import { toolchainBinDir } from "./dist/submission-validation/host/leanenv.js"; process.stdout.write(toolchainBinDir())')"
+          PATH="$bin:$PATH" npm run smoke:prooftree
       # The paper-layer e2es compile small fixtures with the host latexmk, the
       # way `lax build` does on an author's machine; they skip themselves
       # without one, so the install is what makes them run here. Beyond the
