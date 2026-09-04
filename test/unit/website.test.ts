@@ -183,14 +183,18 @@ describe("the local preview", () => {
     expect(trimmed(output.lines)).toEqual([
       "  Preview",
       "",
-      `  http://localhost:${port}`,
+      `  http://localhost:${port}/lax-50/`,
       "",
       "  lax-50 and 2 published submissions.",
       "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
     ]);
 
-    const page = await fetch(`http://localhost:${port}/`);
-    expect(await page.text()).toContain("rendered by the stub");
+    // The line the author opened this command for goes to the submission they
+    // are working on, and it is a page, not the archive's front door.
+    const page = await fetch(`http://localhost:${port}/lax-50/`);
+    expect(await page.text()).toContain("the stub's lax-50 page");
+    const index = await fetch(`http://localhost:${port}/`);
+    expect(await index.text()).toContain("rendered by the stub");
 
     // The renderer is told the epoch this CLI's own table names, not the one
     // its config carried when it was released.
@@ -213,6 +217,48 @@ describe("the local preview", () => {
     expect(renderer.renders).toBeGreaterThan(1);
     expect(output.lines.join("\n")).not.toContain("site rebuilt from");
     expect(output.lines.join("\n")).not.toContain("loading the pinned");
+  });
+
+  it("redirects the link it printed to the id a mid-preview build allocates", async () => {
+    currentDatabase([]);
+    const local = temporaryDirectory("lax-serve-local-");
+    const port = await freePort();
+    const output = capture();
+
+    try {
+      await serveWebsite(local, port, {
+        renderer: stubRenderer(),
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    expect(trimmed(output.lines)).toContain(`  http://localhost:${port}/local/`);
+    const before = await fetch(`http://localhost:${port}/local/`);
+    expect(await before.text()).toContain("the stub's local page");
+
+    const rebuilt = capture();
+    try {
+      fs.writeFileSync(
+        path.join(local, "build-output.json"),
+        JSON.stringify(localBuildOutput("lax-50", "Bounded gaps")),
+      );
+      await waitFor(
+        () => rebuilt.lines.some((line) => /^ {2}↻ \d{2}:\d{2}:\d{2} {2}rebuilt$/u.test(line)),
+        "the rebuild line",
+      );
+    } finally {
+      rebuilt.restore();
+    }
+
+    // The renderer files the folder under its new id and drops the old page;
+    // the tab the author already has open follows it instead of 404ing.
+    const after = await fetch(`http://localhost:${port}/local/`, { redirect: "manual" });
+    expect(after.status).toBe(302);
+    expect(after.headers.get("location")).toBe("/lax-50/");
+    const followed = await fetch(`http://localhost:${port}/local/`);
+    expect(await followed.text()).toContain("the stub's lax-50 page");
   });
 
   it("moves to the next free port and says so", async () => {
@@ -239,7 +285,9 @@ describe("the local preview", () => {
     expect(trimmed(output.lines)).toEqual([
       "  Preview",
       "",
-      `  http://localhost:${taken + 1}`,
+      // No build has named the folder yet, so the preview opens on the page the
+      // renderer files an unbuilt folder under.
+      `  http://localhost:${taken + 1}/local/`,
       "",
       "  No published submissions yet.",
       "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
@@ -633,10 +681,22 @@ function stubRenderer(): StubRenderer {
           }),
         ),
       );
+      // Shaped like the real generator: the whole tree is replaced, and every
+      // submission gets its own `<id>/index.html` beside the front page.
+      fs.rmSync(outDir, { recursive: true, force: true });
+      fs.mkdirSync(outDir, { recursive: true });
       fs.writeFileSync(
         path.join(outDir, "index.html"),
         "<!doctype html><html><head></head><body>rendered by the stub</body></html>",
       );
+      for (const submission of submissions as Array<{ record: { id: string } }>) {
+        const directory = path.join(outDir, submission.record.id);
+        fs.mkdirSync(directory, { recursive: true });
+        fs.writeFileSync(
+          path.join(directory, "index.html"),
+          `<!doctype html><html><head></head><body>the stub's ${submission.record.id} page</body></html>`,
+        );
+      }
     },
     mimeTypes: { ".html": "text/html; charset=utf-8" },
   };

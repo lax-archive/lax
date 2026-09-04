@@ -124,7 +124,18 @@ export async function serveWebsite(
   let advice = fs.existsSync(path.join(archive, ".git"))
     ? undefined
     : databaseAdvice({ status: "missing" }, archive);
-  writePlaceholder(outDir, bannerText(advice));
+  // What the preview opens on. An author who ran `lax serve` in a folder came
+  // to look at that folder's pages, and the archive's front page is one link
+  // away from them; only `--database-only`, which renders no folder, opens on
+  // the index. `linked` is the page the printed link names, `localPage` the one
+  // the last render actually filed the folder under — a build landing mid-
+  // preview moves it from `local` to the reserved id, and the tab the author
+  // already has open is redirected rather than left on a page nothing writes.
+  const linked = localFolder === undefined
+    ? undefined
+    : submissionPagePath(localSubmissionId(localFolder));
+  let localPage = linked;
+  writePlaceholder(outDir, bannerText(advice), linked);
   let timer: NodeJS.Timeout | undefined;
   let building = false;
   let buildAgain = false;
@@ -151,6 +162,9 @@ export async function serveWebsite(
     building = true;
     try {
       const submissions = loadWebsiteSubmissions(archive, localFolder);
+      if (localFolder !== undefined) {
+        localPage = submissionPagePath(submissions.at(-1)?.record.id ?? LOCAL_SUBMISSION_ID);
+      }
       await attachPaperFiles(submissions, failedPaperFetches);
       const builder = await pageBuilder;
       await builder.generateSite(submissions, outDir, epoch().id);
@@ -219,6 +233,17 @@ export async function serveWebsite(
     const file = path.resolve(outDir, relative);
     const inside = file === outDir || file.startsWith(`${outDir}${path.sep}`);
     if (!inside || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+      if (
+        inside &&
+        linked !== undefined &&
+        localPage !== undefined &&
+        localPage !== linked &&
+        relative === `${linked}index.html`
+      ) {
+        response.writeHead(302, { location: `/${localPage}` });
+        response.end();
+        return;
+      }
       response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
       response.end("not found");
       return;
@@ -252,7 +277,7 @@ export async function serveWebsite(
   });
 
   ui.title("Preview");
-  ui.link(`http://localhost:${bound}`);
+  ui.link(`http://localhost:${bound}${linked === undefined ? "" : `/${linked}`}`);
   // The first render is the one that knows how many submissions there are, so
   // the counts wait for it rather than being guessed at. The link does not
   // wait: loading the renderer takes a moment, and the URL is the line the
@@ -351,7 +376,7 @@ function previewCounts(
   if (localFolder === undefined) return { published: submissions.length };
   const id = submissions.at(-1)?.record.id;
   return {
-    ...(id === undefined || id === "local" ? {} : { localId: id }),
+    ...(id === undefined || id === LOCAL_SUBMISSION_ID ? {} : { localId: id }),
     published: submissions.length - 1,
   };
 }
@@ -447,15 +472,23 @@ export function applyWebsiteWarning(outDir: string, warning?: string): void {
   }
 }
 
-function writePlaceholder(outDir: string, warning?: string): void {
-  fs.writeFileSync(
-    path.join(outDir, "index.html"),
-    "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" " +
-      "content=\"width=device-width,initial-scale=1\"><title>Lax local preview</title></head>" +
-      `<body><main><h1>Lax local preview</h1><p>Building the website…</p>${
-        warning === undefined ? "" : `<p>${escapeHtml(warning)}</p>`
-      }</main></body></html>`,
-  );
+/**
+ * The loading page, written to the site root and — so the link the preview
+ * prints answers from the first second, before any renderer has loaded — to the
+ * previewed folder's own page. The first successful render replaces the whole
+ * directory, so neither copy outlives it.
+ */
+function writePlaceholder(outDir: string, warning?: string, localPage?: string): void {
+  const html = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" " +
+    "content=\"width=device-width,initial-scale=1\"><title>Lax local preview</title></head>" +
+    `<body><main><h1>Lax local preview</h1><p>Building the website…</p>${
+      warning === undefined ? "" : `<p>${escapeHtml(warning)}</p>`
+    }</main></body></html>`;
+  fs.writeFileSync(path.join(outDir, "index.html"), html);
+  if (localPage === undefined) return;
+  const directory = path.join(outDir, localPage);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, "index.html"), html);
 }
 
 function walkHtml(directory: string, transform: (html: string) => string): void {
@@ -484,13 +517,51 @@ function positiveInterval(name: string, fallback: number): number {
   return value;
 }
 
+/**
+ * The id a folder's pages are filed under before `lax init` has allocated one:
+ * `lax serve` renders a folder against a synthetic draft record, and the
+ * renderer files every submission by its record id.
+ */
+const LOCAL_SUBMISSION_ID = "local";
+
+/**
+ * The id the renderer will file this folder's pages under, read without
+ * rendering anything: the preview prints its link before the first render
+ * finishes, and the link may not name a different id than the pages do. Never
+ * throws — an unreadable `build-output.json` is the render's error to report,
+ * and the folder still has the placeholder page this id addresses.
+ */
+function localSubmissionId(folder: string): string {
+  const outputFile = path.join(path.resolve(folder), "build-output.json");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(outputFile, "utf8")) as unknown;
+  } catch {
+    return LOCAL_SUBMISSION_ID;
+  }
+  return isObject(raw) && typeof raw.id === "string" ? raw.id : LOCAL_SUBMISSION_ID;
+}
+
+/**
+ * The site path a submission's page is at, for an id the preview is willing to
+ * speak: `lax build` writes the id and `lax serve` turns it into a directory
+ * under the output tree, a URL it prints, and a redirect target, so an id that
+ * is not one plain path segment gets none of the three — the preview opens on
+ * the index instead, and the render still shows the folder as it always did.
+ * Deliberately wider than `SUBMISSION_ID_PATTERN`: the ids that reach here also
+ * include the scaffold's `lax-0` and the pre-build `local`.
+ */
+function submissionPagePath(id: string): string | undefined {
+  return /^[A-Za-z0-9][\w.-]*$/u.test(id) ? `${id}/` : undefined;
+}
+
 function loadLocalSubmission(folder: string): WebsiteSubmission {
   const root = path.resolve(folder);
   const outputFile = path.join(root, "build-output.json");
   const raw = fs.existsSync(outputFile)
     ? parseJson(fs.readFileSync(outputFile, "utf8"), outputFile)
     : undefined;
-  const id = isObject(raw) && typeof raw.id === "string" ? raw.id : "local";
+  const id = isObject(raw) && typeof raw.id === "string" ? raw.id : LOCAL_SUBMISSION_ID;
   const submission: WebsiteSubmission = {
     record: {
       specVersion: "1",
