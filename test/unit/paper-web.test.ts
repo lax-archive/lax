@@ -1,9 +1,11 @@
 // The web derivation's seams and mechanics without any TeX (paper-web-plan.md
 // stage 2): the deterministic bundle tar, the marker sanity count, the
-// prerequisite probe, the join passthrough into `paper.web`, and the paper
+// prerequisite probe, the join passthrough into `paper.web`, the paper
 // phase's threading of an injected WebDeriver — including the `paper.web:
-// false` opt-out and the warnings-only (never blocking) contract. The real
-// derivation is covered by test/e2e/paper-web.test.ts.
+// false` opt-out and the warnings-only (never blocking) contract — and the
+// encode-to-seal path itself, driven with a stand-in encode child over a
+// real PDF so the oracle's verdict is measured through the code that ships.
+// The real derivation is covered by test/e2e/paper-web.test.ts.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -20,11 +22,16 @@ import { joinPaperMarks } from "../../src/submission-validation/paper/join.js";
 import { ONE_LINE_TAIL_BYTES, oneLineTail } from "../../src/submission-validation/paper/compile.js";
 import { runPaperPhase, type CompiledPaper } from "../../src/submission-validation/paper/phase.js";
 import {
+  encodeAndSealWebBundle,
   markerCountProblems,
   probeReflowtex,
+  runWebDerivation,
   webCompileEnvironment,
   webLatexmkArguments,
   writeDeterministicTar,
+  type ReflowtexInstallation,
+  type WebDeriveInput,
+  type WebDerivation,
   type WebDeriver,
   parseEncodeReport,
 } from "../../src/submission-validation/paper/web.js";
@@ -32,7 +39,14 @@ import { tmpDir } from "../support/host.js";
 
 // ── a real minimal PDF, so the phase's pdf.js extraction genuinely runs ────
 
-function minimalPdf(text: string): Buffer {
+/** One text line per string: `T*` puts each on its own baseline, which is
+ * what makes pdf.js report them as separate lines with `hasEOL` — the shape
+ * the oracle's furniture stripping reads. Keep each line to a printed line's
+ * worth of text: pdf.js reports a text item only as far as the media box's
+ * right edge, so at this 12pt size a line past about ninety characters comes
+ * back truncated mid-word — a fixture that silently loses its own tail. */
+function minimalPdf(text: string | readonly string[]): Buffer {
+  const lines = typeof text === "string" ? [text] : text;
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -41,7 +55,7 @@ function minimalPdf(text: string): Buffer {
     "",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
   ];
-  const stream = `BT /F1 12 Tf 72 720 Td (${text}) Tj ET`;
+  const stream = `BT /F1 12 Tf 14 TL 72 720 Td ${lines.map((line) => `(${line}) Tj T*`).join(" ")} ET`;
   objects[3] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
   let body = "%PDF-1.4\n";
   const offsets: number[] = [];
@@ -197,6 +211,176 @@ describe("paper phase web threading", () => {
     expect(result.findings.warnings).toEqual([
       { phase: "paper", rule: "web-oracle", message: "the reflow view was not derived: divergence at token 3" },
     ]);
+  });
+});
+
+// ── the encode-to-seal path, over a real PDF ──────────────────────────────
+
+interface StandInStream {
+  text: string;
+  unreferenced?: string[];
+}
+
+/**
+ * A stand-in for the fork's encode child — node in place of the venv's
+ * python — writing the three outputs the real child writes. Everything
+ * downstream of it inside `encodeAndSealWebBundle` (report parsing, marker
+ * sanity, pdf.js extraction, the oracle, the seal) then runs for real, so
+ * these tests measure the shipped verdict and not a restatement of it.
+ */
+function standInFork(stream: StandInStream): ReflowtexInstallation {
+  const root = tmpDir("lax-web-fork-");
+  const report = {
+    markers: [],
+    text: stream.text,
+    unreferenced: (stream.unreferenced ?? []).map((text) => ({ text, markers: [] })),
+  };
+  const script = path.join(root, "encode_web.mjs");
+  fs.writeFileSync(
+    script,
+    [
+      `import fs from "node:fs";`,
+      `import path from "node:path";`,
+      `const out = process.argv[process.argv.indexOf("--out") + 1];`,
+      `const block = Buffer.from("a serialized block");`,
+      `fs.mkdirSync(path.join(out, "blocks"), { recursive: true });`,
+      `fs.writeFileSync(path.join(out, "blocks", "000.pb"), block);`,
+      `fs.writeFileSync(path.join(out, "stream.json"), ${JSON.stringify(JSON.stringify(report))});`,
+      `fs.writeFileSync(path.join(out, "encode.json"), JSON.stringify({ pbBytes: block.length, fonts: {} }));`,
+      "",
+    ].join("\n"),
+  );
+  const schema = path.join(root, "latex.proto");
+  fs.writeFileSync(schema, 'syntax = "proto3";\n');
+  return {
+    checkout: root,
+    serializer: script,
+    venvPython: process.execPath,
+    encodeScript: script,
+    schemaProto: schema,
+    generatedPb2: script,
+    pymupdf: root,
+  };
+}
+
+/** Compile-free derivation: a real PDF carrying `pdfLines`, the stand-in
+ * child carrying the stream, the shipped encode → oracle → seal path. */
+async function derive(
+  pdfLines: readonly string[],
+  stream: StandInStream,
+): Promise<{ derivation: WebDerivation; bundlePath: string }> {
+  const { paper, submissionRoot } = markerlessPaper();
+  const jobDir = tmpDir("lax-web-job-");
+  const webSrc = path.join(jobDir, "paper", "web", "src");
+  const webOut = path.join(jobDir, "paper", "web", "out");
+  fs.mkdirSync(webSrc, { recursive: true });
+  fs.mkdirSync(webOut, { recursive: true });
+  const pdfPath = path.join(jobDir, "main.pdf");
+  fs.writeFileSync(pdfPath, minimalPdf(pdfLines));
+  const input: WebDeriveInput = {
+    paper,
+    submissionRoot,
+    jobDir,
+    sourceDateEpoch: 0,
+    limits: DEFAULT_LIMITS,
+    pdfPath,
+  };
+  const derivation = await runWebDerivation((warnings, skip) =>
+    encodeAndSealWebBundle(input, standInFork(stream), webSrc, webOut, warnings, skip));
+  return { derivation, bundlePath: path.join(jobDir, "paper", "web", "paper-web.tar") };
+}
+
+/** A one-page paper's worth of text. The size matters: the budget the
+ * oracle spends on unreferenced captures is a share of the document, so a
+ * margin note is only honest against a paper long enough to hold one. */
+const body = [
+  "The construction proceeds by induction on the height of the tree,",
+  "and every step preserves the invariant stated in the previous section.",
+  "The base case is immediate, since a single vertex carries no edges at all,",
+  "and the inductive step splits the tree at a centroid and applies the",
+  "hypothesis to each of the two halves in turn.",
+];
+
+describe("the oracle over the encode reports", () => {
+  it("seals a view whose only omission is a margin note, and names the note", async () => {
+    const note = "A marginal note that only print shows";
+    const { derivation, bundlePath } = await derive([...body, note], {
+      text: body.join(" "),
+      unreferenced: [note],
+    });
+    expect(derivation.web).toBeDefined();
+    expect(fs.existsSync(bundlePath)).toBe(true);
+    expect(derivation.warnings.map((warning) => warning.rule)).toEqual(["web-unreferenced-paragraph"]);
+    expect(derivation.warnings[0]!.message).toContain(note);
+  });
+
+  it("refuses to seal when the unreferenced captures pass the budget", async () => {
+    // Seven of eight paragraphs missing from the stream: subtracting them
+    // all leaves the oracle comparing one paragraph with itself, and the
+    // bundle would carry an eighth of the paper the PDF beside it shows.
+    const paragraphs = Array.from(
+      { length: 8 },
+      (unused, index) => `Paragraph number ${index} states a genuine claim about the construction here.`,
+    );
+    const { derivation, bundlePath } = await derive(paragraphs, {
+      text: paragraphs[0]!,
+      unreferenced: paragraphs.slice(1),
+    });
+    expect(derivation.web).toBeUndefined();
+    expect(fs.existsSync(bundlePath)).toBe(false);
+    const rules = derivation.warnings.map((warning) => warning.rule);
+    expect(rules).toEqual([...Array.from({ length: 7 }, () => "web-unreferenced-paragraph"), "web-unreferenced-cap"]);
+    const cap = derivation.warnings[7]!.message;
+    expect(cap).toContain("never references 7 captured paragraph(s)");
+    expect(cap).toContain("carrying 77 of the PDF's 88 tokens, past the 17");
+  });
+
+  it("refuses to seal a short paper whose stream drops a quarter of it", async () => {
+    // The budget's absolute floor is what one honest margin note costs a
+    // short paper; it is not a licence to drop a section. Thirty tokens sit
+    // well under that floor and are still a quarter of this paper, so the
+    // share of the document — not the constant — has to decide.
+    const kept = Array.from(
+      { length: 8 },
+      (unused, index) => `Kept sentence ${index} that both the PDF and the serialized stream carry verbatim.`,
+    );
+    const droppedLines = [
+      "A print only section of about thirty tokens that the",
+      "serialized stream never carries, long enough to matter to a",
+      "reader and short enough to sit under the absolute floor.",
+    ];
+    const { derivation, bundlePath } = await derive([...kept, ...droppedLines], {
+      text: kept.join(" "),
+      unreferenced: [droppedLines.join(" ")],
+    });
+    expect(derivation.web).toBeUndefined();
+    expect(fs.existsSync(bundlePath)).toBe(false);
+    expect(derivation.warnings.map((warning) => warning.rule))
+      .toEqual(["web-unreferenced-paragraph", "web-unreferenced-cap"]);
+    expect(derivation.warnings[1]!.message).toContain("carrying 30 of the PDF's 134 tokens, past the 26");
+  });
+
+  it("keeps a table of small integers, which the folio stripper once ate", async () => {
+    // Every row reads as at most four digits once the column spacing is
+    // collapsed; deleting them from the PDF side while the stream carries
+    // them is a divergence the paper never had.
+    const rows = ["1   1", "2   3", "3   7", "4  15", "5  31", "6  63", "7  127", "8  255"];
+    const { derivation } = await derive([...body, ...rows, "7"], {
+      text: [...body, ...rows].join(" "),
+    });
+    expect(derivation.warnings).toEqual([]);
+    expect(derivation.web).toBeDefined();
+  });
+
+  it("skips, loudly, when the stream really does diverge from the PDF", async () => {
+    const printOnly = Array.from(
+      { length: 6 },
+      (unused, index) => `Print only sentence ${index} that the serialized stream never carries at all.`,
+    );
+    const { derivation } = await derive([...body, ...printOnly], { text: body.join(" ") });
+    expect(derivation.web).toBeUndefined();
+    expect(derivation.warnings.map((warning) => warning.rule)).toEqual(["web-oracle"]);
+    expect(derivation.warnings[0]!.message).toContain("diverges from the PDF text");
   });
 });
 

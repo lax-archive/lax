@@ -35,7 +35,7 @@ import {
   assemblePdfText,
   compareTokens,
   oracleTokens,
-  removeTokenRun,
+  subtractUnreferenced,
 } from "./web-oracle.js";
 
 /** What the paper phase hands a web deriver, after the PDF path succeeded. */
@@ -569,19 +569,12 @@ export async function encodeAndSealWebBundle(
     return skip("web-oracle", `the reflow view was not derived: ${error instanceof Error ? error.message : String(error)}`);
   }
   const streamTokens = oracleTokens(stream.text);
-  const streamJoined = ` ${streamTokens.join(" ")} `;
-  for (const paragraph of stream.unreferenced) {
-    const tokens = oracleTokens(paragraph.text);
-    if (tokens.length === 0) continue; // marker-only capture (the hoist's leftover)
-    // A capture the page stream never references but whose text it
-    // carries anyway is a trial typesetting — LaTeX's \caption measures
-    // every caption in a box first, and classes and theorem packages
-    // measure the opening letters of a paragraph the same way ("th",
-    // "We") — not an omission: the surface shows that text, and
-    // subtracting it from the PDF side would manufacture the divergence
-    // the oracle exists to catch. Substring, not token run: the opening
-    // letters are a fragment of a word, never a whole token.
-    if (streamJoined.includes(` ${tokens.join(" ")}`)) continue;
+  // The subtraction of unreferenced captures and the budget that bounds it
+  // are one decision, taken in the oracle (web-oracle.ts): the PDF side may
+  // never be trimmed here without the bound that keeps the trimmed remnant
+  // the same document.
+  const subtracted = subtractUnreferenced(pdfTokens, streamTokens, stream.unreferenced);
+  for (const paragraph of subtracted.omitted) {
     // The cheap loud diagnostic for \marginpar and friends: text the
     // reflow surface will not show, named, whether or not the web view
     // itself derives.
@@ -591,9 +584,21 @@ export async function encodeAndSealWebBundle(
         "the reflow view omits a captured paragraph the page stream never references " +
         `(\\marginpar and similar produce these): "${preview(paragraph.text)}"`,
     });
-    pdfTokens = removeTokenRun(pdfTokens, tokens).tokens;
   }
-  const verdict = compareTokens(pdfTokens, streamTokens, input.limits.paperWebOracleSimilarity);
+  if (subtracted.overBudget) {
+    // Past the budget the derived view is not a lossy rendering of the
+    // paper but a different text, and the oracle would be comparing that
+    // remnant with itself. The named paragraphs above say what went
+    // missing; this says why nothing is sealed.
+    return skip(
+      "web-unreferenced-cap",
+      `the reflow view was not derived: the page stream never references ${subtracted.omitted.length} captured ` +
+        `paragraph(s) carrying ${subtracted.removedTokens} of the PDF's ${pdfTokens.length} tokens, past the ` +
+        `${subtracted.budgetTokens} the oracle forgives as marginal text for a document this size; ` +
+        "the reflow view would show a different paper than the PDF beside it",
+    );
+  }
+  const verdict = compareTokens(subtracted.tokens, streamTokens, input.limits.paperWebOracleSimilarity);
   if (verdict.divergence !== undefined) {
     return skip(
       "web-oracle",

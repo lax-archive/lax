@@ -20,8 +20,14 @@
 //   tokens are lowercased alphanumeric runs, so casing and punctuation
 //   never count as divergence;
 // - unreferenced glyph-bearing paragraphs (`\marginpar` text is captured
-//   but never referenced): their token runs are removed from the PDF side,
-//   and the deriver reports each as its own warning.
+//   but never referenced): their token runs are removed from the PDF side
+//   up to a bounded share of the document, and the deriver reports each as
+//   its own warning.
+//
+// Every one of these normalizations deletes evidence, so each is written to
+// err towards a **skip**: the oracle decides whether a derived view is
+// sealed and shown beside the author's PDF, and a view that silently drops
+// text is worse than no view at all.
 
 import type { ExtractedTextItem } from "./extract-destinations.js";
 
@@ -52,10 +58,25 @@ export function pdfLines(page: ExtractedTextItem[]): string[] {
   return lines;
 }
 
-/** Folio-like standalone line: a bare arabic or roman page number. */
+/** A well-formed roman numeral, upper or lower case, i to mmmmcmxcix — the
+ * front matter's folios and nothing else. Letter sets are not enough: `mix`
+ * is a numeral, `civil` and `mild` only look like one. */
+const ROMAN_NUMERAL = /^m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$/iu;
+
+/**
+ * Folio-like standalone line: a page number *alone* on its line. The line
+ * must be one whitespace-free token, because the two mistakes are not
+ * symmetric. A folio left in place costs the PDF side one extra token per
+ * page, which the similarity floor absorbs. A line wrongly taken for a
+ * folio is deleted from the PDF side while the stream still carries it, and
+ * that manufactures exactly the divergence the oracle exists to catch — a
+ * table of small integers, whose rows read as four digits once the spaces
+ * between the columns are collapsed away, would fail a faithful paper.
+ */
 export function isFolioLine(line: string): boolean {
-  const collapsed = line.replace(/\s+/gu, "");
-  return /^[0-9]{1,4}$/u.test(collapsed) || /^[ivxlcdm]{1,8}$/iu.test(collapsed);
+  const token = line.trim();
+  if (token === "" || /\s/u.test(token)) return false;
+  return /^[0-9]{1,4}$/u.test(token) || ROMAN_NUMERAL.test(token);
 }
 
 /** The identity of a candidate running-head line: its collapsed text with
@@ -143,6 +164,103 @@ export function removeTokenRun(tokens: string[], run: string[]): { tokens: strin
     }
   }
   return { tokens, removed: false };
+}
+
+/**
+ * The share of the PDF's tokens the oracle will forgive as captured but
+ * never referenced, the floor under it in absolute tokens, and the ceiling
+ * over that floor. `\marginpar` notes are marginalia — a phrase, a sentence,
+ * a handful per paper — so five percent is already far above what a paper
+ * full of them spends, while the absolute floor keeps a short paper's single
+ * note from tipping the whole derivation over on its own arithmetic (the
+ * fraction of a 60-token paper is two tokens; one honest margin note is
+ * seven).
+ *
+ * A fixed number of tokens is a different share of every document, though,
+ * so the floor needs a ceiling of its own: thirty-two tokens is a twentieth
+ * of a real paper, a quarter of a one-page note and half of a stub, and
+ * without the ceiling the bound stops being a share of the document at
+ * exactly the lengths where a share is cheapest to lose. A fifth is the most
+ * the oracle will forgive at any length — well clear of the twelve percent
+ * an honest margin note costs a one-page paper, and nowhere near a document
+ * a reader would call the same one.
+ */
+export const UNREFERENCED_BUDGET_FRACTION = 0.05;
+export const UNREFERENCED_BUDGET_MINIMUM = 32;
+export const UNREFERENCED_BUDGET_CEILING_FRACTION = 0.2;
+
+export interface UnreferencedSubtraction<T> {
+  /** The PDF tokens with the forgiven omissions removed. */
+  tokens: string[];
+  /** The captures the page stream genuinely does not carry, in input order:
+   * each is its own warning at the call site. */
+  omitted: T[];
+  /** Tokens actually taken off the PDF side. */
+  removedTokens: number;
+  /** The most this document's size allowed. */
+  budgetTokens: number;
+  /** `removedTokens` over `budgetTokens`: the caller must skip. */
+  overBudget: boolean;
+}
+
+/**
+ * Subtract the captured-but-unreferenced paragraphs from the PDF side —
+ * bounded, because the bound is what separates a lossy derivation from a
+ * different document.
+ *
+ * A capture the page stream never references but whose text it carries
+ * anyway is a trial typesetting — LaTeX's `\caption` measures every caption
+ * in a box first, and classes and theorem packages measure the opening
+ * letters of a paragraph the same way ("th", "We") — not an omission: the
+ * surface shows that text, and subtracting it would manufacture the
+ * divergence the oracle exists to catch. Substring, not token run: the
+ * opening letters are a fragment of a word, never a whole token.
+ *
+ * What is left is text the print PDF shows and the reflow surface will not:
+ * `\marginpar` and friends. Removing it lets the rest of the document be
+ * compared, which is right for marginalia and wrong past that — subtract
+ * enough and the oracle compares a remnant with itself and passes anything.
+ * So the removals share one budget over the whole document. Past it the
+ * derivation is not a lossy view of the paper, it is a different document,
+ * and the caller skips: no bundle is sealed, the PDF stands untouched, and
+ * the author's report names every dropped paragraph plus the overrun. The
+ * trade-off is deliberate — a paper whose reflow view really does lose more
+ * than a twentieth of its words (a fifth, where the paper is too short for a
+ * twentieth to hold one margin note) loses the web view rather than showing
+ * readers a text the PDF beside it does not contain.
+ *
+ * A run the PDF side does not carry contiguously spends no budget: nothing
+ * was removed, so the similarity floor still sees the whole divergence.
+ */
+export function subtractUnreferenced<T extends { text: string }>(
+  pdfTokens: readonly string[],
+  streamTokens: readonly string[],
+  unreferenced: readonly T[],
+): UnreferencedSubtraction<T> {
+  // A share of the document, floored so a short paper's one honest margin
+  // note is not measured against a fraction that rounds to nothing, and
+  // capped so that floor never becomes a licence to drop a fifth of a short
+  // paper: under 160 tokens the ceiling binds, over 640 the fraction does,
+  // and the floor holds the middle.
+  const budgetTokens = Math.min(
+    Math.max(UNREFERENCED_BUDGET_MINIMUM, Math.floor(UNREFERENCED_BUDGET_FRACTION * pdfTokens.length)),
+    Math.floor(UNREFERENCED_BUDGET_CEILING_FRACTION * pdfTokens.length),
+  );
+  const streamJoined = ` ${streamTokens.join(" ")} `;
+  let tokens = [...pdfTokens];
+  const omitted: T[] = [];
+  let removedTokens = 0;
+  for (const paragraph of unreferenced) {
+    const run = oracleTokens(paragraph.text);
+    if (run.length === 0) continue; // marker-only capture (the hoist's leftover)
+    if (streamJoined.includes(` ${run.join(" ")}`)) continue;
+    omitted.push(paragraph);
+    const removal = removeTokenRun(tokens, run);
+    if (!removal.removed) continue;
+    tokens = removal.tokens;
+    removedTokens += run.length;
+  }
+  return { tokens, omitted, removedTokens, budgetTokens, overBudget: removedTokens > budgetTokens };
 }
 
 export interface TokenComparison {

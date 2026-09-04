@@ -2,7 +2,10 @@
 // oracle"): every specified normalization — hyphenation joining, ligature
 // and math-alphabet decomposition, accent stripping, casing/punctuation
 // tolerance, PDF-side furniture stripping, unreferenced-paragraph removal —
-// plus the similarity verdict and its divergence location.
+// plus the similarity verdict and its divergence location. Each
+// normalization deletes evidence, so each is tested from both sides: it
+// must forgive what it exists to forgive, and it must not delete a faithful
+// paper's own text.
 
 import { describe, expect, it } from "vitest";
 import type { ExtractedTextItem } from "../../src/submission-validation/paper/extract-destinations.js";
@@ -13,6 +16,10 @@ import {
   oracleTokens,
   pdfLines,
   removeTokenRun,
+  subtractUnreferenced,
+  UNREFERENCED_BUDGET_CEILING_FRACTION,
+  UNREFERENCED_BUDGET_FRACTION,
+  UNREFERENCED_BUDGET_MINIMUM,
 } from "../../src/submission-validation/paper/web-oracle.js";
 
 describe("oracle tokenization", () => {
@@ -68,6 +75,36 @@ describe("PDF-side assembly", () => {
     expect(isFolioLine("xiv")).toBe(true);
     expect(isFolioLine("1 A second file")).toBe(false);
     expect(isFolioLine("Theorem 1.")).toBe(false);
+  });
+
+  it("leaves a line with more than one token alone, however digit-like", () => {
+    // A page number stands alone on its line. A row of a table of small
+    // integers is digits too — but only after its column spacing is thrown
+    // away, and deleting such rows from the PDF side while the stream
+    // carries them fails a faithful paper.
+    expect(isFolioLine("4  15")).toBe(false);
+    expect(isFolioLine("1 1")).toBe(false);
+    expect(isFolioLine("3  14  15")).toBe(false);
+    expect(isFolioLine("i i")).toBe(false);
+  });
+
+  it("takes only well-formed roman numerals, not every word spelled in them", () => {
+    expect(isFolioLine("iv")).toBe(true);
+    expect(isFolioLine("XLII")).toBe(true);
+    expect(isFolioLine("civil")).toBe(false);
+    expect(isFolioLine("mild")).toBe(false);
+    expect(isFolioLine("did")).toBe(false);
+  });
+
+  it("keeps a small-integer table whole while still stripping the page number", () => {
+    const rows = ["1   1", "2   3", "3   7", "4  15", "5  31", "6  63", "7  127", "8  255"];
+    const assembled = assemblePdfText([
+      page([["The coefficients of the expansion, row by row:"], ...rows.map((row) => [row]), ["7"]]),
+    ]);
+    expect(assembled.folioLines).toBe(1);
+    // the stream carries the same table: the two sides agree exactly
+    const stream = oracleTokens(["The coefficients of the expansion, row by row:", ...rows].join(" "));
+    expect(compareTokens(oracleTokens(assembled.text), stream, 0.98)).toEqual({ similarity: 1 });
   });
 
   it("strips folios but keeps a section heading that begins with its number", () => {
@@ -136,6 +173,100 @@ describe("unreferenced-paragraph removal", () => {
     expect(removeTokenRun(tokens, ["three"])).toEqual({ tokens, removed: false });
     expect(removeTokenRun(tokens, [])).toEqual({ tokens, removed: false });
     expect(removeTokenRun(tokens, ["one", "two", "three"])).toEqual({ tokens, removed: false });
+  });
+
+  const paragraph = (index: number): string =>
+    `Paragraph number ${index} states a genuine claim about the construction and its consequences.`;
+
+  it("subtracts a margin note the stream never carries, and names it", () => {
+    // The proportions of a real one-page paper: seven tokens of marginalia
+    // in fifty-nine, which is what the budget exists to forgive.
+    const note = "A marginal note that only print shows";
+    const body = [paragraph(1), paragraph(2), paragraph(3), paragraph(4)];
+    const printed = [paragraph(1), note, ...body.slice(1)].join(" ");
+    const streamed = body.join(" ");
+    const subtraction = subtractUnreferenced(oracleTokens(printed), oracleTokens(streamed), [{ text: note }]);
+    expect(subtraction.omitted).toEqual([{ text: note }]);
+    expect(subtraction.removedTokens).toBe(7);
+    expect(subtraction.budgetTokens).toBe(11);
+    expect(subtraction.overBudget).toBe(false);
+    expect(subtraction.tokens).toEqual(oracleTokens(streamed));
+  });
+
+  it("subtracts nothing for a trial typesetting the stream does carry", () => {
+    // \caption measures its box before setting it, and classes measure the
+    // opening letters of a paragraph the same way: the capture is
+    // unreferenced, but the surface shows the text.
+    const printed = [paragraph(1), paragraph(2)].join(" ");
+    const subtraction = subtractUnreferenced(oracleTokens(printed), oracleTokens(printed), [
+      { text: "Paragraph number 2 states" },
+      { text: "Th" },
+    ]);
+    expect(subtraction.omitted).toEqual([]);
+    expect(subtraction.removedTokens).toBe(0);
+    expect(subtraction.tokens).toEqual(oracleTokens(printed));
+  });
+
+  it("refuses to forgive more than the budget: the remnant is a different document", () => {
+    const paragraphs = Array.from({ length: 8 }, (unused, index) => paragraph(index));
+    const pdf = oracleTokens(paragraphs.join(" "));
+    const stream = oracleTokens(paragraphs[0]!);
+    // Untouched, the two sides are a skip: 104 PDF tokens against 13.
+    const untouched = compareTokens(pdf, stream, 0.98);
+    expect(untouched.similarity).toBeLessThan(0.98);
+    expect(untouched.divergence).toBeDefined();
+    // Subtract all seven and the oracle compares one paragraph with itself,
+    // sealing a bundle that carries an eighth of the paper.
+    const subtraction = subtractUnreferenced(pdf, stream, paragraphs.slice(1).map((text) => ({ text })));
+    expect(subtraction.removedTokens).toBe(91);
+    expect(subtraction.budgetTokens).toBe(Math.floor(UNREFERENCED_BUDGET_CEILING_FRACTION * pdf.length));
+    expect(subtraction.overBudget).toBe(true);
+    expect(compareTokens(subtraction.tokens, stream, 0.98).similarity).toBe(1);
+  });
+
+  it("never forgives a quarter of a short paper, however far the floor is from it", () => {
+    // The floor is what one honest margin note costs a short paper, not a
+    // licence to drop a quarter of its words: thirty tokens of a
+    // hundred-and-twenty-token paper sit just under the floor's thirty-two
+    // and are still a different document.
+    const pdf = Array.from({ length: 120 }, (unused, index) => `word${index}`);
+    const dropped = pdf.slice(0, 30).join(" ");
+    const stream = pdf.slice(30);
+    const subtraction = subtractUnreferenced(pdf, stream, [{ text: dropped }]);
+    expect(subtraction.removedTokens).toBe(30);
+    expect(subtraction.removedTokens).toBeLessThan(UNREFERENCED_BUDGET_MINIMUM);
+    expect(subtraction.overBudget).toBe(true);
+    expect(subtraction.budgetTokens).toBe(24);
+    // What the budget prevents: the subtraction leaves the two sides in
+    // perfect agreement, so nothing downstream would object.
+    expect(compareTokens(subtraction.tokens, stream, 0.98)).toEqual({ similarity: 1 });
+  });
+
+  it("scales the budget with the document, floored in the middle and capped at the bottom", () => {
+    const long = Array.from({ length: 2_000 }, (unused, index) => `word${index}`);
+    const budgetOf = (count: number): number => subtractUnreferenced(long.slice(0, count), [], []).budgetTokens;
+    // Above 640 tokens the fraction governs; between 160 and 640 the floor
+    // does; under 160 the ceiling does, because a fixed 32 tokens is a
+    // growing share of an ever shorter paper.
+    expect(budgetOf(2_000)).toBe(UNREFERENCED_BUDGET_FRACTION * 2_000);
+    expect(budgetOf(300)).toBe(UNREFERENCED_BUDGET_MINIMUM);
+    expect(budgetOf(60)).toBe(UNREFERENCED_BUDGET_CEILING_FRACTION * 60);
+    // The one-page paper the e2e compiles measures 56 PDF tokens against a
+    // 7-token \marginpar: its own fraction is two tokens, the floor lifts
+    // the budget, and the ceiling still leaves the note room.
+    expect(budgetOf(56)).toBeGreaterThan(7);
+  });
+
+  it("spends no budget on a run the PDF side does not carry contiguously", () => {
+    // Nothing was removed, so the similarity floor still sees the whole
+    // divergence — the budget bounds forgiveness, not diagnostics.
+    const pdf = oracleTokens("the printed text says something else entirely");
+    const absent = { text: "a capture that appears on neither substrate verbatim" };
+    const subtraction = subtractUnreferenced(pdf, oracleTokens("the printed text"), [absent]);
+    expect(subtraction.omitted).toEqual([absent]);
+    expect(subtraction.removedTokens).toBe(0);
+    expect(subtraction.overBudget).toBe(false);
+    expect(subtraction.tokens).toEqual(pdf);
   });
 });
 
