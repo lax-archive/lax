@@ -1,0 +1,5 @@
+name = "golden"
+defaultTargets = ["Golden"]
+
+[[lean_lib]]
+name = "Golden"
