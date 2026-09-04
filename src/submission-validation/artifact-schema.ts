@@ -94,7 +94,9 @@ export function parseSuccessfulValidationArtifacts(
     throw new ValidationError("validation report request does not match the authorized submit request");
   }
   const runtime = parseRuntime(reportObject.runtime);
-  if (JSON.stringify(runtime) !== JSON.stringify(expectedRuntime)) {
+  // Both sides go through parseRuntime, so the comparison is by value and
+  // never by the key order a builder happened to use.
+  if (JSON.stringify(runtime) !== JSON.stringify(parseRuntime(expectedRuntime))) {
     throw new ValidationError("validation report runtime does not match the workflow's pinned runtime");
   }
   const dependencies = boundedArray(reportObject.dependencies, "validation dependencies", MAX_DEPENDENCIES)
@@ -173,6 +175,7 @@ export function parsePublishedCapture(value: unknown): PublishedCapture {
 
 function parseRuntime(value: unknown): ValidationRuntimeIdentity {
   const object = exactObject(value, [
+    "environment",
     "image",
     "imageDigest",
     "layoutVersion",
@@ -187,7 +190,11 @@ function parseRuntime(value: unknown): ValidationRuntimeIdentity {
     throw new ValidationError("validation runtime image and digest do not match");
   }
   const layoutVersion = positiveInteger(object.layoutVersion, "validation runtime layout version");
+  // Shape only: the caller compares the whole identity to the one it built
+  // from the environment table itself, so a report claiming an id whose pins
+  // are not that entry's fails there, credential-free.
   return {
+    environment: text(object.environment, "validation runtime environment", 64, false),
     image,
     imageDigest,
     layoutVersion,

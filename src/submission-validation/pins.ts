@@ -1,7 +1,14 @@
-// The archive environment pins: the single home of every value that fixes
-// what a submission builds against and where it runs. Both validation paths
-// read them — the host (no-container) `lax build` path and the trusted
-// container path — so the two can never disagree.
+// The archive's non-Lean pins: the single home of every value that fixes
+// where a submission is validated. Both validation paths read them — the host
+// (no-container) `lax build` path and the trusted container path — so the two
+// can never disagree.
+//
+// What a submission builds *against* lives next door in environments.ts: the
+// Lean toolchain and mathlib commit are per environment now, and this module
+// keeps only what every environment shares (the stock container image, the TeX
+// images, the ReflowTeX and PyMuPDF pins, elan's installer, and the layout
+// version), plus the one mathlib repository URL — only the canonical
+// repository is ever allowed, so it never varies by environment.
 //
 // The trusted sandbox is a *stock* image pinned by digest plus a VM-installed
 // toolchain and warm mathlib workspace mounted read-only into it; there is no
@@ -10,17 +17,20 @@
 //
 // Test/dev seam: LAX_MATHLIB_URL/LAX_MATHLIB_REV substitute a small local
 // "mathlib" so the fast tests exercise the real warm-store and seeding
-// machinery without downloading gigabytes. Never set in production.
+// machinery without downloading gigabytes. Both are read at call time (see
+// mathlibUrl() here and environments() next door), never frozen at import.
+// Never set in production.
 
 import type { ValidationRuntimeIdentity } from "./contracts.js";
+import type { ArchiveEnvironment } from "./environments.js";
 
-export const LEAN_VERSION = "v4.30.0";
-export const LEAN_TOOLCHAIN = "leanprover/lean4:v4.30.0";
-
-export const MATHLIB_URL =
-  process.env.LAX_MATHLIB_URL ?? "https://github.com/leanprover-community/mathlib4";
-export const MATHLIB_REV =
-  process.env.LAX_MATHLIB_REV ?? "c5ea00351c28e24afc9f0f84379aa41082b1188f";
+/** The mathlib repository every environment requires. One constant, not a
+ * per-environment field: an environment chooses a *commit* of this repository
+ * and nothing else. A function rather than a constant so the test seam is read
+ * when it is asked for, not when this module happens to be imported. */
+export function mathlibUrl(): string {
+  return process.env.LAX_MATHLIB_URL ?? "https://github.com/leanprover-community/mathlib4";
+}
 
 /** Commit of leanprover/elan whose `elan-init.sh` installs elan on the VM —
  * the same installer pin the deleted runtime image used. */
@@ -104,18 +114,23 @@ export const PYMUPDF_SHA256 = "397d6715c1f0df7548a92d0afd8ce370fc48fa47aeefac16b
 export const LAYOUT_VERSION = 1;
 
 /**
- * The runtime identity of a host-toolchain build. There is no container
- * image, so the image fields carry the literal "host" marker; the pin fields
- * are the same archive pins the container path asserts.
+ * The runtime identity of a host-toolchain build in one environment. There is
+ * no container image, so the image fields carry the literal "host" marker; the
+ * pin fields come from the environment's table entry, exactly as the container
+ * path's do. Key order matters: the trusted publisher compares a report's
+ * runtime to its own by JSON equality (artifact-schema.ts parseRuntime).
  */
-export function hostValidationRuntime(): ValidationRuntimeIdentity {
+export function hostValidationRuntime(
+  environment: ArchiveEnvironment,
+): ValidationRuntimeIdentity {
   return {
+    environment: environment.id,
     image: "host",
     imageDigest: "host",
     layoutVersion: LAYOUT_VERSION,
-    leanToolchain: LEAN_TOOLCHAIN,
-    leanVersion: LEAN_VERSION,
-    mathlibRepository: MATHLIB_URL,
-    mathlibCommit: MATHLIB_REV,
+    leanToolchain: environment.leanToolchain,
+    leanVersion: environment.id,
+    mathlibRepository: mathlibUrl(),
+    mathlibCommit: environment.mathlibCommit,
   };
 }

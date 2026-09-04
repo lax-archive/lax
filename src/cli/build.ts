@@ -22,7 +22,7 @@ import { formatProfile, Profiler } from "../shared/profile.js";
 import { databaseDirectory } from "./database.js";
 import { groupFindings } from "./findings.js";
 import { deriveLocalSource, repositoryRoot } from "./git.js";
-import { declaresPaper, submissionIdFromFolder } from "./manifest.js";
+import { declaresPaper, submissionEnvironment, submissionIdFromFolder } from "./manifest.js";
 import { recordSubmission } from "./registry.js";
 import * as ui from "./ui.js";
 import type { SourceLocation } from "../shared/types.js";
@@ -140,7 +140,12 @@ export async function buildSubmission(
     archiveSha,
   };
   recordSubmission(submissionRoot);
-  const runtime = hostValidationRuntime();
+  // The submission's own environment decides which warm store this build
+  // needs a row for; the manifest is the only place that names it, and an
+  // unreadable or unadmitted one is the static phase's violation, not this
+  // row's problem, so an unknown one falls back to the epoch.
+  const environment = submissionEnvironment(submissionRoot);
+  const runtime = hostValidationRuntime(environment);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "lax-build-"));
   const jobDir = path.join(temporary, "work");
   fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
@@ -156,7 +161,7 @@ export async function buildSubmission(
   // and stays open while the Lean rows below it come and go.
   const paperRow = scope === "both" && declaresPaper(submissionRoot);
   if (paperRow) rows.push("paper");
-  if (!warmReady(warmDir())) rows.push("mathlib");
+  if (!warmReady(warmDir(environment))) rows.push("mathlib");
   rows.push("concepts");
   if (scope !== "concepts") rows.push("proofs");
   if (options.replay === true) rows.push("replay");
@@ -282,6 +287,10 @@ export async function buildSubmission(
           source: request.source,
           archiveSha,
           runtimeImageDigest: runtime.imageDigest,
+          // What the image digest cannot say on this path (it is the constant
+          // "host"): which environment produced this output.
+          leanToolchain: runtime.leanToolchain,
+          mathlibCommit: runtime.mathlibCommit,
           replay: options.replay === true,
         },
       };
@@ -452,13 +461,15 @@ export function showValidationFailure(failure: ValidationFailure): void {
 }
 
 /** A clean checkout can reuse a full build only when source, Archive snapshot,
- * and the runtime that produced it all match: a pin bump changes what the same
- * sources compile to, so a pre-bump build-output is not current. */
+ * and the runtime that produced it all match: a moved environment changes what
+ * the same sources compile to, so an output from before the move is not
+ * current. */
 export function hasCurrentLocalBuild(
   folder: string,
   source: SourceLocation,
   archiveSha: string,
 ): boolean {
+  const runtime = hostValidationRuntime(submissionEnvironment(folder));
   try {
     const value = JSON.parse(
       fs.readFileSync(path.join(path.resolve(folder), "build-output.json"), "utf8"),
@@ -483,7 +494,13 @@ export function hasCurrentLocalBuild(
       value.id === submissionIdFromFolder(folder) &&
       validation?.version === 1 &&
       validation.archiveSha === archiveSha &&
-      validation.runtimeImageDigest === hostValidationRuntime().imageDigest &&
+      validation.runtimeImageDigest === runtime.imageDigest &&
+      // The image digest alone is the constant "host" on this path, so it
+      // says nothing: what makes a cached build stale locally is the
+      // environment moving under it, which is the toolchain and the mathlib
+      // commit the output was built against.
+      validation.leanToolchain === runtime.leanToolchain &&
+      validation.mathlibCommit === runtime.mathlibCommit &&
       builtSource?.repository === source.repository &&
       builtSource.commit === source.commit &&
       builtSource.folder === source.folder

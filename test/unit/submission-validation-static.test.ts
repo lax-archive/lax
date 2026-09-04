@@ -10,6 +10,14 @@ import { validateLakefile } from "../../src/submission-validation/validators/lak
 import { isAcceptedLicense } from "../../src/submission-validation/validators/license.js";
 import { validateManifest } from "../../src/submission-validation/validators/manifest.js";
 import {
+  environment,
+  environments,
+  epoch,
+  EPOCH,
+} from "../../src/submission-validation/environments.js";
+import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
+import { withTestEnvironments } from "../support/environments.js";
+import {
   cleanupTemporary,
   COMMIT,
   initializeGit,
@@ -834,5 +842,90 @@ describe("paper static validation", () => {
         Buffer.from("\n\\laxmark{e}{1}%\n", "latin1"),
       ]),
     );
+  });
+});
+
+describe("archive environment selection", () => {
+  it("selects the environment the manifest names and lists the admitted ones when it names another", () => {
+    const findings = new FindingCollector("static");
+    validateManifest(
+      manifest("lax-261").replace(`leanVersion: ${RUNTIME.leanVersion}`, "leanVersion: v4.99.0"),
+      "lax-261",
+      RUNTIME,
+      findings,
+    );
+    const messages = findings.violations.map((finding) => finding.message).join("\n");
+    expect(messages).toContain("leanVersion v4.99.0 is not an archive environment");
+    // the admitted list, with the epoch marked, and the CLI-skew sentence
+    expect(messages).toContain(`${EPOCH} (epoch)`);
+    expect(messages).toContain("Update lax");
+  });
+
+  it("takes the pins from the entry, so a second environment validates against its own", () => {
+    const other = "v4.31.0";
+    const otherCommit = "b".repeat(40);
+    withTestEnvironments([{ id: other, mathlibCommit: otherCommit }], () => {
+      const findings = new FindingCollector("static");
+      const parsed = validateManifest(
+        manifest("lax-261")
+          .replace(`leanVersion: ${RUNTIME.leanVersion}`, `leanVersion: ${other}`)
+          .replace(`mathlibVersion: ${RUNTIME.mathlibCommit}`, `mathlibVersion: ${otherCommit}`),
+        "lax-261",
+        // the real selector: the runtime is built from whichever entry the
+        // manifest selected, not from a fixed one
+        (entry) => hostValidationRuntime(entry),
+        findings,
+      );
+      expect(findings.violations).toEqual([]);
+      expect(parsed?.leanVersion).toBe(other);
+
+      // and the *other* environment's mathlib commit is then wrong for it
+      const crossed = new FindingCollector("static");
+      validateManifest(
+        manifest("lax-261").replace(`leanVersion: ${RUNTIME.leanVersion}`, `leanVersion: ${other}`),
+        "lax-261",
+        (entry) => hostValidationRuntime(entry),
+        crossed,
+      );
+      expect(crossed.violations.map((finding) => finding.message).join("\n")).toContain(
+        `mathlibVersion must be ${otherCommit}`,
+      );
+    });
+  });
+
+  it("treats an id with path characters as an unknown id, before any filesystem use", () => {
+    // The id is untrusted input that only ever indexes the table (trust rule
+    // 2). Nothing derives a directory, cache key, or mount source from the
+    // author's string, so a traversal attempt is simply not a row.
+    for (const id of ["../x", "v4.30.0/..", "v4.30.0/../../etc", "..", "/etc/passwd"]) {
+      expect(environment(id)).toBeUndefined();
+      const findings = new FindingCollector("static");
+      validateManifest(
+        manifest("lax-261").replace(`leanVersion: ${RUNTIME.leanVersion}`, `leanVersion: ${JSON.stringify(id)}`),
+        "lax-261",
+        RUNTIME,
+        findings,
+      );
+      expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(
+        "is not an archive environment",
+      );
+    }
+    // and no admitted id could ever be one either
+    for (const entry of environments()) {
+      expect(entry.id).toMatch(/^v[0-9]+\.[0-9]+\.[0-9]+$/u);
+      expect(path.basename(entry.id)).toBe(entry.id);
+    }
+  });
+
+  it("keeps the epoch in the table and grows only through the test seam", () => {
+    expect(epoch().id).toBe(EPOCH);
+    expect(environments().map((entry) => entry.id)).toContain(EPOCH);
+    withTestEnvironments([{ id: "v4.31.0" }], () => {
+      expect(environments().map((entry) => entry.id)).toEqual([EPOCH, "v4.31.0"]);
+      // an injected entry borrows the installed toolchain, so one Lean
+      // install serves every environment a test invents
+      expect(environment("v4.31.0")?.leanToolchain).toBe(epoch().leanToolchain);
+    });
+    expect(environments().map((entry) => entry.id)).toEqual([EPOCH]);
   });
 });

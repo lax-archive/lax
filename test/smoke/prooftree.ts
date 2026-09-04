@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LEAN_TOOLCHAIN, LEAN_VERSION } from "../../src/submission-validation/pins.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 
 interface TheoremReport {
   statement: string;
@@ -22,9 +22,12 @@ interface KernelReport {
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const fixtures = path.join(repository, "test", "fixtures", "prooftree");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "lax-prooftree-smoke-"));
+// The composer sources are shared by every environment; the smoke checks them
+// under the epoch's toolchain, which is the one CI installs.
+const environment = epoch();
 const leanEnvironment = {
   ...process.env,
-  ELAN_TOOLCHAIN: LEAN_TOOLCHAIN,
+  ELAN_TOOLCHAIN: environment.leanToolchain,
   LEAN_PATH: temporary,
 };
 
@@ -45,8 +48,8 @@ function assert(condition: unknown, message: string): asserts condition {
 try {
   const version = lean(["--version"]);
   assert(
-    version.includes(`version ${LEAN_VERSION.slice(1)}`),
-    `proof-tree smoke test requires ${LEAN_VERSION}; found ${version.trim()}`,
+    version.includes(`version ${environment.id.slice(1)}`),
+    `proof-tree smoke test requires ${environment.id}; found ${version.trim()}`,
   );
 
   lean(["-o", path.join(temporary, "Concepts.olean"), path.join(fixtures, "Concepts.lean")]);

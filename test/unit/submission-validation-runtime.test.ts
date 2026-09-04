@@ -7,6 +7,7 @@ import type { ModuleInventory } from "../../src/submission-validation/contracts.
 import { compileConcepts } from "../../src/submission-validation/phases/compile.js";
 import { provisionWorkspace } from "../../src/submission-validation/phases/provision.js";
 import { replayPackage } from "../../src/submission-validation/phases/replay.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 import { VALIDATION_IMAGE, VALIDATION_IMAGE_DIGEST } from "../../src/submission-validation/pins.js";
 import {
   ContainerRunner,
@@ -51,22 +52,25 @@ function fakeLayout(): RuntimeLayout {
 
 describe("validation runtime boundaries retained from main", () => {
   it("pins the stock runtime image and keeps any override digest-pinned", () => {
-    // no environment requirement: the identity comes from the reviewed pins
-    expect(configuredRuntime(undefined)).toMatchObject({
+    // no environment variable required: the image comes from the reviewed pin
+    // and the Lean pins from the environment table row
+    expect(configuredRuntime(epoch(), undefined)).toMatchObject({
+      environment: epoch().id,
       image: VALIDATION_IMAGE,
       imageDigest: VALIDATION_IMAGE_DIGEST,
+      leanToolchain: epoch().leanToolchain,
     });
     expect(VALIDATION_IMAGE).toMatch(/^node:22-bookworm-slim@sha256:[0-9a-f]{64}$/u);
     // the narrow smoke/testing override must itself be digest-pinned
-    expect(configuredRuntime(RUNTIME.image)).toMatchObject({
+    expect(configuredRuntime(epoch(), RUNTIME.image)).toMatchObject({
       image: RUNTIME.image,
       imageDigest: RUNTIME.imageDigest,
       leanToolchain: RUNTIME.leanToolchain,
     });
-    expect(() => configuredRuntime("ghcr.io/lax-archive/validation:latest")).toThrow(
+    expect(() => configuredRuntime(epoch(), "ghcr.io/lax-archive/validation:latest")).toThrow(
       "immutable @sha256 digest",
     );
-    expect(() => configuredRuntime("sha256:" + "1".repeat(64))).toThrow(
+    expect(() => configuredRuntime(epoch(), "sha256:" + "1".repeat(64))).toThrow(
       "immutable @sha256 digest",
     );
   });
@@ -387,6 +391,7 @@ describe("validation runtime boundaries retained from main", () => {
     installDockerRecorder(record);
     const layout = fakeLayout();
     const runner = new ContainerRunner(
+      epoch(),
       RUNTIME,
       { ...DEFAULT_LIMITS, minFreeDiskBytes: 0 },
       source,
@@ -469,7 +474,7 @@ describe("validation runtime boundaries retained from main", () => {
     const record = path.join(temporary("lax-container-bin-"), "arguments.txt");
     const texImage = { image: `texlive/texlive:TL2025-historic@sha256:${"7".repeat(64)}`, imageDigest: "7".repeat(64) };
     installDockerRecorder(record, { repoDigests: [`texlive/texlive@sha256:${"7".repeat(64)}`] });
-    const runner = new ContainerRunner(RUNTIME, DEFAULT_LIMITS, source, undefined, fakeLayout());
+    const runner = new ContainerRunner(epoch(), RUNTIME, DEFAULT_LIMITS, source, undefined, fakeLayout());
     const invocation: ContainerInvocation = {
       label: "paper-compile",
       image: texImage,
@@ -503,7 +508,7 @@ describe("validation runtime boundaries retained from main", () => {
   });
 
   it("refuses to run before the runtime layout is verified", async () => {
-    const runner = new ContainerRunner(RUNTIME, DEFAULT_LIMITS, temporary("lax-unverified-"));
+    const runner = new ContainerRunner(epoch(), RUNTIME, DEFAULT_LIMITS, temporary("lax-unverified-"));
     await expect(
       runner.run({ label: "early", args: [], timeoutMs: 1_000, maxOutputBytes: 1_000 }),
     ).rejects.toThrow("verifyRuntime");
@@ -531,6 +536,7 @@ describe("validation runtime boundaries retained from main", () => {
     const executableRoot = temporary("lax-container-growth-bin-");
     installWorkspaceGrowingDocker(executableRoot, workspace);
     const runner = new ContainerRunner(
+      epoch(),
       RUNTIME,
       { ...DEFAULT_LIMITS, maxWorkspaceBytes: 1_024, maxWorkspaceEntries: 100 },
       workspace,

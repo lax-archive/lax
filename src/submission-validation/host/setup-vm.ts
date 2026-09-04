@@ -18,6 +18,7 @@ import {
   recordValidationProfile,
   resetValidationOutputs,
 } from "../outputs.js";
+import { epoch } from "../environments.js";
 import { ensureValidationHost } from "./setup.js";
 
 const outputDir = validationOutputDirectory();
@@ -29,7 +30,10 @@ try {
   // gate ran before it, and a passing gate leaves nothing behind — so clear
   // any stale outputs: the profile accumulates from here and run.js keeps it.
   if (outputDir !== undefined) resetValidationOutputs(outputDir);
-  ok = await ensureValidationHost({ echo: true, profiler });
+  // stage 2: the trusted workflow will pass the environment the static gate
+  // selected (`setup-vm.js --env <id>`); until then this provisions the epoch,
+  // which is what the single-pin workflow provisions today.
+  ok = await ensureValidationHost({ environment: epoch(), echo: true, profiler });
 } finally {
   const snapshot = profiler.snapshot();
   if (outputDir !== undefined) recordValidationProfile(outputDir, "vm-setup", snapshot);

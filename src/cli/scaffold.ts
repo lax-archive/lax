@@ -2,9 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { generatedFilesGitignore } from "../submission-validation/generated-files.js";
-// The pins module is the single home of the archive pins, so scaffolds always
-// match what the host build and the trusted container validate against (and
-// follow the fake-mathlib test seam).
+// The environment table is the single home of the archive pins, so scaffolds
+// always match what the host build and the trusted container validate against
+// (and follow the fake-mathlib test seam).
+import { epoch } from "../submission-validation/environments.js";
 import {
   ensureLocalWarm,
   seedManifest,
@@ -15,7 +16,12 @@ import { PLACEHOLDER_SUBMISSION_ID } from "../shared/constants.js";
 import { normalizeSubmissionId, validateNewSubmissionId } from "../shared/validation.js";
 import * as ui from "./ui.js";
 
-const runtime = hostValidationRuntime();
+/** A new submission is scaffolded in the epoch. Read per call, never frozen at
+ * import: the test seam substitutes the fake mathlib after this module loads,
+ * and stage 4 gives `lax init` an `--env` of its own. */
+function epochRuntime(): ReturnType<typeof hostValidationRuntime> {
+  return hostValidationRuntime(epoch());
+}
 
 export function ensureEmptyFolder(folder: string): string {
   const root = path.resolve(folder);
@@ -40,6 +46,7 @@ export function scaffoldSubmission(
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     fs.writeFileSync(filename, content);
   };
+  const runtime = epochRuntime();
   fs.mkdirSync(root, { recursive: true });
   write(
     "manifest.yaml",
@@ -85,7 +92,8 @@ export async function provisionScaffold(
   idInput: string,
 ): Promise<ProvisionResult> {
   try {
-    const warm = await ensureLocalWarm({ echo: ui.isVerbose() });
+    // stage 4: `lax init --env` selects the environment; today it is the epoch.
+    const warm = await ensureLocalWarm(epoch(), { echo: ui.isVerbose() });
     if (warm === undefined) return { ok: false };
     const id = normalizeSubmissionId(idInput, { placeholder: true });
     if (id !== PLACEHOLDER_SUBMISSION_ID) validateNewSubmissionId(id);
@@ -106,6 +114,7 @@ export async function provisionScaffold(
 }
 
 function lakefile(packageName: string, conceptsName: string, proofs: boolean): string {
+  const runtime = epochRuntime();
   return (
     `name = ${JSON.stringify(packageName)}\ndefaultTargets = [${JSON.stringify(packageName)}]\n\n` +
     "[leanOptions]\nautoImplicit = false\n\n" +

@@ -1,7 +1,8 @@
 // The warm mathlib workspace: a lax-owned Lake workspace requiring mathlib at
-// the archive pin, built once against the pinned toolchain. Submission builds
-// consume it **in place** through Lake package overrides: seedOverrides
-// writes `<package>/.lake/package-overrides.json` with one path entry per
+// one environment's pin, built once against that environment's toolchain.
+// There is one store per environment (see warmDir), provisioned on demand.
+// Submission builds consume it **in place** through Lake package overrides:
+// seedOverrides writes `<package>/.lake/package-overrides.json` with one entry per
 // package in the warm workspace's locked manifest, each pointing at the
 // shared checkout under `<warm>/.lake/packages/`. Lake reads the overrides
 // file on every `lake build` (verified at the pinned v4.30.0) and substitutes
@@ -42,14 +43,20 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { laxHome } from "../../shared/lax-home.js";
-import { LEAN_TOOLCHAIN, LEAN_VERSION, MATHLIB_REV, MATHLIB_URL } from "../pins.js";
+import type { ArchiveEnvironment } from "../environments.js";
+import { leanFacts } from "../lean-facts.js";
+import { mathlibUrl } from "../pins.js";
 import { lakeBinary, lakePathEnv } from "./leanenv.js";
 import { run } from "./proc.js";
 
-/** The local warm workspace for the current archive pins, keyed by toolchain
- * and mathlib revision so a pin bump coexists with the previous store. */
-export function warmDir(base = path.join(laxHome(), "warm")): string {
-  return path.join(base, `${LEAN_VERSION}-${MATHLIB_REV.slice(0, 12)}`);
+/** The local warm workspace of one environment, keyed by toolchain and
+ * mathlib revision so two environments — and a pin bump within one — coexist
+ * as separate stores. */
+export function warmDir(
+  environment: ArchiveEnvironment,
+  base = path.join(laxHome(), "warm"),
+): string {
+  return path.join(base, `${environment.id}-${environment.mathlibCommit.slice(0, 12)}`);
 }
 
 /** Written only after a warm build ran to the very end (including the local
@@ -65,7 +72,7 @@ export function warmReady(ws: string): boolean {
   return (
     fs.existsSync(path.join(ws, READY_MARKER)) &&
     fs.existsSync(path.join(ws, "lake-manifest.json")) &&
-    fs.existsSync(path.join(ws, ".lake", "packages"))
+    fs.existsSync(path.join(ws, ...leanFacts().lakePackagesDir))
   );
 }
 
@@ -92,9 +99,12 @@ export type WarmStage = "building" | "sealing";
 
 /**
  * Build a warm workspace at `ws`: scaffold the LaxWarm package requiring
- * mathlib at the archive pin, pull mathlib's prebuilt artifacts, and build.
+ * mathlib at the environment's pin, pull mathlib's prebuilt artifacts, and
+ * build. Everything version-bearing comes from the entry, so two environments
+ * provision through this one path.
  */
 export async function buildWarmWorkspace(
+  environment: ArchiveEnvironment,
   ws: string,
   opts: { echo?: boolean; fromSource?: boolean } = {},
 ): Promise<boolean> {
@@ -113,14 +123,14 @@ defaultTargets = ["LaxWarm"]
 
 [[require]]
 name = "mathlib"
-git = "${MATHLIB_URL}"
-rev = "${MATHLIB_REV}"
+git = "${mathlibUrl()}"
+rev = "${environment.mathlibCommit}"
 
 [[lean_lib]]
 name = "LaxWarm"
 `,
   );
-  write(path.join(ws, "lean-toolchain"), LEAN_TOOLCHAIN + "\n");
+  write(path.join(ws, "lean-toolchain"), environment.leanToolchain + "\n");
   write(path.join(ws, "LaxWarm.lean"), "import Mathlib\n");
 
   // LAKE_ARTIFACT_CACHE must be off for the warm build and every consumer
@@ -136,9 +146,9 @@ name = "LaxWarm"
     // needs `leantar`, and without it on PATH `lake exe cache get` dies with
     // "leantar not found in Lean sysroot" — a failure this reports as a
     // network problem, sending the author off to debug the wrong thing.
-    PATH: lakePathEnv(),
+    PATH: lakePathEnv(environment),
   };
-  const lake = lakeBinary();
+  const lake = lakeBinary(environment);
 
   // the fake mathlib of the test seam ships no `cache` executable
   if (!process.env.LAX_MATHLIB_URL) {
@@ -191,9 +201,10 @@ function makeWritable(dir: string): void {
  * the build failed — the caller reports and the next run retries.
  */
 export async function ensureLocalWarm(
+  environment: ArchiveEnvironment,
   opts: { fromSource?: boolean; echo?: boolean; onStage?: (stage: WarmStage) => void } = {},
 ): Promise<string | undefined> {
-  const ws = warmDir();
+  const ws = warmDir(environment);
   // A caller that renders its own progress takes the stage and prints nothing
   // of ours; everyone else gets the prose (see WarmStage).
   const announce = (stage: WarmStage, prose: string): void => {
@@ -215,7 +226,7 @@ export async function ensureLocalWarm(
       `${ws}\n     (downloads gigabytes — once per machine, every submission shares it;\n` +
       "     expect roughly 10–30 minutes, including some long quiet stretches)",
   );
-  if (!(await buildWarmWorkspace(ws, { echo: opts.echo ?? true, fromSource: opts.fromSource })))
+  if (!(await buildWarmWorkspace(environment, ws, { echo: opts.echo ?? true, fromSource: opts.fromSource })))
     return undefined;
   announce("sealing", "lax: making the shared store read-only (a few quiet minutes)");
   makeStoreReadOnly(ws);
@@ -259,15 +270,18 @@ export function seedOverrides(warmWs: string, pkgDir: string, overrideBase?: str
   const packages = warmManifest.packages.map((pkg) => ({
     type: "path",
     name: pkg.name,
-    dir: path.join(base, ".lake", "packages", pkg.name),
+    dir: path.join(base, ...leanFacts().lakePackagesDir, pkg.name),
     inherited: pkg.inherited,
     ...(pkg.scope === undefined ? {} : { scope: pkg.scope }),
   }));
-  const lakeDir = path.join(pkgDir, ".lake");
+  const lakeDir = path.join(pkgDir, leanFacts().lakeDir);
   fs.mkdirSync(lakeDir, { recursive: true });
   const target = path.join(lakeDir, "package-overrides.json");
   const staged = path.join(lakeDir, `.package-overrides.lax-${process.pid}-${randomUUID()}`);
-  fs.writeFileSync(staged, JSON.stringify({ version: "1.2.0", packages }, null, 1) + "\n");
+  fs.writeFileSync(
+    staged,
+    JSON.stringify({ version: leanFacts().lakeManifestVersion, packages }, null, 1) + "\n",
+  );
   fs.renameSync(staged, target);
 }
 
@@ -339,7 +353,11 @@ export function seedManifest(
   fs.writeFileSync(
     staged,
     JSON.stringify(
-      { version: "1.2.0", packagesDir: ".lake/packages", packages: entries },
+      {
+        version: leanFacts().lakeManifestVersion,
+        packagesDir: leanFacts().lakePackagesDir.join("/"),
+        packages: entries,
+      },
       null,
       1,
     ) + "\n",

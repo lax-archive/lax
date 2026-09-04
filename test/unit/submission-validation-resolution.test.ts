@@ -20,6 +20,7 @@ import {
   temporary,
   writeFile,
 } from "../support/submission-validation.js";
+import { withTestEnvironments } from "../support/environments.js";
 
 afterEach(cleanupTemporary);
 
@@ -217,6 +218,32 @@ describe("Archive dependency resolution retained from main", () => {
       "capture-provenance",
       "capture-provenance",
     ]);
+  });
+
+  it("rejects a dependency from another environment, naming both islands", () => {
+    // Islands are hard: an olean built by one Lean version cannot be loaded by
+    // another, so a capture from environment B is not a dependency a
+    // submission in environment A can have — and the message has to say which
+    // two, because the fix is a port, not a flag.
+    const other = "v4.31.0";
+    const otherCommit = "b".repeat(40);
+    withTestEnvironments([{ id: other, mathlibCommit: otherCommit }], () => {
+      const islandRoot = temporary("lax-resolution-island-");
+      writeArchiveRecord(islandRoot, "lax-10", {
+        capture: capture({ mathlibCommit: otherCommit }),
+      });
+      const crossed = resolve(
+        withConceptRequires([{ name: "Lax10", folder: "." }]),
+        new ArchiveSnapshot(islandRoot, "a".repeat(40)),
+      );
+      expect(crossed.findings.violations.map((finding) => finding.rule)).toEqual([
+        "capture-provenance",
+      ]);
+      const message = crossed.findings.violations[0]!.message;
+      expect(message).toContain(`Lax10 was built in environment ${other}`);
+      expect(message).toContain(`not ${RUNTIME.environment}`);
+      expect(message).toContain(`only submissions in ${RUNTIME.environment} can cite one another`);
+    });
   });
 
   it("detects cycles in transitive Archive package requirements", () => {

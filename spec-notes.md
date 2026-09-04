@@ -6,6 +6,73 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## Archive environments: a table, and the epoch (stage 1 implemented, 2026-09-04)
+
+The single archive-wide Lean/mathlib pin becomes a **table of environments**
+(`src/submission-validation/environments.ts`). An environment is a Lean
+toolchain plus the mathlib commit it builds, identified by the Lean version
+string — `v4.30.0` — which is also the name of the mathlib release tag whose
+commit it records. Exactly one of them is the **epoch**: the environment the
+archive recommends this year, the one `lax init` scaffolds against and the
+one every citation-connected submission shares by default. The table only
+grows; an entry is never edited except to add measured `limits` or a
+`closedAt` lever (shipped unused). It holds one row today, `v4.30.0` at
+mathlib `c5ea003…`, admitted at go-live — so nothing an author does or sees
+changes yet. See environments-plan.md for the rest of the design.
+
+What this changes in the spec's terms:
+
+- **"Archive Environment" is plural.** The axioms and build options stay
+  archive-wide; the toolchain and mathlib commit are per environment. Old
+  environments stay valid forever: a record never becomes invalid because the
+  epoch moved, and porting is a new submission that supersedes the old one.
+- **`leanVersion` selects the environment.** The manifest validator looks it
+  up in the table first, and every pin check in the static phase — the
+  manifest's `mathlibVersion`, both `lean-toolchain` files, both lakefiles'
+  mathlib `rev` — is then made against the entry it found, exactly as it was
+  made against the single pin. An id the table does not admit is a `manifest`
+  violation naming the admitted ids, marking the epoch, and saying to update
+  lax if the environment is newer than the CLI. The id is only ever a lookup
+  key (trust rule 2): directory names, cache keys and mount sources derive
+  from the entry, never from the author's string.
+- **Dependencies must be in the same environment.** This was already the
+  effect of the capture-provenance rule; it is now stated, and the violation
+  names both environments. Cross-environment citation is impossible rather
+  than forbidden — an olean built by one Lean version cannot be loaded by
+  another, and two mathlib closures have no meaning in one `LEAN_PATH`.
+- **`ValidationRuntimeIdentity` gains `environment`**, the id of the row the
+  run was validated in, so a report says which island it belongs to. The
+  record schema is untouched: a record's environment is its
+  `manifest.leanVersion`, which every record already carries.
+
+Provisioning follows the entry rather than the pin: one warm store, one
+toolchain, one inspector build per environment, on demand and never all at
+once (`ensureValidationHost({ environment })`, `warmDir(env)`,
+`ensureRuntimeLayout(env)`, `limitsFor(env)`). The inspector's
+hand-maintained `lean/inspector/lean-toolchain` is gone — it is generated
+from the entry into the build's staging directory and folded into the
+inspector's cache key, so it can no longer drift from the table. The
+per-Lean-version literals lax hardcodes (lake's manifest schema version and
+output paths, the core import roots, the background-axiom triple, elan's
+directory mangling, leanchecker's missing-module wording, the lake version
+banner) moved into `lean-facts.ts`, keyed by version with one shared value.
+`lax build` now treats a cached build as stale when the environment moved
+under it, which the container image digest could not say on the host path.
+
+Still to come, and not yet spec-visible: the trusted workflow's
+per-environment cache key and `setup-vm --env` (stage 2), the scheduled
+admission workflow that adds a row per monthly mathlib tag (stage 3), `lax
+init --env <id>` with a typed confirmation and `lax port` (stage 4), and the
+website's environment notice, facet, and emitted index (stage 5).
+
+Spec touchpoints: "Archive Environment" (a table with the epoch marked), the
+manifest field descriptions for `leanVersion`/`mathlibVersion`, the pinned
+toolchain and mathlib require rules ("the submission's environment" rather
+than "the archive-wide" pin), the dependency rules (same environment), and —
+when stage 4 lands — `lax init`'s options and the new `lax port`. The
+supersedes entry below gains a sentence: a port across environments is an
+ordinary successor and needs no rule of its own.
+
 ## Hardening pass after the 0.1.35 audit (implemented, 2026-09-04)
 
 Five of the audit's fixes (`history/audit-20260903.md`) changed behaviour an

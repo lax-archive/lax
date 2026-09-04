@@ -8,6 +8,7 @@ import type {
 } from "../contracts.js";
 import { submissionIdForPackage } from "../contracts.js";
 import { CHAIN_WORKFLOW_HINT } from "../chain-workflow.js";
+import { environmentOfPins } from "../environments.js";
 import { FindingCollector } from "../findings.js";
 import type { ArchiveSnapshot } from "../archive/snapshot.js";
 
@@ -101,8 +102,22 @@ export function runResolution(
     else {
       if (capture.sourceCommit !== record.source.commit)
         findings.violate("capture-provenance", `${packageName} capture source commit does not match its Archive record`);
-      if (capture.leanToolchain !== runtime.leanToolchain || capture.mathlibCommit !== runtime.mathlibCommit)
-        findings.violate("capture-provenance", `${packageName} capture was built against different Archive pins`);
+      // Islands are hard, not merely forbidden: an olean built by one Lean
+      // version cannot be loaded by another, and two mathlib closures have no
+      // meaning in one LEAN_PATH. So a dependency outside this submission's
+      // environment is rejected here, and the message names both — porting is
+      // a new submission, never a wider search path.
+      if (capture.leanToolchain !== runtime.leanToolchain || capture.mathlibCommit !== runtime.mathlibCommit) {
+        const built = environmentOfPins(capture.leanToolchain, capture.mathlibCommit);
+        findings.violate(
+          "capture-provenance",
+          `${packageName} was built in ` +
+            (built === undefined
+              ? `an environment this CLI does not admit (${capture.leanToolchain} / ${capture.mathlibCommit})`
+              : `environment ${built.id}`) +
+            `, not ${runtime.environment}; only submissions in ${runtime.environment} can cite one another`,
+        );
+      }
     }
     const dependencies = archive.packageNames(record);
     const dependency: ResolvedDependency = {

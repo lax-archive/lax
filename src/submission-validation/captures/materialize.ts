@@ -10,6 +10,7 @@ import {
   looksRetryable,
   resourceLimitFailure,
 } from "../failures.js";
+import { leanFacts } from "../lean-facts.js";
 
 /** Deduplicate the resolved captures by submission and enforce the aggregate
  * declared-size budget; shared by the container and host materializers. */
@@ -135,13 +136,13 @@ export function makeCapturedPackagesUsable(
     const packageRoot = path.join(root, kind, "package");
     const library = path.join(root, kind, "lib");
     if (!fs.existsSync(packageRoot) || !fs.existsSync(library)) continue;
-    const target = path.join(packageRoot, ".lake", "build", "lib", "lean");
+    const target = path.join(packageRoot, ...leanFacts().lakeLibDir);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.symlinkSync(linkTarget(kind, "lib"), target);
     touchTree(library);
     const ir = path.join(root, kind, "ir");
     if (fs.existsSync(ir)) {
-      fs.symlinkSync(linkTarget(kind, "ir"), path.join(packageRoot, ".lake", "build", "ir"));
+      fs.symlinkSync(linkTarget(kind, "ir"), path.join(packageRoot, ...leanFacts().lakeIrDir));
       touchTree(ir);
     }
   }

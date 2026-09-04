@@ -53,6 +53,14 @@ prefer them over inferring intent from the current code.
   the Jan-owned gates — fork repo, docker smoke, rehearsal, renderer
   release, round trip — are in TODO.md. Both plans retire to `history/`
   after the round trips.
+- **environments-plan.md** — several Lean/mathlib versions: a yearly
+  *epoch* as the default, monthly mathlib `vX.Y.0` release tags as
+  admitted environments authors may stray to after a typed confirmation,
+  one inspector build per environment, a scheduled admission workflow,
+  and a flat database with a website-emitted index. Planned 2026-09-04;
+  stage 1 (the table and selection) landed the same day with a single
+  entry, so nothing is author-visible yet. Remaining stages and the
+  admission checklist are in the plan; TODO.md carries the next steps.
 - **one-axiom-plan.md** — the old one-statement-per-concept design. The
   bound was lifted on 2026-08-06 (a concept declares any number of
   statements; see the spec-notes entry), and the plan document was deleted
@@ -128,10 +136,17 @@ publisher/control-plane/archive code, `src/cli/` the CLI. Untrusted code
 runs in docker containers (`src/submission-validation/sandbox/`) with
 allowlist-only mounts, env allowlist, resource caps, and a workspace
 watchdog; the container is a stock digest-pinned image
-(`src/submission-validation/pins.ts` — the single home of all pins) with
-the VM-installed toolchain and warm mathlib workspace bind-mounted
+(`src/submission-validation/pins.ts` — the single home of the image, TeX,
+ReflowTeX, PyMuPDF and elan pins, and of the one mathlib repository URL)
+with the VM-installed toolchain and warm mathlib workspace bind-mounted
 read-only (`host/setup.ts` provisions them, `sandbox/layout.ts` resolves
-them). A declared paper compiles in a second digest-pinned image (a full
+them). What a submission builds *against* lives beside it in
+`environments.ts`: the table of archive environments (a Lean toolchain plus
+a mathlib commit, identified by the Lean version string) and the *epoch*,
+the one the archive recommends. The manifest's `leanVersion` selects an
+entry; provisioning, mounts, limits, and the inspector build are keyed by
+it, one environment at a time. Per-Lean-version literals live in
+`lean-facts.ts`. A declared paper compiles in a second digest-pinned image (a full
 TeX Live, `PAPER_IMAGE` in the same pins module) through the same runner,
 with none of the Lean mounts, concurrently with the Lean chain. Database writes go through the GitHub API with a non-forced ref
 update (compare-and-swap) plus re-validation on retry; dependency captures

@@ -10,7 +10,18 @@ import {
   databaseFreshnessAsync,
   syncDatabase,
 } from "../../src/cli/database.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
+
+/** What `lax build` records about the runtime that produced an output. */
+function localRuntime(): Record<string, string> {
+  const runtime = hostValidationRuntime(epoch());
+  return {
+    runtimeImageDigest: runtime.imageDigest,
+    leanToolchain: runtime.leanToolchain,
+    mathlibCommit: runtime.mathlibCommit,
+  };
+}
 
 const homes: string[] = [];
 
@@ -283,7 +294,7 @@ describe("local command preflights", () => {
           version: 1,
           source,
           archiveSha: "b".repeat(40),
-          runtimeImageDigest: hostValidationRuntime().imageDigest,
+          ...localRuntime(),
         },
       }),
     );
@@ -315,7 +326,7 @@ describe("local command preflights", () => {
             version: 1,
             source,
             archiveSha: "b".repeat(40),
-            runtimeImageDigest: hostValidationRuntime().imageDigest,
+            ...localRuntime(),
           },
         }),
       );
@@ -338,10 +349,12 @@ describe("local command preflights", () => {
     expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
   });
 
-  it("rejects a build-output produced before a pin bump", () => {
-    // The same sources compile to different artifacts across a toolchain pin
-    // bump, so a pre-bump build-output must not let `lax submit` skip the
-    // local rebuild.
+  it("rejects a build-output produced in another environment", () => {
+    // The same sources compile to different artifacts under a different
+    // toolchain or mathlib commit, so an output from before the environment
+    // moved must not let `lax submit` skip the local rebuild. The image digest
+    // cannot say this on the host path — it is the constant "host" — so the
+    // freshness check reads the environment's own pins.
     const root = temporary("lax-submission-");
     fs.writeFileSync(path.join(root, "manifest.yaml"), "id: lax-7\n");
     const source = {
@@ -349,28 +362,29 @@ describe("local command preflights", () => {
       commit: "a".repeat(40),
       folder: ".",
     };
-    const write = (runtimeImageDigest: unknown): void => {
+    const write = (validation: Record<string, unknown>): void => {
       fs.writeFileSync(
         path.join(root, "build-output.json"),
         JSON.stringify({
           id: "lax-7",
-          localValidation: {
-            version: 1,
-            source,
-            archiveSha: "b".repeat(40),
-            ...(runtimeImageDigest === undefined ? {} : { runtimeImageDigest }),
-          },
+          localValidation: { version: 1, source, archiveSha: "b".repeat(40), ...validation },
         }),
       );
     };
 
-    write(hostValidationRuntime().imageDigest);
+    write(localRuntime());
     expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(true);
 
-    write(`${hostValidationRuntime().imageDigest}-before-the-bump`);
+    write({ ...localRuntime(), runtimeImageDigest: "sha256-of-some-other-image" });
     expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
 
-    write(undefined);
+    write({ ...localRuntime(), leanToolchain: "leanprover/lean4:v4.33.0" });
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
+
+    write({ ...localRuntime(), mathlibCommit: "9".repeat(40) });
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
+
+    write({});
     expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
   });
 });

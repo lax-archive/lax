@@ -13,10 +13,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ArchiveEnvironment } from "../environments.js";
 import { inspectorBinary } from "../host/inspector.js";
 import { toolchainDir } from "../host/leanenv.js";
 import { warmDir, warmReady } from "../host/warmstore.js";
-import { LEAN_TOOLCHAIN } from "../pins.js";
 
 export interface RuntimeLayout {
   /** the pinned toolchain (bin/lean, bin/lake, bin/leanchecker, lib/...) */
@@ -47,29 +47,34 @@ export function sandboxToolsDir(): string {
 }
 
 /**
- * Resolve (and minimally ensure) the host state the sandbox mounts. Throws a
+ * Resolve (and minimally ensure) the host state the sandbox mounts for one
+ * environment; the in-container mount targets are the same for all of
+ * them, so the container never learns there are several. Throws a
  * clear, actionable error when the VM setup has not run. Paths are
  * realpath'd: test homes symlink the warm base into a shared cache, and bind
  * mount sources should be canonical.
  */
-export async function ensureRuntimeLayout(): Promise<RuntimeLayout> {
-  const toolchain = toolchainDir();
+export async function ensureRuntimeLayout(
+  environment: ArchiveEnvironment,
+): Promise<RuntimeLayout> {
+  const toolchain = toolchainDir(environment);
   for (const binary of ["lean", "lake", "leanchecker"]) {
     if (!fs.existsSync(path.join(toolchain, "bin", binary))) {
       throw new Error(
-        `the pinned Lean toolchain ${LEAN_TOOLCHAIN} is not installed at ${toolchain}; ` +
+        `the Lean toolchain ${environment.leanToolchain} of environment ${environment.id} ` +
+          `is not installed at ${toolchain}; ` +
           "run the validation host setup (dist/submission-validation/host/setup-vm.js) first",
       );
     }
   }
-  const warm = warmDir();
+  const warm = warmDir(environment);
   if (!warmReady(warm)) {
     throw new Error(
-      `the warm mathlib workspace is not ready at ${warm}; ` +
+      `the warm mathlib workspace of environment ${environment.id} is not ready at ${warm}; ` +
         "run the validation host setup (dist/submission-validation/host/setup-vm.js) first",
     );
   }
-  const inspectorBin = await inspectorBinary();
+  const inspectorBin = await inspectorBinary(environment);
   return {
     toolchainDir: fs.realpathSync(toolchain),
     warmDir: fs.realpathSync(warm),

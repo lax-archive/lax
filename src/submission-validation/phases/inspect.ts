@@ -11,9 +11,10 @@ import type {
   ValidationScope,
 } from "../contracts.js";
 import { FindingCollector } from "../findings.js";
+import { leanFacts } from "../lean-facts.js";
 
-const BACKGROUND_AXIOMS = new Set(["propext", "Classical.choice", "Quot.sound"]);
-const IMPORT_PREFIXES = ["Init", "Std", "Lean", "Mathlib"];
+const BACKGROUND_AXIOMS = new Set(leanFacts().backgroundAxioms);
+const IMPORT_PREFIXES = leanFacts().coreImportRoots;
 
 export function judgeInspection(
   conceptReport: InspectorReport,

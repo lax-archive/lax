@@ -14,6 +14,7 @@ export const TEST_SOURCE = {
 };
 
 export const TEST_RUNTIME: ValidationRuntimeIdentity = {
+  environment: "v4.30.0",
   image: `ghcr.io/lax-archive/validation@sha256:${"2".repeat(64)}`,
   imageDigest: "2".repeat(64),
   layoutVersion: 1,

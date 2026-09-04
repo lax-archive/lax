@@ -17,7 +17,13 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ArchiveSnapshot } from "../archive/snapshot.js";
 import { capturePackage, describeLocalCapture } from "../captures/seal.js";
-import { DEFAULT_LIMITS, type ValidationLimits } from "../config.js";
+import { limitsFor, type ValidationLimits } from "../config.js";
+import {
+  epoch,
+  resolveRuntime,
+  type ArchiveEnvironment,
+  type RuntimeSource,
+} from "../environments.js";
 import { FindingCollector } from "../findings.js";
 import type {
   InspectionResult,
@@ -29,6 +35,7 @@ import type {
   ValidationFinding,
   ValidationReport,
   ValidationRequest,
+  ValidationRuntimeIdentity,
   ValidationScope,
 } from "../contracts.js";
 import {
@@ -100,7 +107,10 @@ export interface HostValidationOptions {
 
 interface HostState {
   request: ValidationRequest;
-  runtime: ReturnType<typeof hostValidationRuntime>;
+  /** The environment the manifest selected; the epoch until the static phase
+   * has answered, and nothing provisions before then. */
+  environment: ArchiveEnvironment;
+  runtime: ValidationRuntimeIdentity;
   limits: ValidationLimits;
   scope: ValidationScope;
   echo: boolean;
@@ -128,8 +138,10 @@ export async function validateSubmissionOnHost(
   jobDir: string,
   options: HostValidationOptions,
 ): Promise<HostValidationReport> {
-  const runtime = hostValidationRuntime();
-  const limits = DEFAULT_LIMITS;
+  const runtimeSource: RuntimeSource = (entry) => hostValidationRuntime(entry);
+  let environment = epoch();
+  let runtime = resolveRuntime(runtimeSource, environment);
+  let limits = limitsFor(environment);
   const profiler = options.profiler ?? new Profiler();
   const scope = options.scope ?? "both";
   const echo = options.echo ?? true;
@@ -137,6 +149,7 @@ export async function validateSubmissionOnHost(
   const violations: ValidationFinding[] = [];
   const state: HostState = {
     request,
+    environment,
     runtime,
     limits,
     scope,
@@ -170,7 +183,7 @@ export async function validateSubmissionOnHost(
       reportVersion: 1,
       ok,
       request,
-      runtime,
+      runtime: state.runtime,
       dependencies: state.dependencies,
       warnings: [...warnings],
       violations: [...violations],
@@ -195,10 +208,18 @@ export async function validateSubmissionOnHost(
   let staticCheck: ReturnType<typeof runStaticValidation>;
   try {
     staticCheck = await state.phase("static validation", () =>
-      runStaticValidation(request, state.fetched.submissionRoot, runtime));
+      runStaticValidation(request, state.fetched.submissionRoot, runtimeSource));
   } catch (error) {
     return fail("static", "validator", error);
   }
+  // From here the run carries the environment the manifest selected: its
+  // toolchain, its warm store, its inspector, its limits.
+  environment = staticCheck.environment;
+  runtime = staticCheck.runtime;
+  limits = limitsFor(environment);
+  state.environment = environment;
+  state.runtime = runtime;
+  state.limits = limits;
   warnings.push(...staticCheck.findings.warnings);
   violations.push(...staticCheck.findings.violations);
   if (staticCheck.findings.failed || staticCheck.result.concepts === undefined || staticCheck.result.proofs === undefined)
@@ -255,7 +276,7 @@ export async function validateSubmissionOnHost(
       capturePaperSources(staticCheck.result.paper, state.fetched.submissionRoot, state.captureRoot);
     }
     const capture = await state.phase("emit", () =>
-      describeLocalCapture(state.captureRoot, request.source.commit, runtime));
+      describeLocalCapture(state.captureRoot, request.source.commit, state.runtime));
     const buildOutput = emitBuildOutput(
       state.fetched.submissionRoot,
       staticCheck.result,
@@ -281,7 +302,7 @@ export async function validateSubmissionOnHost(
     let warmWs: string | undefined;
     try {
       warmWs = await state.phase("warm store", () =>
-        ensureLocalWarm({ fromSource: options.fromSource, echo }));
+        ensureLocalWarm(state.environment, { fromSource: options.fromSource, echo }));
     } catch (error) {
       return fail("provision", "warm-store", error);
     }
@@ -321,10 +342,10 @@ export async function validateSubmissionOnHost(
       }
       if (echo) console.log(`\n== lake build (${kind}) ==`);
       const build = await state.phase(`compile ${kind}`, () =>
-        run(lakeBinary(), ["build"], pkgDir, {
+        run(lakeBinary(state.environment), ["build"], pkgDir, {
           echo,
-          env: { LAKE_ARTIFACT_CACHE: "false", LEAN_NUM_THREADS: "4", PATH: lakePathEnv() },
-          maxOutputBytes: limits.maxOutputBytes,
+          env: { LAKE_ARTIFACT_CACHE: "false", LEAN_NUM_THREADS: "4", PATH: lakePathEnv(state.environment) },
+          maxOutputBytes: state.limits.maxOutputBytes,
         }));
       if (build.code !== 0) {
         const failure = compilationFailure(
@@ -381,12 +402,13 @@ export async function validateSubmissionOnHost(
         )))
         .filter((directory) => fs.existsSync(directory));
     const leanEnvFor = (kind: "concepts" | "proofs"): LeanEnv => hostLeanEnv(
+      state.environment,
       kind === "proofs"
         ? [path.join(state.captureRoot, "proofs", "lib"), path.join(state.captureRoot, "concepts", "lib")]
         : [path.join(state.captureRoot, "concepts", "lib")],
       dependencyLibDirs(kind),
       warm,
-      limits.leanThreads,
+      state.limits.leanThreads,
     );
 
     if (options.replay === true) {
@@ -418,7 +440,7 @@ export async function validateSubmissionOnHost(
     let inspectorBin: string;
     try {
       inspectorBin = await state.phase("inspector binary", () =>
-        inspectorBinary({
+        inspectorBinary(state.environment, {
           echo,
           // Half a minute of lake with nothing else to show for it, once per
           // inspector source change. Say so on the row rather than let it read

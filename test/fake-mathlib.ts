@@ -12,10 +12,13 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { epoch } from "../src/submission-validation/environments.js";
 import { FAKE_MATHLIB_FIXTURE as FIXTURE } from "./paths.js";
 
-// keep in sync with LEAN_TOOLCHAIN (not imported, see header)
-const TOOLCHAIN = "leanprover/lean4:v4.30.0\n";
+// The installed toolchain — the epoch's, which every injected test
+// environment shares. Safe to read here: the table is read at call time and
+// the toolchain does not depend on the mathlib seam this file is setting up.
+const TOOLCHAIN = `${epoch().leanToolchain}\n`;
 
 export function fakeMathlib(): { url: string; rev: string } {
   if (!fs.existsSync(path.join(FIXTURE, ".git"))) {

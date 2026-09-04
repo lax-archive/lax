@@ -3,7 +3,7 @@ import path from "node:path";
 import { ArchiveSnapshot, fetchArchiveSnapshot } from "./archive/snapshot.js";
 import { materializeDependencyCaptures } from "./captures/materialize.js";
 import { capturePackage, describeLocalCapture, sealCapture } from "./captures/seal.js";
-import { configuredRuntime, DEFAULT_LIMITS, type ValidationLimits } from "./config.js";
+import { configuredRuntime, limitsFor, type ValidationLimits } from "./config.js";
 import type {
   PaperOutput,
   ResolvedDependency,
@@ -26,6 +26,7 @@ import {
   submittedSourceFailure,
 } from "./failures.js";
 import { commitTimestamp, laxmarkDirectory } from "./host/paper.js";
+import { epoch, resolveRuntime, type RuntimeSource } from "./environments.js";
 import { warmDir } from "./host/warmstore.js";
 import { FindingCollector } from "./findings.js";
 import type { ValidationOutcome } from "./outputs.js";
@@ -498,10 +499,14 @@ async function prepareValidation(
   jobDir: string,
   options: ValidationOptions,
 ): Promise<Preparation> {
-  const runtime = options.runtime ?? configuredRuntime();
-  const limits = DEFAULT_LIMITS;
+  // Which environment this run is in is the static phase's answer (the
+  // manifest names it), so until then everything runs against the epoch's:
+  // the fetch timeouts and the workspace cap, and nothing that provisions.
+  const runtimeSource: RuntimeSource = options.runtime ?? ((entry) => configuredRuntime(entry));
+  let environment = epoch();
+  let runtime = resolveRuntime(runtimeSource, environment);
+  let limits = limitsFor(environment);
   const profiler = options.profiler ?? new Profiler();
-  const runner = options.runner ?? new ContainerRunner(runtime, limits, jobDir, profiler);
   const scope = options.scope ?? "both";
   const warnings: ValidationFinding[] = [];
   const violations: ValidationFinding[] = [];
@@ -554,10 +559,14 @@ async function prepareValidation(
   let staticCheck;
   try {
     staticCheck = await phase("static validation", () =>
-      runStaticValidation(request, fetched.submissionRoot, runtime));
+      runStaticValidation(request, fetched.submissionRoot, runtimeSource));
   } catch (error) {
     return { report: fail(base(), "static", "validator", error) };
   }
+  // From here the run carries the environment the manifest selected.
+  environment = staticCheck.environment;
+  runtime = staticCheck.runtime;
+  limits = limitsFor(environment);
   warnings.push(...staticCheck.findings.warnings);
   violations.push(...staticCheck.findings.violations);
   if (staticCheck.findings.failed || staticCheck.result.concepts === undefined || staticCheck.result.proofs === undefined)
@@ -579,6 +588,7 @@ async function prepareValidation(
   // runtime available costs an image pull and a provisioned host, which
   // spec.md's Static → Resolution → Provision order spends only on a
   // submission that has already passed the millisecond-level phases.
+  const runner = options.runner ?? new ContainerRunner(environment, runtime, limits, jobDir, profiler);
   let paperRun: Promise<PaperRun> | undefined;
   if (options.stopAfter !== "resolution") {
     // The paper needs no Lean, so it starts here — before the runtime is even
@@ -614,7 +624,7 @@ async function prepareValidation(
       dependencyRoot: path.join(jobDir, "dependencies"),
       // the same pin-keyed warm workspace verifyRuntime asserted ready and
       // the runner mounts; provisioning reads its locked manifest on the host
-      warmWs: warmDir(),
+      warmWs: warmDir(environment),
       captureRoot: path.join(jobDir, "capture"),
       phase,
       ...(paperRun === undefined ? {} : { paperRun }),

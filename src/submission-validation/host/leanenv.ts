@@ -10,7 +10,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { LEAN_TOOLCHAIN } from "../pins.js";
+import type { ArchiveEnvironment } from "../environments.js";
+import { leanFacts } from "../lean-facts.js";
 import { run, type RunResult } from "./proc.js";
 
 export interface LeanEnv {
@@ -24,31 +25,31 @@ export function elanHome(): string {
   return process.env.ELAN_HOME ?? path.join(os.homedir(), ".elan");
 }
 
-/** The pinned toolchain's directory inside elan's home (elan's directory
- * naming: `leanprover/lean4:v4.30.0` -> `leanprover--lean4---v4.30.0`). The
- * sandbox bind-mounts this whole directory read-only into the container. */
-export function toolchainDir(): string {
-  const name = LEAN_TOOLCHAIN.replace("/", "--").replace(":", "---");
+/** The environment's toolchain directory inside elan's home (elan's directory
+ * naming lives in lean-facts.ts). The sandbox bind-mounts this whole directory
+ * read-only into the container, one environment at a time. */
+export function toolchainDir(environment: ArchiveEnvironment): string {
+  const name = leanFacts(environment).elanToolchainDirName(environment.leanToolchain);
   return path.join(elanHome(), "toolchains", name);
 }
 
-/** bin/ of the pinned toolchain. */
-export function toolchainBinDir(): string {
-  return path.join(toolchainDir(), "bin");
+/** bin/ of the environment's toolchain. */
+export function toolchainBinDir(environment: ArchiveEnvironment): string {
+  return path.join(toolchainDir(environment), "bin");
 }
 
-export function leancheckerBin(): string {
-  return path.join(toolchainBinDir(), "leanchecker");
+export function leancheckerBin(environment: ArchiveEnvironment): string {
+  return path.join(toolchainBinDir(environment), "leanchecker");
 }
 
 export function packageLibDir(packageDir: string): string {
-  return path.join(packageDir, ".lake", "build", "lib", "lean");
+  return path.join(packageDir, ...leanFacts().lakeLibDir);
 }
 
 /** Lib dirs of a warm workspace's `.lake/packages` — mathlib and its upstream
  * dependencies at their canonical build paths. */
 export function workspaceLibDirs(ws: string): string[] {
-  const pkgs = path.join(ws, ".lake", "packages");
+  const pkgs = path.join(ws, ...leanFacts().lakePackagesDir);
   if (!fs.existsSync(pkgs)) return [];
   const dirs: string[] = [];
   for (const name of fs.readdirSync(pkgs).sort()) {
@@ -67,6 +68,7 @@ export function workspaceLibDirs(ws: string): string[] {
  * leanchecker's module scan is symlink-blind).
  */
 export function hostLeanEnv(
+  environment: ArchiveEnvironment,
   ownLibs: string[],
   depLibDirs: string[],
   warmWs: string,
@@ -79,13 +81,13 @@ export function hostLeanEnv(
   ].map((entry) => (fs.existsSync(entry) ? fs.realpathSync(entry) : entry));
   const env = {
     LEAN_PATH: leanPath.join(path.delimiter),
-    PATH: `${toolchainBinDir()}${path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${toolchainBinDir(environment)}${path.delimiter}${process.env.PATH ?? ""}`,
     // The same worker budget the container checks pin (see history/oom.md);
     // leanchecker and the inspector replay modules concurrently.
     ...(leanThreads === undefined ? {} : { LEAN_NUM_THREADS: String(leanThreads) }),
   };
   return {
-    leancheckerBin: leancheckerBin(),
+    leancheckerBin: leancheckerBin(environment),
     exec: (bin, args, cwd) => run(bin, args, cwd, { env }),
   };
 }
@@ -102,9 +104,16 @@ export function hostLeanEnv(
  * build ever uses. Same reasoning as doctor's `toolBinary()`; the fallback
  * keeps a developer's own toolchain working.
  */
-export function lakeBinary(): string {
-  const owned = path.join(toolchainBinDir(), "lake");
+export function lakeBinary(environment: ArchiveEnvironment): string {
+  const owned = path.join(toolchainBinDir(environment), "lake");
   return fs.existsSync(owned) ? owned : "lake";
+}
+
+/** The lean this run invokes directly (the proof-tree composer), chosen the
+ * same way as `lakeBinary` and for the same reason. */
+export function leanBinary(environment: ArchiveEnvironment): string {
+  const owned = path.join(toolchainBinDir(environment), "lean");
+  return fs.existsSync(owned) ? owned : "lean";
 }
 
 /**
@@ -115,6 +124,6 @@ export function lakeBinary(): string {
  * VM — `lax build` and `lax doctor` never call it, so every host lake
  * invocation must carry this itself.
  */
-export function lakePathEnv(): string {
-  return `${toolchainBinDir()}${path.delimiter}${process.env.PATH ?? ""}`;
+export function lakePathEnv(environment: ArchiveEnvironment): string {
+  return `${toolchainBinDir(environment)}${path.delimiter}${process.env.PATH ?? ""}`;
 }

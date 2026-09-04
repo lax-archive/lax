@@ -1,13 +1,11 @@
 import {
   LAYOUT_VERSION,
-  LEAN_TOOLCHAIN,
-  LEAN_VERSION,
-  MATHLIB_REV,
-  MATHLIB_URL,
+  mathlibUrl,
   VALIDATION_IMAGE,
   VALIDATION_IMAGE_DIGEST,
 } from "./pins.js";
 import type { ValidationRuntimeIdentity } from "./contracts.js";
+import type { ArchiveEnvironment } from "./environments.js";
 import { ValidationError } from "../shared/validation.js";
 
 export interface ValidationLimits {
@@ -122,13 +120,15 @@ export const RUNTIME_PATHS = {
 } as const;
 
 /**
- * The trusted container runtime identity. It comes from the reviewed pins —
+ * The trusted container runtime identity for one archive environment. It
+ * comes from the reviewed table and the reviewed image pin —
  * no environment variable is required, and the trusted workflow sets none. A
  * narrow override remains for smoke-testing a candidate image before a pin
  * bump: the override must itself be digest-pinned, so it can never weaken the
  * immutability guarantee, only point it elsewhere. Never set in production.
  */
 export function configuredRuntime(
+  environment: ArchiveEnvironment,
   image = process.env.LAX_VALIDATION_IMAGE,
 ): ValidationRuntimeIdentity {
   let imageDigest = VALIDATION_IMAGE_DIGEST;
@@ -142,12 +142,23 @@ export function configuredRuntime(
     imageDigest = match[1]!;
   }
   return {
+    environment: environment.id,
     image,
     imageDigest,
     layoutVersion: LAYOUT_VERSION,
-    leanToolchain: LEAN_TOOLCHAIN,
-    leanVersion: LEAN_VERSION,
-    mathlibRepository: MATHLIB_URL,
-    mathlibCommit: MATHLIB_REV,
+    leanToolchain: environment.leanToolchain,
+    leanVersion: environment.id,
+    mathlibRepository: mathlibUrl(),
+    mathlibCommit: environment.mathlibCommit,
   };
+}
+
+/**
+ * The limits one environment runs under: the archive-wide defaults with the
+ * entry's own measured overrides on top. A new environment's admission run
+ * records its replay/inspect peak, so a heavier mathlib carries its own
+ * thread and memory budget instead of forcing every environment down to it.
+ */
+export function limitsFor(environment: ArchiveEnvironment): ValidationLimits {
+  return { ...DEFAULT_LIMITS, ...environment.limits };
 }

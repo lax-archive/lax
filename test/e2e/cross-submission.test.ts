@@ -30,6 +30,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 import { warmDir } from "../../src/submission-validation/host/warmstore.js";
 import { startFakeGhcr, type FakeGhcr } from "../fake-ghcr.js";
 import { sharedWarmBase } from "../paths.js";
@@ -270,7 +271,7 @@ describe("cross-submission dependencies (real lake, source builds, fake ghcr)", 
 
   it("builds the transitive dependency closure from source at the locked revs, replays against it, and never touches the registry", async () => {
     const jobDir = path.join(tmpDir("lax-down-job-"), "work");
-    const warm = fs.realpathSync(warmDir(sharedWarmBase()));
+    const warm = fs.realpathSync(warmDir(epoch(), sharedWarmBase()));
     const storeBefore = snapshotTree(warm);
     const requestsBefore = ghcr.requests.length;
     const report = await buildOnHost(down, {

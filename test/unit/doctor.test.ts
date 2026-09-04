@@ -8,7 +8,8 @@ import { doctor } from "../../src/cli/doctor.js";
 import { recordSubmission } from "../../src/cli/registry.js";
 import * as ui from "../../src/cli/ui.js";
 import { REQUIRED_RENDERER_PATHS } from "../../src/cli/website-renderer.js";
-import { ELAN_COMMIT, LEAN_TOOLCHAIN, MATHLIB_REV } from "../../src/submission-validation/pins.js";
+import { ELAN_COMMIT } from "../../src/submission-validation/pins.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 import {
   markWarmReady,
   warmDir,
@@ -18,8 +19,10 @@ import { removeTree } from "../support/tmp.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** The pin as doctor's rows name it: `v4.30.0`, not the full toolchain id. */
-const TOOLCHAIN_VERSION = LEAN_TOOLCHAIN.slice(LEAN_TOOLCHAIN.indexOf(":") + 1);
+/** The epoch as doctor's rows name it: `v4.30.0`, not the full toolchain id. */
+const TOOLCHAIN_VERSION = epoch().id;
+const LEAN_TOOLCHAIN = epoch().leanToolchain;
+const MATHLIB_REV = epoch().mathlibCommit;
 
 const previous = {
   home: process.env.LAX_HOME,
@@ -159,7 +162,7 @@ function seedPageBuilder(): void {
  * other link in the Lean chain: without one, the store check behind them
  * starts a build of its own. */
 function seedWarmStore(): void {
-  const ws = warmDir();
+  const ws = warmDir(epoch());
   fs.mkdirSync(path.join(ws, ".lake", "packages"), { recursive: true });
   fs.writeFileSync(path.join(ws, "lake-manifest.json"), '{"packages":[]}\n');
   fs.writeFileSync(path.join(ws, ".lax-warm-ok"), "");
@@ -176,7 +179,7 @@ function writeOverrides(pkg: string, packages: Array<{ name: string; dir: string
 /** A submission that passes every check but the ones a test then breaks. */
 function seedSubmission(): string {
   seedWarmStore();
-  fs.mkdirSync(path.join(warmDir(), ".lake", "packages", "mathlib"), { recursive: true });
+  fs.mkdirSync(path.join(warmDir(epoch()), ".lake", "packages", "mathlib"), { recursive: true });
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "lax-submission-"));
   seeded.push(parent);
   const root = path.join(parent, "lax-9");
@@ -454,7 +457,7 @@ describe("lax doctor", () => {
     const sibling = path.join(root, "..", "next-door", "concepts");
     fs.mkdirSync(sibling, { recursive: true });
     writeOverrides(path.join(root, "concepts"), [
-      { name: "mathlib", dir: path.join(warmDir(), ".lake", "packages", "mathlib") },
+      { name: "mathlib", dir: path.join(warmDir(epoch()), ".lake", "packages", "mathlib") },
       { name: "Lax9", dir: "../../next-door/concepts" },
     ]);
     writeOverrides(path.join(root, "proofs"), [
@@ -513,7 +516,7 @@ describe("lax doctor", () => {
     // exits 0: eight ✓ and one line.
     provision();
     seedPageBuilder();
-    const warm = warmDir();
+    const warm = warmDir(epoch());
     fs.mkdirSync(path.join(warm, ".lake", "packages"), { recursive: true });
     fs.writeFileSync(path.join(warm, "lake-manifest.json"), "{}\n");
     markWarmReady(warm);
@@ -585,8 +588,8 @@ describe("lax doctor", () => {
     expect(row(printed(log), "Mathlib")).toContain("built just now");
     // and the store is left in the state every consumer relies on: complete,
     // marked, and sealed against writes
-    expect(warmReady(warmDir())).toBe(true);
-    expect(fs.statSync(warmDir()).mode & 0o200).toBe(0);
+    expect(warmReady(warmDir(epoch()))).toBe(true);
+    expect(fs.statSync(warmDir(epoch())).mode & 0o200).toBe(0);
   });
 
   it("names the missing toolchain instead of downloading gigabytes without one", async () => {
@@ -600,7 +603,7 @@ describe("lax doctor", () => {
     const store = row(printed(log), "Mathlib")!;
     expect(store).toContain("✗");
     expect(store).toContain(`no ${TOOLCHAIN_VERSION} to build it with`);
-    expect(fs.existsSync(warmDir())).toBe(false);
+    expect(fs.existsSync(warmDir(epoch()))).toBe(false);
   });
 
   it("keeps the row shape (title, mark, label, detail, aligned fix)", async () => {

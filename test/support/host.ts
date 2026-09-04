@@ -1,7 +1,7 @@
 // Helpers for the real-lake host-pipeline tests: temp LAX_HOMEs linked to the
 // machine-shared warm/tools caches, and submission fixtures written against
-// the *active* archive pins (the fake mathlib in fast runs — see setup-env.ts
-// and src/submission-validation/pins.ts).
+// the *active* archive pins of one environment (the fake mathlib in fast runs
+// — see setup-env.ts and src/submission-validation/environments.ts).
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -18,6 +18,7 @@ import {
   type HostValidationOptions,
   type HostValidationReport,
 } from "../../src/submission-validation/host/pipeline.js";
+import { epoch, type ArchiveEnvironment } from "../../src/submission-validation/environments.js";
 import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
 import type { Profiler } from "../../src/shared/profile.js";
 import { SHARED_TOOLS, sharedWarmBase } from "../paths.js";
@@ -56,9 +57,11 @@ export function makeHostSubmission(
   id: string,
   files: Record<string, string> = {},
   stableBase?: string,
-  options: { manifestExtra?: string } = {},
+  options: { manifestExtra?: string; environment?: ArchiveEnvironment } = {},
 ): string {
-  const runtime = hostValidationRuntime();
+  // Scaffolded against one environment's pins: the epoch's unless the test
+  // injected another through LAX_TEST_ENVIRONMENTS and names it here.
+  const runtime = hostValidationRuntime(options.environment ?? epoch());
   const root = stableBase === undefined ? tmpDir("lax-sub-") : path.join(stableBase, id);
   if (stableBase !== undefined) fs.mkdirSync(root, { recursive: true });
   const concepts = packageNameForSubmission(id);

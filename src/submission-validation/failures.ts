@@ -1,4 +1,5 @@
 import type { ValidationFailure, ValidationReport } from "./contracts.js";
+import { leanFacts } from "./lean-facts.js";
 
 export type PipelineFailureKind = "submission" | ValidationFailure["kind"];
 
@@ -125,7 +126,10 @@ export function compilationFailure(output: string, fallbackMessage: string): Pip
  * LAX omitted or mis-laid-out an artifact; it is not a new author error. */
 export function replayFailure(output: string, fallbackMessage: string): PipelineFailure {
   const message = output.trim() || fallbackMessage;
-  if (/(?:unknown module|object file.*(?:not found|does not exist)|cannot find.*\.olean)/iu.test(message)) {
+  // The wording is leanchecker's, so it belongs to the Lean release; this
+  // classifier has no environment in hand, and lean-facts.ts answers for the
+  // epoch until a release makes two admitted versions disagree.
+  if (leanFacts().missingModulePattern.test(message)) {
     return infrastructureFailure(message);
   }
   return submissionFailure(message);

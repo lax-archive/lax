@@ -22,14 +22,9 @@ import type {
   ValidationRequest,
 } from "../../src/submission-validation/contracts.js";
 import { packageNameForSubmission } from "../../src/submission-validation/contracts.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 import { ensureValidationHost } from "../../src/submission-validation/host/setup.js";
-import {
-  LEAN_TOOLCHAIN,
-  LEAN_VERSION,
-  MATHLIB_REV,
-  MATHLIB_URL,
-  REFLOWTEX_REV,
-} from "../../src/submission-validation/pins.js";
+import { mathlibUrl, REFLOWTEX_REV } from "../../src/submission-validation/pins.js";
 import {
   validateSubmission,
   type ValidationOptions,
@@ -105,13 +100,16 @@ assert(
   "the smoke runs against the real pins; unset the LAX_MATHLIB_* test seam",
 );
 
+// The smoke exercises one environment end to end: the epoch's, which is what
+// the trusted workflow provisions.
+const environment = epoch();
 const runtime: RuntimePins = {
-  leanToolchain: LEAN_TOOLCHAIN,
-  leanVersion: LEAN_VERSION,
-  mathlibRepository: MATHLIB_URL,
-  mathlibCommit: MATHLIB_REV,
+  leanToolchain: environment.leanToolchain,
+  leanVersion: environment.id,
+  mathlibRepository: mathlibUrl(),
+  mathlibCommit: environment.mathlibCommit,
 };
-assert(await ensureValidationHost({ echo: true }), "validation host setup failed");
+assert(await ensureValidationHost({ environment, echo: true }), "validation host setup failed");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-submission-validation-smoke-"));
 const completed: Array<{ name: string; ok: boolean; wallMs?: number; captureFiles?: number }> = [];
 const selectedFixtures = fixtures().filter(

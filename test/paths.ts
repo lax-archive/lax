@@ -8,12 +8,14 @@
 // re-download on the next LAX_E2E run. Per-test scratch dirs still go to
 // `os.tmpdir()`; only the shared, durable state is here.
 //
-// Deliberately dependency-free: fake-mathlib.ts (which imports this) runs
-// from vitest setup files before the env seam is set, so it must not import
-// src/ modules (their constants freeze the env at import time).
+// Importing src/ from here is fine: every pin is read at call time now (see
+// src/submission-validation/environments.ts), so nothing freezes the mathlib
+// seam at import.
 
 import os from "node:os";
 import path from "node:path";
+import { epoch } from "../src/submission-validation/environments.js";
+import { elanHome, toolchainBinDir } from "../src/submission-validation/host/leanenv.js";
 
 /** The CLI's own home as the *user* sees it, captured before any test
  * repoints LAX_HOME at a temp dir (see sharedWarmBase). */
@@ -37,7 +39,7 @@ export const SHARED_TOOLS = path.join(TEST_CACHE, "tools");
 export const E2E_WORKSPACE = path.join(TEST_CACHE, "e2e-workspace");
 
 /**
- * The base dir holding warm workspaces (`warmDir()` keys a workspace inside
+ * The base dir holding warm workspaces (`warmDir(env)` keys a workspace inside
  * it by toolchain + mathlib rev).
  *
  * Under LAX_E2E the pin is the *real* one — exactly the workspace the CLI
@@ -55,19 +57,16 @@ export function sharedWarmBase(): string {
 }
 
 /**
- * Put the pinned toolchain's bin dir and elan's own bin dir first on PATH,
+ * Put the epoch toolchain's bin dir and elan's own bin dir first on PATH,
  * mirroring ensureValidationHost (host/setup.ts): the warm/inspector builds
  * and the host pipeline spawn `lake` by name, and CLI subprocesses preflight
  * `elan` — the suite must find them even when the caller's PATH has neither
- * (CI provisions ~/.elan but never edits the step's PATH). The src import is
- * dynamic so this module stays env-seam-safe to import (see the header).
+ * (CI provisions ~/.elan but never edits the step's PATH). Every injected test
+ * environment shares that one installed toolchain, so one call covers them all.
  */
-export async function putToolchainOnPath(): Promise<void> {
-  const { elanHome, toolchainBinDir } = await import(
-    "../src/submission-validation/host/leanenv.js"
-  );
+export function putToolchainOnPath(): void {
   const current = (process.env.PATH ?? "").split(path.delimiter);
-  const missing = [toolchainBinDir(), path.join(elanHome(), "bin")].filter(
+  const missing = [toolchainBinDir(epoch()), path.join(elanHome(), "bin")].filter(
     (dir) => !current.includes(dir),
   );
   if (missing.length > 0) process.env.PATH = [...missing, ...current].join(path.delimiter);

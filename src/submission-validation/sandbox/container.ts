@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { RUNTIME_PATHS, type ValidationLimits } from "../config.js";
 import type { ValidationRuntimeIdentity } from "../contracts.js";
+import type { ArchiveEnvironment } from "../environments.js";
 import { notePeakMemory, type Profiler } from "../../shared/profile.js";
 import { ensureRuntimeLayout, type RuntimeLayout } from "./layout.js";
 import { assertWorkspaceWithinLimit } from "./workspace-limit.js";
@@ -70,6 +71,9 @@ export interface ValidationRunner {
  */
 export class ContainerRunner implements ValidationRunner {
   constructor(
+    /** Whose toolchain, warm store, and inspector are mounted. The in-container
+     * targets are the same for every environment, so nothing below it knows. */
+    private readonly environment: ArchiveEnvironment,
     private readonly runtime: ValidationRuntimeIdentity,
     private readonly limits: ValidationLimits,
     private readonly workspaceRoot: string,
@@ -95,7 +99,7 @@ export class ContainerRunner implements ValidationRunner {
    */
   async verifyRuntime(): Promise<void> {
     await this.verifyImage(this.runtime);
-    this.layout ??= await ensureRuntimeLayout();
+    this.layout ??= await ensureRuntimeLayout(this.environment);
   }
 
   /**

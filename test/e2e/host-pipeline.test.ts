@@ -10,8 +10,13 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { formatProfile, Profiler } from "../../src/shared/profile.js";
 import { packageNameForSubmission } from "../../src/submission-validation/contracts.js";
-import { warmDir } from "../../src/submission-validation/host/warmstore.js";
-import { sharedWarmBase } from "../paths.js";
+import { epoch } from "../../src/submission-validation/environments.js";
+import {
+  environment as environmentById,
+} from "../../src/submission-validation/environments.js";
+import { warmDir, warmReady } from "../../src/submission-validation/host/warmstore.js";
+import { FAKE_MATHLIB_FIXTURE, sharedWarmBase } from "../paths.js";
+import { withTestEnvironmentsAsync } from "../support/environments.js";
 import {
   buildOnHost,
   freshLaxHome,
@@ -133,7 +138,7 @@ end Lax2Proofs
     // the warm store is sealed (files *and* directories read-only) and must
     // come out of the builds byte-for-byte untouched — consumers use it in
     // place through package overrides, never by writing anything near it
-    const warm = fs.realpathSync(warmDir(sharedWarmBase()));
+    const warm = fs.realpathSync(warmDir(epoch(), sharedWarmBase()));
     expect(fs.statSync(warm).mode & 0o222).toBe(0);
     expect(fs.statSync(path.join(warm, ".lake", "packages", "mathlib")).mode & 0o222).toBe(0);
     const storeBefore = snapshotTree(warm);
@@ -500,3 +505,119 @@ describe("provisioning for a plain `lake build`", () => {
     }
   });
 });
+
+describe("a second archive environment", () => {
+  // Nothing about the pipeline is per-pin any more: the manifest names an
+  // environment, the table answers with a toolchain and a mathlib commit, and
+  // every provisioned path — the warm store, the inspector, the composed
+  // LEAN_PATH — is keyed by that entry. This proves it with an environment
+  // that does not exist outside the test: a second fake mathlib commit under
+  // the one installed toolchain, admitted through LAX_TEST_ENVIRONMENTS.
+  const OTHER = "v4.31.0";
+
+  it("provisions its own warm store and validates a submission against its own pins", async () => {
+    const otherCommit = secondFakeMathlibCommit();
+    await withTestEnvironmentsAsync([{ id: OTHER, mathlibCommit: otherCommit }], async () => {
+      const environment = environmentById(OTHER)!;
+      expect(environment.mathlibCommit).toBe(otherCommit);
+      expect(environment.leanToolchain).toBe(epoch().leanToolchain);
+      // a store of its own, beside the epoch's, keyed by (version, commit)
+      expect(warmDir(environment, sharedWarmBase())).not.toBe(
+        warmDir(epoch(), sharedWarmBase()),
+      );
+
+      const root = makeHostSubmission("lax-31", {}, undefined, { environment });
+      const report = await buildOnHost(root, { id: "lax-31" });
+      expect(messages(report)).toBe("");
+      expect(report.ok).toBe(true);
+      expect(report.runtime.environment).toBe(OTHER);
+      expect(report.runtime.mathlibCommit).toBe(otherCommit);
+      expect(warmReady(warmDir(environment, sharedWarmBase()))).toBe(true);
+    });
+  });
+
+  it("rejects a submission pinned to the other environment's mathlib", async () => {
+    // Same table, wrong row: the pins are checked against the entry the
+    // manifest selected, so borrowing another environment's commit fails.
+    const otherCommit = secondFakeMathlibCommit();
+    await withTestEnvironmentsAsync([{ id: OTHER, mathlibCommit: otherCommit }], async () => {
+      const root = makeHostSubmission("lax-32");
+      const manifestPath = path.join(root, "manifest.yaml");
+      fs.writeFileSync(
+        manifestPath,
+        fs.readFileSync(manifestPath, "utf8").replace(
+          `mathlibVersion: ${epoch().mathlibCommit}`,
+          `mathlibVersion: ${otherCommit}`,
+        ),
+      );
+      const report = await buildOnHost(root, { id: "lax-32" });
+      expect(report.ok).toBe(false);
+      expect(messages(report)).toContain(`mathlibVersion must be ${epoch().mathlibCommit}`);
+    });
+  });
+
+  it("refuses an environment the table does not admit", async () => {
+    const root = makeHostSubmission("lax-33");
+    const manifestPath = path.join(root, "manifest.yaml");
+    fs.writeFileSync(
+      manifestPath,
+      fs.readFileSync(manifestPath, "utf8").replace(
+        `leanVersion: ${epoch().id}`,
+        "leanVersion: v4.99.0",
+      ),
+    );
+    const report = await buildOnHost(root, { id: "lax-33" });
+    expect(report.ok).toBe(false);
+    expect(messages(report)).toContain("leanVersion v4.99.0 is not an archive environment");
+    // and nothing was provisioned for it: no store, no directory named after
+    // an id the table never answered for
+    expect(fs.existsSync(path.join(sharedWarmBase(), "v4.99.0-" + "0".repeat(12)))).toBe(false);
+    expect(
+      fs.readdirSync(sharedWarmBase()).some((entry) => entry.startsWith("v4.99.0")),
+    ).toBe(false);
+  });
+});
+
+/**
+ * A second commit of the fake mathlib fixture, so an injected environment has
+ * a mathlib of its own rather than sharing the epoch's store.
+ *
+ * Written with plumbing: it reuses the first commit's tree (the package is the
+ * same trivial one) and never moves HEAD or the working tree, because the
+ * fixture is machine-shared and other forks read `HEAD` for their own pin
+ * while this runs; only a tag of its own is added, so lake can fetch it. The
+ * dates are fixed, so the commit — and hence the warm store keyed by it — is
+ * the same on every run and on every machine.
+ */
+function secondFakeMathlibCommit(): string {
+  const fixture = FAKE_MATHLIB_FIXTURE;
+  const git = (args: string[]): string => {
+    const result = spawnSync("git", ["-C", fixture, ...args], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z",
+        GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z",
+      },
+    });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  const commit = git([
+    "-c",
+    "user.email=t@t",
+    "-c",
+    "user.name=t",
+    "commit-tree",
+    git(["rev-parse", "HEAD^{tree}"]),
+    "-p",
+    git(["rev-parse", "HEAD"]),
+    "-m",
+    "fake mathlib, second environment",
+  ]);
+  // A ref of its own, so lake can fetch the commit: an unreferenced object is
+  // not advertised and `git fetch <sha>` would fail. `update-ref` writes it
+  // without going anywhere near HEAD or the working tree.
+  git(["update-ref", "refs/tags/lax-test-second", commit]);
+  return commit;
+}

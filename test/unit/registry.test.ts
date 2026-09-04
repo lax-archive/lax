@@ -16,7 +16,8 @@ import {
 } from "../../src/cli/registry.js";
 import { provisionScaffold, scaffoldSubmission } from "../../src/cli/scaffold.js";
 import { markWarmReady, warmDir } from "../../src/submission-validation/host/warmstore.js";
-import { MATHLIB_REV, MATHLIB_URL } from "../../src/submission-validation/pins.js";
+import { epoch } from "../../src/submission-validation/environments.js";
+import { mathlibUrl } from "../../src/submission-validation/pins.js";
 import { removeTree } from "../support/tmp.js";
 
 const previous = {
@@ -54,20 +55,20 @@ afterEach(() => {
   if (previous.token !== undefined) process.env.LAX_GITHUB_APP_USER_TOKEN = previous.token;
 });
 
-/** A ready warm store at warmDir(): locked manifest, package checkouts, marker. */
+/** A ready warm store at warmDir(epoch()): locked manifest, package checkouts, marker. */
 function makeWarmStore(): string {
-  const warm = warmDir();
+  const warm = warmDir(epoch());
   fs.mkdirSync(warm, { recursive: true });
   const packages = [
     {
-      url: MATHLIB_URL,
+      url: mathlibUrl(),
       type: "git",
       subDir: null,
       scope: "",
-      rev: MATHLIB_REV,
+      rev: epoch().mathlibCommit,
       name: "mathlib",
       manifestFile: "lake-manifest.json",
-      inputRev: MATHLIB_REV,
+      inputRev: epoch().mathlibCommit,
       inherited: false,
       configFile: "lakefile.toml",
     },

@@ -1,32 +1,40 @@
 // Provision the validation host (a trusted-workflow VM, or any machine that
-// runs the container smoke): pinned elan + toolchain, the warm mathlib
-// workspace, and the inspector binary — the same code path local `lax build`
-// uses (ensureLocalWarm/inspectorBinary), so the trusted runner and an
-// author's machine can never diverge. Everything is idempotent and fast when
-// an actions-cache restored ~/.elan and the warm store; the expensive first
-// run prints progress lines throughout.
+// runs the container smoke) for one archive environment: pinned elan, that
+// environment's toolchain, its warm mathlib workspace, and its inspector —
+// the same code path local `lax build` uses (ensureLocalWarm/inspectorBinary),
+// so the trusted runner and an author's machine can never diverge. Everything
+// is idempotent and fast when an actions-cache restored ~/.elan and the warm
+// store; the expensive first run prints progress lines throughout.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Profiler } from "../../shared/profile.js";
-import { ELAN_COMMIT, LEAN_TOOLCHAIN } from "../pins.js";
+import type { ArchiveEnvironment } from "../environments.js";
+import { ELAN_COMMIT } from "../pins.js";
 import { inspectorBinary } from "./inspector.js";
 import { elanHome, toolchainBinDir, toolchainDir } from "./leanenv.js";
 import { run } from "./proc.js";
 import { ensureLocalWarm } from "./warmstore.js";
 
 /**
- * Ensure elan, the pinned toolchain, the warm store, and the inspector.
+ * Ensure elan, one environment's toolchain, its warm store, and its inspector.
  * Returns false (after printing a clear message) on failure; the caller sets
  * the exit code. `lake exe cache get` stays fatal by default: a trusted run
  * must not silently fall back to compiling mathlib for hours. An optional
  * profiler (setup-vm.js passes one) records a span per provisioning step.
  */
 export async function ensureValidationHost(
-  opts: { echo?: boolean; fromSource?: boolean; profiler?: Profiler } = {},
+  opts: {
+    /** The environment to provision — one at a time, never all of them. */
+    environment: ArchiveEnvironment;
+    echo?: boolean;
+    fromSource?: boolean;
+    profiler?: Profiler;
+  },
 ): Promise<boolean> {
+  const environment = opts.environment;
   const echo = opts.echo ?? true;
   const span = <T>(name: string, operation: () => Promise<T>): Promise<T> =>
     opts.profiler === undefined ? operation() : opts.profiler.span(name, operation);
@@ -43,13 +51,13 @@ export async function ensureValidationHost(
     }
   }
 
-  if (fs.existsSync(path.join(toolchainBinDir(), "lean"))) {
-    console.log(`lax setup: toolchain ${LEAN_TOOLCHAIN} present at ${toolchainDir()}`);
+  if (fs.existsSync(path.join(toolchainBinDir(environment), "lean"))) {
+    console.log(`lax setup: toolchain ${environment.leanToolchain} present at ${toolchainDir(environment)}`);
   } else {
-    console.log(`lax setup: installing toolchain ${LEAN_TOOLCHAIN}`);
+    console.log(`lax setup: installing toolchain ${environment.leanToolchain}`);
     const install = await span("toolchain install", () =>
-      run(elanBin, ["toolchain", "install", LEAN_TOOLCHAIN], os.homedir(), { echo }));
-    if (install.code !== 0 || !fs.existsSync(path.join(toolchainBinDir(), "lean"))) {
+      run(elanBin, ["toolchain", "install", environment.leanToolchain], os.homedir(), { echo }));
+    if (install.code !== 0 || !fs.existsSync(path.join(toolchainBinDir(environment), "lean"))) {
       console.error(`lax setup: could not install the pinned toolchain (exit ${install.code})`);
       return false;
     }
@@ -57,18 +65,18 @@ export async function ensureValidationHost(
 
   // put the pinned toolchain itself first on PATH: the warm build and the
   // inspector build below run `lake` directly, not through elan's shims
-  process.env.PATH = `${toolchainBinDir()}${path.delimiter}${process.env.PATH ?? ""}`;
+  process.env.PATH = `${toolchainBinDir(environment)}${path.delimiter}${process.env.PATH ?? ""}`;
 
-  console.log("lax setup: ensuring the warm mathlib workspace");
+  console.log(`lax setup: ensuring the warm mathlib workspace for ${environment.id}`);
   const warm = await span("warm workspace", () =>
-    ensureLocalWarm({ echo, fromSource: opts.fromSource }));
+    ensureLocalWarm(environment, { echo, fromSource: opts.fromSource }));
   if (warm === undefined) {
     console.error("lax setup: the warm mathlib workspace could not be built (see the transcript above)");
     return false;
   }
   console.log(`lax setup: warm workspace ready at ${warm}`);
 
-  const inspector = await span("inspector build", () => inspectorBinary({ echo }));
+  const inspector = await span("inspector build", () => inspectorBinary(environment, { echo }));
   console.log(`lax setup: inspector ready at ${inspector}`);
   console.log("lax setup: validation host ready");
   return true;

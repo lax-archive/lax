@@ -10,14 +10,24 @@ import { GitHubClient, GitHubError, repositoryPath } from "../shared/github.js";
 import { elanHome, toolchainBinDir } from "../submission-validation/host/leanenv.js";
 import { run } from "../submission-validation/host/proc.js";
 import { installElan } from "../submission-validation/host/setup.js";
-import { ensureLocalWarm, warmDir, warmReady } from "../submission-validation/host/warmstore.js";
+import {
+  ensureLocalWarm,
+  warmDir,
+  warmReady,
+  type WarmStage,
+} from "../submission-validation/host/warmstore.js";
 import {
   engineAvailable,
   MIN_LATEXMK_VERSION,
   probeLatexmkAsync,
 } from "../submission-validation/host/paper.js";
 import { LAX_GENERATED_FILES } from "../submission-validation/generated-files.js";
-import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../submission-validation/pins.js";
+// stage 4: doctor reports the epoch, the admitted environments, and which are
+// installed, and its per-submission preflight reads the submission's own. Until
+// then every environment-shaped check here is the epoch's, which is the single
+// pin it checked before.
+import { epoch } from "../submission-validation/environments.js";
+import { leanFacts } from "../submission-validation/lean-facts.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, updateDatabaseQuietly } from "./database.js";
 import { declaresPaper, submissionIdFromFolder } from "./manifest.js";
@@ -54,8 +64,11 @@ interface Check {
  * details sit further left than a command report's. */
 const LABEL_WIDTH = 20;
 
-/** `v4.30.0` out of `leanprover/lean4:v4.30.0`: the pin as the author reads it. */
-const TOOLCHAIN_VERSION = LEAN_TOOLCHAIN.slice(LEAN_TOOLCHAIN.indexOf(":") + 1);
+/** `v4.30.0` out of `leanprover/lean4:v4.30.0`: the version as the author
+ * reads it. Read per call: the environment table follows the test seam. */
+function toolchainVersion(): string {
+  return epoch().id;
+}
 
 /**
  * The binary a lax command would actually run for `tool`.
@@ -73,7 +86,7 @@ function toolBinary(tool: string): string {
     tool === "elan"
       ? path.join(elanHome(), "bin", "elan")
       : tool === "lake"
-        ? path.join(toolchainBinDir(), "lake")
+        ? path.join(toolchainBinDir(epoch()), "lake")
         : undefined;
   return owned !== undefined && fs.existsSync(owned) ? owned : tool;
 }
@@ -189,35 +202,35 @@ async function lakeCheck(dry: boolean, working: (text: string) => void): Promise
       fix: [dry ? WOULD_INSTALL : installHint("elan")],
     };
   }
-  if (!fs.existsSync(path.join(toolchainBinDir(), "lean")) && dry) {
+  if (!fs.existsSync(path.join(toolchainBinDir(epoch()), "lean")) && dry) {
     return {
       label: "Lake",
       status: "fail",
-      detail: `${TOOLCHAIN_VERSION} is not installed`,
+      detail: `${toolchainVersion()} is not installed`,
       fix: [WOULD_INSTALL],
     };
   }
-  if (!fs.existsSync(path.join(toolchainBinDir(), "lean"))) {
-    working(`installing ${TOOLCHAIN_VERSION}, a few minutes the first time`);
-    const install = await run(elanBin, ["toolchain", "install", LEAN_TOOLCHAIN], os.homedir(), {
+  if (!fs.existsSync(path.join(toolchainBinDir(epoch()), "lean"))) {
+    working(`installing ${toolchainVersion()}, a few minutes the first time`);
+    const install = await run(elanBin, ["toolchain", "install", epoch().leanToolchain], os.homedir(), {
       echo: false,
     });
     if (install.code !== 0) {
       return {
         label: "Lake",
         status: "fail",
-        detail: `could not install ${TOOLCHAIN_VERSION} (exit ${install.code})`,
-        fix: [`run \`elan toolchain install ${LEAN_TOOLCHAIN}\` to see the full transcript`],
+        detail: `could not install ${toolchainVersion()} (exit ${install.code})`,
+        fix: [`run \`elan toolchain install ${epoch().leanToolchain}\` to see the full transcript`],
       };
     }
   }
-  const version = await toolVersionAt(path.join(toolchainBinDir(), "lake"));
+  const version = await toolVersionAt(path.join(toolchainBinDir(epoch()), "lake"));
   return version === undefined
     ? {
         label: "Lake",
         status: "fail",
-        detail: `${TOOLCHAIN_VERSION} has no working lake`,
-        fix: [`reinstall it: \`elan toolchain uninstall ${LEAN_TOOLCHAIN}\` then \`lax doctor\``],
+        detail: `${toolchainVersion()} has no working lake`,
+        fix: [`reinstall it: \`elan toolchain uninstall ${epoch().leanToolchain}\` then \`lax doctor\``],
       }
     : { label: "Lake", status: "ok", detail: version, fact: shortLake(version) };
 }
@@ -238,8 +251,7 @@ async function toolVersionAt(bin: string): Promise<string | undefined> {
  * that ran is a tool that ran, whatever it chose to print.
  */
 function shortLake(raw: string): string {
-  const lean = /Lean version ([^\s)]+)/u.exec(raw)?.[1];
-  const lake = /Lake version (\S+)/u.exec(raw)?.[1];
+  const { lean, lake } = leanFacts(epoch()).parseLakeBanner(raw);
   if (lean === undefined && lake === undefined) return raw;
   return [lean === undefined ? undefined : `v${lean}`, lake === undefined ? undefined : `lake ${lake}`]
     .filter((part) => part !== undefined)
@@ -753,18 +765,18 @@ async function databaseCheck(dry: boolean, working: (text: string) => void): Pro
 }
 
 function toolchainCheck(): Check {
-  const binDir = toolchainBinDir();
+  const binDir = toolchainBinDir(epoch());
   return fs.existsSync(binDir)
     ? {
         label: "Lean toolchain",
         status: "ok",
-        detail: TOOLCHAIN_VERSION,
-        internal: `${LEAN_TOOLCHAIN} at ${binDir}`,
+        detail: toolchainVersion(),
+        internal: `${epoch().leanToolchain} at ${binDir}`,
       }
     : {
         label: "Lean toolchain",
         status: "warn",
-        detail: `${TOOLCHAIN_VERSION} is not installed yet`,
+        detail: `${toolchainVersion()} is not installed yet`,
         fix: ["elan installs it automatically on the first `lax build`"],
       };
 }
@@ -785,7 +797,7 @@ function toolchainCheck(): Check {
  * in paragraphs over the top of the report.
  */
 async function warmStoreCheck(steps: ui.Steps, dry: boolean): Promise<Check> {
-  const ws = warmDir();
+  const ws = warmDir(epoch());
   if (warmReady(ws)) return { label: "Mathlib", status: "ok", detail: "ready", internal: ws };
   if (dry) {
     return {
@@ -800,19 +812,19 @@ async function warmStoreCheck(steps: ui.Steps, dry: boolean): Promise<Check> {
   // its fix, so this row names the dependency rather than spending a gigabyte
   // download on a `lake` that is missing or, worse, some other elan's shim
   // resolving a toolchain no lax build uses.
-  if (!fs.existsSync(path.join(toolchainBinDir(), "lean"))) {
+  if (!fs.existsSync(path.join(toolchainBinDir(epoch()), "lean"))) {
     return {
       label: "Mathlib",
       status: "fail",
-      detail: `no ${TOOLCHAIN_VERSION} to build it with`,
+      detail: `no ${toolchainVersion()} to build it with`,
       fix: ["close the Lean problem above, then run `lax doctor` again"],
       internal: ws,
     };
   }
   steps.begin("mathlib");
-  const warm = await ensureLocalWarm({
+  const warm = await ensureLocalWarm(epoch(), {
     echo: false,
-    onStage: (stage) => {
+    onStage: (stage: WarmStage) => {
       steps.detail(
         "mathlib",
         stage === "building"
@@ -885,12 +897,17 @@ async function submissionCheck(root: string, label: string): Promise<Check> {
       problems.push(`${kind}/lakefile.toml is missing`);
       continue;
     }
+    // stage 4: read the submission's own environment here rather than the
+    // epoch's, so an off-epoch submission is not reported as mispinned.
+    const environment = epoch();
     const toolchain = tryRead(path.join(pkg, "lean-toolchain"))?.trim();
-    if (toolchain !== LEAN_TOOLCHAIN) {
-      problems.push(`${kind}/lean-toolchain is ${toolchain ?? "missing"} (pins want ${LEAN_TOOLCHAIN})`);
+    if (toolchain !== environment.leanToolchain) {
+      problems.push(
+        `${kind}/lean-toolchain is ${toolchain ?? "missing"} (environment ${environment.id} wants ${environment.leanToolchain})`,
+      );
       fixes.add("update the toolchain and mathlib pins to the current archive pins");
     }
-    if (tryRead(path.join(pkg, "lakefile.toml"))?.includes(MATHLIB_REV) !== true) {
+    if (tryRead(path.join(pkg, "lakefile.toml"))?.includes(environment.mathlibCommit) !== true) {
       problems.push(`${kind}/lakefile.toml pins a different mathlib than the archive`);
       fixes.add("update the toolchain and mathlib pins to the current archive pins");
     }
@@ -898,7 +915,7 @@ async function submissionCheck(root: string, label: string): Promise<Check> {
     // mathlib; validate their targets so a pin bump (new warm store) or a
     // deleted store surfaces here instead of as a surprise download.
     const overrides = tryRead(path.join(pkg, ".lake", "package-overrides.json"));
-    const warmRoot = path.dirname(warmDir());
+    const warmRoot = path.dirname(warmDir(environment));
     // Names the warm store owns. The overrides that point into it say so
     // first-hand, but they are exactly what an author loses by deleting
     // `.lake` — and `lake-manifest.json` lives outside it, so the next bare
@@ -1024,7 +1041,7 @@ function packageClones(packagesDir: string): string[] {
 function warmClosureNames(): string[] {
   try {
     const manifest = JSON.parse(
-      fs.readFileSync(path.join(warmDir(), "lake-manifest.json"), "utf8"),
+      fs.readFileSync(path.join(warmDir(epoch()), "lake-manifest.json"), "utf8"),
     ) as { packages: Array<{ name: string }> };
     return manifest.packages.map((pkgEntry) => pkgEntry.name);
   } catch {

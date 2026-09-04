@@ -10,6 +10,13 @@ import type {
   ValidationRuntimeIdentity,
 } from "../contracts.js";
 import { packageNameForSubmission } from "../contracts.js";
+import {
+  environment as environmentById,
+  epoch,
+  resolveRuntime,
+  type ArchiveEnvironment,
+  type RuntimeSource,
+} from "../environments.js";
 import { FindingCollector } from "../findings.js";
 import { rewriteMarkers, texRewriteOrder } from "../paper/rewrite.js";
 import { validateLakefile } from "../validators/lakefile.js";
@@ -19,11 +26,24 @@ import { deriveInventory } from "./inventory.js";
 import type { SubmissionTree } from "./package-files.js";
 import { checkPackageFiles, readSubmissionTree } from "./package-files.js";
 
+/**
+ * The static phase, and the phase that settles which archive environment the
+ * run is in: the manifest is read first, its `leanVersion` selects an entry
+ * (validators/manifest.ts), and every other check here — both `lean-toolchain`
+ * files, both lakefiles' mathlib rev — is made against that entry's runtime.
+ * The selection is returned so the phases after this one provision, mount, and
+ * resolve against the same environment.
+ */
 export function runStaticValidation(
   request: ValidationRequest,
   root: string,
-  runtime: ValidationRuntimeIdentity,
-): { result: StaticResult; findings: FindingCollector } {
+  runtimeSource: RuntimeSource,
+): {
+  result: StaticResult;
+  findings: FindingCollector;
+  environment: ArchiveEnvironment;
+  runtime: ValidationRuntimeIdentity;
+} {
   const findings = new FindingCollector("static");
   const result: StaticResult = {};
   const manifestPath = path.join(root, "manifest.yaml");
@@ -34,13 +54,20 @@ export function runStaticValidation(
       result.manifest = validateManifest(
         content,
         request.id,
-        runtime,
+        runtimeSource,
         findings,
         request.issue,
         request.legacyManifestWithoutIssue,
       );
     }
   }
+
+  // The environment the manifest named, by the same lookup the validator
+  // already made and violated on: an unreadable or unadmitted one leaves the
+  // epoch, and the failed findings stop the run before anything is
+  // provisioned against it.
+  const selected = environmentById(result.manifest?.leanVersion ?? "") ?? epoch();
+  const runtime = resolveRuntime(runtimeSource, selected);
 
   const abstractPath = path.join(root, "abstract.md");
   if (!regularFile(abstractPath)) findings.violate("abstract", "abstract.md is missing");
@@ -105,7 +132,7 @@ export function runStaticValidation(
     const inventory = deriveInventory(root, kind, packageName, findings);
     if (lakefile !== undefined) result[kind] = { lakefile, inventory };
   }
-  return { result, findings };
+  return { result, findings, environment: selected, runtime };
 }
 
 /**

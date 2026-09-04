@@ -1,5 +1,12 @@
 import { parse } from "yaml";
-import type { PaperManifest, SubmissionManifest, ValidationRuntimeIdentity } from "../contracts.js";
+import type { PaperManifest, SubmissionManifest } from "../contracts.js";
+import {
+  admittedEnvironmentList,
+  environment,
+  epoch,
+  resolveRuntime,
+  type RuntimeSource,
+} from "../environments.js";
 import type { FindingCollector } from "../findings.js";
 import { HANDLE_PATTERN, LEGACY_SUBMISSION_IDS, MAX_OWNERS } from "../../shared/constants.js";
 import type { IssueBinding } from "../../shared/types.js";
@@ -25,10 +32,18 @@ const OPTIONAL_MANIFEST_KEYS = new Set(["supersedes", "paper", "issue", "initial
 const PAPER_KEYS = new Set(["folder", "main", "engine", "web"]);
 const AUTHOR_KEYS = new Set(["name", "orcid", "github"]);
 
+/**
+ * The manifest is where a submission names its archive environment, so this is
+ * where the environment is selected: `leanVersion` is looked up in the table
+ * and everything else — the toolchain files, the lakefiles' mathlib rev,
+ * `mathlibVersion` — is then checked against the entry it found. The id is
+ * only ever a lookup key (trust rule 2); nothing downstream ever sees the
+ * author's string, only the entry.
+ */
 export function validateManifest(
   content: string,
   submissionId: string,
-  runtime: ValidationRuntimeIdentity,
+  runtimeSource: RuntimeSource,
   findings: FindingCollector,
   expectedIssue?: IssueBinding,
   legacyManifestWithoutIssue?: true,
@@ -152,6 +167,24 @@ export function validateManifest(
       findings.violate("manifest", `manifest.yaml: ${(error as Error).message}`);
     }
   }
+  // Selection, before any check that reads a pin. An unknown id is the one
+  // thing the table cannot answer, and the message says what it can.
+  let selected = epoch();
+  if (leanVersion !== undefined) {
+    const entry = environment(leanVersion);
+    if (entry === undefined) {
+      findings.violate(
+        "manifest",
+        `manifest.yaml: leanVersion ${leanVersion} is not an archive environment. ` +
+          `Admitted: ${admittedEnvironmentList()}. ` +
+          "Update lax if the environment is newer than this CLI.",
+      );
+    } else {
+      selected = entry;
+    }
+  }
+  const runtime = resolveRuntime(runtimeSource, selected);
+
   if (specVersion !== undefined && specVersion !== "1")
     findings.violate("manifest", "manifest.yaml: specVersion must be \"1\"");
   const expectedId = submissionId;
@@ -160,7 +193,10 @@ export function validateManifest(
       "manifest",
       `manifest.yaml: id must be ${expectedId} or Lax${expectedId.slice("lax-".length)}, got ${rawId}`,
     );
-  if (leanVersion !== undefined && leanVersion !== runtime.leanVersion)
+  // Only reachable when the run is pinned to one runtime (the local
+  // `options.runtime` seam and the unit tests): with the table doing the
+  // selecting, a known id *is* the runtime's.
+  if (leanVersion !== undefined && environment(leanVersion) !== undefined && leanVersion !== runtime.leanVersion)
     findings.violate("manifest", `manifest.yaml: leanVersion must be ${runtime.leanVersion}`);
   if (mathlibVersion !== undefined && mathlibVersion !== runtime.mathlibCommit)
     findings.violate("manifest", `manifest.yaml: mathlibVersion must be ${runtime.mathlibCommit}`);

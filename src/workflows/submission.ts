@@ -21,6 +21,7 @@ import {
   type SuccessfulValidationArtifacts,
 } from "../submission-validation/artifact-schema.js";
 import { configuredRuntime } from "../submission-validation/config.js";
+import { epoch } from "../submission-validation/environments.js";
 import type {
   ValidationFinding,
   ValidationReport,
@@ -543,7 +544,10 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
     report,
     output,
     validationRequest(request),
-    configuredRuntime(),
+    // stage 2: look the report's own environment id up in the table and pass
+    // that runtime; the existing equality checks then do the rest. Until then
+    // this is the epoch, which is what the single-pin publisher asserted.
+    configuredRuntime(epoch()),
   );
   const capturePath = requiredEnv("VALIDATION_CAPTURE_PATH");
   let stat: fs.Stats;

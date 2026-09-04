@@ -6,11 +6,12 @@ import { fileURLToPath } from "node:url";
 import { parsePublishedCapture } from "../submission-validation/artifact-schema.js";
 import type { PublishedCapture } from "../submission-validation/contracts.js";
 import {
-  LEAN_TOOLCHAIN,
-  LEAN_VERSION,
-  MATHLIB_REV,
-  MATHLIB_URL,
-} from "../submission-validation/pins.js";
+  environmentOfPins,
+  type ArchiveEnvironment,
+} from "../submission-validation/environments.js";
+import { leanFacts } from "../submission-validation/lean-facts.js";
+import { lakeBinary, lakePathEnv, leanBinary } from "../submission-validation/host/leanenv.js";
+import { mathlibUrl } from "../submission-validation/pins.js";
 import { isObject, normalizeSubmissionId } from "../shared/validation.js";
 import { laxHome } from "./auth.js";
 import { databaseDirectory, tryRefreshDatabase } from "./database.js";
@@ -18,7 +19,7 @@ import { databaseDirectory, tryRefreshDatabase } from "./database.js";
 const MAX_ARCHIVE_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
 const COMPOSER_TIMEOUT_MS = 15 * 60_000;
-const BACKGROUND_AXIOMS = new Set(["propext", "Classical.choice", "Quot.sound"]);
+const BACKGROUND_AXIOMS = new Set(leanFacts().backgroundAxioms);
 
 export interface NetworkProof {
   id: string;
@@ -37,6 +38,10 @@ interface ArchiveSubmission {
   requiredByConcepts: string[];
   requiredByProofs: string[];
   capture: PublishedCapture;
+  /** The environment its capture was built in, by the capture's own pins.
+   * Undefined when no admitted environment has them — a record from before an
+   * entry was written, or one this CLI is too old to know. */
+  environment?: ArchiveEnvironment;
 }
 
 export interface SelectedProof extends NetworkProof {
@@ -223,6 +228,16 @@ export async function generateProofTree(
   const target = archive.get(submissionId);
   if (target === undefined) throw new Error(`${submissionId} has no draft or registered Archive content`);
   if (target.statements.length === 0) throw new Error(`${submissionId} declares no statements`);
+  // A proof tree is composed inside one environment: its modules are loaded
+  // into a single Lean process, and an olean built by one toolchain cannot be
+  // read by another. The target's environment is the tree's.
+  const environment = target.environment;
+  if (environment === undefined) {
+    throw new Error(
+      `${submissionId} was built in ${describeEnvironment(target.capture)}; ` +
+        "update lax if the environment is newer than this CLI",
+    );
+  }
 
   const allStatements = [...archive.values()].flatMap((submission) => submission.statements);
   const allProofs = [...archive.values()].flatMap((submission) => submission.proofs);
@@ -252,6 +267,12 @@ export async function generateProofTree(
   for (const id of captureIds) {
     const submission = archive.get(id);
     if (submission === undefined) throw new Error(`selected proof dependency ${id} is unavailable`);
+    if (submission.environment?.id !== environment.id) {
+      throw new Error(
+        `${id} is in ${describeEnvironment(submission.capture)} but ${submissionId} is in ` +
+          `${environment.id}; a proof tree cannot span two environments`,
+      );
+    }
     captureRoots.set(id, await materializeCapture(id, submission.capture));
   }
 
@@ -263,7 +284,7 @@ export async function generateProofTree(
     [path.join(root, "concepts", "lib"), path.join(root, "proofs", "lib")]
       .filter((directory) => fs.existsSync(directory)),
   );
-  const mathlibLeanPath = ensureMathlibEnvironment();
+  const mathlibLeanPath = ensureMathlibEnvironment(environment);
   const leanPath = [...capturedLeanPaths, mathlibLeanPath].filter(Boolean).join(path.delimiter);
   const composer = composerSource();
   const verifier = verifierSource();
@@ -288,6 +309,7 @@ export async function generateProofTree(
     }, null, 2)}\n`);
     console.log(`lax generate-prooftree: kernel-checking ${entries.length} generated theorems`);
     runLean(
+      environment,
       ["--run", composer, stagedRequest, ...proofModules],
       staging,
       leanPath,
@@ -299,6 +321,7 @@ export async function generateProofTree(
     ].join(path.delimiter);
     console.log("lax generate-prooftree: verifying the standalone generated module");
     runLean(
+      environment,
       ["--run", verifier, stagedRequest, moduleName],
       staging,
       verificationLeanPath,
@@ -373,7 +396,8 @@ function loadArchive(directory: string): Map<string, ArchiveSubmission> {
     if (record.id !== entry.name || (record.state !== "draft" && record.state !== "registered")) continue;
     const output = readObject(path.join(directory, entry.name, "build-output.json"));
     if (output.id !== entry.name) throw new Error(`${entry.name}/build-output.json has the wrong id`);
-    const capture = parseArchiveCapture(output.capture);
+    const capture = parsePublishedCapture(output.capture);
+    const environment = captureEnvironment(capture);
     const concepts = objectArray(output.concepts, `${entry.name} concepts`);
     const conceptPaths: string[] = [];
     const statements: string[] = [];
@@ -409,6 +433,7 @@ function loadArchive(directory: string): Map<string, ArchiveSubmission> {
       requiredByConcepts: stringArray(output.requiredByConcepts, `${entry.name} requiredByConcepts`),
       requiredByProofs: stringArray(output.requiredByProofs, `${entry.name} requiredByProofs`),
       capture,
+      ...(environment === undefined ? {} : { environment }),
     });
   }
   return result;
@@ -443,21 +468,20 @@ function compareSubmissionIds(left: string, right: string): number {
   return Number(left.slice("lax-".length)) - Number(right.slice("lax-".length));
 }
 
-function parseArchiveCapture(value: unknown): PublishedCapture {
-  return requirePinnedCapture(parsePublishedCapture(value));
+/** The environment a record's capture belongs to, by its recorded pins. The
+ * archive holds several; which ones this composer may load together is the
+ * target submission's environment, decided in generateProofTree. */
+function captureEnvironment(capture: PublishedCapture): ArchiveEnvironment | undefined {
+  return environmentOfPins(capture.leanToolchain, capture.mathlibCommit);
 }
 
-function requirePinnedCapture(capture: PublishedCapture): PublishedCapture {
-  if (
-    capture.leanToolchain !== LEAN_TOOLCHAIN ||
-    capture.mathlibCommit !== MATHLIB_REV
-  ) {
-    throw new Error(
-      `capture runtime ${capture.leanToolchain} / ${capture.mathlibCommit} does not match ` +
-      `the single pinned runtime ${LEAN_TOOLCHAIN} / ${MATHLIB_REV}`,
-    );
-  }
-  return capture;
+/** Describe a record's environment for a message: its id, or its raw pins when
+ * no admitted entry has them. */
+function describeEnvironment(capture: PublishedCapture): string {
+  return (
+    captureEnvironment(capture)?.id ??
+    `an environment unknown to this CLI (${capture.leanToolchain} / ${capture.mathlibCommit})`
+  );
 }
 
 async function materializeCapture(id: string, capture: PublishedCapture): Promise<string> {
@@ -578,14 +602,26 @@ function verifyCapture(root: string, capture: PublishedCapture): void {
   if (seen.size !== expected.size) throw new Error("cached capture is missing declared files");
 }
 
-function ensureMathlibEnvironment(): string {
-  const version = execFileSync("lean", ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  if (!version.includes(`version ${LEAN_VERSION.slice(1)}`)) {
-    throw new Error(`generate-prooftree requires Lean ${LEAN_VERSION}; found ${version.trim()}`);
+/** The composer's own mathlib workspace, one per environment: the toolchain
+ * and the commit both decide what its LEAN_PATH means, so the directory is
+ * keyed like the warm store rather than by the commit alone. Every binary is
+ * resolved through the environment's toolchain, never through PATH. */
+function ensureMathlibEnvironment(environment: ArchiveEnvironment): string {
+  const lean = leanBinary(environment);
+  const lake = lakeBinary(environment);
+  const version = execFileSync(lean, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (!version.includes(`version ${environment.id.slice(1)}`)) {
+    throw new Error(
+      `generate-prooftree requires Lean ${environment.id} for this submission; found ${version.trim()}`,
+    );
   }
-  const runtime = path.join(laxHome(), "prooftree-runtime", MATHLIB_REV);
+  const runtime = path.join(
+    laxHome(),
+    "prooftree-runtime",
+    `${environment.id}-${environment.mathlibCommit.slice(0, 12)}`,
+  );
   const marker = path.join(runtime, ".ready");
-  const mathlib = path.join(runtime, ".lake", "packages", "mathlib");
+  const mathlib = path.join(runtime, ...leanFacts(environment).lakePackagesDir, "mathlib");
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   const lakefile = [
     'name = "LaxProofTreeRuntime"',
@@ -593,41 +629,44 @@ function ensureMathlibEnvironment(): string {
     "",
     "[[require]]",
     'name = "mathlib"',
-    `git = "${MATHLIB_URL}"`,
-    `rev = "${MATHLIB_REV}"`,
+    `git = "${mathlibUrl()}"`,
+    `rev = "${environment.mathlibCommit}"`,
     "",
     "[[lean_lib]]",
     'name = "LaxProofTreeRuntime"',
     "",
   ].join("\n");
   fs.writeFileSync(path.join(runtime, "lakefile.toml"), lakefile);
-  fs.writeFileSync(path.join(runtime, "lean-toolchain"), `${LEAN_TOOLCHAIN}\n`);
+  fs.writeFileSync(path.join(runtime, "lean-toolchain"), `${environment.leanToolchain}\n`);
   fs.writeFileSync(path.join(runtime, "LaxProofTreeRuntime.lean"), "import Mathlib\n");
   let ready = false;
   try {
-    ready = fs.readFileSync(marker, "utf8").trim() === MATHLIB_REV &&
+    ready = fs.readFileSync(marker, "utf8").trim() === environment.mathlibCommit &&
       execFileSync("git", ["-C", mathlib, "rev-parse", "HEAD"], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
-      }).trim() === MATHLIB_REV;
+      }).trim() === environment.mathlibCommit;
   } catch {
     ready = false;
   }
   if (!ready) {
     console.log("lax generate-prooftree: preparing the pinned Mathlib cache (first run only)");
-    execFileSync("lake", ["update"], { cwd: runtime, stdio: "inherit" });
-    execFileSync("lake", ["exe", "cache", "get"], { cwd: runtime, stdio: "inherit" });
+    const lakeEnv = { ...process.env, PATH: lakePathEnv(environment) };
+    execFileSync(lake, ["update"], { cwd: runtime, stdio: "inherit", env: lakeEnv });
+    execFileSync(lake, ["exe", "cache", "get"], { cwd: runtime, stdio: "inherit", env: lakeEnv });
     const actual = execFileSync("git", ["-C", mathlib, "rev-parse", "HEAD"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
-    if (actual !== MATHLIB_REV) throw new Error("the proof-tree Mathlib checkout has the wrong commit");
-    fs.writeFileSync(marker, `${MATHLIB_REV}\n`);
+    if (actual !== environment.mathlibCommit)
+      throw new Error("the proof-tree Mathlib checkout has the wrong commit");
+    fs.writeFileSync(marker, `${environment.mathlibCommit}\n`);
   }
-  return execFileSync("lake", ["env", "printenv", "LEAN_PATH"], {
+  return execFileSync(lake, ["env", "printenv", "LEAN_PATH"], {
     cwd: runtime,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, PATH: lakePathEnv(environment) },
   }).trim();
 }
 
@@ -647,14 +686,19 @@ function packageRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 }
 
-function runLean(args: string[], cwd: string, leanPath: string): void {
-  execFileSync("lean", args, {
+function runLean(
+  environment: ArchiveEnvironment,
+  args: string[],
+  cwd: string,
+  leanPath: string,
+): void {
+  execFileSync(leanBinary(environment), args, {
     cwd,
     stdio: "inherit",
     env: {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      PATH: lakePathEnv(environment),
       HOME: process.env.HOME,
-      ELAN_TOOLCHAIN: LEAN_TOOLCHAIN,
+      ELAN_TOOLCHAIN: environment.leanToolchain,
       LEAN_PATH: leanPath,
     },
     timeout: COMPOSER_TIMEOUT_MS,

@@ -242,6 +242,30 @@ describe("submission validation outputs", () => {
   // The self-check exists for everything the collector cannot reach: a
   // report the publisher would refuse must not leave the validate job, where
   // the artifact can still say why.
+  it("compares the report runtime to the publisher's by value, not by key order", () => {
+    const directory = temporaryDirectory();
+    fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+    const report = successfulReport();
+    writeValidationOutputs(directory, report);
+    const written = readJson(path.join(directory, VALIDATION_REPORT_FILENAME)) as ValidationReport;
+    const generated = readJson(path.join(directory, GENERATED_BUILD_OUTPUT_FILENAME));
+    // the same identity with its keys in reverse: a builder's key order is
+    // not part of the contract
+    const reversed = Object.fromEntries(
+      Object.entries(report.runtime).reverse(),
+    ) as unknown as ValidationReport["runtime"];
+    expect(() => parseSuccessfulValidationArtifacts(written, generated, report.request, reversed))
+      .not.toThrow();
+    // but every field is: a report claiming another environment id with the
+    // same pins is not this publisher's runtime
+    expect(() => parseSuccessfulValidationArtifacts(
+      written,
+      generated,
+      report.request,
+      { ...report.runtime, environment: "v4.31.0" },
+    )).toThrow("does not match the workflow's pinned runtime");
+  });
+
   it("refuses to emit a successful report the trusted publisher would reject, and says so in the report", () => {
     const directory = temporaryDirectory();
     fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
@@ -363,6 +387,9 @@ function baseReport(): Omit<ValidationReport, "ok"> {
       archiveSha: "e".repeat(40),
     },
     runtime: {
+      // key order matters: the publisher compares this whole object to the one
+      // it builds from the environment table by JSON equality
+      environment: "v4.30.0",
       image: `ghcr.io/lax-archive/validation@sha256:${"f".repeat(64)}`,
       imageDigest: "f".repeat(64),
       layoutVersion: 1,

@@ -8,6 +8,11 @@ import {
   MAX_OWNERS,
   PLACEHOLDER_SUBMISSION_ID,
 } from "../shared/constants.js";
+import {
+  environment as environmentById,
+  epoch,
+  type ArchiveEnvironment,
+} from "../submission-validation/environments.js";
 import type { IssueBinding } from "../shared/types.js";
 import {
   isObject,
@@ -20,6 +25,9 @@ import * as ui from "./ui.js";
 export interface LocalSubmissionManifest {
   filename: string;
   id: string;
+  /** The archive environment the submission declares, unvalidated: static
+   * validation is where an unknown one becomes a violation. */
+  leanVersion?: string;
   title?: string;
   authors: Array<{ github?: string }>;
   issue?: IssueBinding;
@@ -43,6 +51,7 @@ export function readLocalSubmissionManifest(folder: string): LocalSubmissionMani
   } catch {
     throw new Error(`${filename} must contain an id of the form lax-N or LaxN`);
   }
+  const leanVersion = typeof value.leanVersion === "string" ? value.leanVersion : undefined;
   const title =
     typeof value.title === "string" && value.title.trim() !== "" ? value.title : undefined;
   const authors = Array.isArray(value.authors)
@@ -54,7 +63,30 @@ export function readLocalSubmissionManifest(folder: string): LocalSubmissionMani
     : [];
   const initialOwners = parseInitialOwners(value.initialOwners, filename);
   const issue = value.issue === undefined ? undefined : parseManifestIssue(value.issue, filename);
-  return { filename, id, ...(title === undefined ? {} : { title }), authors, issue, initialOwners };
+  return {
+    filename,
+    id,
+    ...(leanVersion === undefined ? {} : { leanVersion }),
+    ...(title === undefined ? {} : { title }),
+    authors,
+    issue,
+    initialOwners,
+  };
+}
+
+/**
+ * The archive environment a local submission folder is in. The manifest's
+ * `leanVersion` is the id and the table is the only thing that turns it into
+ * an entry; an unreadable folder or an id this CLI does not admit falls back
+ * to the epoch, because saying which environment is missing is static
+ * validation's job and it says it properly.
+ */
+export function submissionEnvironment(folder: string): ArchiveEnvironment {
+  try {
+    return environmentById(readLocalSubmissionManifest(folder).leanVersion ?? "") ?? epoch();
+  } catch {
+    return epoch();
+  }
 }
 
 /** The id a local submission folder carries, including the historical lax-0 placeholder. */

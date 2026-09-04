@@ -241,6 +241,49 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   digest is not recorded in the report's runtime identity (the pin lives
   in `pins.ts`, so a bump is a reviewed edit).
 
+## Archive environments (environments-plan.md — stage 1 landed 2026-09-04)
+
+Several Lean/mathlib versions: a yearly **epoch** as the default, monthly
+mathlib `vX.Y.0` release tags as admitted environments authors may stray
+to after a typed confirmation. Stage 1 (the table, selection,
+per-environment provisioning) is in; the table holds one row, so nothing
+is author-visible yet. Stages in the plan; 2 and 3 finish the feature.
+
+- **Stage 0 spike ran 2026-09-04** (`spike/environments/REPORT.md`): GO.
+  The inspector compiles unchanged under v4.33.0 with byte-identical
+  output, the whole suite passes under that toolchain, and only
+  `assets/prooftree/Main.lean` breaks (`Environment.addDeclCore` gained a
+  `maxRecDepth` argument); `spike/environments/prooftree-addDecl.patch`
+  compiles under both releases and lands in stage 3 with an explicit
+  unlimited `maxRecDepth`. Still unmeasured: a cold `lake exe cache get`
+  at v4.33.0 (23 GB free here) and the replay peak.
+- **Stage 2**: the static gate writes the selected environment id and a
+  per-environment cache key to `$GITHUB_OUTPUT`; the lean cache restore
+  and save use it; `setup-vm.js --env <id>` provisions only that
+  environment; the publisher looks the report's environment id up in the
+  table instead of passing the epoch (the `// stage 2:` comments in
+  `host/setup-vm.ts` and `workflows/submission.ts` mark both call sites).
+  Rehearsal drill first (`scripts/rehearsal/`), then ship.
+- **Stage 3**: inspector shape guards (`run_cmd` beside each `unsafeCast`
+  reader in `Main.lean`), the `inspector-golden` fixture and test, an
+  `inspector-matrix` CI job over every admitted entry, the prooftree
+  `addDecl` patch from the spike (then `npm run smoke:prooftree` under
+  both toolchains), and `environments.yml` — the admission cron that
+  tests a new mathlib `vX.Y.0` tag and opens a PR adding its row. The
+  admission job must run the prooftree smoke and the golden test: the
+  spike showed unit + fake-mathlib e2e alone miss a composer break.
+- **Stage 4**: `lax init --env <id>` with the typed confirmation and
+  `--yes`, doctor reporting the epoch and which environments are
+  installed (the `// stage 4:` comments in `cli/doctor.ts` and
+  `cli/scaffold.ts` mark what still assumes the epoch), `lax port`, and
+  the `lax print instructions` sentence.
+- **Stage 5**: the website's environment notice, facet and grouping, the
+  epoch in lax-website's config, `index.json`/`environments.json`, and
+  `lax serve` passing the epoch. Renderer release; re-pin page-builder.
+- **Stage 6**: README status and command table, the CLAUDE.md paragraph,
+  and a history note after the first real off-epoch round trip. (The
+  spec-notes entry for stage 1 is written.)
+
 ## Admin tool (admin-plan.md — designed, not implemented)
 
 Maintainer-only operations: `/lax admin <verb>` issue commands

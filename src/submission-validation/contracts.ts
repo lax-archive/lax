@@ -56,6 +56,11 @@ export interface ValidationFailure {
 }
 
 export interface ValidationRuntimeIdentity {
+  /** The archive environment this run was validated in: the id of a row of
+   * environments.ts, which is also the manifest's `leanVersion`. The pin
+   * fields below are that row's, re-derived from the table by every reader
+   * rather than trusted from the report. */
+  environment: string;
   image: string;
   imageDigest: string;
   layoutVersion: number;
