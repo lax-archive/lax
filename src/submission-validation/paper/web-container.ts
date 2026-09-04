@@ -47,9 +47,11 @@ import {
  * font lists (real font files by filename; legacy Type1 outlines by TeX
  * name), and the directory the resolved bytes land in. They live in the
  * web compile's copy (already mounted writable) and are written by the
- * host *after* the compile container exited, so the compile cannot tamper
- * with them; none of them can shadow author content (the fresh copy is
- * re-made per run) and none enter the sealed bundle. */
+ * host *after* the compile container exited, so the compile cannot change
+ * what they say — it can only have left something of its own at these
+ * names first, which is what `writeIntoWebCopy` takes away. None of them
+ * can shadow author content (the fresh copy is re-made per run) and none
+ * enter the sealed bundle. */
 export const WEB_EXPORT_SCRIPT = "lax-web-export.sh";
 export const WEB_EXPORT_CONVERTER = "lax-web-convert.py";
 export const WEB_EXPORT_FONT_LIST = "lax-web-fonts.txt";
@@ -62,6 +64,67 @@ export const WEB_EXPORT_DOWNSAMPLED_SUFFIX = "downsampled";
 /** Where the unpacked PyMuPDF wheel is mounted, read-only, in the export
  * container — `PYTHONPATH`, and the only thing in it. */
 export const WEB_PYMUPDF_PATH = "/opt/lax/pymupdf";
+
+/**
+ * Every host-side write into the web copy, with whatever the path holds
+ * removed first.
+ *
+ * The copy is the compile's own writable mount and the compile is author
+ * code running with `-shell-escape`, so each name the host writes to after
+ * it — the export step's script, the lists that step reads, the rewritten
+ * `output.json`, a finished encoding vector — may already exist as a
+ * symlink the compile planted, pointing at anything on the runner the job
+ * can reach. `writeFileSync` opens by name and follows such a link, which
+ * puts host-written bytes at the far end of it. Unlinking takes the
+ * redirect away rather than merely noticing it, which is all an `lstat`
+ * before the write can do: a check speaks for the moment it ran, and is
+ * easy to leave off the next write added here. So every write in this
+ * module goes through this one function and no name it writes can be left
+ * out. The one *directory* the host later reaches through, `pics`, is a
+ * component rather than a name written and is settled by
+ * `webPicturesDirectory` instead.
+ */
+function writeIntoWebCopy(file: string, contents: string, mode?: number): void {
+  // `recursive` so a whole directory planted under a host-owned name goes
+  // too; node's removal lstats, so a symlink loses the link, never the
+  // thing it points at.
+  fs.rmSync(file, { recursive: true, force: true });
+  fs.writeFileSync(file, contents, mode === undefined ? undefined : { mode });
+}
+
+/**
+ * The externalized pictures' directory in the web copy, as a real directory
+ * the host owns.
+ *
+ * `prepareWebSource` creates `pics/` before the compile, and the compile —
+ * author code, `-shell-escape`, the copy its own writable mount — may throw
+ * it away and leave a symlink at that name. Everything the host does with a
+ * picture afterwards spells the name out: the slot pre-clears and the box
+ * normalization write and delete under `pics/<something>`, the export
+ * accounting reads the directory, and the encode sources every converted
+ * SVG from it. Removing a symlink at the *leaf* of one of those paths does
+ * nothing about a link one component higher, which redirects all of them at
+ * once, so the component is settled here — once, before the host touches
+ * anything under it — and every later step asks this function where the
+ * directory is rather than joining the name itself.
+ *
+ * Replacing what stands there costs the run nothing it still had: a compile
+ * that unlinked `pics/` deleted its own externalized pictures with it, and a
+ * picture with no converted SVG is precisely the fork's kern fallback,
+ * counted as `web-pictures-dropped` like any picture the converter could not
+ * read.
+ */
+function webPicturesDirectory(webSrc: string): string {
+  const picsDir = path.join(webSrc, "pics");
+  // A symlink lstats as a link whatever it points at, so this is false for
+  // one aimed at a directory; the removal that follows takes the link and
+  // never the directory at the far end of it.
+  if (fs.lstatSync(picsDir, { throwIfNoEntry: false })?.isDirectory() !== true) {
+    fs.rmSync(picsDir, { recursive: true, force: true });
+    fs.mkdirSync(picsDir, { recursive: true });
+  }
+  return picsDir;
+}
 
 /**
  * The in-image export step: resolve each requested font file by name and
@@ -505,7 +568,7 @@ export function resolveVirtualFonts(webSrc: string): { resolved: string[]; refus
       fs.rmSync(pfb, { force: true });
       refused.push(name);
     } else {
-      fs.writeFileSync(path.join(fontsDir, `${name}.enc`), encodingFile(name, names, shared));
+      writeIntoWebCopy(path.join(fontsDir, `${name}.enc`), encodingFile(name, names, shared));
       resolved.push(name);
     }
     fs.rmSync(vpl, { force: true });
@@ -550,8 +613,7 @@ export function pictureAtOrigin(svg: string): string | undefined {
 /** Every converted picture moved to a `0 0` origin, in place; the number
  * rewritten. Runs on the export's output before the encode child reads it. */
 export function normalizePictureBoxes(webSrc: string): number {
-  const picsDir = path.join(webSrc, "pics");
-  if (!fs.existsSync(picsDir)) return 0;
+  const picsDir = webPicturesDirectory(webSrc);
   let moved = 0;
   for (const name of fs.readdirSync(picsDir).sort()) {
     if (!name.endsWith(".svg")) continue;
@@ -559,7 +621,7 @@ export function normalizePictureBoxes(webSrc: string): number {
     if (!fs.lstatSync(file).isFile()) continue;
     const rewritten = pictureAtOrigin(fs.readFileSync(file, "utf8"));
     if (rewritten === undefined) continue;
-    fs.writeFileSync(file, rewritten);
+    writeIntoWebCopy(file, rewritten);
     moved += 1;
   }
   return moved;
@@ -656,7 +718,7 @@ export function assignIncludedPictureSlots(webSrc: string, limits: ValidationLim
     node.file = slot;
     changed = true;
   });
-  if (changed) fs.writeFileSync(file, JSON.stringify(data));
+  if (changed) writeIntoWebCopy(file, JSON.stringify(data));
   return {
     included: [...slots].map(([name, slot]) => ({ slot, file: name })),
     refused: [...refused].sort(),
@@ -687,7 +749,7 @@ export function dropUnconvertedPictures(
   walkPictureNodes(data, (node) => {
     if (typeof node.file === "string" && missing.has(node.file)) delete node.file;
   });
-  fs.writeFileSync(file, JSON.stringify(data));
+  writeIntoWebCopy(file, JSON.stringify(data));
   return [...new Set(missing.values())].sort();
 }
 
@@ -758,14 +820,12 @@ export function webExportProblem(
   for (const name of fs.existsSync(fontsDir) ? fs.readdirSync(fontsDir).sort() : []) {
     exported.push(path.join(fontsDir, name));
   }
-  const picsDir = path.join(webSrc, "pics");
+  const picsDir = webPicturesDirectory(webSrc);
   const unconverted: string[] = [];
-  if (fs.existsSync(picsDir)) {
-    for (const name of fs.readdirSync(picsDir).sort()) {
-      if (name.endsWith(".svg")) exported.push(path.join(picsDir, name));
-      if (name.endsWith(".pdf") && !fs.existsSync(path.join(picsDir, `${name.slice(0, -4)}.svg`))) {
-        unconverted.push(name);
-      }
+  for (const name of fs.readdirSync(picsDir).sort()) {
+    if (name.endsWith(".svg")) exported.push(path.join(picsDir, name));
+    if (name.endsWith(".pdf") && !fs.existsSync(path.join(picsDir, `${name.slice(0, -4)}.svg`))) {
+      unconverted.push(name);
     }
   }
   if (unconverted.length > 0) {
@@ -864,9 +924,16 @@ export function containerWebDeriver(
       );
     }
     // The compile (author code, -shell-escape) ran before these files are
-    // written, so it cannot tamper with them — and the fonts directory is
-    // re-made empty so nothing the compile planted pre-seeds the export.
+    // written, so it cannot change what they say — but it chose what stood
+    // at those names when the host arrived, which is why each write below
+    // goes through `writeIntoWebCopy`; the fonts directory is re-made empty
+    // for the same reason, so nothing the compile planted pre-seeds the
+    // export. The pictures directory is settled here too, before the first
+    // host step that names anything under it: it is the one path component
+    // the host reaches through, and a link left there would carry all of
+    // them out of the copy at once.
     fs.rmSync(path.join(webSrc, WEB_EXPORT_FONTS_DIR), { recursive: true, force: true });
+    webPicturesDirectory(webSrc);
     // Every plain \includegraphics gets a slot and the file names stay behind
     // (see "plain \includegraphics" above); the tikz pictures are untouched.
     const pictures = assignIncludedPictureSlots(webSrc, input.limits);
@@ -878,11 +945,11 @@ export function containerWebDeriver(
       fs.rmSync(path.join(webSrc, `${picture.slot}.svg`), { force: true });
       fs.rmSync(path.join(webSrc, `${picture.slot}.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`), { force: true });
     }
-    fs.writeFileSync(path.join(webSrc, WEB_EXPORT_FONT_LIST), fontNames.map((name) => `${name}\n`).join(""), { mode: 0o600 });
-    fs.writeFileSync(path.join(webSrc, WEB_EXPORT_PFB_LIST), legacyNames.map((name) => `${name}\n`).join(""), { mode: 0o600 });
-    fs.writeFileSync(path.join(webSrc, WEB_EXPORT_PICTURE_LIST), `${JSON.stringify(pictures.included)}\n`, { mode: 0o600 });
-    fs.writeFileSync(path.join(webSrc, WEB_EXPORT_CONVERTER), webConvertScript(input.limits), { mode: 0o600 });
-    fs.writeFileSync(path.join(webSrc, WEB_EXPORT_SCRIPT), webExportScript(), { mode: 0o600 });
+    writeIntoWebCopy(path.join(webSrc, WEB_EXPORT_FONT_LIST), fontNames.map((name) => `${name}\n`).join(""), 0o600);
+    writeIntoWebCopy(path.join(webSrc, WEB_EXPORT_PFB_LIST), legacyNames.map((name) => `${name}\n`).join(""), 0o600);
+    writeIntoWebCopy(path.join(webSrc, WEB_EXPORT_PICTURE_LIST), `${JSON.stringify(pictures.included)}\n`, 0o600);
+    writeIntoWebCopy(path.join(webSrc, WEB_EXPORT_CONVERTER), webConvertScript(input.limits), 0o600);
+    writeIntoWebCopy(path.join(webSrc, WEB_EXPORT_SCRIPT), webExportScript(), 0o600);
     const exported = await runner.run({
       label: "paper-web-export",
       image,

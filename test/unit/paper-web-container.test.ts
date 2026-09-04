@@ -35,6 +35,7 @@ import {
   WEB_EXPORT_DOWNSAMPLED_SUFFIX,
   WEB_EXPORT_FONT_LIST,
   WEB_EXPORT_FONTS_DIR,
+  WEB_EXPORT_PFB_LIST,
   WEB_EXPORT_PICTURE_LIST,
   WEB_EXPORT_SCRIPT,
   WEB_INCLUDED_SLOT_PREFIX,
@@ -173,6 +174,12 @@ interface FakeRunnerOptions {
   downsampled?: string[];
   /** What the fake encode child reports as unsourced picture nodes. */
   droppedPictures?: number;
+  /** Symlinks the compile leaves in the web copy, by their name in it and
+   * the absolute path each points at — the reach a `-shell-escape` run has
+   * over every name the host writes to, reads, or reaches through after it.
+   * Whatever stands at the name is removed first, exactly as the shell of
+   * such a compile would (`rm -rf pics && ln -s elsewhere pics`). */
+  plantedSymlinks?: Record<string, string>;
 }
 
 function fakeRunner(options: FakeRunnerOptions = {}): ValidationRunner & { calls: Array<string | ContainerInvocation> } {
@@ -211,6 +218,10 @@ function fakeRunner(options: FakeRunnerOptions = {}): ValidationRunner & { calls
         }
         if (options.droppedPictures !== undefined) {
           fs.writeFileSync(path.join(webSrc, "fake-dropped.txt"), String(options.droppedPictures));
+        }
+        for (const [name, target] of Object.entries(options.plantedSymlinks ?? {})) {
+          fs.rmSync(path.join(webSrc, name), { recursive: true, force: true });
+          fs.symlinkSync(target, path.join(webSrc, name));
         }
         return { code: 0, output: "latexmk web transcript", timedOut: false, ...options.compileResult };
       }
@@ -601,6 +612,81 @@ describe("container web deriver", () => {
     expect(derived.warnings[0]!.rule).toBe("web-export");
     expect(derived.warnings[0]!.message).toContain("exit 3");
   });
+
+  it("writes the export step's files past symlinks the compile planted at their names", async () => {
+    // The compile runs untrusted with -shell-escape and owns the copy the
+    // host writes the export step into afterwards, so it can leave a symlink
+    // at each of those names pointing anywhere the job can reach. Following
+    // one would put host-written bytes — a shell script among them — outside
+    // the copy, on the runner.
+    const outside = tmpDir("lax-web-container-outside-");
+    const names = [
+      WEB_EXPORT_SCRIPT,
+      WEB_EXPORT_CONVERTER,
+      WEB_EXPORT_FONT_LIST,
+      WEB_EXPORT_PFB_LIST,
+      WEB_EXPORT_PICTURE_LIST,
+    ];
+    for (const name of names) fs.writeFileSync(path.join(outside, name), "the runner's own file\n");
+    const { input, run } = derive({
+      plantedSymlinks: Object.fromEntries(names.map((name) => [name, path.join(outside, name)])),
+    });
+    const derived = await run();
+
+    // The derivation is untouched by the attempt: the export step reads the
+    // files it was given, in the copy, and the bundle seals as ever.
+    expect(derived.web).toBeDefined();
+    expect(derived.warnings).toEqual([]);
+    const webSrc = path.join(input.jobDir, "paper", "web", "src");
+    for (const name of names) {
+      expect(fs.readFileSync(path.join(outside, name), "utf8")).toBe("the runner's own file\n");
+      expect(fs.lstatSync(path.join(webSrc, name)).isSymbolicLink()).toBe(false);
+    }
+    expect(fs.readFileSync(path.join(webSrc, WEB_EXPORT_SCRIPT), "utf8")).toBe(webExportScript());
+    expect(fs.lstatSync(path.join(webSrc, WEB_EXPORT_SCRIPT)).mode & 0o777).toBe(0o600);
+  });
+
+  it("settles the pictures directory before reaching through it, link or no link", async () => {
+    // `pics` is reached *through* rather than written to: the slot pre-clear,
+    // the export accounting, the box normalization and the encode all spell
+    // out `pics/<something>`. A compile that swaps the directory for a link
+    // (`rm -rf pics && ln -s elsewhere pics`) redirects every one of those at
+    // once — which taking the link off the leaf of each path cannot undo.
+    const outside = tmpDir("lax-web-container-pics-outside-");
+    // Two of the runner's own files, at names the host reaches for under
+    // `pics/`: a picture whose off-origin box the normalization rewrites in
+    // place, and the marker a slot's pre-clear deletes before the export.
+    const drawing = path.join(outside, "figure.svg");
+    const marker = path.join(outside, `lax-inc0.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`);
+    fs.writeFileSync(drawing, "<svg version='1.1' viewBox='0 -18 74 18'><g id='page1'/></svg>");
+    fs.writeFileSync(marker, "");
+    const { input, run } = derive({
+      outputJson: streamWithPictures(["orcid.pdf"]),
+      pictures: ["fig0"],
+      plantedSymlinks: { pics: outside },
+    });
+    const derived = await run();
+
+    // Neither was rewritten or deleted, nothing else landed beside them, and
+    // the copy holds a real directory at the name again.
+    expect(fs.readFileSync(drawing, "utf8")).toContain("viewBox='0 -18 74 18'");
+    expect(fs.readdirSync(outside).sort()).toEqual([
+      "figure.svg",
+      `lax-inc0.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`,
+    ]);
+    const webSrc = path.join(input.jobDir, "paper", "web", "src");
+    expect(fs.lstatSync(path.join(webSrc, "pics")).isSymbolicLink()).toBe(false);
+    expect(fs.lstatSync(path.join(webSrc, "pics")).isDirectory()).toBe(true);
+
+    // And the derivation carries on in it: the export fills the settled
+    // directory, the boxes are squared there, and the bundle seals. What the
+    // compile externalized into the directory it unlinked went with it, which
+    // is the kern fallback and nothing worse.
+    expect(derived.web).toBeDefined();
+    expect(derived.warnings).toEqual([]);
+    expect(fs.readFileSync(path.join(webSrc, "pics", "fig0.svg"), "utf8")).toContain("viewBox='0 0 74 18'");
+    expect(pictureFiles(webSrc)).toEqual([`${WEB_INCLUDED_SLOT_PREFIX}0`]);
+  });
 });
 
 describe("export helpers", () => {
@@ -794,6 +880,30 @@ describe("export helpers", () => {
     // Neither the program nor the unfiltered vector belongs in the export set.
     expect(fs.readdirSync(fonts).filter((name) => /\.(?:vpl|base-enc)$/u.test(name))).toEqual([]);
     expect(resolveVirtualFonts(tmpDir("lax-web-vf-none-"))).toEqual({ resolved: [], refused: [] });
+  });
+
+  it("finishes a virtual face past a symlink standing at its encoding's name", () => {
+    // Nothing plants one here today — the fonts directory is re-made empty
+    // before the export step fills it inside the container — but the rule is
+    // the write's, not the caller's knowledge of who made the entry: a host
+    // write into the compile's copy never follows what it finds.
+    const outside = path.join(tmpDir("lax-web-vf-outside-"), "elsewhere.enc");
+    fs.writeFileSync(outside, "not the encoding\n");
+    const webSrc = tmpDir("lax-web-vf-link-");
+    const fonts = path.join(webSrc, WEB_EXPORT_FONTS_DIR);
+    fs.mkdirSync(fonts, { recursive: true });
+    fs.writeFileSync(
+      path.join(fonts, "Good.vpl"),
+      `(MAPFONT D 0\n   (FONTNAME base)\n   )\n(CHARACTER C P\n   (CHARWD R 0.5)\n   (MAP\n      (SETCHAR C P)\n      )\n   )\n`,
+    );
+    fs.writeFileSync(path.join(fonts, "Good.base-enc"), "/Base [/A] def");
+    fs.writeFileSync(path.join(fonts, "Good.pfb"), "%!PS");
+    fs.symlinkSync(outside, path.join(fonts, "Good.enc"));
+
+    expect(resolveVirtualFonts(webSrc)).toEqual({ resolved: ["Good"], refused: [] });
+    expect(fs.readFileSync(outside, "utf8")).toBe("not the encoding\n");
+    expect(fs.lstatSync(path.join(fonts, "Good.enc")).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(path.join(fonts, "Good.enc"), "utf8")).toContain("/Good [");
   });
 
   it("moves a picture's box to the origin, which EPS input never puts there", () => {
