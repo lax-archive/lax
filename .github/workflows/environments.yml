@@ -53,7 +53,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       # discover.mjs reads the canonical mathlib URL out of the compiled pins
       # module rather than naming it a second time
       - run: npm run build
@@ -107,7 +107,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm run build
       - name: Install the candidate's toolchain

@@ -284,7 +284,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       # install-toolchain.mjs reaches into dist/ for the pinned elan installer
       - run: npm run build
       - name: Install the environment's toolchain

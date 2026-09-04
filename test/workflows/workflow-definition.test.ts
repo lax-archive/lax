@@ -803,6 +803,14 @@ describe("CI workflow wiring", () => {
   it("installs dependencies without lifecycle scripts", () => {
     for (const [name, job] of Object.entries(ciJobs)) {
       const installs = job.steps.filter((step) => step.run?.startsWith("npm ci"));
+      // A job that installs nothing (inspector-plan reads the table's source
+      // text with bare node) must then run nothing that would need the tree.
+      if (installs.length === 0) {
+        for (const step of job.steps) {
+          expect(step.run ?? "", name).not.toMatch(/^(?:npm|npx) /u);
+        }
+        continue;
+      }
       expect(installs, name).toHaveLength(1);
       expect(installs[0]?.run, name).toBe("npm ci --ignore-scripts");
     }
