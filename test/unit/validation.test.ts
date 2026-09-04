@@ -138,6 +138,7 @@ describe("shared input validation", () => {
     expect(() => validateFolder("../secret")).toThrow();
     expect(() => validateFolder("one//two")).toThrow();
     expect(() => validateFolder("one\\two")).toThrow();
+    expect(() => validateFolder("one,src=/etc")).toThrow("must not contain a comma");
     expect(validateFolder("a".repeat(512))).toHaveLength(512);
     expect(() => validateFolder("a".repeat(513))).toThrow("512");
     expect(validateFolder(Array.from({ length: 32 }, () => "a").join("/"))).toBe(

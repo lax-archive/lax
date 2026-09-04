@@ -253,6 +253,9 @@ export function validateFolder(raw: unknown): string {
   if (raw === "" || raw.startsWith("/") || raw.includes("\\") || raw.includes("\0")) {
     problems.add("folder must be a relative POSIX path");
   }
+  if (raw.includes(",")) {
+    problems.add("folder must not contain a comma because container mount paths are comma-delimited");
+  }
   const segments = raw.split("/");
   if (
     segments.length > MAX_FOLDER_SEGMENTS ||

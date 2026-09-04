@@ -196,6 +196,8 @@ export class ContainerRunner implements ValidationRunner {
       const source = path.resolve(mount.source);
       if (!fs.existsSync(source)) throw new Error(`container mount does not exist: ${source}`);
       if (!path.isAbsolute(mount.target)) throw new Error("container mount targets must be absolute");
+      assertMountField(source, "source");
+      assertMountField(mount.target, "target");
       args.push(
         "--mount",
         `type=bind,src=${source},dst=${mount.target}${mount.writable === true ? "" : ",readonly"}`,
@@ -388,4 +390,15 @@ async function runProcess(
 function safeLabel(value: string): string {
   const label = value.toLowerCase().replace(/[^a-z0-9-]+/gu, "-").replace(/^-+|-+$/gu, "");
   return label.slice(0, 30) || "phase";
+}
+
+/**
+ * Docker parses --mount as a comma-delimited key/value string. A comma in a
+ * bind path can therefore introduce another src/dst option. Control bytes are
+ * forbidden as well so every field reaches Docker in one unambiguous form.
+ */
+function assertMountField(value: string, label: "source" | "target"): void {
+  if (/[,\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error(`container mount ${label} contains a Docker option delimiter or control character`);
+  }
 }

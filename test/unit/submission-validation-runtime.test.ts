@@ -386,7 +386,13 @@ describe("validation runtime boundaries retained from main", () => {
     const record = path.join(temporary("lax-container-bin-"), "arguments.txt");
     installDockerRecorder(record);
     const layout = fakeLayout();
-    const runner = new ContainerRunner(RUNTIME, DEFAULT_LIMITS, source, undefined, layout);
+    const runner = new ContainerRunner(
+      RUNTIME,
+      { ...DEFAULT_LIMITS, minFreeDiskBytes: 0 },
+      source,
+      undefined,
+      layout,
+    );
 
     const result = await runner.run({
       label: "Static Check!",
@@ -435,6 +441,27 @@ describe("validation runtime boundaries retained from main", () => {
         maxOutputBytes: 1_000,
       }),
     ).rejects.toThrow("invalid container environment name");
+
+    const injectedSource = path.join(source, "package,src=elsewhere");
+    fs.mkdirSync(injectedSource, { recursive: true });
+    await expect(
+      runner.run({
+        label: "bad-mount-source",
+        args: [],
+        mounts: [{ source: injectedSource, target: "/input" }],
+        timeoutMs: 1_000,
+        maxOutputBytes: 1_000,
+      }),
+    ).rejects.toThrow("container mount source contains a Docker option delimiter");
+    await expect(
+      runner.run({
+        label: "bad-mount-target",
+        args: [],
+        mounts: [{ source, target: "/input,dst=/host" }],
+        timeoutMs: 1_000,
+        maxOutputBytes: 1_000,
+      }),
+    ).rejects.toThrow("container mount target contains a Docker option delimiter");
   });
 
   it("runs a foreign image bare: verified first, no Lean mounts, the image's own PATH", async () => {
