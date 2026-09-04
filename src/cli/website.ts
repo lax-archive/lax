@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArchiveFiles } from "../shared/archive-schema.js";
 import { SUBMISSION_ID_PATTERN } from "../shared/constants.js";
 import { isObject } from "../shared/validation.js";
+import { epoch } from "../submission-validation/environments.js";
 import {
   databaseDirectory,
   databaseFreshnessAsync,
@@ -31,7 +32,11 @@ interface WebsiteSubmission {
 }
 
 export interface PageBuilder {
-  generateSite(submissions: WebsiteSubmission[], outDir: string): Promise<void>;
+  /** The third argument is the archive's epoch. A renderer released before
+   * environments existed ignores it and uses the `EPOCH` its own config was
+   * released with; a newer one prefers ours, which is the table the author's
+   * installed CLI actually validates against. */
+  generateSite(submissions: WebsiteSubmission[], outDir: string, epoch?: string): Promise<void>;
   mimeTypes: Record<string, string>;
 }
 
@@ -148,7 +153,7 @@ export async function serveWebsite(
       const submissions = loadWebsiteSubmissions(archive, localFolder);
       await attachPaperFiles(submissions, failedPaperFetches);
       const builder = await pageBuilder;
-      await builder.generateSite(submissions, outDir);
+      await builder.generateSite(submissions, outDir, epoch().id);
       applyWebsiteWarning(outDir, bannerText(advice));
       counts = previewCounts(submissions, localFolder);
       if (opened && !stopped) ui.faint(`↻ ${clock()}  rebuilt`);

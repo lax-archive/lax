@@ -6,7 +6,7 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
-## Archive environments: a table, and the epoch (stages 1 to 4 implemented, 2026-09-04)
+## Archive environments: a table, and the epoch (stages 1 to 5 implemented, 2026-09-04)
 
 The single archive-wide Lean/mathlib pin becomes a **table of environments**
 (`src/submission-validation/environments.ts`). An environment is a Lean
@@ -157,8 +157,47 @@ composer adds declarations through `Lean.addDecl`, whose signature did not
 move when `Environment.addDeclCore` gained an argument in Lean 4.33. None of
 this is author-visible: the table still holds one row.
 
-Still to come, and not yet spec-visible: the website's
-environment notice, facet, and emitted index (stage 5).
+**2026-09-04, evening (stage 5).** The website now says which
+island a record is on. The site cannot derive the epoch from records — it is
+a recommendation, not a fact about any record — so it carries one value of
+its own: `EPOCH` in lax-website's `src/config.ts`, edited once a year at the
+epoch bump. `generateSite(submissions, outDir, epoch?)` takes an override as
+its third argument and `lax serve` passes `epoch().id` from the CLI's own
+table, because a pinned renderer's config is as old as the release that
+carried it; a renderer released before this ignores the argument, which is
+the whole reason it is an argument rather than a required parameter.
+
+- **The notice** stands beside the draft banner on the submission, concept,
+  proof and paper pages of any record outside the epoch: "Environment
+  `v4.33.0`. The archive's epoch is `v4.30.0`; only submissions in `v4.33.0`
+  can cite this work." It keeps the draft banner's box in a muted palette
+  and carries no warning mark — the record is as valid and as permanent as
+  any other, and the environment is a fact about *who can build on it*, not
+  a defect. A record that is in the epoch gets the converse in one word: an
+  `epoch` label beside the masthead's existing `Lean … · mathlib …` pins.
+- **The facet** is `data-env` on every listing row plus the environment
+  folded into that row's `data-tags`, so an environment is one more chip in
+  the topic strip the browser already filters on and no new control ships.
+  The chips appear only once the archive holds work in more than one
+  environment. Listings — the landing library and the sidebar alike — put the
+  epoch's submissions first and the other environments newest first, inside
+  the registered/work-in-progress groups they already had; superseded records
+  are still listed nowhere but their successors' version history, where the
+  dialog goes on printing each version's own pins, which is exactly what a
+  cross-environment port needs it to do.
+- **`index.json` and `environments.json`** at the site root are new, and are
+  the first machine-readable output the site has ever had: `{records: [{id,
+  state, environment, title, supersedes?, supersededBy?, concepts: [{id,
+  title, type}], proofs: [id]}]}` and `{epoch, environments: [{id,
+  registered, drafts}]}`, both with literal key order and one sorting rule
+  per list so the build stays reproducible. They exist because an agent that
+  wants to know what the archive holds should not have to clone
+  `lax-database` or scrape HTML; `content/contributing.md` links both.
+
+Nothing here is spec-visible: the record schema is untouched, a record's
+environment is still its `manifest.leanVersion`, and the database keeps its
+flat layout — the index answers "what can I cite in environment X" better
+than a folder per environment could, and every reader still resolves by id.
 
 Spec touchpoints: "Archive Environment" (a table with the epoch marked), the
 manifest field descriptions for `leanVersion`/`mathlibVersion`, the pinned

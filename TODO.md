@@ -241,15 +241,16 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   digest is not recorded in the report's runtime identity (the pin lives
   in `pins.ts`, so a bump is a reviewed edit).
 
-## Archive environments (environments-plan.md — stages 1 to 4 landed 2026-09-04)
+## Archive environments (environments-plan.md — stages 1 to 5 landed 2026-09-04)
 
 Several Lean/mathlib versions: a yearly **epoch** as the default, monthly
 mathlib `vX.Y.0` release tags as admitted environments authors may stray
 to after a typed confirmation. Stage 1 (the table, selection,
 per-environment provisioning), stage 2 (the trusted workflow selecting per
-environment), stage 3 (the admission machinery) and stage 4 (the CLI
-surface) are in; the table holds one row, so nothing an author sees
-changes until the first admission adds a second. Stages in the plan.
+environment), stage 3 (the admission machinery), stage 4 (the CLI
+surface) and stage 5 (the website surface) are in; the table holds one
+row, so nothing an author sees changes until the first admission adds a
+second. What remains is listed per stage below, then stage 6 (docs).
 
 - **Stage 0 spike ran 2026-09-04** (`spike/environments/REPORT.md`): GO.
   The inspector compiles unchanged under v4.33.0 with byte-identical
@@ -310,9 +311,27 @@ changes until the first admission adds a second. Stages in the plan.
   have to coexist), and it repoints requires by editing the require block
   in place rather than reserializing the author's lakefile — a require
   not in one-key-per-line form is reported instead of rewritten.
-- **Stage 5**: the website's environment notice, facet and grouping, the
-  epoch in lax-website's config, `index.json`/`environments.json`, and
-  `lax serve` passing the epoch. Renderer release; re-pin page-builder.
+- **Stage 5 code is done** (2026-09-04, in the lax-website working tree,
+  uncommitted): `EPOCH` in lax-website's `src/config.ts` (edited once a
+  year), overridden by `generateSite`'s third argument, which `lax serve`
+  now passes as `epoch().id` — an older pinned renderer ignores it; the
+  off-epoch notice beside `draftBanner()` on the submission, concept,
+  proof and paper pages, and an `epoch` label on the masthead's Lean pin
+  for records that are in it; `data-env` plus the environment folded into
+  `data-tags`, so the environment is one more chip in the existing strip
+  (chips appear only once a second environment holds work) and listings
+  put the epoch first and other environments newest first; `index.json`
+  and `environments.json` at the site root, linked from
+  `content/contributing.md`; `capture` declared on `BuildOutput`.
+  **Remaining, in order**: a renderer release carrying all of it, then
+  re-pin the page-builder (`page-builder:fetch|package|verify`), and only
+  then let `REQUIRED_RENDERER_PATHS` in `cli/website-renderer.ts` name the
+  new surface — `dist/sitegen/machine-index.js`, the module that emits
+  `index.json` and `environments.json`, so a renderer predating them is
+  re-fetched rather than used. That list gates the *published* release as
+  well as the downloaded copy, so a path may join it only once a release
+  carries it (and the same edit is due in lax-website's
+  `.github/scripts/package-renderer.mjs` REQUIRED_FILES).
 - **Stage 6**: README status and command table, the CLAUDE.md paragraph,
   and a history note after the first real off-epoch round trip. (The
   spec-notes entry for stage 1 is written.)

@@ -17,6 +17,7 @@ import {
   type WebsitePreview,
 } from "../../src/cli/website.js";
 import { initialFiles } from "../../src/shared/archive-schema.js";
+import { epoch } from "../../src/submission-validation/environments.js";
 import { startFakeGhcr, type FakeGhcr } from "../fake-ghcr.js";
 
 const issue = { repositoryId: 123456789, number: 42 };
@@ -190,6 +191,10 @@ describe("the local preview", () => {
 
     const page = await fetch(`http://localhost:${port}/`);
     expect(await page.text()).toContain("rendered by the stub");
+
+    // The renderer is told the epoch this CLI's own table names, not the one
+    // its config carried when it was released.
+    expect(renderer.epochs).toEqual([epoch().id]);
 
     // A later render is one dim line, not a sentence.
     const rebuilt = capture();
@@ -600,15 +605,25 @@ interface SeenSubmission {
   bundleFile?: string;
 }
 
+interface StubRenderer extends PageBuilder {
+  renders: number;
+  seen: SeenSubmission[][];
+  /** The epoch of each render: the argument a renderer released before
+   * environments existed simply ignores. */
+  epochs: Array<string | undefined>;
+}
+
 /** A renderer standing in for the pinned lax-website bundle, which only a
  * release carries: it writes one page, counts how often it was asked to,
  * and records the per-submission renderer inputs the serve wiring feeds. */
-function stubRenderer(): PageBuilder & { renders: number; seen: SeenSubmission[][] } {
-  const builder: PageBuilder & { renders: number; seen: SeenSubmission[][] } = {
+function stubRenderer(): StubRenderer {
+  const builder: StubRenderer = {
     renders: 0,
     seen: [],
-    generateSite: async (submissions, outDir) => {
+    epochs: [],
+    generateSite: async (submissions, outDir, epoch) => {
       builder.renders += 1;
+      builder.epochs.push(epoch);
       builder.seen.push(
         (submissions as Array<{ record: { id: string }; paperFile?: string; bundleFile?: string }>).map(
           (submission) => ({

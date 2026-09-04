@@ -22,7 +22,18 @@ landed 2026-09-04**: the inspector's shape guards and golden fixture, the
 composer's version-agnostic `addDecl`, the `inspector-matrix` gate in
 `ci.yml`, and `environments.yml` with its discover/admit scripts — the
 machinery is in place and the first real admission run is Jan's
-(TODO.md). Stages 5 and 6 are open. The investigation this
+(TODO.md).
+**Stage 5 landed 2026-09-04** (code in both repositories; the renderer
+release and the page-builder re-pin are the remaining gates): the epoch in
+lax-website's `src/config.ts` and as `generateSite`'s third argument, the
+off-epoch notice and the masthead's `epoch` label, `data-env` plus the
+environment as a chip in the existing strip, epoch-first listing order, and
+`index.json`/`environments.json` at the site root. Two readings the Website
+section below left open, decided there: the environment orders rows *inside*
+the existing registered/work-in-progress `entry-heading` groups rather than
+adding groups of its own (a superseded record is not listed at all, so
+"superseded after" had nothing to order), and the environment chips appear
+only once a second environment holds work. Stage 6 is open. The investigation this
 rests on covered every consumer of the pins module, the database and
 resolution code, the inspector's Lean-version coupling, and the website's
 version surfaces; the file:line references below were verified that day and
