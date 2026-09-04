@@ -11,9 +11,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Profiler } from "../../shared/profile.js";
-import type { ArchiveEnvironment } from "../environments.js";
+import {
+  admittedEnvironmentList,
+  type ArchiveEnvironment,
+  environment as environmentById,
+  epoch,
+} from "../environments.js";
 import { ELAN_COMMIT } from "../pins.js";
-import { inspectorBinary } from "./inspector.js";
+import { inspectorBinary, inspectorSourceHash } from "./inspector.js";
 import { elanHome, toolchainBinDir, toolchainDir } from "./leanenv.js";
 import { run } from "./proc.js";
 import { ensureLocalWarm } from "./warmstore.js";
@@ -80,6 +85,79 @@ export async function ensureValidationHost(
   console.log(`lax setup: inspector ready at ${inspector}`);
   console.log("lax setup: validation host ready");
   return true;
+}
+
+/**
+ * The Actions cache identity of what ensureValidationHost produces for one
+ * environment (~/.elan, ~/.lax/warm, ~/.lax/tools): the runner OS, the
+ * environment's id, its mathlib commit, and the hash of the inspector sources
+ * under its toolchain. Every part derives from the *entry* — the id is a
+ * table key by the time it gets here (trust rule 2) — and none of it from the
+ * rest of the table, so a monthly admission evicts no other environment's
+ * store; a hash of the whole table file would. The salt is bumped by hand
+ * when the on-disk layout changes, or when the elan pin moves (elan itself
+ * is not in the key: an installed elan is skipped, so a stale one would
+ * survive a restore). Deliberately no prefix fallback anywhere it is used: a
+ * store for other pins would restore gigabytes of dead weight beside the
+ * fresh build.
+ */
+export const HOST_CACHE_SALT = "lax-validation-host-v2";
+
+export function validationHostCacheKey(environment: ArchiveEnvironment, runnerOs: string): string {
+  if (!/^[A-Za-z0-9_-]{1,32}$/u.test(runnerOs)) throw new Error("the runner OS must be a short token");
+  return [
+    HOST_CACHE_SALT,
+    runnerOs,
+    environment.id,
+    environment.mathlibCommit.slice(0, 12),
+    inspectorSourceHash(environment),
+  ].join("-");
+}
+
+/** What setup-vm.js was asked to do. */
+export interface SetupVmArguments {
+  /** The environment to provision, or whose cache key to name. */
+  environment: ArchiveEnvironment;
+  /** `--cache-key`: name the key of what a provisioning run would produce
+   * and provision nothing — for the cache restore step that precedes it. */
+  cacheKeyOnly: boolean;
+}
+
+/**
+ * `setup-vm.js [--env <id>] [--cache-key]`. No `--env` means the epoch: that
+ * is what ci.yml and release.yml provision, as they provisioned the single pin
+ * before there was a table. The trusted validate job passes the id its static
+ * gate selected. The id is untrusted wherever it comes from and is only ever
+ * a table key: an id the table does not admit is refused here, naming the
+ * admitted ids, before anything is resolved to a path or a key from it.
+ */
+export function parseSetupVmArguments(argv: readonly string[]): SetupVmArguments {
+  let id: string | undefined;
+  let cacheKeyOnly = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--env") {
+      const value = argv[index + 1];
+      if (value === undefined || value === "" || value.startsWith("--")) {
+        throw new Error("usage: setup-vm.js [--env <id>] [--cache-key] (--env needs an environment id)");
+      }
+      if (id !== undefined) throw new Error("usage: setup-vm.js [--env <id>] [--cache-key] (--env given twice)");
+      id = value;
+      index += 1;
+    } else if (argument === "--cache-key") {
+      cacheKeyOnly = true;
+    } else {
+      throw new Error(`usage: setup-vm.js [--env <id>] [--cache-key] (unknown argument ${JSON.stringify(argument)})`);
+    }
+  }
+  if (id === undefined) return { environment: epoch(), cacheKeyOnly };
+  const environment = environmentById(id);
+  if (environment === undefined) {
+    throw new Error(
+      `environment ${JSON.stringify(id)} is not admitted; the admitted environments are ${admittedEnvironmentList()}`,
+    );
+  }
+  return { environment, cacheKeyOnly };
 }
 
 /** Why an install failed, for a caller that renders its own diagnosis. */

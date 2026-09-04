@@ -241,13 +241,14 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   digest is not recorded in the report's runtime identity (the pin lives
   in `pins.ts`, so a bump is a reviewed edit).
 
-## Archive environments (environments-plan.md — stage 1 landed 2026-09-04)
+## Archive environments (environments-plan.md — stages 1 and 2 landed 2026-09-04)
 
 Several Lean/mathlib versions: a yearly **epoch** as the default, monthly
 mathlib `vX.Y.0` release tags as admitted environments authors may stray
 to after a typed confirmation. Stage 1 (the table, selection,
-per-environment provisioning) is in; the table holds one row, so nothing
-is author-visible yet. Stages in the plan; 2 and 3 finish the feature.
+per-environment provisioning) and stage 2 (the trusted workflow selecting
+per environment) are in; the table holds one row, so nothing is
+author-visible yet. Stages in the plan; 3 finishes the feature.
 
 - **Stage 0 spike ran 2026-09-04** (`spike/environments/REPORT.md`): GO.
   The inspector compiles unchanged under v4.33.0 with byte-identical
@@ -257,13 +258,26 @@ is author-visible yet. Stages in the plan; 2 and 3 finish the feature.
   compiles under both releases and lands in stage 3 with an explicit
   unlimited `maxRecDepth`. Still unmeasured: a cold `lake exe cache get`
   at v4.33.0 (23 GB free here) and the replay peak.
-- **Stage 2**: the static gate writes the selected environment id and a
-  per-environment cache key to `$GITHUB_OUTPUT`; the lean cache restore
-  and save use it; `setup-vm.js --env <id>` provisions only that
-  environment; the publisher looks the report's environment id up in the
-  table instead of passing the epoch (the `// stage 2:` comments in
-  `host/setup-vm.ts` and `workflows/submission.ts` mark both call sites).
-  Rehearsal drill first (`scripts/rehearsal/`), then ship.
+- **Stage 2 code is done** (2026-09-04, unreleased): the static gate
+  writes the selected environment id and the per-environment cache key
+  (`host/setup.ts validationHostCacheKey`, salt `lax-validation-host-v2`)
+  to `$GITHUB_OUTPUT`; the lean cache restore and save use that key;
+  `setup-vm.js --env <id>` provisions only that environment (no `--env`
+  is the epoch, which is what `ci.yml` and `release.yml` provision, under
+  the same key from `setup-vm.js --cache-key`); the publisher looks the
+  report's environment up in the table before any token is minted.
+  **Remaining gate before the next release: the rehearsal drill**
+  (`scripts/rehearsal/`, Jan) — this is an Actions-side change and
+  `npm run check` cannot see the cache action, the step outputs, or the
+  quoted `--env` shell hop (history/live-rehearsal.md). `drive.sh` was
+  updated for it and now asserts, from the job logs of the `/lax submit`
+  round trip: the gate's `lax gate: environment <id>` line, the restore
+  step naming a `lax-validation-host-v2-Linux-<id>-…` key, setup-vm's
+  `lax setup: provisioning environment <id>` and `… ensuring the warm
+  mathlib workspace for <id>` lines, and `publish-submit`'s `lax publish:
+  environment <id>` line. Also worth an eye on the first production run:
+  the first key with the new salt is a cache miss, so that run provisions
+  cold (~3 min) and saves; the old `v1` entries age out on their own.
 - **Stage 3**: inspector shape guards (`run_cmd` beside each `unsafeCast`
   reader in `Main.lean`), the `inspector-golden` fixture and test, an
   `inspector-matrix` CI job over every admitted entry, the prooftree

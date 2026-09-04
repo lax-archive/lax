@@ -21,7 +21,11 @@ import {
   type SuccessfulValidationArtifacts,
 } from "../submission-validation/artifact-schema.js";
 import { configuredRuntime } from "../submission-validation/config.js";
-import { epoch } from "../submission-validation/environments.js";
+import {
+  admittedEnvironmentList,
+  environment as environmentById,
+} from "../submission-validation/environments.js";
+import { appendWorkflowOutput } from "../submission-validation/outputs.js";
 import type {
   ValidationFinding,
   ValidationReport,
@@ -487,9 +491,7 @@ function workflowRun(): WorkflowRunRef {
 }
 
 function writeOutput(name: string, value: string): void {
-  const file = requiredEnv("GITHUB_OUTPUT");
-  const delimiter = `lax_${process.pid}_${Date.now()}`;
-  fs.appendFileSync(file, `${name}<<${delimiter}\n${value}\n${delimiter}\n`, "utf8");
+  appendWorkflowOutput(name, value);
 }
 
 function encode(value: unknown): string {
@@ -540,14 +542,25 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
     requiredEnv("GENERATED_BUILD_OUTPUT_PATH"),
     "generated build output",
   );
+  // The runtime the report must match is the table's own for the environment
+  // the report claims. The id is untrusted (it came out of the validate job)
+  // and is only ever a table key: an unadmitted one is refused here, before
+  // any token is minted, and an admitted one is rendered from its row — so
+  // a report carrying an admitted id with some other environment's pins
+  // fails the identity comparison exactly as a wrong single pin did.
+  const entry = environmentById(reportedEnvironment(report));
+  if (entry === undefined) {
+    throw new ValidationError(
+      `validation report names environment ${safeInline(reportedEnvironment(report), 64)}, ` +
+        `which is not admitted; the admitted environments are ${admittedEnvironmentList()}`,
+    );
+  }
+  console.log(`lax publish: environment ${entry.id} (${entry.leanToolchain}, mathlib ${entry.mathlibCommit.slice(0, 12)})`);
   const artifacts = parseSuccessfulValidationArtifacts(
     report,
     output,
     validationRequest(request),
-    // stage 2: look the report's own environment id up in the table and pass
-    // that runtime; the existing equality checks then do the rest. Until then
-    // this is the epoch, which is what the single-pin publisher asserted.
-    configuredRuntime(epoch()),
+    configuredRuntime(entry),
   );
   const capturePath = requiredEnv("VALIDATION_CAPTURE_PATH");
   let stat: fs.Stats;
@@ -610,6 +623,14 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
     throw new ValidationError("validation paper web bundle digest does not match its build output");
   }
   return artifacts;
+}
+
+/** The environment id a report claims, read before the report is parsed:
+ * the lookup needs it, and the parser needs the lookup's runtime. Anything
+ * but a string is an empty id, which the table refuses like any other. */
+function reportedEnvironment(report: unknown): string {
+  if (!isObject(report) || !isObject(report.runtime)) return "";
+  return typeof report.runtime.environment === "string" ? report.runtime.environment : "";
 }
 
 function readBoundedJson(filename: string, label: string): unknown {

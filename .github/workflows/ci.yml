@@ -38,7 +38,14 @@ jobs:
       # e2e tests (test/e2e/host-pipeline.test.ts and friends) drive elan/lake
       # against the fake mathlib, so the runner needs the same host toolchain
       # the smoke job provisions — same store, same key, same save-before-
-      # untrusted-code rule (the suite builds fixture code with lake).
+      # untrusted-code rule (the suite builds fixture code with lake). The
+      # store is the epoch's: setup-vm.js without --env provisions the epoch,
+      # and its --cache-key names the same key the trusted validate job's
+      # static gate derives for that environment, so the three workflows
+      # share one store per environment.
+      - name: Name the epoch's host cache key
+        id: host-key
+        run: node dist/submission-validation/host/setup-vm.js --cache-key
       - name: Restore toolchain and warm mathlib workspace
         id: lean-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -47,7 +54,7 @@ jobs:
             ~/.elan
             ~/.lax/warm
             ~/.lax/tools
-          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+          key: ${{ steps.host-key.outputs.cache_key }}
       - name: Provision the validation host
         run: node dist/submission-validation/host/setup-vm.js
       - name: Save toolchain and warm mathlib workspace
@@ -58,7 +65,7 @@ jobs:
             ~/.elan
             ~/.lax/warm
             ~/.lax/tools
-          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+          key: ${{ steps.host-key.outputs.cache_key }}
       # The proof-tree composer (assets/prooftree/) is Lean that only the
       # pinned toolchain can run, and only end to end: the smoke composes the
       # eight-theorem fixture, replays it in a fresh process, and reads the
@@ -149,12 +156,16 @@ jobs:
           key: lax-reflowtex-venv-v1-${{ runner.os }}-${{ hashFiles('reflowtex/requirements.lock') }}
       - name: Fetch the pinned ReflowTeX fork
         run: npm run reflowtex:fetch
-      # Same store, same identity, same rules as submission.yml's validate job:
-      # the pins module is the single home of everything the host setup installs,
-      # so its hash is the cache key, and no restore-keys — a store for other
-      # pins would restore gigabytes of dead weight next to the fresh build.
-      # Sharing the key with the trusted workflow is deliberate: both jobs write
-      # it only from trusted provisioning, before any sandbox runs (see below).
+      # Same store, same identity, same rules as submission.yml's validate job
+      # for the epoch: the key is derived by host/setup.ts from the environment
+      # table's row (id, mathlib commit, inspector sources under its
+      # toolchain), and no restore-keys — a store for other pins would restore
+      # gigabytes of dead weight next to the fresh build. Sharing the key with
+      # the trusted workflow is deliberate: both jobs write it only from
+      # trusted provisioning, before any sandbox runs (see below).
+      - name: Name the epoch's host cache key
+        id: host-key
+        run: node dist/submission-validation/host/setup-vm.js --cache-key
       - name: Restore toolchain and warm mathlib workspace
         id: lean-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -163,7 +174,7 @@ jobs:
             ~/.elan
             ~/.lax/warm
             ~/.lax/tools
-          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+          key: ${{ steps.host-key.outputs.cache_key }}
       # The smoke calls ensureValidationHost itself, but only after this step
       # has already done the work — provisioning here keeps the expensive part
       # on its own log line and, crucially, in front of the cache save.
@@ -182,7 +193,7 @@ jobs:
             ~/.elan
             ~/.lax/warm
             ~/.lax/tools
-          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+          key: ${{ steps.host-key.outputs.cache_key }}
       # Deliberately no env: no fake-mathlib seam (the smoke refuses to start
       # with one set — it must assert the real pins) and no validation output
       # directory; the fixtures get throwaway job roots under $TMPDIR.

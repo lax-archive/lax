@@ -8,7 +8,12 @@ the prooftree composer needs a source fix). **Stage 1 landed 2026-09-04**: the t
 from the manifest, per-environment provisioning and inspector cache key,
 pins as functions, the per-version literals module, and the build freshness
 fix — one row (`v4.30.0`) and no author-visible change; see the spec-notes
-entry of that date. Stages 2 to 6 are open. The investigation this
+entry of that date. **Stage 2 landed 2026-09-04** (code; the rehearsal
+drill is the remaining gate before it ships): the static gate's
+environment and cache-key outputs, the per-environment cache key,
+`setup-vm --env` (and `--cache-key`, so ci.yml and release.yml share the
+epoch's store under the same key), and the publisher's table lookup. Stages
+3 to 6 are open. The investigation this
 rests on covered every consumer of the pins module, the database and
 resolution code, the inspector's Lean-version coupling, and the website's
 version surfaces; the file:line references below were verified that day and

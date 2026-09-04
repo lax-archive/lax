@@ -137,8 +137,16 @@ jobs:
       # fails the job here instead of after a multi-GB cache restore and a
       # warm-mathlib build. The gate writes the report the upload step below
       # preserves; on a pass it leaves nothing behind and the full validation
-      # re-runs these phases from scratch.
+      # re-runs these phases from scratch. What a pass does hand on is the
+      # archive environment the manifest selected, as two step outputs: the
+      # table entry's id (`environment`) and the Actions cache identity of
+      # that entry's provisioned host (`cache_key`). Both derive from the
+      # table row, never from the manifest's string — an unadmitted id fails
+      # the gate before any output exists — and both travel as data: the key
+      # through `with:` and the id through `env:`, never interpolated into a
+      # `run:` script (trust rule 2).
       - name: Static gate
+        id: gate
         env:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
@@ -169,11 +177,13 @@ jobs:
         with:
           path: reflowtex/venv
           key: lax-reflowtex-venv-v1-${{ runner.os }}-${{ hashFiles('reflowtex/requirements.lock') }}
-      # The pins module is the single home of every value the host setup
-      # installs (elan commit, toolchain, mathlib revision), so its hash is
-      # the cache identity; the version salt invalidates by hand when the
-      # on-disk layout changes. No restore-keys: a store for other pins would
-      # restore gigabytes of dead weight next to the fresh build.
+      # One store per environment, keyed by the gate's output: the runner OS,
+      # the environment id, its mathlib commit, and the hash of the inspector
+      # sources under its toolchain (host/setup.ts validationHostCacheKey) —
+      # not a hash of the environment table, so a monthly admission evicts no
+      # other environment's store; the version salt invalidates by hand when
+      # the on-disk layout changes. No restore-keys: a store for other pins
+      # would restore gigabytes of dead weight next to the fresh build.
       - name: Restore toolchain and warm mathlib workspace
         id: lean-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -182,11 +192,16 @@ jobs:
             ~/.elan
             ~/.lax/warm
             ~/.lax/tools
-          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+          key: ${{ steps.gate.outputs.cache_key }}
+      # Provisions the one environment the gate selected. The id reaches the
+      # script as an environment variable and is looked up in the table again
+      # there; an id the table does not admit fails the step naming the
+      # admitted ones.
       - name: Provision the validation host
         env:
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
-        run: node dist/submission-validation/host/setup-vm.js
+          LAX_ENVIRONMENT: ${{ steps.gate.outputs.environment }}
+        run: node dist/submission-validation/host/setup-vm.js --env "$LAX_ENVIRONMENT"
       # Save before any submission code *executes*: the cache must only ever
       # hold what the trusted setup produced. Saving in the action's post step
       # would snapshot the tree after untrusted code ran on this VM — a
@@ -206,7 +221,7 @@ jobs:
             ~/.elan
             ~/.lax/warm
             ~/.lax/tools
-          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+          key: ${{ steps.gate.outputs.cache_key }}
       - name: Validate
         env:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}

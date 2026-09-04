@@ -113,6 +113,21 @@ refute_job_success() {
   if [ "$actual" = "success" ]; then fail "$2 must not have succeeded"; else pass "$2 did not succeed (${actual:-absent})"; fi
 }
 
+expect_log() {
+  # $1 = run id, $2 = job display name, $3 = fixed string its log must carry.
+  # Job logs are the only place the per-environment plumbing of
+  # environments-plan.md stage 2 is visible: the gate's selection, the cache
+  # key the restore step used, the provisioning line, the publisher's lookup.
+  local job_id
+  job_id="$(gh run view "$1" --repo "$CONTROL" --json jobs \
+    --jq "[.jobs[] | select(.name == \"$2\") | .databaseId][0] // \"\"")"
+  if [ -n "$job_id" ] && gh run view --repo "$CONTROL" --job "$job_id" --log 2>/dev/null | grep -qF -- "$3"; then
+    pass "$2 log: $3"
+  else
+    fail "$2 log lacks: $3"
+  fi
+}
+
 # Trigger something, then wait for and report the run it produced. Prints the
 # run id on stdout; all human-readable output goes to stderr so the caller can
 # capture the id.
@@ -160,6 +175,19 @@ RUN2="$(drive "round trip 2/4 -- /lax submit" comment "$SUBMIT")"
 expect_job "$RUN2" route success
 expect_job "$RUN2" Validate success
 expect_job "$RUN2" publish-submit success
+# The environment the submission names is the one the whole run must serve:
+# the gate selects it, the cache restore is keyed on it (hit or miss, the
+# cache action prints the key it looked for), setup-vm provisions exactly it,
+# and the publisher looks it up before minting. The id is read from the
+# submitted manifest itself, not assumed to be the epoch.
+ENVIRONMENT="$(gh api "repos/$SUBMISSION/contents/manifest.yaml?ref=$COMMIT" --jq .content \
+  | base64 --decode | sed -n 's/^leanVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p')"
+[ -n "$ENVIRONMENT" ] || { echo "could not read leanVersion from the submitted manifest" >&2; exit 1; }
+expect_log "$RUN2" Validate "lax gate: environment $ENVIRONMENT "
+expect_log "$RUN2" Validate "lax-validation-host-v2-Linux-$ENVIRONMENT-"
+expect_log "$RUN2" Validate "lax setup: provisioning environment $ENVIRONMENT"
+expect_log "$RUN2" Validate "lax setup: ensuring the warm mathlib workspace for $ENVIRONMENT"
+expect_log "$RUN2" publish-submit "lax publish: environment $ENVIRONMENT "
 
 # --- round trip 3: /lax register ---------------------------------------------
 RUN3="$(drive "round trip 3/4 -- /lax register" comment "/lax register")"

@@ -50,8 +50,12 @@ jobs:
       - run: npm run build
       # The fast suite is docker-free but not toolchain-free: the real-lake
       # e2e tests drive elan/lake against the fake mathlib, so the release
-      # gate provisions the same host toolchain CI does — same store, same
-      # pins-hashed key, saved before anything but trusted setup touches it.
+      # gate provisions the same host toolchain CI does — the epoch's store,
+      # under the key host/setup.ts derives from its table row, saved before
+      # anything but trusted setup touches it.
+      - name: Name the epoch's host cache key
+        id: host-key
+        run: node dist/submission-validation/host/setup-vm.js --cache-key
       - name: Restore toolchain and warm mathlib workspace
         id: lean-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -60,7 +64,7 @@ jobs:
             ~/.elan
             ~/.lax/warm
             ~/.lax/tools
-          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+          key: ${{ steps.host-key.outputs.cache_key }}
       - name: Provision the validation host
         run: node dist/submission-validation/host/setup-vm.js
       - name: Save toolchain and warm mathlib workspace
@@ -71,7 +75,7 @@ jobs:
             ~/.elan
             ~/.lax/warm
             ~/.lax/tools
-          key: lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}
+          key: ${{ steps.host-key.outputs.cache_key }}
       - run: npm test
       # After the gate: `npm run build` wipes dist/, so the vendored
       # page-builder must land after the last build, and `npm pack` runs with

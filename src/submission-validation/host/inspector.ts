@@ -40,23 +40,39 @@ function cliVersion(): string {
   return pkg.version;
 }
 
-/** Include the shipped sources *and* the environment's toolchain in the cache
- * identity. The sources matter during development and for repackaged builds
- * whose semver was not changed: an old executable must never silently survive
- * a checker/inspector source change. The toolchain matters because two
- * environments build the same sources into different executables. */
-function inspectorCacheKey(environment: ArchiveEnvironment): string {
-  const source = inspectorSourceDir(environment);
+/**
+ * The identity of one environment's inspector build: the shipped sources
+ * *and* the toolchain they compile under. The sources matter during
+ * development and for repackaged builds whose semver was not changed: an old
+ * executable must never silently survive a checker/inspector source change.
+ * The toolchain matters because two environments build the same sources into
+ * different executables. Nothing else of the table is in it, so a row added
+ * for another environment leaves every other environment's hash alone — the
+ * trusted workflow's host cache key (host/setup.ts) relies on exactly that.
+ */
+export function inspectorSourceHash(environment: ArchiveEnvironment): string {
+  return hashInspectorSources(environment.leanToolchain, inspectorSourceDir(environment));
+}
+
+/** The hash itself, over a source directory: what inspectorSourceHash
+ * computes once the entry's directory is resolved. */
+export function hashInspectorSources(leanToolchain: string, sourceDir: string): string {
   const hash = createHash("sha256");
-  hash.update(environment.leanToolchain);
+  hash.update(leanToolchain);
   hash.update("\0");
   for (const file of SOURCE_FILES) {
     hash.update(file);
     hash.update("\0");
-    hash.update(fs.readFileSync(path.join(source, file)));
+    hash.update(fs.readFileSync(path.join(sourceDir, file)));
     hash.update("\0");
   }
-  return `${cliVersion()}-${hash.digest("hex").slice(0, 16)}`;
+  return hash.digest("hex").slice(0, 16);
+}
+
+/** The tools directory name: the CLI version in front of the source hash,
+ * so a release's executable never serves an older or newer CLI. */
+function inspectorCacheKey(environment: ArchiveEnvironment): string {
+  return `${cliVersion()}-${inspectorSourceHash(environment)}`;
 }
 
 export interface InspectorBuildOptions {

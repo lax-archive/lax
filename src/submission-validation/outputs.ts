@@ -81,6 +81,24 @@ export function recordValidationProfile(outputDir: string, stage: string, root: 
   }
 }
 
+/**
+ * Set one output of the running workflow step, in the heredoc form GitHub
+ * documents for $GITHUB_OUTPUT, so a value may span lines. Every entry point
+ * that hands a value to a later step goes through here: the route job's
+ * request encodings, the static gate's environment and cache key, the
+ * publisher's should_publish. Throws when no output file is set, because a
+ * missing output is a later step reading an empty string, which is exactly
+ * the silent failure a workflow must not have.
+ */
+export function appendWorkflowOutput(name: string, value: string): void {
+  const file = process.env.GITHUB_OUTPUT;
+  if (file === undefined || file === "") throw new Error("GITHUB_OUTPUT is required");
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) throw new Error(`invalid workflow output name ${name}`);
+  const delimiter = `lax_${process.pid}_${Date.now()}`;
+  if (value.includes(delimiter)) throw new Error(`workflow output ${name} contains its own delimiter`);
+  fs.appendFileSync(file, `${name}<<${delimiter}\n${value}\n${delimiter}\n`, "utf8");
+}
+
 /** Echo the span tree into the workflow run's step summary when there is one. */
 export function appendProfileStepSummary(stage: string, root: Span): void {
   const filename = process.env.GITHUB_STEP_SUMMARY;

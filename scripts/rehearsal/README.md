@@ -99,6 +99,14 @@ pages the script prints.
    synchronizes the issue title, and dispatches the rebuild. ≈ 5 min
    author-visible; the cold run also provisions elan, the toolchain, and
    mathlib, and saves the Actions cache before untrusted code runs.
+   The script also reads the job logs for the per-environment plumbing
+   (environments-plan.md stage 2), with the environment taken from the
+   submitted manifest's `leanVersion`: the static gate's `lax gate:
+   environment <id>` line, the cache restore step naming a
+   `lax-validation-host-v2-Linux-<id>-…` key (hit or miss), setup-vm's
+   `lax setup: provisioning environment <id>` and `… ensuring the warm
+   mathlib workspace for <id>` lines, and the publisher's `lax publish:
+   environment <id>` line in `publish-submit`.
 3. **`/lax register`.** `route` and `publish` succeed; the record flips to
    `registered`.
 4. **Negative probe.** A second `/lax submit` after registration must be

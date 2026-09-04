@@ -51,6 +51,7 @@ interface WorkflowJob {
   outputs?: Record<string, string>;
   steps: Array<{
     name?: string;
+    id?: string;
     if?: string;
     uses?: string;
     run?: string;
@@ -86,10 +87,22 @@ function requireJob<T>(all: Record<string, T>, name: string): T {
   return found;
 }
 
-/** The one cache identity both the trusted validate job and the CI smoke use. */
-const HOST_CACHE_KEY =
-  "lax-validation-host-v1-${{ runner.os }}-${{ hashFiles('src/submission-validation/pins.ts') }}";
+/**
+ * The host store's cache identity is computed, not spelled out in YAML:
+ * host/setup.ts validationHostCacheKey derives it from the environment
+ * table's row. The trusted validate job takes it from its static gate's
+ * output (the environment the manifest selected); ci.yml and release.yml,
+ * which always provision the epoch, take it from `setup-vm.js --cache-key`.
+ */
+const GATE_CACHE_KEY = "${{ steps.gate.outputs.cache_key }}";
+const EPOCH_CACHE_KEY = "${{ steps.host-key.outputs.cache_key }}";
+const CACHE_KEY_STEP = "node dist/submission-validation/host/setup-vm.js --cache-key";
 const HOST_CACHE_PATHS = ["~/.elan", "~/.lax/warm", "~/.lax/tools"];
+
+/** The provisioning step: setup-vm.js run for its side effect, not its key. */
+function provisions(run: string | undefined): boolean {
+  return (run ?? "").includes("dist/submission-validation/host/setup-vm.js") && !(run ?? "").includes("--cache-key");
+}
 
 // ---------------------------------------------------------------------------
 // Pins: supply-chain lint that can only live at the YAML level.
@@ -323,11 +336,11 @@ describe("submission workflow wiring", () => {
     const steps = requireJob(jobs, "validate").steps;
     const gate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js --gate");
     const restore = steps.findIndex(
-      (step) => step.uses?.startsWith("actions/cache/restore") === true && step.with?.key === HOST_CACHE_KEY,
+      (step) => step.uses?.startsWith("actions/cache/restore") === true && step.with?.key === GATE_CACHE_KEY,
     );
-    const setup = steps.findIndex((step) => (step.run ?? "").includes("dist/submission-validation/host/setup-vm.js"));
+    const setup = steps.findIndex((step) => provisions(step.run));
     const save = steps.findIndex(
-      (step) => step.uses?.startsWith("actions/cache/save") === true && step.with?.key === HOST_CACHE_KEY,
+      (step) => step.uses?.startsWith("actions/cache/save") === true && step.with?.key === GATE_CACHE_KEY,
     );
     const validate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js");
     expect(gate).toBeGreaterThanOrEqual(0);
@@ -337,17 +350,63 @@ describe("submission workflow wiring", () => {
     expect(setup).toBeLessThan(save);
     expect(save).toBeLessThan(validate);
     // Two cache identities exist in the job, each keyed by reviewed inputs:
-    // the host store by the pins module plus a layout salt, the reflowtex
-    // encode venv by the hash-pinned requirements lock. Nothing else.
+    // the host store by the environment row the gate selected plus a layout
+    // salt, the reflowtex encode venv by the hash-pinned requirements lock.
+    // Nothing else.
     for (const step of steps) {
       if (step.uses?.startsWith("actions/cache/") !== true) continue;
-      if (step.with?.key === HOST_CACHE_KEY) {
+      if (step.with?.key === GATE_CACHE_KEY) {
         for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
       } else {
         expect(step.with?.key).toContain("hashFiles('reflowtex/requirements.lock')");
         expect(step.with?.path).toBe("reflowtex/venv");
       }
     }
+  });
+
+  it("provisions the environment the static gate selected, passed as data", () => {
+    // environments-plan.md stage 2. The gate is the one step that knows which
+    // archive environment the manifest named, and it says so through two step
+    // outputs computed from the table row (run.ts writeGateOutputs): the row's
+    // id and the host cache key. The restore and save steps take the key
+    // through `with:`; the provisioning step takes the id through `env:` and
+    // hands it to setup-vm.js as a quoted shell variable. Neither output is
+    // interpolated into a `run:` script — an expression inside a script is
+    // executed as code, which is what trust rule 2 forbids for a value that
+    // originated in a submission's manifest, table-validated or not. No
+    // restore-keys, as ever.
+    const steps = requireJob(jobs, "validate").steps;
+    const gate = steps.find((step) => step.run === "node dist/submission-validation/run.js --gate");
+    expect(gate?.id).toBe("gate");
+    const cacheSteps = steps.filter(
+      (step) => step.uses?.startsWith("actions/cache/") === true && step.with?.path !== "reflowtex/venv",
+    );
+    expect(cacheSteps.map((step) => step.uses?.split("@")[0])).toEqual([
+      "actions/cache/restore",
+      "actions/cache/save",
+    ]);
+    for (const step of cacheSteps) {
+      expect(step.with?.key).toBe(GATE_CACHE_KEY);
+      expect(step.with?.["restore-keys"]).toBeUndefined();
+    }
+    expect(workflow).not.toMatch(/^\s*restore-keys:/mu);
+    expect(workflow).not.toContain("hashFiles('src/submission-validation/pins.ts')");
+    const setup = steps.find((step) => provisions(step.run));
+    expect(setup?.env?.LAX_ENVIRONMENT).toBe("${{ steps.gate.outputs.environment }}");
+    expect(setup?.run).toBe('node dist/submission-validation/host/setup-vm.js --env "$LAX_ENVIRONMENT"');
+    // No script anywhere in the workflow interpolates a step output — or any
+    // expression at all: every value a script needs arrives through env:.
+    for (const [name, job] of Object.entries(jobs)) {
+      for (const step of job.steps) {
+        if (step.run === undefined) continue;
+        expect(step.run, `${name}: ${step.name ?? step.run}`).not.toContain("${{");
+      }
+    }
+    // The gate's outputs are consumed only by the validate job's own steps:
+    // the environment id never becomes a job output for a privileged job.
+    expect(requireJob(jobs, "validate").outputs).toBeUndefined();
+    expect(workflow.match(/steps\.gate\.outputs\.environment/gu)).toHaveLength(1);
+    expect(workflow.match(/steps\.gate\.outputs\.cache_key/gu)).toHaveLength(2);
   });
 
   it("fetches the pinned reflowtex fork before untrusted submission code, failure-tolerant", () => {
@@ -368,7 +427,7 @@ describe("submission workflow wiring", () => {
     expect(save?.if).toContain("steps.reflowtex-fetch.outcome == 'success'");
     const gate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js --gate");
     const leanRestore = steps.findIndex(
-      (step) => step.uses?.startsWith("actions/cache/restore") === true && step.with?.key === HOST_CACHE_KEY,
+      (step) => step.uses?.startsWith("actions/cache/restore") === true && step.with?.key === GATE_CACHE_KEY,
     );
     expect(gate).toBeLessThan(steps.indexOf(restore!));
     expect(steps.indexOf(restore!)).toBeLessThan(steps.indexOf(fetch!));
@@ -640,7 +699,7 @@ describe("CI workflow wiring", () => {
     // smoke compiles fixture Lean, so it also sits after the cache save, for
     // the reason the container smoke does.
     const runs = requireJob(ciJobs, "check").steps.map((step) => step.run ?? step.uses ?? "");
-    const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
+    const setup = runs.findIndex((run) => provisions(run));
     const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
     const prooftree = runs.findIndex((run) => run.includes("npm run smoke:prooftree"));
     expect(setup).toBeGreaterThanOrEqual(0);
@@ -696,7 +755,7 @@ describe("CI workflow wiring", () => {
     const smokeJob = requireJob(ciJobs, "smoke");
     const runs = smokeJob.steps.map((step) => step.run ?? step.uses ?? "");
     const restore = runs.findIndex((run) => run.startsWith("actions/cache/restore"));
-    const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
+    const setup = runs.findIndex((run) => provisions(run));
     const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
     const smoke = runs.findIndex((run) => run === "npm run smoke:submission-validation");
     expect(restore).toBeGreaterThanOrEqual(0);
@@ -704,16 +763,20 @@ describe("CI workflow wiring", () => {
     expect(setup).toBeLessThan(save);
     expect(save).toBeLessThan(smoke);
     expect(smokeJob.steps[save]?.if).toBe("steps.lean-cache.outputs.cache-hit != 'true'");
-    // Same store identity as submission.yml: a divergent key would double the
-    // provisioning cost and let the two paths drift onto different pins.
-    let cacheSteps = 0;
-    for (const step of smokeJob.steps) {
-      if (step.uses?.startsWith("actions/cache/") !== true) continue;
-      cacheSteps += 1;
-      expect(step.with?.key).toBe(HOST_CACHE_KEY);
-      for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
-    }
-    expect(cacheSteps).toBe(2);
+    // Same store identity as submission.yml for the epoch: a divergent key
+    // would double the provisioning cost and let the two paths drift onto
+    // different pins.
+    expectEpochHostCache(smokeJob);
+  });
+
+  it("provisions the epoch under the key the trusted workflow would use for it", () => {
+    // ci.yml has no static gate to select an environment: setup-vm.js
+    // without --env provisions the epoch, and the same script's --cache-key
+    // names the key host/setup.ts derives for that row — the very function
+    // the gate calls — so an epoch store saved here is the one a submission
+    // in the epoch restores, and vice versa. The key step precedes the
+    // restore, and provisioning is never given an --env here.
+    for (const name of ["check", "smoke"]) expectEpochHostCache(requireJob(ciJobs, name));
   });
 
   it("equips the check job for the paper web e2es before the test step", () => {
@@ -781,7 +844,7 @@ describe("release workflow wiring", () => {
     const typecheck = runs.indexOf("npm run typecheck");
     const compile = runs.indexOf("npm run build");
     const restore = runs.findIndex((run) => run.startsWith("actions/cache/restore"));
-    const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
+    const setup = runs.findIndex((run) => provisions(run));
     const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
     const test = runs.indexOf("npm test");
     expect(typecheck).toBeGreaterThanOrEqual(0);
@@ -791,14 +854,9 @@ describe("release workflow wiring", () => {
     expect(setup).toBeLessThan(save);
     expect(save).toBeLessThan(test);
     expect(build.steps[save]?.if).toBe("steps.lean-cache.outputs.cache-hit != 'true'");
-    let cacheSteps = 0;
-    for (const step of build.steps) {
-      if (step.uses?.startsWith("actions/cache/") !== true) continue;
-      cacheSteps += 1;
-      expect(step.with?.key).toBe(HOST_CACHE_KEY);
-      for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
-    }
-    expect(cacheSteps).toBe(2);
+    // The epoch's store, under the trusted workflow's key for it (see the
+    // CI test of the same name for why).
+    expectEpochHostCache(build);
   });
 
   it("vendors the page-builder after the last build and packs without scripts", () => {
@@ -851,6 +909,37 @@ describe("release workflow wiring", () => {
     }
   });
 });
+
+/**
+ * A job that provisions the epoch: one `--cache-key` step with id host-key
+ * ahead of the host cache restore, both host cache steps keyed on its output
+ * and on nothing else, no restore-keys, and a provisioning step with no
+ * `--env` (the epoch is the default) and no interpolated expression.
+ */
+function expectEpochHostCache(job: WorkflowJob): void {
+  const keyStep = job.steps.findIndex((step) => step.run === CACHE_KEY_STEP);
+  expect(keyStep).toBeGreaterThanOrEqual(0);
+  expect(job.steps[keyStep]?.id).toBe("host-key");
+  const hostCache = job.steps.filter(
+    (step) => step.uses?.startsWith("actions/cache/") === true && step.with?.path !== "reflowtex/venv",
+  );
+  expect(hostCache.map((step) => step.uses?.split("@")[0])).toEqual([
+    "actions/cache/restore",
+    "actions/cache/save",
+  ]);
+  expect(keyStep).toBeLessThan(job.steps.indexOf(hostCache[0]!));
+  for (const step of hostCache) {
+    expect(step.with?.key).toBe(EPOCH_CACHE_KEY);
+    expect(step.with?.["restore-keys"]).toBeUndefined();
+    for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
+  }
+  const setup = job.steps.filter((step) => provisions(step.run));
+  expect(setup).toHaveLength(1);
+  expect(setup[0]?.run).toBe("node dist/submission-validation/host/setup-vm.js");
+  for (const step of job.steps) {
+    if (step.run !== undefined) expect(step.run, step.name ?? step.run).not.toContain("${{");
+  }
+}
 
 function nextJobOffset(jobText: string): number {
   const match = /\n {2}[a-z-]+:\n/gu;

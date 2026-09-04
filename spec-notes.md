@@ -6,7 +6,7 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
-## Archive environments: a table, and the epoch (stage 1 implemented, 2026-09-04)
+## Archive environments: a table, and the epoch (stages 1 and 2 implemented, 2026-09-04)
 
 The single archive-wide Lean/mathlib pin becomes a **table of environments**
 (`src/submission-validation/environments.ts`). An environment is a Lean
@@ -59,11 +59,34 @@ banner) moved into `lean-facts.ts`, keyed by version with one shared value.
 `lax build` now treats a cached build as stale when the environment moved
 under it, which the container image digest could not say on the host path.
 
-Still to come, and not yet spec-visible: the trusted workflow's
-per-environment cache key and `setup-vm --env` (stage 2), the scheduled
-admission workflow that adds a row per monthly mathlib tag (stage 3), `lax
-init --env <id>` with a typed confirmation and `lax port` (stage 4), and the
-website's environment notice, facet, and emitted index (stage 5).
+**2026-09-04, later (stage 2).** The trusted workflow now selects per
+environment. The validate job's static gate — the credential-free fetch →
+static → resolution pass that already ran before the toolchain cache —
+hands the environment the manifest selected to the rest of the job as two
+step outputs: the table entry's id and the Actions cache key derived from
+that entry (`lax-validation-host-v2-<os>-<id>-<mathlib commit>-<inspector
+source hash>`; the row, not the table, so a monthly admission evicts no
+other environment's store). The cache restore and save are keyed on it,
+and `setup-vm.js --env <id>` provisions exactly that environment,
+refusing any id the table does not admit. The trusted publisher looks the
+report's `runtime.environment` up in the table before any token is minted
+and compares the report's identity against that row's pins, so a report
+claiming an admitted id with another environment's pins fails as a wrong
+single pin did, and an unadmitted id is a hard validation error naming it
+and the admitted list. Trust rule 2 holds at every hop: the id is only
+ever a table key — the manifest's string never reaches an output (an
+unadmitted `leanVersion` fails the gate first), the workflow passes the id
+through `env:` and the key through the cache step's `with:`, never
+interpolated into a script, and the publisher re-derives the runtime from
+the table rather than trusting the report's pins. `ci.yml` and
+`release.yml` provision the epoch, as they provisioned the single pin,
+under the same key the validate job would use for it. Nothing is
+spec-visible; the record schema is untouched.
+
+Still to come, and not yet spec-visible: the scheduled admission workflow
+that adds a row per monthly mathlib tag (stage 3), `lax init --env <id>`
+with a typed confirmation and `lax port` (stage 4), and the website's
+environment notice, facet, and emitted index (stage 5).
 
 Spec touchpoints: "Archive Environment" (a table with the epoch marked), the
 manifest field descriptions for `leanVersion`/`mathlibVersion`, the pinned

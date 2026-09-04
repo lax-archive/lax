@@ -24,14 +24,35 @@ export const TEST_RUNTIME: ValidationRuntimeIdentity = {
   mathlibCommit: "3".repeat(40),
 };
 
-export const TEST_CAPTURE: CaptureManifest = {
-  formatVersion: 1,
-  digest: "4".repeat(64),
-  sourceCommit: TEST_SOURCE.commit,
-  leanToolchain: TEST_RUNTIME.leanToolchain,
-  mathlibCommit: TEST_RUNTIME.mathlibCommit,
-  files: [{ path: "concepts/Lax42.olean", bytes: 3, sha256: "5".repeat(64) }],
-};
+/** The fixture runtime for another archive environment: the same image and
+ * mathlib repository, the entry's own id, toolchain, and commit — what
+ * `configuredRuntime(entry)` renders for a row of the table. */
+export function testRuntimeFor(entry: {
+  id: string;
+  leanToolchain: string;
+  mathlibCommit: string;
+}): ValidationRuntimeIdentity {
+  return {
+    ...TEST_RUNTIME,
+    environment: entry.id,
+    leanToolchain: entry.leanToolchain,
+    leanVersion: entry.id,
+    mathlibCommit: entry.mathlibCommit,
+  };
+}
+
+export function testCaptureFor(runtime: ValidationRuntimeIdentity): CaptureManifest {
+  return {
+    formatVersion: 1,
+    digest: "4".repeat(64),
+    sourceCommit: TEST_SOURCE.commit,
+    leanToolchain: runtime.leanToolchain,
+    mathlibCommit: runtime.mathlibCommit,
+    files: [{ path: "concepts/Lax42.olean", bytes: 3, sha256: "5".repeat(64) }],
+  };
+}
+
+export const TEST_CAPTURE: CaptureManifest = testCaptureFor(TEST_RUNTIME);
 
 export function validationRequest(id = "lax-42"): ValidationRequest {
   return {
@@ -42,14 +63,14 @@ export function validationRequest(id = "lax-42"): ValidationRequest {
   };
 }
 
-export function buildOutput(id = "lax-42"): BuildOutputPayload {
+export function buildOutput(id = "lax-42", runtime = TEST_RUNTIME): BuildOutputPayload {
   return {
     inputs: {
       manifest: {
         specVersion: "1",
         id,
-        leanVersion: TEST_RUNTIME.leanVersion,
-        mathlibVersion: TEST_RUNTIME.mathlibCommit,
+        leanVersion: runtime.leanVersion,
+        mathlibVersion: runtime.mathlibCommit,
         title: "Accepted submission title",
         authors: [{ name: "Alice Example", github: "alice" }],
         bibEntries: [],
@@ -60,13 +81,13 @@ export function buildOutput(id = "lax-42"): BuildOutputPayload {
     requiredByProofs: [],
     concepts: [],
     proofs: [],
-    capture: structuredClone(TEST_CAPTURE),
+    capture: testCaptureFor(runtime),
   };
 }
 
-export function successfulArtifacts(id = "lax-42"): SuccessfulValidationArtifacts {
+export function successfulArtifacts(id = "lax-42", runtime = TEST_RUNTIME): SuccessfulValidationArtifacts {
   const request = validationRequest(id);
-  const output = buildOutput(id);
+  const output = buildOutput(id, runtime);
   const report: ValidationReport & {
     ok: true;
     buildOutput: BuildOutputPayload;
@@ -75,12 +96,12 @@ export function successfulArtifacts(id = "lax-42"): SuccessfulValidationArtifact
     reportVersion: 1,
     ok: true,
     request,
-    runtime: TEST_RUNTIME,
+    runtime,
     dependencies: [],
     warnings: [],
     violations: [],
     buildOutput: output,
-    capture: structuredClone(TEST_CAPTURE),
+    capture: testCaptureFor(runtime),
   };
   return { report, buildOutput: output };
 }

@@ -8,7 +8,11 @@
 // the job restores the toolchain cache and provisions the host: a manifest
 // typo then costs seconds instead of a warm-mathlib build. It is not a stage —
 // it threads no state to the full run, which re-executes fetch, static
-// validation, and resolution from scratch and overwrites every output.
+// validation, and resolution from scratch and overwrites every output. What
+// a passing gate does hand on, as step outputs, is the archive environment
+// the manifest selected — its id and the host cache key derived from its
+// table entry — so the cache restore and the host provisioning that follow
+// serve that environment and no other.
 
 import { Buffer } from "node:buffer";
 import fs from "node:fs";
@@ -16,11 +20,15 @@ import path from "node:path";
 import { Profiler } from "../shared/profile.js";
 import { decodeUtf8, ValidationError } from "../shared/validation.js";
 import {
+  type ValidationReport,
   type ValidationRequest,
   validationRequestFromUnknown,
 } from "./contracts.js";
+import { environment as environmentById } from "./environments.js";
+import { validationHostCacheKey } from "./host/setup.js";
 import {
   appendProfileStepSummary,
+  appendWorkflowOutput,
   recordValidationProfile,
   resetValidationOutputs,
   writeValidationOutputs,
@@ -53,6 +61,7 @@ try {
   // A passing gate leaves nothing behind: its report is not evidence of a
   // validation (nothing compiled), and the full run writes the real outputs.
   if (!gate || !report.ok) writeValidationOutputs(outputDir, report);
+  if (gate && report.ok) writeGateOutputs(report);
   // A typed failure means no content verdict was reached. Keep exit 2 for an
   // ordinary submission rejection and exit 1 for capacity/infrastructure so
   // callers never have to infer ownership from a transcript.
@@ -71,6 +80,29 @@ try {
   removeValidationWorkspace(jobDir);
 }
 process.exitCode = exitCode;
+
+/**
+ * The passing gate's step outputs: `environment`, the id of the table row the
+ * manifest selected, and `cache_key`, the Actions cache identity of that
+ * row's provisioned host. The id written is the entry's own, never the
+ * manifest's string: an unadmitted `leanVersion` is a static violation, so
+ * the gate has already exited 2 without reaching this — and the report's
+ * runtime carries the id of the entry static validation resolved, which is
+ * looked up once more here so that only a table row can ever name the
+ * output. The workflow passes the id on through `env:` and the key through
+ * the cache step's `with:`; neither is interpolated into a script. Written
+ * only under Actions (GITHUB_OUTPUT set); a local gate has no later step.
+ */
+function writeGateOutputs(report: ValidationReport): void {
+  if (process.env.GITHUB_OUTPUT === undefined || process.env.GITHUB_OUTPUT === "") return;
+  const entry = environmentById(report.runtime.environment);
+  if (entry === undefined) {
+    throw new Error(`the gate passed in environment ${report.runtime.environment}, which the table does not admit`);
+  }
+  appendWorkflowOutput("environment", entry.id);
+  appendWorkflowOutput("cache_key", validationHostCacheKey(entry, requiredEnv("RUNNER_OS")));
+  console.log(`lax gate: environment ${entry.id} (${entry.leanToolchain}, mathlib ${entry.mathlibCommit.slice(0, 12)})`);
+}
 
 function readRequest(): ValidationRequest {
   const encoded = requiredEnv("VALIDATION_REQUEST");

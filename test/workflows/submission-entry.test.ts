@@ -21,16 +21,30 @@ import {
   reportFailure,
   reportValidation,
 } from "../../src/workflows/submission.js";
-import { successfulArtifacts, TEST_RUNTIME, TEST_SOURCE } from "../support/validation-artifacts.js";
+import { withTestEnvironmentsAsync } from "../support/environments.js";
+import {
+  successfulArtifacts,
+  TEST_RUNTIME,
+  TEST_SOURCE,
+  testRuntimeFor,
+} from "../support/validation-artifacts.js";
 
 // The suite-wide fake-mathlib seam makes the real pins module carry a
-// non-GitHub mathlib URL, which the artifact schema rightly rejects; pin the
-// runtime identity to the valid test fixture instead. Only prepare-submit
-// consults it, and only for the equality check against the report.
+// non-GitHub mathlib URL, which the artifact schema rightly rejects; render
+// the runtime identity from the valid test fixture instead. The fixture
+// stands in for the epoch's row; any other admitted entry — one injected
+// through LAX_TEST_ENVIRONMENTS — is rendered from its own row on the same
+// fixture image, which is what configuredRuntime(entry) does with the real
+// pins. Only the submit publishers consult it, and only for the equality
+// check against the report after the table lookup.
 vi.mock("../../src/submission-validation/config.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../src/submission-validation/config.js")>();
-  const { TEST_RUNTIME: runtime } = await import("../support/validation-artifacts.js");
-  return { ...original, configuredRuntime: () => runtime };
+  const { TEST_RUNTIME: runtime, testRuntimeFor } = await import("../support/validation-artifacts.js");
+  return {
+    ...original,
+    configuredRuntime: (entry: { id: string; leanToolchain: string; mathlibCommit: string }) =>
+      entry.id === runtime.environment ? runtime : testRuntimeFor(entry),
+  };
 });
 
 const repositoryId = 123456789;
@@ -343,6 +357,95 @@ describe("prepare-submit entry point", () => {
       expect(request.authorization).toBe("Bearer workflow-token");
       expect(`${request.url} ${request.body}`).not.toContain(canary);
     }
+  });
+
+  it("refuses a report from an environment the table does not admit, before anything is minted", async () => {
+    // The report's environment id is untrusted output of the validate job and
+    // only ever a table key: an id the table does not hold is a hard
+    // validation error naming it and the admitted list, and should_publish
+    // is never written — the mint steps key off that output.
+    const texts = initialFiles("lax-42", { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z");
+    const directory = workDirectory();
+    const captureBytes = Buffer.from("lax capture fixture bytes");
+    const artifacts = successfulArtifacts("lax-42", testRuntimeFor({
+      id: "v4.99.0",
+      leanToolchain: "leanprover/lean4:v4.99.0",
+      mathlibCommit: "6".repeat(40),
+    }));
+    artifacts.report.request.issue = { repositoryId, number: issueNumber };
+    const digest = createHash("sha256").update(captureBytes).digest("hex");
+    artifacts.report.capture.digest = digest;
+    artifacts.report.buildOutput.capture.digest = digest;
+    artifacts.buildOutput.capture.digest = digest;
+    fs.writeFileSync(path.join(directory, "validation-report.json"), JSON.stringify(artifacts.report));
+    fs.writeFileSync(path.join(directory, "generated-build-output.json"), JSON.stringify(artifacts.buildOutput));
+    fs.writeFileSync(path.join(directory, "capture.tar"), captureBytes);
+    const outputFile = path.join(directory, "github-output");
+    stubWorkflowEnv({
+      GITHUB_OUTPUT: outputFile,
+      PUBLISH_REQUEST: encode(submitRequest(fileDigests(texts))),
+      VALIDATION_REPORT_PATH: path.join(directory, "validation-report.json"),
+      GENERATED_BUILD_OUTPUT_PATH: path.join(directory, "generated-build-output.json"),
+      VALIDATION_CAPTURE_PATH: path.join(directory, "capture.tar"),
+      VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
+      VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
+    });
+    const state: IssueState = { comments: [], reactions: [] };
+    const requests = installIssueFetch(state, texts);
+
+    await expect(prepareSubmit()).rejects.toThrow(
+      /validation report names environment v4\.99\.0, which is not admitted; the admitted environments are v4\.30\.0 \(epoch\)/u,
+    );
+    expect(fs.existsSync(outputFile)).toBe(false);
+    // No database state was read for it: the lookup precedes the preflight.
+    expect(requests.some((request) => request.url.includes("/repos/lax-archive/lax-database"))).toBe(false);
+    // The failure is reported on the issue like any other publication refusal.
+    expect(state.comments.at(-1)?.body).toContain("v4.99.0");
+    expect(state.comments.at(-1)?.body).toContain(resultMarker(commentId));
+  });
+
+  it("accepts a report from a second admitted environment against that entry's own pins", async () => {
+    // Same artifact, with the environment now admitted: the publisher renders
+    // the runtime from the table row — that row's toolchain and mathlib
+    // commit, not the epoch's — and the existing identity comparison passes.
+    // The row's pins are what the check is against: the same report with the
+    // epoch's commit under the other id fails it, as a wrong single pin did.
+    const other = { id: "v4.99.0", leanToolchain: "leanprover/lean4:v4.99.0", mathlibCommit: "6".repeat(40) };
+    const texts = initialFiles("lax-42", { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z");
+    const directory = workDirectory();
+    const captureBytes = Buffer.from("lax capture fixture bytes");
+    const digest = createHash("sha256").update(captureBytes).digest("hex");
+    const write = (artifacts: ReturnType<typeof successfulArtifacts>): void => {
+      artifacts.report.request.issue = { repositoryId, number: issueNumber };
+      artifacts.report.capture.digest = digest;
+      artifacts.report.buildOutput.capture.digest = digest;
+      artifacts.buildOutput.capture.digest = digest;
+      fs.writeFileSync(path.join(directory, "validation-report.json"), JSON.stringify(artifacts.report));
+      fs.writeFileSync(path.join(directory, "generated-build-output.json"), JSON.stringify(artifacts.buildOutput));
+    };
+    write(successfulArtifacts("lax-42", testRuntimeFor(other)));
+    fs.writeFileSync(path.join(directory, "capture.tar"), captureBytes);
+    const outputFile = path.join(directory, "github-output");
+    stubWorkflowEnv({
+      GITHUB_OUTPUT: outputFile,
+      PUBLISH_REQUEST: encode(submitRequest(fileDigests(texts))),
+      VALIDATION_REPORT_PATH: path.join(directory, "validation-report.json"),
+      GENERATED_BUILD_OUTPUT_PATH: path.join(directory, "generated-build-output.json"),
+      VALIDATION_CAPTURE_PATH: path.join(directory, "capture.tar"),
+      VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
+      VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
+    });
+    installIssueFetch({ comments: [], reactions: [] }, texts);
+
+    await withTestEnvironmentsAsync([other], async () => {
+      await prepareSubmit();
+      expect(fs.readFileSync(outputFile, "utf8")).toMatch(/should_publish<<[^\n]+\ntrue\n/u);
+
+      write(successfulArtifacts("lax-42", { ...testRuntimeFor(other), mathlibCommit: TEST_RUNTIME.mathlibCommit }));
+      await expect(prepareSubmit()).rejects.toThrow(
+        "validation report runtime does not match the workflow's pinned runtime",
+      );
+    });
   });
 
   it("hashes a recorded paper from the validate artifact before anything is minted", async () => {
