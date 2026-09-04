@@ -88,8 +88,9 @@ The rules, applied to every `.tex` file under the folder:
 - You may mark your own concepts and proofs, and those of packages your
   lakefiles require directly (`requiredByConcepts` ∪ `requiredByProofs`);
   likewise your own submission id and the submissions those packages belong
-  to (an offline scaffold marks itself as `lax-0` until it is renumbered).
-  Anything else is a citation and belongs in the bibliography.
+  to — your own being the id `lax init` generated, which stays yours unless
+  the first `lax submit` finds it taken and renumbers the folder, markers
+  included. Anything else is a citation and belongs in the bibliography.
 - Markers nest; `end` closes the innermost open marker; every marker must be
   closed in the file that opened it. The same id may be marked any number
   of times. An inline passage is bracketed by breaking the line before and

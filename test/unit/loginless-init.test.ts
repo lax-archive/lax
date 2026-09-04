@@ -279,7 +279,20 @@ describe("loginless submission initialization", () => {
       path.join(root, "proofs", "Lax123456Proofs.lean"),
       "import Lax123456\nimport Lax1234567\nnamespace Lax123456Proofs\n",
     );
-    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+    // A declared paper is part of the identity too: its markers name the
+    // concept and proof packages, so a rekey has to renumber them with the
+    // Lean sources or the next build reports a package the folder no longer
+    // has.
+    fs.mkdirSync(path.join(root, "paper"));
+    fs.writeFileSync(
+      path.join(root, "paper", "main.tex"),
+      "% lax begin Lax123456.Treewidth\nA definition.\n% lax end\n",
+    );
+    fs.appendFileSync(path.join(root, "manifest.yaml"), "paper:\n  folder: paper\n  main: main.tex\n");
+    // The `init` parameter is unread here but declared: the assertion below
+    // reads it back off the recorded calls to prove nothing was POSTed, and a
+    // one-argument mock records a one-element tuple.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
       const url = new URL(String(input));
       if (url.pathname === "/user") return json({ id: 10, login: "alice", type: "User" });
       if (url.pathname === "/users/alice") return json({ id: 10, login: "alice", type: "User" });
@@ -317,6 +330,9 @@ describe("loginless submission initialization", () => {
     const proof = fs.readFileSync(path.join(root, "proofs", `${packageName}Proofs.lean`), "utf8");
     expect(proof).toContain(`namespace ${packageName}Proofs`);
     expect(proof).toContain("import Lax1234567");
+    expect(fs.readFileSync(path.join(root, "paper", "main.tex"), "utf8")).toBe(
+      `% lax begin ${packageName}.Treewidth\nA definition.\n% lax end\n`,
+    );
     expect(
       fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST"),
     ).toBe(false);
