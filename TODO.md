@@ -239,14 +239,12 @@ deleted afterwards) landed 2026-09-04; the plan is
 `history/environments-plan.md` and the round trip, with its measurements,
 is `history/environments-roundtrip-20260904.md`. What stays open:
 
-- **[Jan] Let Actions open pull requests.** The organization setting
-  ("Allow GitHub Actions to create and approve pull requests", org
-  Settings → Actions → General) is off and the repository cannot
-  override it, so the admit job pushes its branch and then fails at
-  `gh pr create`; the 2026-09-04 pull request was opened by hand. Until
-  it is on, every scheduled admission ends the same way. (Both the
-  org-level read and the repo-level write of that setting were refused
-  to the CLI token on 2026-09-04.)
+- **Actions may open pull requests since 2026-09-04 evening** (Jan
+  turned on "Allow GitHub Actions to create and approve pull requests" in
+  the organization's Actions settings). The first admission's pull
+  request was opened by hand because it was off; the next scheduled run
+  (Tuesdays 04:41 UTC) is the first to exercise `gh pr create` from the
+  admit job — check that it lands.
 - **Nothing saves an off-epoch host cache, so every off-epoch submission
   provisions cold.** Every `submission.yml` run since 2026-08-07 carries
   `Cache reservation failed: cache write denied: token has no writable
