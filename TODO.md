@@ -163,19 +163,27 @@ text is taken after the legacy re-addressing, and a capture whose text
 the stream carries is no omission (`web.ts`); the smoke fixture typesets
 in T1 Latin Modern so the map route runs in the pinned image. What remains:
 
-- **[Jan] Renderer release**: bump
-  `src/cli/deployment/website-source.lock.json` to a paper-bearing
-  lax-website revision, `page-builder:package` + `page-builder:verify`
-  (they now write and check `THIRD-PARTY-NOTICES.txt`), npm publish,
-  update `_renderer/latest.json`; then the release-step edit recorded in
-  code comments — add `assets/site/pdfjs`, `assets/site/reflowtex`, and
-  `assets/site/manuscript.js` to `REQUIRED_RENDERER_PATHS`
-  (`src/cli/website-renderer.ts`) and to the `deployment/verify.ts` path
-  list. Until the release, `lax serve` feeds the paper inputs to a pinned
-  renderer that ignores them. (The picture converter's wheel is *not* part
-  of this: only the trusted container derivation uses it, and
-  `npm run reflowtex:fetch` already brings it — `lax serve` and `lax
-  build` derive no web view at all.)
+- **Renderer release: done in the tree, one Jan-only step left.** The pin
+  `src/cli/deployment/website-source.lock.json` now names lax-website
+  `b38fdc14` (2026-09-03, the paper viewers and the multi-statement
+  presentation), and the release-step edit the code comments described is
+  applied: `assets/site/pdfjs`, `assets/site/reflowtex`, and
+  `assets/site/manuscript.js` are in `REQUIRED_RENDERER_PATHS`
+  (`src/cli/website-renderer.ts`), in the `deployment/verify.ts` path
+  list, and in the `website-renderer` test fixture. `page-builder:fetch` +
+  `:package` + `:verify` are green on that pin and the regenerated
+  `THIRD-PARTY-NOTICES.txt` now names all three components (fonts, pdf.js
+  5.6.205, ReflowTeX). The download half was already live:
+  `https://laxarchive.org/_renderer/latest.json` has served `b38fdc14`
+  since lax-website's own deploy, so an installed CLI picks the
+  paper-bearing renderer today; only the *bundled fallback* was stale.
+  **[Jan]** The npm publish is the release workflow, not a laptop:
+  `release.yml` runs `page-builder:fetch/package/verify` itself and
+  publishes through npm trusted publishing on a `v*` tag, so the fallback
+  ships with the next version bump + tag. Nothing to do by hand.
+  (The picture converter's wheel is *not* part of this: only the trusted
+  container derivation uses it, and `npm run reflowtex:fetch` already
+  brings it — `lax serve` and `lax build` derive no web view at all.)
 - **[Jan] Production round trips** closing both plans — a real paper (the
   flagship drafts in `~/git/lax-submissions`) through validate → publish →
   site page with both surfaces — recorded in `history/`; measure the TeX

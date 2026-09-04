@@ -27,15 +27,18 @@ if (
 ) {
   throw new Error("packaged page-builder metadata does not match its lock or bytes");
 }
-// Once a renderer release ships the paper viewers, this list (and
-// REQUIRED_RENDERER_PATHS in src/cli/website-renderer.ts) also names
-// "assets/site/pdfjs", "assets/site/reflowtex", and "assets/site/manuscript.js"
-// — a release-step edit, since the current pin predates those files.
+// This list and REQUIRED_RENDERER_PATHS in src/cli/website-renderer.ts must
+// name the same renderer surface: the vendored fallback and the downloaded
+// copy are interchangeable only if both carry it. The paper viewers are in
+// both since the first paper-bearing renderer release.
 for (const relative of [
   "package.json",
   "dist/sitegen/generate.js",
   "dist/sitegen/assets.js",
   "assets/site",
+  "assets/site/pdfjs",
+  "assets/site/reflowtex",
+  "assets/site/manuscript.js",
   "content/landing.md",
   "content/contributing.md",
   NOTICES_FILENAME,

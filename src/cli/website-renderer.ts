@@ -14,13 +14,16 @@ const INSTALL_TIMEOUT_MS = 5 * 60_000;
 // updateWebsiteRenderer gates a fresh download — so paths that exist only in
 // a newer lax-website revision may join it only once a renderer release
 // carrying them is published (a release-step edit, together with the
-// deployment/verify.ts list). Concretely owed to the first paper-bearing
-// release: "assets/site/pdfjs", "assets/site/reflowtex", "assets/site/manuscript.js".
-// Adding them earlier would fail `lax update` against the current release.
+// deployment/verify.ts list). The paper viewers below are such an addition:
+// they entered the list with the first paper-bearing renderer release, and a
+// downloaded copy that predates it is re-fetched rather than used.
 const REQUIRED_RENDERER_PATHS = [
   "dist/sitegen/generate.js",
   "dist/sitegen/assets.js",
   "assets/site",
+  "assets/site/pdfjs",
+  "assets/site/reflowtex",
+  "assets/site/manuscript.js",
   "content/landing.md",
   "content/contributing.md",
 ] as const;

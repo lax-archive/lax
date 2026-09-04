@@ -31,6 +31,9 @@ describe("downloaded Website renderer", () => {
       "dist/sitegen/generate.js",
       "dist/sitegen/assets.js",
       "assets/site",
+      "assets/site/pdfjs",
+      "assets/site/reflowtex",
+      "assets/site/manuscript.js",
       "content/landing.md",
       "content/contributing.md",
     ]) {
