@@ -1,10 +1,12 @@
-# Release = CI on a git tag.
+# Release = build and test on a git tag, then publish the resulting artifact in
+# a separate OIDC-only job.
 #
-# The fast suite gates the publish, so no release can come from an untested
-# tree, and the publish itself uses npm's OIDC trusted publishing — no npm
-# token on any laptop, in any secret store, or in this repository. The npm
-# trusted-publisher registration names this repository and this workflow
-# file; keep the filename `release.yml` unless that registration moves too.
+# The job that installs dependencies and runs repository code has no OIDC
+# grant. The job with that grant never checks out or executes repository code;
+# it only verifies and publishes the packed artifact with lifecycle scripts
+# disabled. npm trusted publishing therefore needs no long-lived token on a
+# laptop, in a secret store, or in this repository. Its registration names
+# this repository and workflow file; keep `release.yml` unless it moves too.
 #
 # A successful `npm publish` moves `latest`. Rollback is moving `latest`
 # back: `npm dist-tag add lax-archive@<old-version> latest`.
@@ -16,24 +18,27 @@ on:
     tags: ["v*"]
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # OIDC: this is what stands in for an npm token
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          fetch-depth: 0
+      # A tag on an unmerged side branch must not become a release. The
+      # checkout is complete, so origin/main is a fresh, local fact.
+      - name: Require the tagged commit on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
           cache: npm
       # npm 12 changed `npm pack --json` and requires a newer Node 22 patch.
       # Keep trusted publishing on the latest compatible npm 11 release.
-      - run: npm install --global npm@11.19.0
-      - run: npm ci
+      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - run: npm ci --ignore-scripts
       # The tag is the source of truth for what is released: a mismatch means
       # someone tagged without bumping, and the publish would lie.
       - name: Check release tag
@@ -41,6 +46,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           package_version=$(node -p "require('./package.json').version")
           test "$version" = "$package_version"
+      - run: npm run typecheck
       - run: npm run build
       # The fast suite is docker-free but not toolchain-free: the real-lake
       # e2e tests drive elan/lake against the fake mathlib, so the release
@@ -77,5 +83,42 @@ jobs:
           npm run page-builder:verify
       - name: Pack deterministic CLI artifact
         run: npm pack --ignore-scripts
+      - name: Preserve the tested package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cli-package
+          path: lax-archive-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC: this is what stands in for an npm token
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - name: Restore the tested package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cli-package
+          path: .release
+      - name: Verify the package identity
+        id: package
+        shell: bash
+        run: |
+          shopt -s nullglob
+          packages=(.release/*.tgz)
+          test "${#packages[@]}" -eq 1
+          expected=".release/lax-archive-${GITHUB_REF_NAME#v}.tgz"
+          test "${packages[0]}" = "$expected"
+          echo "path=$expected" >> "$GITHUB_OUTPUT"
       - name: Publish with npm trusted publishing
-        run: npm publish "lax-archive-${GITHUB_REF_NAME#v}.tgz"
+        env:
+          PACKAGE_PATH: ${{ steps.package.outputs.path }}
+        run: npm publish "$PACKAGE_PATH" --ignore-scripts

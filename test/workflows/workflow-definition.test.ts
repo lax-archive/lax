@@ -742,18 +742,23 @@ describe("release workflow wiring", () => {
   // The npm trusted-publisher registration names this repository and the
   // workflow *file*, so the filename itself is load-bearing: renaming
   // release.yml silently breaks publishing until the registration follows.
-  const job = requireJob(releaseParsed.jobs, "publish");
+  const build = requireJob(releaseParsed.jobs, "build");
+  const publish = requireJob(releaseParsed.jobs, "publish");
 
-  it("publishes only from version tags, with OIDC and nothing else", () => {
-    expect(Object.keys(releaseParsed.jobs)).toEqual(["publish"]);
+  it("publishes only tested mainline tags through an isolated OIDC job", () => {
+    expect(Object.keys(releaseParsed.jobs)).toEqual(["build", "publish"]);
     expect(releaseParsed.on).toEqual({ push: { tags: ["v*"] } });
-    // id-token is the trusted-publishing credential; contents stays read-only
-    // and no other grant exists that a compromised test could reach.
-    expect(job.permissions).toEqual({ contents: "read", "id-token": "write" });
-    const checkout = job.steps.find((step) => step.uses?.startsWith("actions/checkout"));
-    expect(checkout?.with).toMatchObject({ "persist-credentials": false });
-    const setupNode = job.steps.find((step) => step.uses?.startsWith("actions/setup-node"));
-    expect(setupNode?.with).toMatchObject({ "registry-url": "https://registry.npmjs.org" });
+    expect(build.permissions).toEqual({ contents: "read" });
+    expect(publish.needs).toBe("build");
+    expect(publish.permissions).toEqual({ contents: "read", "id-token": "write" });
+    const checkout = build.steps.find((step) => step.uses?.startsWith("actions/checkout"));
+    expect(checkout?.with).toMatchObject({ "persist-credentials": false, "fetch-depth": 0 });
+    expect(build.steps.find((step) => step.name === "Require the tagged commit on main")?.run)
+      .toContain('git merge-base --is-ancestor "$GITHUB_SHA" origin/main');
+    const buildNode = build.steps.find((step) => step.uses?.startsWith("actions/setup-node"));
+    expect(buildNode?.with?.["registry-url"]).toBeUndefined();
+    const publishNode = publish.steps.find((step) => step.uses?.startsWith("actions/setup-node"));
+    expect(publishNode?.with).toMatchObject({ "registry-url": "https://registry.npmjs.org" });
   });
 
   it("provisions the host toolchain before the test gate", () => {
@@ -761,20 +766,22 @@ describe("release workflow wiring", () => {
     // this ordering the release gate dies at `spawn lake ENOENT` on a bare
     // runner. Same store identity and save-from-trusted-provisioning-only
     // discipline as ci.yml and the trusted validate job.
-    const runs = job.steps.map((step) => step.run ?? step.uses ?? "");
-    const build = runs.indexOf("npm run build");
+    const runs = build.steps.map((step) => step.run ?? step.uses ?? "");
+    const typecheck = runs.indexOf("npm run typecheck");
+    const compile = runs.indexOf("npm run build");
     const restore = runs.findIndex((run) => run.startsWith("actions/cache/restore"));
     const setup = runs.findIndex((run) => run.includes("dist/submission-validation/host/setup-vm.js"));
     const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
     const test = runs.indexOf("npm test");
-    expect(build).toBeGreaterThanOrEqual(0);
-    expect(build).toBeLessThan(restore);
+    expect(typecheck).toBeGreaterThanOrEqual(0);
+    expect(typecheck).toBeLessThan(compile);
+    expect(compile).toBeLessThan(restore);
     expect(restore).toBeLessThan(setup);
     expect(setup).toBeLessThan(save);
     expect(save).toBeLessThan(test);
-    expect(job.steps[save]?.if).toBe("steps.lean-cache.outputs.cache-hit != 'true'");
+    expect(build.steps[save]?.if).toBe("steps.lean-cache.outputs.cache-hit != 'true'");
     let cacheSteps = 0;
-    for (const step of job.steps) {
+    for (const step of build.steps) {
       if (step.uses?.startsWith("actions/cache/") !== true) continue;
       cacheSteps += 1;
       expect(step.with?.key).toBe(HOST_CACHE_KEY);
@@ -787,24 +794,50 @@ describe("release workflow wiring", () => {
     // `npm run build` wipes dist/ (including dist/cli/vendor), so the vendored
     // page-builder must land after the final build, and `npm pack` must run
     // with --ignore-scripts or prepack would rebuild and wipe it again.
-    const runs = job.steps.map((step) => step.run ?? step.uses ?? "");
+    const runs = build.steps.map((step) => step.run ?? step.uses ?? "");
     const vendor = runs.findIndex((run) => run.includes("page-builder:fetch"));
     expect(runs[vendor]).toContain("page-builder:package");
     expect(runs[vendor]).toContain("page-builder:verify");
     const pack = runs.findIndex((run) => run.startsWith("npm pack"));
-    const publish = runs.findIndex((run) => run.startsWith("npm publish"));
     const lastBuild = runs.lastIndexOf("npm run build");
     expect(lastBuild).toBeLessThan(vendor);
     expect(vendor).toBeLessThan(pack);
     expect(runs[pack]).toContain("--ignore-scripts");
-    // Publishing the packed tarball (not the working tree) is what keeps
-    // prepack from running a vendor-wiping rebuild inside `npm publish`.
-    expect(pack).toBeLessThan(publish);
-    expect(runs[publish]).toContain(".tgz");
+    const upload = build.steps.find((step) => step.uses?.startsWith("actions/upload-artifact"));
+    expect(upload?.with).toMatchObject({
+      name: "cli-package",
+      path: "lax-archive-*.tgz",
+      "if-no-files-found": "error",
+      "retention-days": 1,
+    });
     // The tag/package.json equality check must gate everything downstream.
-    const tagCheck = job.steps.findIndex((step) => step.name === "Check release tag");
+    const tagCheck = build.steps.findIndex((step) => step.name === "Check release tag");
     expect(tagCheck).toBeGreaterThanOrEqual(0);
     expect(tagCheck).toBeLessThan(vendor);
+  });
+
+  it("keeps repository code and lifecycle scripts out of the OIDC boundary", () => {
+    expect(JSON.stringify(build)).not.toContain("id-token");
+    expect(publish.steps.some((step) => step.uses?.startsWith("actions/checkout"))).toBe(false);
+    expect(JSON.stringify(publish)).not.toContain("npm test");
+    expect(JSON.stringify(publish)).not.toContain("npm run build");
+    const download = publish.steps.find((step) => step.uses?.startsWith("actions/download-artifact"));
+    expect(download?.with).toMatchObject({ name: "cli-package", path: ".release" });
+    const identity = publish.steps.find((step) => step.name === "Verify the package identity");
+    expect(identity?.run).toContain('test "${#packages[@]}" -eq 1');
+    expect(identity?.run).toContain('lax-archive-${GITHUB_REF_NAME#v}.tgz');
+    const publishStep = publish.steps.at(-1);
+    expect(publishStep?.env).toEqual({ PACKAGE_PATH: "${{ steps.package.outputs.path }}" });
+    const command = publishStep?.run;
+    expect(command).toContain('npm publish "$PACKAGE_PATH"');
+    expect(command).toContain("--ignore-scripts");
+    for (const [name, job] of Object.entries(releaseParsed.jobs)) {
+      for (const step of job.steps.filter((candidate) =>
+        candidate.run?.startsWith("npm ci") || candidate.run?.startsWith("npm install"),
+      )) {
+        expect(step.run, name).toContain("--ignore-scripts");
+      }
+    }
   });
 });
 
