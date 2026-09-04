@@ -48,6 +48,8 @@ export const GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]";
  */
 export const ADMIN_GITHUB_IDS: ReadonlySet<number> = new Set([
   2_657_497, // jan3er
+  33_251_410, // clemenskuske
+  91_967_389, // EdouardBonnet
 ]);
 
 export const SUBMISSION_ID_PATTERN = /^lax-[1-9][0-9]*$/;
