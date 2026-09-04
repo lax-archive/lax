@@ -163,27 +163,14 @@ text is taken after the legacy re-addressing, and a capture whose text
 the stream carries is no omission (`web.ts`); the smoke fixture typesets
 in T1 Latin Modern so the map route runs in the pinned image. What remains:
 
-- **Renderer release: done in the tree, one Jan-only step left.** The pin
-  `src/cli/deployment/website-source.lock.json` now names lax-website
-  `b38fdc14` (2026-09-03, the paper viewers and the multi-statement
-  presentation), and the release-step edit the code comments described is
-  applied: `assets/site/pdfjs`, `assets/site/reflowtex`, and
-  `assets/site/manuscript.js` are in `REQUIRED_RENDERER_PATHS`
-  (`src/cli/website-renderer.ts`), in the `deployment/verify.ts` path
-  list, and in the `website-renderer` test fixture. `page-builder:fetch` +
-  `:package` + `:verify` are green on that pin and the regenerated
-  `THIRD-PARTY-NOTICES.txt` now names all three components (fonts, pdf.js
-  5.6.205, ReflowTeX). The download half was already live:
-  `https://laxarchive.org/_renderer/latest.json` has served `b38fdc14`
-  since lax-website's own deploy, so an installed CLI picks the
-  paper-bearing renderer today; only the *bundled fallback* was stale.
-  **[Jan]** The npm publish is the release workflow, not a laptop:
-  `release.yml` runs `page-builder:fetch/package/verify` itself and
-  publishes through npm trusted publishing on a `v*` tag, so the fallback
-  ships with the next version bump + tag. Nothing to do by hand.
-  (The picture converter's wheel is *not* part of this: only the trusted
-  container derivation uses it, and `npm run reflowtex:fetch` already
-  brings it — `lax serve` and `lax build` derive no web view at all.)
+- **Renderer release: done.** The bundled fallback and the download share
+  one surface again: the pin names lax-website `30927d2d` (2026-09-04,
+  the paper viewers, the multi-statement presentation, and the machine
+  index), `https://laxarchive.org/_renderer/latest.json` serves it, and
+  `release.yml` packages it on the `v*` tag. (The picture converter's
+  wheel is *not* part of this: only the trusted container derivation uses
+  it, and `npm run reflowtex:fetch` already brings it — `lax serve` and
+  `lax build` derive no web view at all.)
 - **[Jan] Production round trips** closing both plans — a real paper (the
   flagship drafts in `~/git/lax-submissions`) through validate → publish →
   site page with both surfaces — recorded in `history/`; measure the TeX
@@ -261,43 +248,60 @@ second. What remains is listed per stage below, then stage 6 (docs).
   unlimited `maxRecDepth`. Still unmeasured: a cold `lake exe cache get`
   at v4.33.0 (23 GB free here) and the replay peak — the first admission
   run measures both.
-- **Stage 2 code is done** (2026-09-04, unreleased): the static gate
-  writes the selected environment id and the per-environment cache key
-  (`host/setup.ts validationHostCacheKey`, salt `lax-validation-host-v2`)
-  to `$GITHUB_OUTPUT`; the lean cache restore and save use that key;
+- **Stage 2 is done** (2026-09-04): the static gate writes the selected
+  environment id and the per-environment cache key (`host/setup.ts
+  validationHostCacheKey`, salt `lax-validation-host-v2`) to
+  `$GITHUB_OUTPUT`; the lean cache restore and save use that key;
   `setup-vm.js --env <id>` provisions only that environment (no `--env`
   is the epoch, which is what `ci.yml` and `release.yml` provision, under
   the same key from `setup-vm.js --cache-key`); the publisher looks the
-  report's environment up in the table before any token is minted.
-  **Remaining gate before the next release: the rehearsal drill**
-  (`scripts/rehearsal/`, Jan) — this is an Actions-side change and
-  `npm run check` cannot see the cache action, the step outputs, or the
-  quoted `--env` shell hop (history/live-rehearsal.md). `drive.sh` was
-  updated for it and now asserts, from the job logs of the `/lax submit`
-  round trip: the gate's `lax gate: environment <id>` line, the restore
-  step naming a `lax-validation-host-v2-Linux-<id>-…` key, setup-vm's
-  `lax setup: provisioning environment <id>` and `… ensuring the warm
-  mathlib workspace for <id>` lines, and `publish-submit`'s `lax publish:
-  environment <id>` line. Also worth an eye on the first production run:
-  the first key with the new salt is a cache miss, so that run provisions
-  cold (~3 min) and saves; the old `v1` entries age out on their own.
-- **Stage 3 landed 2026-09-04**: the inspector's shape guards, the
-  `inspector-golden` fixture and test (byte-identical under v4.30.0 and
-  v4.33.0), the composer's `Lean.addDecl` port with an explicit
-  unlimited `maxRecDepth` (`npm run smoke:prooftree` green under both
-  toolchains), the `inspector-plan`/`inspector-matrix` jobs in `ci.yml`,
-  and `.github/workflows/environments.yml` with
+  report's environment up in the table before any token is minted. Jan
+  waived the rehearsal drill for this release (2026-09-04); `drive.sh`
+  keeps the environment-line assertions for the next Actions-side change.
+  **Worth an eye on the first production run**: the first key with the
+  new salt is a cache miss, so that run provisions cold (~3 min) and
+  saves; the old `v1` entries age out on their own.
+- **Stage 3 is done, and the first admission ran 2026-09-04**: the
+  inspector's shape guards, the `inspector-golden` fixture and test, the
+  composer's `Lean.addDecl` port, the `inspector-plan`/`inspector-matrix`
+  jobs in `ci.yml`, and `environments.yml` with
   `scripts/environments/{discover,admit,matrix,install-toolchain}.mjs`.
-  **Jan-owned, and the one thing left in this stage: the first real
-  admission run.** Dispatch `environments.yml` with `tag: v4.33.0` —
-  the newest mathlib `vX.Y.0` today, commit
-  `db584cd6d46c92f209a44c0f1c829460d327499d` — and merge the pull
-  request it opens. Two repository settings gate it: Actions must be
-  allowed to create pull requests (Settings → Actions → General), and
-  the admission run's container smoke needs a runner with room for a
-  cold `lake exe cache get` (~7 GB). Watch the first run: the container
-  smoke against a second mathlib has never executed anywhere, and its
-  memory measurement is what writes the new entry's `limits`.
+  `v4.33.0` (mathlib `db584cd6d46c92f209a44c0f1c829460d327499d`) is the
+  second row of the table, merged from the pull request the fourth run
+  pushed (run 33870950217; the container smoke against a second mathlib
+  passed all eight fixtures, cold `lake exe cache get` about 2 min, the
+  whole smoke 5 min 46 s on a hosted runner). The three runs before it
+  each found one thing the job could not see locally, all fixed on main:
+  the job installed only the candidate's toolchain, so the suite's shared
+  fake-mathlib store was never built and five tests failed rather than
+  skipped, while three table tests assumed the one-row table under the
+  suite-wide seam (`8992821`); the composer smoke driver left the
+  toolchain off the child's PATH, which `findSysroot` needs — red on
+  main since the stage-3 port, on CI only (`7ede363`); and the smoke's
+  `paper-web` fixture needs the ReflowTeX fetch the job lacked, hidden
+  by a `tee` without `pipefail` that turned the crash into a green step
+  with no measurement (`e954005`). Still open from that run:
+  - **[Jan] Let Actions open pull requests.** The organization setting
+    ("Allow GitHub Actions to create and approve pull requests", org
+    Settings → Actions → General) is off and the repository cannot
+    override it, so the admit job pushes its branch and then fails at
+    `gh pr create`; the 2026-09-04 pull request was opened by hand.
+    Until it is on, every scheduled admission ends the same way.
+  - **What the admission measures is not a budget.** The smoke's
+    heaviest-span peak over its fixtures (1.15 GiB for v4.33.0) is what
+    `admit.mjs` writes as the entry's `limits.memoryBytes`, and that
+    becomes the container's `--memory` cap — a real submission imports
+    far more of mathlib (~5.6 GiB per replay thread at the epoch) and
+    would be refused. The entry was merged without `limits`, inheriting
+    `DEFAULT_LIMITS` like the epoch. Decide what the run should measure
+    (a full-mathlib import, as the plan's checklist assumed) or record
+    the figure as a note rather than a cap, then fix `environments.yml`
+    and `admit.mjs` together.
+  - **Epoch fixture in the admission job**: the job now installs the
+    epoch's toolchain beside the candidate's so the fake-mathlib suite
+    runs the way `ci.yml` runs it; the suite therefore proves the
+    plumbing under a two-row table, and only the golden test, the
+    composer smoke, and the container smoke run the candidate's Lean.
 - **Stage 4 is done** (2026-09-04, unreleased): `lax init [--env <id>]
   [--yes]` scaffolds in the environment it names, after a typed
   confirmation and the two populations when that is not the epoch;
@@ -311,27 +315,18 @@ second. What remains is listed per stage below, then stage 6 (docs).
   have to coexist), and it repoints requires by editing the require block
   in place rather than reserializing the author's lakefile — a require
   not in one-key-per-line form is reported instead of rewritten.
-- **Stage 5 code is done** (2026-09-04; lax-website commit 8c0d1a42 on
-  its main, unpushed): `EPOCH` in lax-website's `src/config.ts` (edited once a
-  year), overridden by `generateSite`'s third argument, which `lax serve`
-  now passes as `epoch().id` — an older pinned renderer ignores it; the
-  off-epoch notice beside `draftBanner()` on the submission, concept,
-  proof and paper pages, and an `epoch` label on the masthead's Lean pin
-  for records that are in it; `data-env` plus the environment folded into
-  `data-tags`, so the environment is one more chip in the existing strip
-  (chips appear only once a second environment holds work) and listings
-  put the epoch first and other environments newest first; `index.json`
-  and `environments.json` at the site root, linked from
-  `content/contributing.md`; `capture` declared on `BuildOutput`.
-  **Remaining, in order**: a renderer release carrying all of it, then
-  re-pin the page-builder (`page-builder:fetch|package|verify`), and only
-  then let `REQUIRED_RENDERER_PATHS` in `cli/website-renderer.ts` name the
-  new surface — `dist/sitegen/machine-index.js`, the module that emits
-  `index.json` and `environments.json`, so a renderer predating them is
-  re-fetched rather than used. That list gates the *published* release as
-  well as the downloaded copy, so a path may join it only once a release
-  carries it (and the same edit is due in lax-website's
-  `.github/scripts/package-renderer.mjs` REQUIRED_FILES).
+- **Stage 5 is done** (2026-09-04): `EPOCH` in lax-website's
+  `src/config.ts` (edited once a year), overridden by `generateSite`'s
+  third argument, which `lax serve` passes as `epoch().id`; the off-epoch
+  notice on the submission, concept, proof and paper pages and the
+  `epoch` label on the masthead's Lean pin; the environment as one more
+  chip in the tag strip (chips appear only once a second environment holds
+  work), listings epoch first and other environments newest first;
+  `index.json` and `environments.json` at the site root, linked from
+  `content/contributing.md`. Released as renderer `30927d2d`, re-pinned,
+  and `dist/sitegen/machine-index.js` is in `REQUIRED_RENDERER_PATHS`,
+  the `deployment/verify.ts` list, the `website-renderer` test fixture,
+  and lax-website's `package-renderer.mjs` REQUIRED_FILES.
 - **Stage 6**: a history note after the first real off-epoch round trip
   (README, CLAUDE.md, and the spec-notes entry are written; the plan
   retires to `history/` with that note).
