@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { doctor } from "../../src/cli/doctor.js";
 import { recordSubmission } from "../../src/cli/registry.js";
 import * as ui from "../../src/cli/ui.js";
+import { REQUIRED_RENDERER_PATHS } from "../../src/cli/website-renderer.js";
 import { ELAN_COMMIT, LEAN_TOOLCHAIN, MATHLIB_REV } from "../../src/submission-validation/pins.js";
 import {
   markWarmReady,
@@ -141,17 +142,17 @@ function seedPageBuilder(): void {
   let outermost = path.dirname(entry);
   while (!fs.existsSync(path.dirname(outermost))) outermost = path.dirname(outermost);
   planted = outermost;
-  for (const relative of [
-    "dist/sitegen/generate.js",
-    "dist/sitegen/assets.js",
-    "content/landing.md",
-    "content/contributing.md",
-  ]) {
+  // The stand-in mirrors exactly what the readiness check demands, so a path
+  // that joins the list at a renderer release cannot leave this fixture behind.
+  for (const relative of REQUIRED_RENDERER_PATHS) {
     const target = path.join(root, relative);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, "");
+    if (path.extname(relative) === "") {
+      fs.mkdirSync(target, { recursive: true });
+    } else {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, "");
+    }
   }
-  fs.mkdirSync(path.join(root, "assets", "site"), { recursive: true });
 }
 
 /** A warm store doctor reads as ready, for the tests that are about some

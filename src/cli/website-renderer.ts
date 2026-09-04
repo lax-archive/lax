@@ -17,7 +17,7 @@ const INSTALL_TIMEOUT_MS = 5 * 60_000;
 // deployment/verify.ts list). The paper viewers below are such an addition:
 // they entered the list with the first paper-bearing renderer release, and a
 // downloaded copy that predates it is re-fetched rather than used.
-const REQUIRED_RENDERER_PATHS = [
+export const REQUIRED_RENDERER_PATHS = [
   "dist/sitegen/generate.js",
   "dist/sitegen/assets.js",
   "assets/site",
