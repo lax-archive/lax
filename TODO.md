@@ -241,15 +241,15 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   digest is not recorded in the report's runtime identity (the pin lives
   in `pins.ts`, so a bump is a reviewed edit).
 
-## Archive environments (environments-plan.md — stages 1, 2 and 4 landed 2026-09-04)
+## Archive environments (environments-plan.md — stages 1 to 4 landed 2026-09-04)
 
 Several Lean/mathlib versions: a yearly **epoch** as the default, monthly
 mathlib `vX.Y.0` release tags as admitted environments authors may stray
 to after a typed confirmation. Stage 1 (the table, selection,
 per-environment provisioning), stage 2 (the trusted workflow selecting per
-environment) and stage 4 (the CLI surface) are in; the table holds one row,
-so nothing an author sees changes until stage 3 admits a second. Stages in
-the plan; 3 finishes the feature.
+environment), stage 3 (the admission machinery) and stage 4 (the CLI
+surface) are in; the table holds one row, so nothing an author sees
+changes until the first admission adds a second. Stages in the plan.
 
 - **Stage 0 spike ran 2026-09-04** (`spike/environments/REPORT.md`): GO.
   The inspector compiles unchanged under v4.33.0 with byte-identical
@@ -258,7 +258,8 @@ the plan; 3 finishes the feature.
   `maxRecDepth` argument); `spike/environments/prooftree-addDecl.patch`
   compiles under both releases and lands in stage 3 with an explicit
   unlimited `maxRecDepth`. Still unmeasured: a cold `lake exe cache get`
-  at v4.33.0 (23 GB free here) and the replay peak.
+  at v4.33.0 (23 GB free here) and the replay peak — the first admission
+  run measures both.
 - **Stage 2 code is done** (2026-09-04, unreleased): the static gate
   writes the selected environment id and the per-environment cache key
   (`host/setup.ts validationHostCacheKey`, salt `lax-validation-host-v2`)
@@ -279,14 +280,23 @@ the plan; 3 finishes the feature.
   environment <id>` line. Also worth an eye on the first production run:
   the first key with the new salt is a cache miss, so that run provisions
   cold (~3 min) and saves; the old `v1` entries age out on their own.
-- **Stage 3**: inspector shape guards (`run_cmd` beside each `unsafeCast`
-  reader in `Main.lean`), the `inspector-golden` fixture and test, an
-  `inspector-matrix` CI job over every admitted entry, the prooftree
-  `addDecl` patch from the spike (then `npm run smoke:prooftree` under
-  both toolchains), and `environments.yml` — the admission cron that
-  tests a new mathlib `vX.Y.0` tag and opens a PR adding its row. The
-  admission job must run the prooftree smoke and the golden test: the
-  spike showed unit + fake-mathlib e2e alone miss a composer break.
+- **Stage 3 landed 2026-09-04**: the inspector's shape guards, the
+  `inspector-golden` fixture and test (byte-identical under v4.30.0 and
+  v4.33.0), the composer's `Lean.addDecl` port with an explicit
+  unlimited `maxRecDepth` (`npm run smoke:prooftree` green under both
+  toolchains), the `inspector-plan`/`inspector-matrix` jobs in `ci.yml`,
+  and `.github/workflows/environments.yml` with
+  `scripts/environments/{discover,admit,matrix,install-toolchain}.mjs`.
+  **Jan-owned, and the one thing left in this stage: the first real
+  admission run.** Dispatch `environments.yml` with `tag: v4.33.0` —
+  the newest mathlib `vX.Y.0` today, commit
+  `db584cd6d46c92f209a44c0f1c829460d327499d` — and merge the pull
+  request it opens. Two repository settings gate it: Actions must be
+  allowed to create pull requests (Settings → Actions → General), and
+  the admission run's container smoke needs a runner with room for a
+  cold `lake exe cache get` (~7 GB). Watch the first run: the container
+  smoke against a second mathlib has never executed anywhere, and its
+  memory measurement is what writes the new entry's `limits`.
 - **Stage 4 is done** (2026-09-04, unreleased): `lax init [--env <id>]
   [--yes]` scaffolds in the environment it names, after a typed
   confirmation and the two populations when that is not the epoch;

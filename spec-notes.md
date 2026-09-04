@@ -6,7 +6,7 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
-## Archive environments: a table, and the epoch (stages 1, 2 and 4 implemented, 2026-09-04)
+## Archive environments: a table, and the epoch (stages 1 to 4 implemented, 2026-09-04)
 
 The single archive-wide Lean/mathlib pin becomes a **table of environments**
 (`src/submission-validation/environments.ts`). An environment is a Lean
@@ -134,8 +134,30 @@ author's file is theirs — so a require that is not in the one-key-per-line
 form every submission uses is reported for hand editing rather than
 rewritten.
 
-Still to come, and not yet spec-visible: the scheduled admission workflow
-that adds a row per monthly mathlib tag (stage 3), and the website's
+**Admission (stage 3, 2026-09-04).** A row is added by a scheduled workflow,
+not by hand. `.github/workflows/environments.yml` lists mathlib's `vX.Y.0`
+release tags, keeps the ones above the floor and above a recorded start
+version, resolves each to a commit and asserts the tag's own `lean-toolchain`
+names the Lean release of the same name, then runs the whole gate under that
+toolchain with the candidate injected as an environment: the unit and
+fake-mathlib suites, a golden inspector report over a fixture that imports
+only `Init`, the proof-tree composer smoke, and the real-container smoke
+against mathlib at the candidate's commit — the last of which measures the
+peak memory the new entry's `limits` records. On green it appends the entry
+and opens a pull request; on red it opens an issue. It holds no App key and
+never touches the database, and a merged pull request reaches authors with the
+next CLI release. Between admissions an `inspector-matrix` job builds every
+admitted environment's inspector weekly and on any change to the Lean sources
+or the table, because an environment stays open forever and the epoch's
+toolchain is the only one ordinary CI installs. Two things make that gate
+mean something: the inspector's three `unsafeCast` readers of persisted olean
+extension entries now carry elaboration-time guards that fail the *build* when
+a core type changes shape rather than misreading memory, and the proof-tree
+composer adds declarations through `Lean.addDecl`, whose signature did not
+move when `Environment.addDeclCore` gained an argument in Lean 4.33. None of
+this is author-visible: the table still holds one row.
+
+Still to come, and not yet spec-visible: the website's
 environment notice, facet, and emitted index (stage 5).
 
 Spec touchpoints: "Archive Environment" (a table with the epoch marked), the

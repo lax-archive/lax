@@ -17,12 +17,16 @@ epoch's store under the same key), and the publisher's table lookup.
 confirmation and `--yes`, `lax doctor`'s `Environments` row and `--env`,
 `lax port`, and the README/instructions pass. Two additions the CLI section
 below did not specify: a port assigns a fresh id and rekeys the folder, and
-requires are repointed by editing the require block in place. Stages 3, 5
-and 6 are open. The investigation this
+requires are repointed by editing the require block in place. **Stage 3
+landed 2026-09-04**: the inspector's shape guards and golden fixture, the
+composer's version-agnostic `addDecl`, the `inspector-matrix` gate in
+`ci.yml`, and `environments.yml` with its discover/admit scripts — the
+machinery is in place and the first real admission run is Jan's
+(TODO.md). Stages 5 and 6 are open. The investigation this
 rests on covered every consumer of the pins module, the database and
 resolution code, the inspector's Lean-version coupling, and the website's
 version surfaces; the file:line references below were verified that day and
-the ones stage 1 touched have since moved.
+the ones stages 1 and 3 touched have since moved.
 
 ## Goals (Jan, 2026-09-04)
 
@@ -416,9 +420,12 @@ Epoch bump runbook (yearly):
    Single entry, `v4.30.0` as epoch. No author-visible change. Release.
 2. **Trusted workflow.** Static gate outputs, per-environment cache key,
    `setup-vm --env`, publisher lookup. Rehearsal drill, then ship.
-3. **Admission.** Shape guards, golden fixture, `inspector-matrix`,
-   `environments.yml` with discover/admit scripts. First admission is
-   whichever `vX.Y.0` is newest when this lands. Release.
+3. **Admission — landed 2026-09-04.** Shape guards, golden fixture,
+   `inspector-plan`/`inspector-matrix` in `ci.yml`, `environments.yml` with
+   `scripts/environments/{discover,admit,matrix,install-toolchain}.mjs`, and
+   the composer's version-agnostic `addDecl`. The first admission — `v4.33.0`,
+   the newest `vX.Y.0` on the day this landed — is a `workflow_dispatch` Jan
+   runs, and the release follows the pull request it opens.
 4. **CLI.** `init --env` with confirmation, doctor, instructions,
    `lax port`. Release.
 5. **Website.** Notice, facet, grouping, epoch config, the two JSON files,
@@ -439,22 +446,31 @@ run's operator confirms it (M) until a test exists.
   substitutes after manifest validation — `host/warmstore.ts:6-9`.
 - (T, e2e) Locked git manifest entries materialise on `lake build` alone,
   no `lake update`, no post-update hook — `warmstore.ts:30-34`.
-- (M → T in stage 3) `LAKE_ARTIFACT_CACHE=false` is not overridden by any
-  lakefile in the mathlib closure — `warmstore.ts:126-132`.
+- (T, admission smoke) `LAKE_ARTIFACT_CACHE=false` is not overridden by any
+  lakefile in the mathlib closure — `warmstore.ts:126-132`. The fake mathlib
+  has no closure, so only the admission run's real-container smoke, which
+  builds the candidate's warm workspace, can decide this one.
 - (T, e2e) Manifest entry shapes: `inputRev` equals the declared rev;
   `inherited: false` accepted — `warmstore.ts:307-309`.
-- (M → T in stage 3) The capture companion set lake needs to consider a
+- (T, admission smoke) The capture companion set lake needs to consider a
   path dependency fresh — `captures/seal.ts:53-73`, `provision.ts:181-186`.
+  Container-only (history/live-rehearsal.md), so the admission run's docker
+  smoke is where it is decided, not a host e2e.
 - (T, e2e) leanchecker's module scan ignores symlinks (hardlinks used) —
   `host/pipeline.ts:647-649`.
 - (T, golden) Docstring leading-dash stripping; reserved-name predicates
   incl. private prefix; `Match.Extension` empty under `loadExts := false`;
   precomputed axiom-closure extension deliberately unread; `ppExpr`
   application form — `Main.lean:63-70,150-216,296-300`.
-- (T, guards) The three persisted extension entry types' shapes.
+- (T, guards) The three persisted extension entry types' shapes — plus
+  `declRangeExt`'s own type, which is what makes its entries `Name x a`.
 - (T, unit) `lake query -J +<mod>:olean` output shape — `host/pipeline.ts:625-645`.
-- (M) Replay/Inspect peak memory at two threads fits the 16 GB cap.
-- (M) `lake exe cache get` exists and succeeds at the tag.
+- (M, recorded by the run) Replay/Inspect peak memory at two threads fits the
+  16 GB cap. The admission run's container smoke reports the heaviest span's
+  cgroup peak and `admit.mjs` writes it into the entry's `limits`; a human
+  still reads the number before merging.
+- (T, admission smoke) `lake exe cache get` exists and succeeds at the tag —
+  the candidate's warm workspace is built cold in the same run.
 
 ## Risks and accepted trade-offs
 
