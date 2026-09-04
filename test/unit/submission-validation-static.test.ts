@@ -922,14 +922,15 @@ describe("archive environment selection", () => {
     // baseline is the compiled table with the seam cleared, not the ambient one
     withoutTestEnvironments(() => {
       expect(epoch().id).toBe(EPOCH);
-      expect(environments().map((entry) => entry.id)).toContain(EPOCH);
+      const compiled = environments().map((entry) => entry.id);
+      expect(compiled).toContain(EPOCH);
       withTestEnvironments([{ id: "v4.31.0" }], () => {
-        expect(environments().map((entry) => entry.id)).toEqual([EPOCH, "v4.31.0"]);
+        expect(environments().map((entry) => entry.id)).toEqual([...compiled, "v4.31.0"]);
         // an injected entry borrows the installed toolchain, so one Lean
         // install serves every environment a test invents
         expect(environment("v4.31.0")?.leanToolchain).toBe(epoch().leanToolchain);
       });
-      expect(environments().map((entry) => entry.id)).toEqual([EPOCH]);
+      expect(environments().map((entry) => entry.id)).toEqual(compiled);
     });
   });
 });
