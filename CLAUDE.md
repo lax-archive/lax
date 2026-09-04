@@ -61,10 +61,11 @@ prefer them over inferring intent from the current code.
   the spike and stages 1 to 5 landed the same day (table and selection,
   trusted workflow, inspector guards + golden fixture + admission
   workflow, `lax init --env`/`lax port`, the website surface in
-  lax-website), with a single entry, so nothing is author-visible until
-  the first admission. Jan-owned gates and stage 6 are in TODO.md; the
-  admission checklist is in the plan; `spike/environments/REPORT.md`
-  holds the stage-0 verdict.
+  lax-website). The first admission ran the same day: `v4.33.0` is the
+  second row, admitted without a measured memory cap (see TODO.md for
+  why), and the renderer that emits the machine index is pinned. Stage 6
+  and the open admission items are in TODO.md; the admission checklist is
+  in the plan; `spike/environments/REPORT.md` holds the stage-0 verdict.
 - **one-axiom-plan.md** — the old one-statement-per-concept design. The
   bound was lifted on 2026-08-06 (a concept declares any number of
   statements; see the spec-notes entry), and the plan document was deleted

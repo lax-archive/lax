@@ -9,13 +9,13 @@ import { recordSubmission } from "../../src/cli/registry.js";
 import * as ui from "../../src/cli/ui.js";
 import { REQUIRED_RENDERER_PATHS } from "../../src/cli/website-renderer.js";
 import { ELAN_COMMIT } from "../../src/submission-validation/pins.js";
-import { epoch } from "../../src/submission-validation/environments.js";
+import { environments, epoch } from "../../src/submission-validation/environments.js";
 import {
   markWarmReady,
   warmDir,
   warmReady,
 } from "../../src/submission-validation/host/warmstore.js";
-import { withoutTestEnvironmentsAsync, withTestEnvironmentsAsync } from "../support/environments.js";
+import { withTestEnvironmentsAsync } from "../support/environments.js";
 import { removeTree } from "../support/tmp.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -607,28 +607,23 @@ describe("lax doctor", () => {
     expect(fs.existsSync(warmDir(epoch()))).toBe(false);
   });
 
-  it("says nothing about environments while the table admits one", async () => {
-    // The Lean and Mathlib rows *are* that environment; a third row repeating
-    // them under another name is the duplication a collapsed report avoids.
-    const { log } = quiet();
-
-    // the compiled table alone: an admission run injects its candidate for
-    // the whole suite, and then the row is exactly what should appear
-    await withoutTestEnvironmentsAsync(() => doctor({ dry: true }));
-
-    expect(row(printed(log), "Environments")).toBeUndefined();
-  });
-
-  it("names every admitted environment, the epoch, and which are installed", async () => {
+  it("names every admitted environment, the epoch first, and which are installed", async () => {
+    // The row exists once the table admits more than one environment (while
+    // it admitted one, the Lean and Mathlib rows *were* that environment and
+    // the row was collapsed away; the table only grows, so that shape is
+    // history). What it says is asserted per entry rather than as one literal,
+    // because the compiled table's rows and whether this machine has them
+    // installed are not the test's to fix.
     provision();
     seedWarmStore();
     const { log } = quiet();
 
     await withTestEnvironmentsAsync([{ id: "v4.99.0" }], () => doctor({ dry: true }));
 
-    expect(row(printed(log), "Environments")).toBe(
-      `  ✓ Environments        ${epoch().id} (epoch, installed) · v4.99.0 (not installed)`,
-    );
+    const line = row(printed(log), "Environments");
+    expect(line).toMatch(new RegExp(`^  ✓ Environments        ${epoch().id} \\(epoch, installed\\)`, "u"));
+    for (const entry of environments()) expect(line).toContain(entry.id);
+    expect(line).toContain("v4.99.0 (not installed)");
   });
 
   it("--env checks and provisions the environment it names, not the epoch", async () => {
