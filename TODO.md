@@ -311,8 +311,8 @@ second. What remains is listed per stage below, then stage 6 (docs).
   have to coexist), and it repoints requires by editing the require block
   in place rather than reserializing the author's lakefile — a require
   not in one-key-per-line form is reported instead of rewritten.
-- **Stage 5 code is done** (2026-09-04, in the lax-website working tree,
-  uncommitted): `EPOCH` in lax-website's `src/config.ts` (edited once a
+- **Stage 5 code is done** (2026-09-04; lax-website commit 8c0d1a42 on
+  its main, unpushed): `EPOCH` in lax-website's `src/config.ts` (edited once a
   year), overridden by `generateSite`'s third argument, which `lax serve`
   now passes as `epoch().id` — an older pinned renderer ignores it; the
   off-epoch notice beside `draftBanner()` on the submission, concept,
@@ -332,9 +332,9 @@ second. What remains is listed per stage below, then stage 6 (docs).
   well as the downloaded copy, so a path may join it only once a release
   carries it (and the same edit is due in lax-website's
   `.github/scripts/package-renderer.mjs` REQUIRED_FILES).
-- **Stage 6**: README status and command table, the CLAUDE.md paragraph,
-  and a history note after the first real off-epoch round trip. (The
-  spec-notes entry for stage 1 is written.)
+- **Stage 6**: a history note after the first real off-epoch round trip
+  (README, CLAUDE.md, and the spec-notes entry are written; the plan
+  retires to `history/` with that note).
 
 ## Admin tool (admin-plan.md — designed, not implemented)
 
