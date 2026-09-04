@@ -100,7 +100,7 @@ pages the script prints.
    author-visible; the cold run also provisions elan, the toolchain, and
    mathlib, and saves the Actions cache before untrusted code runs.
    The script also reads the job logs for the per-environment plumbing
-   (environments-plan.md stage 2), with the environment taken from the
+   (history/environments-plan.md stage 2), with the environment taken from the
    submitted manifest's `leanVersion`: the static gate's `lax gate:
    environment <id>` line, the cache restore step naming a
    `lax-validation-host-v2-Linux-<id>-…` key (hit or miss), setup-vm's

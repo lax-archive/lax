@@ -374,7 +374,7 @@ describe("submission workflow wiring", () => {
   });
 
   it("provisions the environment the static gate selected, passed as data", () => {
-    // environments-plan.md stage 2. The gate is the one step that knows which
+    // history/environments-plan.md stage 2. The gate is the one step that knows which
     // archive environment the manifest named, and it says so through two step
     // outputs computed from the table row (run.ts writeGateOutputs): the row's
     // id and the host cache key. The restore and save steps take the key
@@ -727,7 +727,7 @@ describe("CI workflow wiring", () => {
   it("guards every admitted environment's inspector, on the table and weekly", () => {
     // The check job installs the epoch alone, so between admissions no other
     // admitted environment's inspector is built anywhere — and an environment
-    // stays open forever (environments-plan.md, "Islands"). The matrix job is
+    // stays open forever (history/environments-plan.md, "Islands"). The matrix job is
     // that guard: one leg per table row, its toolchain and nothing else, the
     // inspector build (which carries Main.lean's shape guards) and the golden
     // report. It answers to the weekly cron as well as to a push touching the

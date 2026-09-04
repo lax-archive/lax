@@ -1,4 +1,4 @@
-// The trusted workflow's per-environment host provisioning (environments-plan.md
+// The trusted workflow's per-environment host provisioning (history/environments-plan.md
 // stage 2): the Actions cache identity host/setup.ts derives from an
 // environment's table row, and the `setup-vm.js [--env <id>] [--cache-key]`
 // argument contract the three workflows call through. The YAML side — which

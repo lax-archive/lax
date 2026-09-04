@@ -2,7 +2,7 @@ name: Environments
 
 # Admission: propose a new archive environment when mathlib cuts a release.
 #
-# environments-plan.md, "Admission: environments.yml". The archive recommends
+# history/environments-plan.md, "Admission: environments.yml". The archive recommends
 # one environment a year (the *epoch*) and admits mathlib's monthly `vX.Y.0`
 # releases beside it, so authors who need a newer mathlib have somewhere to go.
 # Admitting one costs a full test pass under its toolchain, which is what this

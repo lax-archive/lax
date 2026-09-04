@@ -54,7 +54,7 @@ describe("discover.mjs: which mathlib releases are candidates", () => {
 
   it("skips the backlog the plan decided not to admit", () => {
     // v4.31.0 and v4.32.0 came out before admission existed: nobody needs
-    // them and each would cost a full run (environments-plan.md, "Open
+    // them and each would cost a full run (history/environments-plan.md, "Open
     // decisions" — forward only).
     const kept = candidateTags(TAGS, { known: ["v4.30.0"], floor: "v4.30.0" });
     expect(kept).not.toContain("v4.31.0");

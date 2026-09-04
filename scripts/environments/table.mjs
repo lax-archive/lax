@@ -1,7 +1,7 @@
 // Reading and writing the archive environment table as *text*.
 //
 // `src/submission-validation/environments.ts` is the single home of the table
-// (environments-plan.md, "The environment table"). Two jobs need it without a
+// (history/environments-plan.md, "The environment table"). Two jobs need it without a
 // TypeScript build in hand: the `inspector-matrix` gate, which decides which
 // toolchains to install before anything is compiled, and `admit.mjs`, which
 // appends an entry and opens a pull request. Both go through this module, so

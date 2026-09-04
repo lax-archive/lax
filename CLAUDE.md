@@ -53,19 +53,17 @@ prefer them over inferring intent from the current code.
   the Jan-owned gates — fork repo, docker smoke, rehearsal, renderer
   release, round trip — are in TODO.md. Both plans retire to `history/`
   after the round trips.
-- **environments-plan.md** — several Lean/mathlib versions: a yearly
-  *epoch* as the default, monthly mathlib `vX.Y.0` release tags as
+- **history/environments-plan.md** — several Lean/mathlib versions: a
+  yearly *epoch* as the default, monthly mathlib `vX.Y.0` release tags as
   admitted environments authors may stray to after a typed confirmation,
   one inspector build per environment, a scheduled admission workflow,
-  and a flat database with a website-emitted index. Planned 2026-09-04;
-  the spike and stages 1 to 5 landed the same day (table and selection,
-  trusted workflow, inspector guards + golden fixture + admission
-  workflow, `lax init --env`/`lax port`, the website surface in
-  lax-website). The first admission ran the same day: `v4.33.0` is the
-  second row, admitted without a measured memory cap (see TODO.md for
-  why), and the renderer that emits the machine index is pinned. Stage 6
-  and the open admission items are in TODO.md; the admission checklist is
-  in the plan; `spike/environments/REPORT.md` holds the stage-0 verdict.
+  and a flat database with a website-emitted index. Planned, spiked,
+  implemented through all six stages, first admission (`v4.33.0`) and
+  first off-epoch round trip all on 2026-09-04; retired to `history/`
+  with `history/environments-roundtrip-20260904.md`, which holds the
+  measurements and the cache-save finding. The admission checklist stays
+  in the plan; `spike/environments/REPORT.md` holds the stage-0 verdict;
+  the open items are in TODO.md.
 - **admin-plan.md** — maintainer-only operations. The issue-scoped verbs
   (`/lax admin revalidate|delete|reset-draft|owners`, allowlisted by
   numeric id in `ADMIN_GITHUB_IDS`, gates repeated credential-free in the
@@ -100,7 +98,11 @@ prefer them over inferring intent from the current code.
   `paper-roundtrip-20260902.md` (the lax-61 stage-3 round trip), and
   `audit-20260903.md` (the 0.1.31→0.1.35 hardening audit — 40 verified
   defects, and the one class they nearly all belong to: rules copied to
-  call sites instead of placed at boundaries).
+  call sites instead of placed at boundaries), `environments-plan.md`
+  (the multi-environment design, retired executed) and
+  `environments-roundtrip-20260904.md` (the first off-epoch round trip:
+  timings, the limits decision, and why the validate job cannot save
+  caches).
 
 ## Commands
 

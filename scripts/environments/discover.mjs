@@ -7,7 +7,7 @@
 // Prints a JSON matrix on stdout and a human summary on stderr:
 //   {"include":[{"id":"v4.34.0","leanToolchain":"…","mathlibCommit":"…"}]}
 //
-// Step 1 of `.github/workflows/environments.yml` (environments-plan.md,
+// Step 1 of `.github/workflows/environments.yml` (history/environments-plan.md,
 // "Admission: environments.yml"). It reads mathlib and nothing else: no App
 // key, no database, no author code.
 //
@@ -32,7 +32,7 @@ import { readTable, REPOSITORY_ROOT } from "./table.mjs";
 /**
  * The oldest release admission will consider.
  *
- * Stage 3 of environments-plan.md landed on ADMISSION_START_DATE, when
+ * Stage 3 of history/environments-plan.md landed on ADMISSION_START_DATE, when
  * mathlib's newest `vX.Y.0` tag was this one; the plan's decision is to go
  * forward only, so v4.31.0 and v4.32.0 stay backlog. This is that date
  * expressed as the version that carried it — moving it is a deliberate edit,

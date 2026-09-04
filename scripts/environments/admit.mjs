@@ -10,7 +10,7 @@
 // pushes, and holds no credential.
 //
 // The table only grows and an entry is never edited afterwards except to add
-// `limits` or `closedAt` (environments-plan.md, "The environment table"), so
+// `limits` or `closedAt` (history/environments-plan.md, "The environment table"), so
 // admitting an id that is already there is an error, not an update.
 //
 // `--memory-bytes` and `--lean-threads` write `limits`, which override

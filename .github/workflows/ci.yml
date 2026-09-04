@@ -210,7 +210,7 @@ jobs:
   # Which environments the inspector still has to build for, and whether this
   # event needs asking. The check job installs the epoch alone, so between
   # admissions every other admitted environment's inspector is unguarded — and
-  # an environment stays open forever (environments-plan.md, "Islands"), so a
+  # an environment stays open forever (history/environments-plan.md, "Islands"), so a
   # release that breaks an old one has to surface here rather than in a
   # validation run. The matrix comes from the table's own source text, so this
   # job needs no npm install and no build, and an unreadable table fails loudly

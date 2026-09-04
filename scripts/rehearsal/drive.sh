@@ -116,7 +116,7 @@ refute_job_success() {
 expect_log() {
   # $1 = run id, $2 = job display name, $3 = fixed string its log must carry.
   # Job logs are the only place the per-environment plumbing of
-  # environments-plan.md stage 2 is visible: the gate's selection, the cache
+  # history/environments-plan.md stage 2 is visible: the gate's selection, the cache
   # key the restore step used, the provisioning line, the publisher's lookup.
   local job_id
   job_id="$(gh run view "$1" --repo "$CONTROL" --json jobs \

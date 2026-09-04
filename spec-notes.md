@@ -18,7 +18,8 @@ one every citation-connected submission shares by default. The table only
 grows; an entry is never edited except to add measured `limits` or a
 `closedAt` lever (shipped unused). It holds one row today, `v4.30.0` at
 mathlib `c5ea003…`, admitted at go-live — so nothing an author does or sees
-changes yet. See environments-plan.md for the rest of the design.
+changes yet. See history/environments-plan.md for the rest of the design
+(retired executed; the second row, `v4.33.0`, was admitted the same day).
 
 What this changes in the spec's terms:
 

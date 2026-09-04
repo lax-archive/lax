@@ -35,7 +35,8 @@ non-interactively); `lax doctor` lists the admitted environments and which are
 installed on the machine, and `lax doctor --env <id>` provisions one ahead of
 time. Old environments stay valid forever: moving work forward is a new
 submission that supersedes the old one, which `lax port lax-N [folder] --env
-<id>` scaffolds. Design and stages: environments-plan.md.
+<id>` scaffolds. Design: history/environments-plan.md; the first off-epoch
+round trip: history/environments-roundtrip-20260904.md.
 
 **Versioning.** A new version of a registered submission is an ordinary new
 submission whose `manifest.yaml` carries the optional `supersedes: lax-N`

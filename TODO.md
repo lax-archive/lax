@@ -229,110 +229,52 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   digest is not recorded in the report's runtime identity (the pin lives
   in `pins.ts`, so a bump is a reviewed edit).
 
-## Archive environments (environments-plan.md — stages 1 to 5 landed 2026-09-04)
+## Archive environments (closed 2026-09-04; record in history/)
 
 Several Lean/mathlib versions: a yearly **epoch** as the default, monthly
 mathlib `vX.Y.0` release tags as admitted environments authors may stray
-to after a typed confirmation. Stage 1 (the table, selection,
-per-environment provisioning), stage 2 (the trusted workflow selecting per
-environment), stage 3 (the admission machinery), stage 4 (the CLI
-surface) and stage 5 (the website surface) are in; the table holds one
-row, so nothing an author sees changes until the first admission adds a
-second. What remains is listed per stage below, then stage 6 (docs).
+to after a typed confirmation. All six stages, the first admission
+(`v4.33.0`, CLI 0.1.39) and the first off-epoch round trip (lax-851268,
+deleted afterwards) landed 2026-09-04; the plan is
+`history/environments-plan.md` and the round trip, with its measurements,
+is `history/environments-roundtrip-20260904.md`. What stays open:
 
-- **Stage 0 spike ran 2026-09-04** (`spike/environments/REPORT.md`): GO.
-  The inspector compiles unchanged under v4.33.0 with byte-identical
-  output, the whole suite passes under that toolchain, and only
-  `assets/prooftree/Main.lean` breaks (`Environment.addDeclCore` gained a
-  `maxRecDepth` argument); `spike/environments/prooftree-addDecl.patch`
-  compiles under both releases and lands in stage 3 with an explicit
-  unlimited `maxRecDepth`. Still unmeasured: a cold `lake exe cache get`
-  at v4.33.0 (23 GB free here) and the replay peak — the first admission
-  run measures both.
-- **Stage 2 is done** (2026-09-04): the static gate writes the selected
-  environment id and the per-environment cache key (`host/setup.ts
-  validationHostCacheKey`, salt `lax-validation-host-v2`) to
-  `$GITHUB_OUTPUT`; the lean cache restore and save use that key;
-  `setup-vm.js --env <id>` provisions only that environment (no `--env`
-  is the epoch, which is what `ci.yml` and `release.yml` provision, under
-  the same key from `setup-vm.js --cache-key`); the publisher looks the
-  report's environment up in the table before any token is minted. Jan
-  waived the rehearsal drill for this release (2026-09-04); `drive.sh`
-  keeps the environment-line assertions for the next Actions-side change.
-  **Worth an eye on the first production run**: the first key with the
-  new salt is a cache miss, so that run provisions cold (~3 min) and
-  saves; the old `v1` entries age out on their own.
-- **Stage 3 is done, and the first admission ran 2026-09-04**: the
-  inspector's shape guards, the `inspector-golden` fixture and test, the
-  composer's `Lean.addDecl` port, the `inspector-plan`/`inspector-matrix`
-  jobs in `ci.yml`, and `environments.yml` with
-  `scripts/environments/{discover,admit,matrix,install-toolchain}.mjs`.
-  `v4.33.0` (mathlib `db584cd6d46c92f209a44c0f1c829460d327499d`) is the
-  second row of the table, merged from the pull request the fourth run
-  pushed (run 33870950217; the container smoke against a second mathlib
-  passed all eight fixtures, cold `lake exe cache get` about 2 min, the
-  whole smoke 5 min 46 s on a hosted runner). The three runs before it
-  each found one thing the job could not see locally, all fixed on main:
-  the job installed only the candidate's toolchain, so the suite's shared
-  fake-mathlib store was never built and five tests failed rather than
-  skipped, while three table tests assumed the one-row table under the
-  suite-wide seam (`8992821`); the composer smoke driver left the
-  toolchain off the child's PATH, which `findSysroot` needs — red on
-  main since the stage-3 port, on CI only (`7ede363`); and the smoke's
-  `paper-web` fixture needs the ReflowTeX fetch the job lacked, hidden
-  by a `tee` without `pipefail` that turned the crash into a green step
-  with no measurement (`e954005`). Still open from that run:
-  - **[Jan] Let Actions open pull requests.** The organization setting
-    ("Allow GitHub Actions to create and approve pull requests", org
-    Settings → Actions → General) is off and the repository cannot
-    override it, so the admit job pushes its branch and then fails at
-    `gh pr create`; the 2026-09-04 pull request was opened by hand.
-    Until it is on, every scheduled admission ends the same way.
-  - **The admission's measurement is a note, not a cap** (decided
-    2026-09-04, after the first run). The smoke's heaviest-span peak over
-    its fixtures (1.15 GiB for v4.33.0) used to become the entry's
-    `limits.memoryBytes`, hence the container's `--memory` cap, which a
-    real submission (~5.6 GiB per replay thread at the epoch) would have
-    blown straight through. Now the admit job records the peak in the
-    pull request body and passes no `--memory-bytes`; the entry inherits
-    `DEFAULT_LIMITS`, and `limits` is written by hand only after a
-    full-mathlib replay has been measured in the environment (typically
-    `leanThreads: 1` once an import no longer fits twice). A
-    workflow-definition test pins it. The plan's checklist, spec-notes,
-    and `admit.mjs` say the same.
-  - **Epoch fixture in the admission job**: the job now installs the
-    epoch's toolchain beside the candidate's so the fake-mathlib suite
-    runs the way `ci.yml` runs it; the suite therefore proves the
-    plumbing under a two-row table, and only the golden test, the
-    composer smoke, and the container smoke run the candidate's Lean.
-- **Stage 4 is done** (2026-09-04, unreleased): `lax init [--env <id>]
-  [--yes]` scaffolds in the environment it names, after a typed
-  confirmation and the two populations when that is not the epoch;
-  `lax doctor` grew an `Environments` row (hidden while the table admits
-  one) and an `--env <id>` that points the whole Lean chain at another
-  environment and provisions it, disk statement first; `lax port lax-N
-  [folder] [--env <id>]` scaffolds the cross-environment successor. Docs
-  in README and `assets/instructions.md`. Two things the plan's CLI
-  section did not say, decided here: a port assigns a **fresh id** and
-  rekeys the folder (package names derive from the id and both versions
-  have to coexist), and it repoints requires by editing the require block
-  in place rather than reserializing the author's lakefile — a require
-  not in one-key-per-line form is reported instead of rewritten.
-- **Stage 5 is done** (2026-09-04): `EPOCH` in lax-website's
-  `src/config.ts` (edited once a year), overridden by `generateSite`'s
-  third argument, which `lax serve` passes as `epoch().id`; the off-epoch
-  notice on the submission, concept, proof and paper pages and the
-  `epoch` label on the masthead's Lean pin; the environment as one more
-  chip in the tag strip (chips appear only once a second environment holds
-  work), listings epoch first and other environments newest first;
-  `index.json` and `environments.json` at the site root, linked from
-  `content/contributing.md`. Released as renderer `30927d2d`, re-pinned,
-  and `dist/sitegen/machine-index.js` is in `REQUIRED_RENDERER_PATHS`,
-  the `deployment/verify.ts` list, the `website-renderer` test fixture,
-  and lax-website's `package-renderer.mjs` REQUIRED_FILES.
-- **Stage 6**: a history note after the first real off-epoch round trip
-  (README, CLAUDE.md, and the spec-notes entry are written; the plan
-  retires to `history/` with that note).
+- **[Jan] Let Actions open pull requests.** The organization setting
+  ("Allow GitHub Actions to create and approve pull requests", org
+  Settings → Actions → General) is off and the repository cannot
+  override it, so the admit job pushes its branch and then fails at
+  `gh pr create`; the 2026-09-04 pull request was opened by hand. Until
+  it is on, every scheduled admission ends the same way. (Both the
+  org-level read and the repo-level write of that setting were refused
+  to the CLI token on 2026-09-04.)
+- **Nothing saves an off-epoch host cache, so every off-epoch submission
+  provisions cold.** Every `submission.yml` run since 2026-08-07 carries
+  `Cache reservation failed: cache write denied: token has no writable
+  scopes` on its save steps (route's `dist` cache, validate's lean host
+  cache): an `issue_comment`-run job with only `contents: read` gets a
+  token the cache service refuses to write with. It was invisible because
+  `ci.yml` saves the epoch's host cache on every push to `main` and
+  validate restores it; the cache API shows the epoch's `v2` entry alone
+  (3.28 GB, saved from `refs/heads/main`). v4.33.0 provisions cold on
+  every run (~2 min today: warm workspace 102.9 s, peak 7.43 GiB). Fix
+  in `ci.yml`, whose saves work — provision and save every admitted
+  environment, e.g. in `inspector-matrix`, which already runs per
+  environment on table changes and weekly — after weighing the 10 GB
+  repository cache ceiling (~3.3 GB per environment, LRU eviction). Do
+  not fix it by giving the validate job a writable scope: that job runs
+  submission code. The dead save steps in `submission.yml` could then go.
+- **The admission's measurement is a note, not a cap** (decided
+  2026-09-04, after the first run nearly merged the smoke's 1.15 GiB
+  fixture peak as the container cap). The admit job records the peak in
+  the pull request body and passes no limits flag; the entry inherits
+  `DEFAULT_LIMITS`, and `limits` is written by hand only after a
+  full-mathlib replay has been measured in the environment (typically
+  `leanThreads: 1` once an import no longer fits twice). A
+  workflow-definition test pins it. Nothing to do unless an environment's
+  real import outgrows the defaults.
+- **Epoch bump**: the runbook in the plan ("Islands, porting, and the
+  epoch bump") has not run yet; first due when the 2027 epoch is chosen.
+  Re-measure `DEFAULT_LIMITS` on the new epoch's mathlib then.
 
 ## Admin tool (admin-plan.md — issue-scoped verbs and the driver landed 2026-09-04)
 

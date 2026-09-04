@@ -361,7 +361,7 @@ def drifted (reader what expected actual : String) : String :=
     ++ "unsafeCast in `" ++ reader ++ "` is no longer sound.\n  recorded: " ++ expected
     ++ "\n  found:    " ++ actual
     ++ "\nUpdate the reader and the recorded shape together; see \"The inspector\" in "
-    ++ "environments-plan.md before admitting this environment."
+    ++ "history/environments-plan.md before admitting this environment."
 
 /-- Fail elaboration unless `typeName` is still an inductive whose constructors
 have exactly the recorded signatures. -/
