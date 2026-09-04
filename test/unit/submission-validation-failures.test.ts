@@ -44,6 +44,20 @@ describe("submission validation failure ownership", () => {
       "compile timed out",
       "compile ran out of memory",
     )).toMatchObject({ kind: "infrastructure", retryable: true });
+    // A pinned image whose PATH does not hold the command the phase asked
+    // for: the image is ours, so the exit is ours — and it says nothing
+    // about the submission, which would otherwise be refused on content.
+    expect(containerBoundaryFailure(
+      { code: 127, output: 'exec: "latexmk": executable file not found in $PATH', timedOut: false },
+      "the paper did not compile in time",
+      "the paper compile ran out of memory",
+    )).toMatchObject({ kind: "infrastructure", retryable: false, message: expect.stringContaining("latexmk") });
+    // Every other nonzero code belongs to the tool the phase meant to run.
+    expect(containerBoundaryFailure(
+      { code: 12, output: "! Undefined control sequence.", timedOut: false },
+      "the paper did not compile in time",
+      "the paper compile ran out of memory",
+    )).toBeUndefined();
   });
 
   it("treats source transport outages as retryable but bad source coordinates as authored", () => {

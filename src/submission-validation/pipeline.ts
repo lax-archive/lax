@@ -21,6 +21,7 @@ import {
   asPipelineFailure,
   infrastructureFailure,
   looksRetryable,
+  type PipelineFailure,
   type PipelineFailureKind,
   submittedSourceFailure,
 } from "./failures.js";
@@ -107,8 +108,17 @@ interface ReportState {
    * Joined exactly once — by joinPaper — whatever the Lean side does, so
    * both findings reach the author and the job directory outlives latexmk.
    */
-  paperRun?: Promise<PaperPhaseResult>;
-  paperJoined?: PaperPhaseResult;
+  paperRun?: Promise<PaperRun>;
+  paperJoined?: PaperRun;
+}
+
+/**
+ * What the paper phase hands back: its findings, and — when it stopped on
+ * something that is not a verdict on the paper at all — the classified
+ * failure it stopped on, for joinPaper to give the report.
+ */
+interface PaperRun extends PaperPhaseResult {
+  failure?: PipelineFailure;
 }
 
 interface PreparedValidation extends ReportState {
@@ -348,7 +358,8 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
 
   // The join: the paper's marks need the ids Inspect just produced.
   const paper = await joinPaper(state);
-  if (paper?.findings.failed === true) return report(state, false);
+  if (paper !== undefined && (paper.findings.failed || paper.failure !== undefined))
+    return report(state, false);
 
   try {
     let paperOutput: PaperOutput | undefined;
@@ -394,25 +405,56 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
   }
 }
 
-/** Await the paper once and fold its findings into the report state. */
-async function joinPaper(state: ReportState): Promise<PaperPhaseResult | undefined> {
+/**
+ * Await the paper once and fold what it produced into the report state: its
+ * findings when it judged the paper, and the outcome-ownership decision
+ * below when it never got that far.
+ */
+async function joinPaper(state: ReportState): Promise<PaperRun | undefined> {
   if (state.paperRun === undefined) return undefined;
   if (state.paperJoined === undefined) {
-    state.paperJoined = await state.paperRun;
-    state.warnings.push(...state.paperJoined.findings.warnings);
+    const paper = await state.paperRun;
+    state.paperJoined = paper;
+    // A Lean side that already failed operationally keeps precedence: one
+    // report carries one reason why no verdict was reached.
     if (state.failure === undefined) {
-      state.violations.push(...state.paperJoined.findings.violations);
+      if (paper.failure === undefined) {
+        state.violations.push(...paper.findings.violations);
+      } else if (state.violations.length === 0) {
+        // The paper phase reached no verdict and neither did anything else:
+        // the report says the archive could not compile the paper — an
+        // operational outcome, retryable where the fault was — instead of
+        // telling the author their paper is broken.
+        recordFailure(state, "paper", "runtime", paper.failure);
+      } else {
+        // A report is either a verdict on the submission or an operational
+        // failure, never both (writeValidationOutputs refuses the mixture),
+        // and the Lean side has already given the verdict this submission is
+        // refused on. The archive's own fault still belongs in the report, so
+        // it goes where it can stand beside a verdict — a warning that blames
+        // nobody's paper.
+        paper.findings.warn(
+          "runtime",
+          `the archive could not compile the paper this run: ${safeError(paper.failure)}` +
+            "; the paper was not judged, and is compiled again on the next attempt",
+        );
+      }
     }
+    state.warnings.push(...paper.findings.warnings);
   }
   return state.paperJoined;
 }
 
 /**
  * Start the paper's independent piece: copy and rewrite, pull the TeX image,
- * compile, read the destinations back, count-check. Everything the phase
- * does not turn into a finding itself — a missing laxmark.sty, an image that
- * will not pull, a workspace over its cap — becomes one here, so the promise
- * never rejects while nothing is awaiting it.
+ * compile, read the destinations back, count-check. Nothing may reject while
+ * nothing is awaiting the promise, so everything the phase does not turn into
+ * a finding itself is caught here — but catching it is not the same as
+ * blaming the author for it. A TeX image that will not pull, a laxmark.sty
+ * the copy could not read, a job workspace over its cap: none of those is a
+ * statement about the submitted paper, so they keep the ownership their
+ * thrower gave them and default to the pipeline's usual guess for an
+ * unclassified error — the archive's own, not the author's.
  */
 function startPaperPhase(
   paper: StaticPaper,
@@ -425,14 +467,13 @@ function startPaperPhase(
     webDeriver: WebDeriver;
     phase: PreparedValidation["phase"];
   },
-): Promise<PaperPhaseResult> {
-  const asFinding = (error: unknown): PaperPhaseResult => {
-    const findings = new FindingCollector("paper");
-    findings.violate("runtime", safeError(error));
-    return { findings };
-  };
+): Promise<PaperRun> {
+  const owned = (error: unknown): PaperRun => ({
+    findings: new FindingCollector("paper"),
+    failure: asPipelineFailure(error, "infrastructure", looksRetryable(error)),
+  });
   return state
-    .phase("paper", async (): Promise<PaperPhaseResult> => {
+    .phase("paper", async (): Promise<PaperRun> => {
       try {
         return await runPaperPhase({
           paper,
@@ -444,10 +485,12 @@ function startPaperPhase(
           deriveWeb: state.webDeriver,
         });
       } catch (error) {
-        return asFinding(error);
+        return owned(error);
       }
     })
-    .catch(asFinding);
+    // The phase wrapper's own throw — the workspace cap it asserts after the
+    // operation returns — is classified here too, and lands like the rest.
+    .catch(owned);
 }
 
 async function prepareValidation(
@@ -536,7 +579,7 @@ async function prepareValidation(
   // runtime available costs an image pull and a provisioned host, which
   // spec.md's Static → Resolution → Provision order spends only on a
   // submission that has already passed the millisecond-level phases.
-  let paperRun: Promise<PaperPhaseResult> | undefined;
+  let paperRun: Promise<PaperRun> | undefined;
   if (options.stopAfter !== "resolution") {
     // The paper needs no Lean, so it starts here — before the runtime is even
     // verified — and overlaps the whole Lean chain. The web derivation rides
@@ -587,6 +630,24 @@ function fail(
   fallbackKind: PipelineFailureKind = "infrastructure",
   retryable = false,
 ): ValidationReport {
+  recordFailure(state, phase, rule, error, fallbackKind, retryable);
+  return report(state, false);
+}
+
+/**
+ * The ownership decision itself, for the callers that have no report to
+ * return yet: a submission-kind failure is a finding against the author's
+ * content, and everything else — capacity, the archive's own machinery — is
+ * the report's failure, which says no verdict was reached at all.
+ */
+function recordFailure(
+  state: ReportState,
+  phase: ValidationFinding["phase"],
+  rule: string,
+  error: unknown,
+  fallbackKind: PipelineFailureKind = "infrastructure",
+  retryable = false,
+): void {
   const failure = asPipelineFailure(error, fallbackKind, retryable);
   const message = safeError(failure);
   if (failure.kind === "submission") {
@@ -594,7 +655,6 @@ function fail(
   } else {
     state.failure = { kind: failure.kind, retryable: failure.retryable, phase, rule, message };
   }
-  return report(state, false);
 }
 
 function report(state: ReportState, ok: boolean): ValidationReport {

@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PAPER_CAPS, type ValidationLimits } from "../config.js";
 import type { StaticPaper } from "../contracts.js";
+import { containerBoundaryFailure } from "../failures.js";
 import { FindingCollector } from "../findings.js";
 import { latexmkArguments, oneLineTail, paperPdfName } from "./compile.js";
 import { extractPdf, matchDestinations, type LocatedMark } from "./extract.js";
@@ -71,13 +72,23 @@ export async function runPaperPhase(input: PaperPhaseInput): Promise<PaperPhaseR
 
   const result = await input.compile(workDir, latexmkArguments(paper.manifest.engine, paper.manifest.main), input.sourceDateEpoch);
   if (result.code !== 0 || result.timedOut === true) {
-    findings.violate(
-      "compile",
-      (result.timedOut === true
-        ? `the paper did not compile within ${Math.round(input.limits.paperCompileTimeoutMs / 60_000)} minutes`
-        : `the paper did not compile (latexmk exit ${result.code})`) +
-        `; the end of the transcript: ${oneLineTail(result.output, input.limits.paperLogTailChars)}`,
+    const tail = `; the end of the transcript: ${oneLineTail(result.output, input.limits.paperLogTailChars)}`;
+    // Not every nonzero exit is latexmk's verdict on the paper. The codes the
+    // executor reserves for itself — a container that would not start, an
+    // image whose PATH has no latexmk in it, the enforced memory ceiling, the
+    // compile timeout — describe the archive's machinery, and reporting them
+    // as "your paper did not compile" would blame the author for our
+    // infrastructure and mark a retryable outage as a settled verdict. So the
+    // ownership decision comes first, exactly as every Lean phase makes it
+    // (phases/compile.ts). Both executors' results pass through this one
+    // place, so no executor has to remember the rule.
+    const boundary = containerBoundaryFailure(
+      { code: result.code, output: result.output, timedOut: result.timedOut === true },
+      `the paper did not compile within ${Math.round(input.limits.paperCompileTimeoutMs / 60_000)} minutes${tail}`,
+      `the paper compile exceeded its memory limit${tail}`,
     );
+    if (boundary !== undefined) throw boundary;
+    findings.violate("compile", `the paper did not compile (latexmk exit ${result.code})${tail}`);
     return { findings };
   }
 
