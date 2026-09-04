@@ -11,6 +11,25 @@ export interface TestEnvironmentInput {
   leanToolchain?: string;
 }
 
+/**
+ * The ids `LAX_TEST_ENVIRONMENTS` currently injects, in order, or an empty
+ * list. The drivers that provision exactly *one* environment — the container
+ * smoke, whose warm mathlib workspace is 7.5 GB — read it to follow an
+ * admission run's candidate instead of the epoch; the drivers that check every
+ * installed environment (the golden test, the proof-tree smoke) never need it.
+ */
+export function injectedEnvironmentIds(): string[] {
+  const raw = process.env.LAX_TEST_ENVIRONMENTS;
+  if (raw === undefined || raw === "") return [];
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) throw new Error("LAX_TEST_ENVIRONMENTS must be a JSON list");
+  return parsed.map((entry) => {
+    const id = (entry as { id?: unknown }).id;
+    if (typeof id !== "string") throw new Error("a LAX_TEST_ENVIRONMENTS entry has no id");
+    return id;
+  });
+}
+
 /** Run `body` with these extra environments admitted, then restore the seam. */
 export function withTestEnvironments<T>(entries: TestEnvironmentInput[], body: () => T): T {
   const previous = process.env.LAX_TEST_ENVIRONMENTS;

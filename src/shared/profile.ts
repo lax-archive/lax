@@ -97,6 +97,25 @@ export function notePeakMemory(bytes: number): void {
   }
 }
 
+/**
+ * The largest peak-memory observation anywhere in a profile, in bytes, or
+ * undefined when nothing measured one. The heaviest span is what a limits
+ * decision is made against: an admission run records this figure so the new
+ * environment's entry can carry its own `memoryBytes` rather than inherit a
+ * budget measured on another mathlib.
+ */
+export function peakMemoryBytes(root: Span): number | undefined {
+  let heaviest: number | undefined;
+  const walk = (span: Span): void => {
+    if (span.peakMemoryBytes !== undefined && (heaviest === undefined || span.peakMemoryBytes > heaviest)) {
+      heaviest = span.peakMemoryBytes;
+    }
+    for (const child of span.children) walk(child);
+  };
+  walk(root);
+  return heaviest;
+}
+
 export function formatMs(ms: number): string {
   if (ms >= 90_000) return `${(ms / 60_000).toFixed(1)}m`;
   if (ms >= 10_000) return `${(ms / 1_000).toFixed(0)}s`;
@@ -161,14 +180,7 @@ export function formatProfile(root: Span): string {
     lines.push(`${"  shortest run (startup floor)".padEnd(44)}${formatMs(shortest).padStart(8)}`);
   }
 
-  let heaviest: number | undefined;
-  const findPeaks = (span: Span): void => {
-    if (span.peakMemoryBytes !== undefined && (heaviest === undefined || span.peakMemoryBytes > heaviest)) {
-      heaviest = span.peakMemoryBytes;
-    }
-    for (const child of span.children) findPeaks(child);
-  };
-  findPeaks(root);
+  const heaviest = peakMemoryBytes(root);
   if (heaviest !== undefined) {
     lines.push(`${"peak memory (heaviest span)".padEnd(44)}${formatBytes(heaviest).padStart(8)}`);
   }

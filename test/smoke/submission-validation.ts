@@ -22,14 +22,18 @@ import type {
   ValidationRequest,
 } from "../../src/submission-validation/contracts.js";
 import { packageNameForSubmission } from "../../src/submission-validation/contracts.js";
-import { epoch } from "../../src/submission-validation/environments.js";
+import {
+  environment as environmentById,
+  epoch,
+} from "../../src/submission-validation/environments.js";
 import { ensureValidationHost } from "../../src/submission-validation/host/setup.js";
 import { mathlibUrl, REFLOWTEX_REV } from "../../src/submission-validation/pins.js";
 import {
   validateSubmission,
   type ValidationOptions,
 } from "../../src/submission-validation/pipeline.js";
-import { formatProfile, Profiler } from "../../src/shared/profile.js";
+import { formatProfile, peakMemoryBytes, Profiler } from "../../src/shared/profile.js";
+import { injectedEnvironmentIds } from "../support/environments.js";
 
 interface RuntimePins {
   leanToolchain: string;
@@ -100,9 +104,18 @@ assert(
   "the smoke runs against the real pins; unset the LAX_MATHLIB_* test seam",
 );
 
-// The smoke exercises one environment end to end: the epoch's, which is what
-// the trusted workflow provisions.
-const environment = epoch();
+// The smoke exercises exactly one environment end to end — a warm mathlib
+// workspace is 7.5 GB — and normally that is the epoch's, which is what the
+// trusted workflow provisions. An admission run instead injects its candidate
+// through LAX_TEST_ENVIRONMENTS (a test seam, and this is a test) and the
+// smoke follows it: measuring the candidate is the whole point of that run.
+const injected = injectedEnvironmentIds();
+assert(
+  injected.length <= 1,
+  `the smoke provisions one environment; LAX_TEST_ENVIRONMENTS names ${injected.length}`,
+);
+const environment = injected[0] === undefined ? epoch() : environmentById(injected[0]);
+assert(environment !== undefined, `LAX_TEST_ENVIRONMENTS names ${injected[0]}, which is not admitted`);
 const runtime: RuntimePins = {
   leanToolchain: environment.leanToolchain,
   leanVersion: environment.id,
@@ -111,7 +124,16 @@ const runtime: RuntimePins = {
 };
 assert(await ensureValidationHost({ environment, echo: true }), "validation host setup failed");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-submission-validation-smoke-"));
-const completed: Array<{ name: string; ok: boolean; wallMs?: number; captureFiles?: number }> = [];
+// `peakMemoryBytes` is the figure an admission run reads back off the log to
+// write the new environment's `limits`: the container runner samples the
+// cgroup, so it is the container's own peak, not this process's.
+const completed: Array<{
+  name: string;
+  ok: boolean;
+  wallMs?: number;
+  captureFiles?: number;
+  peakMemoryBytes?: number;
+}> = [];
 const selectedFixtures = fixtures().filter(
   (fixture) => process.env.LAX_SMOKE_CASE === undefined || fixture.name === process.env.LAX_SMOKE_CASE,
 );
@@ -164,16 +186,27 @@ try {
     };
     const started = performance.now();
     const report = await validateSubmission(request, jobRoot, options);
-    console.error(`\n[${fixture.name}]\n${formatProfile(profiler.snapshot())}`);
+    const snapshot = profiler.snapshot();
+    const peak = peakMemoryBytes(snapshot);
+    console.error(`\n[${fixture.name}]\n${formatProfile(snapshot)}`);
     fixture.check(report, jobRoot);
     completed.push({
       name: fixture.name,
       ok: report.ok,
       wallMs: Math.round(performance.now() - started),
       ...(report.capture === undefined ? {} : { captureFiles: report.capture.files.length }),
+      ...(peak === undefined ? {} : { peakMemoryBytes: peak }),
     });
   }
-  console.log(JSON.stringify({ ok: true, cases: completed }));
+  console.log(JSON.stringify({
+    ok: true,
+    environment: environment.id,
+    peakMemoryBytes: completed.reduce(
+      (largest, one) => Math.max(largest, one.peakMemoryBytes ?? 0),
+      0,
+    ),
+    cases: completed,
+  }));
 } finally {
   if (process.env.LAX_SMOKE_KEEP === "1") console.error(`smoke workspace retained at ${root}`);
   else fs.rmSync(root, { recursive: true, force: true });
