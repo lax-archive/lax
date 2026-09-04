@@ -70,6 +70,16 @@ export function isAdminCommand(command: ParsedCommand | undefined): boolean {
   return command !== undefined && "admin" in command && command.admin === true;
 }
 
+/**
+ * Whether an action re-validates a manifest, and so may carry
+ * `legacyManifestWithoutIssue`. The route job sets the flag for exactly these
+ * actions and the trusted publisher admits it for exactly these actions; the
+ * two must not drift, so the rule lives here rather than at either call site.
+ */
+export function validatesManifest(action: PublishRequest["action"] | undefined): boolean {
+  return action === "submit" || action === "revalidate";
+}
+
 export interface FilePreconditions {
   record: string;
   buildOutput: string;

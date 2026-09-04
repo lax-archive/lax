@@ -18,6 +18,7 @@ import { ADMIN_GITHUB_IDS, WEBSITE_REPOSITORY } from "./constants.js";
 import { repositoryPath } from "./github.js";
 import {
   isAdminCommand,
+  validatesManifest,
   type AdminVerb,
   type FilePreconditions,
   type GitHubIdentity,
@@ -429,7 +430,7 @@ export function parsePublishRequest(value: unknown, expectedRepositoryId: number
         ? []
         : ["commentId", "command", "preconditions"]),
     ...(action === "delete" && "dependents" in value ? ["dependents"] : []),
-    ...(action === "submit" && "legacyManifestWithoutIssue" in value
+    ...(validatesManifest(action) && "legacyManifestWithoutIssue" in value
       ? ["legacyManifestWithoutIssue"]
       : []),
   ];
@@ -488,7 +489,7 @@ export function parsePublishRequest(value: unknown, expectedRepositoryId: number
     if (action === "delete" && "dependents" in value) {
       dependents = problems.capture(() => trustedDependents(value.dependents));
     }
-    if (action === "submit" && "legacyManifestWithoutIssue" in value) {
+    if (validatesManifest(action) && "legacyManifestWithoutIssue" in value) {
       if (value.legacyManifestWithoutIssue !== true) {
         problems.add("publication request legacy manifest compatibility flag is invalid");
       } else {

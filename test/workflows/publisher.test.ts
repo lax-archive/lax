@@ -554,6 +554,51 @@ describe("trusted Archive publisher modes", () => {
       ),
     ).toThrow("legacy manifest compatibility flag is invalid");
 
+    // A maintainer revalidation of a record on a legacy reservation issue
+    // carries the same flag; the route job sets it for both validating
+    // actions, so the publisher must admit it for both.
+    const oldCliRevalidation = request({
+      action: "revalidate",
+      commentId: 77,
+      command: {
+        action: "revalidate",
+        admin: true,
+        source: {
+          repository: "https://github.com/alice/example",
+          commit: "b".repeat(40),
+          folder: ".",
+        },
+      },
+      preconditions: fileDigests(initial),
+    });
+    expect(
+      parsePublishRequest(
+        { ...oldCliRevalidation, legacyManifestWithoutIssue: true },
+        issue.repositoryId,
+      ).legacyManifestWithoutIssue,
+    ).toBe(true);
+    expect(() =>
+      parsePublishRequest(
+        { ...oldCliRevalidation, legacyManifestWithoutIssue: false },
+        issue.repositoryId,
+      ),
+    ).toThrow("legacy manifest compatibility flag is invalid");
+    // It stays refused on an action that validates no manifest.
+    expect(() =>
+      parsePublishRequest(
+        {
+          ...request({
+            action: "register",
+            commentId: 77,
+            command: { action: "register" },
+            preconditions: fileDigests(initial),
+          }),
+          legacyManifestWithoutIssue: true,
+        },
+        issue.repositoryId,
+      ),
+    ).toThrow("publication request must contain exactly");
+
     const mismatchedInitializationFiles = [
       initialFiles(
         "lax-42",

@@ -13,12 +13,13 @@ import {
   isLegacyIssueReservationBody,
   submissionIdFromIssueBody,
 } from "./issue-reservation.js";
-import type {
-  AdminVerb,
-  GitHubIdentity,
-  ParsedCommand,
-  PublishRequest,
-  SourceLocation,
+import {
+  validatesManifest,
+  type AdminVerb,
+  type GitHubIdentity,
+  type ParsedCommand,
+  type PublishRequest,
+  type SourceLocation,
 } from "./types.js";
 import {
   isObject,
@@ -367,7 +368,7 @@ export class ControlPlane {
       archiveSha: snapshot.sha,
       preconditions: loaded.preconditions,
       dependents,
-      ...((command.action === "submit" || command.action === "revalidate") && legacyReservation
+      ...(validatesManifest(command.action) && legacyReservation
         ? { legacyManifestWithoutIssue: true as const }
         : {}),
     };
