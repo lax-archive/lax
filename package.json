@@ -1,6 +1,6 @@
 {
   "name": "lax-archive",
-  "version": "0.1.40",
+  "version": "0.1.41",
   "description": "Issue-driven control plane and CLI for the Lax archive",
   "type": "module",
   "license": "Apache-2.0",
