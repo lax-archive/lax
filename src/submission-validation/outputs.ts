@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { formatProfile, type Span } from "../shared/profile.js";
+import { oneLineMessage, parseSuccessfulValidationArtifacts } from "./artifact-schema.js";
 import type { ValidationReport } from "./contracts.js";
 
 export const VALIDATION_REPORT_FILENAME = "validation-report.json";
@@ -181,6 +182,8 @@ export function writeValidationOutputs(outputDir: string, outcome: ValidationOut
     fs.writeFileSync(path.join(outputDir, PAPER_WEB_FILENAME), bytes, { mode: 0o600 });
   }
 
+  requirePublishableReport(outputDir, report);
+
   // Write the report last. Consumers treat its presence as the indication that
   // the complete output set was persisted successfully.
   atomicWriteJson(
@@ -188,6 +191,56 @@ export function writeValidationOutputs(outputDir: string, outcome: ValidationOut
     report.buildOutput,
   );
   atomicWriteJson(path.join(outputDir, VALIDATION_REPORT_FILENAME), report);
+}
+
+/**
+ * Run a successful report through the parser the trusted publisher will use
+ * on it, here in the job that can still explain itself. The publisher reads
+ * these two files back credential-free and refuses anything that misses a
+ * schema rule; a passing validation refused there produces the same bytes on
+ * every retry, so the author sees one opaque publication error forever. The
+ * check is on the serialized form because that is what the publisher parses:
+ * JSON drops undefined-valued keys, which `requireExactKeys` counts.
+ *
+ * The identity comparisons stay the publisher's own — it holds the authorized
+ * request and the pinned runtime — so the report is fed its own values here
+ * and only the schema rules bite.
+ */
+function requirePublishableReport(outputDir: string, report: ValidationReport): void {
+  const serialized = JSON.parse(JSON.stringify({
+    report,
+    buildOutput: report.buildOutput,
+  })) as { report: unknown; buildOutput: unknown };
+  try {
+    parseSuccessfulValidationArtifacts(
+      serialized.report,
+      serialized.buildOutput,
+      report.request,
+      report.runtime,
+    );
+  } catch (error) {
+    // Not the submission's fault and not retryable: the pipeline built a
+    // report the Archive's own schema rejects. Record that as the outcome so
+    // the report artifact still says what happened — the failure reporter and
+    // `lax submit` both read this file — and then fail the job loudly. The
+    // build output is deliberately not written: there is nothing to publish.
+    const message = `the validation report does not satisfy the publication schema: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+    const { buildOutput, capture, ...rest } = report;
+    atomicWriteJson(path.join(outputDir, VALIDATION_REPORT_FILENAME), {
+      ...rest,
+      ok: false,
+      failure: {
+        kind: "infrastructure",
+        retryable: false,
+        phase: "emit",
+        rule: "report-schema",
+        message: oneLineMessage(message),
+      },
+    });
+    throw new Error(message);
+  }
 }
 
 function atomicWriteJson(filename: string, value: unknown): void {

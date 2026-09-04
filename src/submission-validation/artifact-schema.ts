@@ -644,6 +644,92 @@ function parseCapturedFile(value: unknown, index: number): CapturedFile {
   return { path: filePath, bytes, sha256: sha256(object.sha256, `${label} sha256`) };
 }
 
+/** The most UTF-8 bytes a finding's rule and message may carry. `parseFinding`
+ * enforces the bounds and `oneLineMessage` fits text to them, so the producer
+ * and the parser cannot drift apart. */
+export const FINDING_RULE_BYTES = 256;
+export const FINDING_MESSAGE_BYTES = 8_000;
+
+/** The elision marker. Visible on purpose: a reader must be able to tell a
+ * cut from the real wording. */
+const ELISION = "[…]";
+
+/**
+ * Rewrite arbitrary text — a transcript tail, a thrown error's `message`, a
+ * file name the submission chose — into the exact shape `parseFinding`
+ * accepts: line breaks folded to a visible marker, every character the schema
+ * forbids replaced by a space, unpaired surrogates replaced, NFC applied and
+ * the result fitted to `maxBytes`. Applying the rules instead of restating
+ * them at each place that builds a finding is what stops a *passing*
+ * validation from being refused at publication over its own warning text —
+ * a refusal there is terminal, because rerunning the validation produces the
+ * same bytes again.
+ *
+ * `elide` chooses what to sacrifice when the text is too long. A finding
+ * message names what happened at its start and carries the transcript at its
+ * end, so the default keeps both ends and drops the middle; a bare transcript
+ * tail keeps only its end, where the error is.
+ */
+export function oneLineMessage(
+  message: string,
+  options: { maxBytes?: number; elide?: "middle" | "start" } = {},
+): string {
+  // Normalize before fitting, never after: composition exclusions mean NFC
+  // can lengthen a string, and the byte budget has to hold for the text that
+  // is actually written.
+  const folded = message
+    .replace(LINE_BREAK, " ⏎ ")
+    .replace(ONE_LINE_FORBIDDEN_GLOBAL, " ")
+    .replace(LONE_SURROGATE, "\ufffd")
+    .normalize("NFC");
+  const fitted = fitBytes(folded, options.maxBytes ?? FINDING_MESSAGE_BYTES, options.elide ?? "middle");
+  // `nonemptyText` refuses a blank field, so text that sanitized away to
+  // nothing still has to say that much: losing a report over an empty message
+  // would be the very failure this function exists to prevent.
+  return fitted.trim() === "" ? "(none)" : fitted;
+}
+
+function fitBytes(message: string, maxBytes: number, elide: "middle" | "start"): string {
+  if (Buffer.byteLength(message, "utf8") <= maxBytes) return message;
+  const marker = elide === "start" ? `${ELISION} ` : ` ${ELISION} `;
+  const budget = maxBytes - Buffer.byteLength(marker, "utf8");
+  if (budget <= 0) return utf8Prefix(message, maxBytes);
+  if (elide === "start") return `${marker}${utf8Suffix(message, budget)}`;
+  const head = utf8Prefix(message, Math.ceil(budget / 2));
+  return `${head}${marker}${utf8Suffix(message, budget - Buffer.byteLength(head, "utf8"))}`;
+}
+
+/** The longest prefix of `message` within `maxBytes`, cut on a code point
+ * boundary: a byte-wise cut would leave a partial sequence that decodes to a
+ * replacement character. A prefix (and likewise a suffix) of NFC text is
+ * itself NFC, so the fitting cannot undo the normalization above. */
+function utf8Prefix(message: string, maxBytes: number): string {
+  let bytes = 0;
+  let end = 0;
+  for (const character of message) {
+    const size = Buffer.byteLength(character, "utf8");
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    end += character.length;
+  }
+  return message.slice(0, end);
+}
+
+/** The longest suffix of `message` within `maxBytes`, cut the same way. */
+function utf8Suffix(message: string, maxBytes: number): string {
+  const characters = [...message];
+  let bytes = 0;
+  let start = message.length;
+  for (let index = characters.length - 1; index >= 0; index -= 1) {
+    const character = characters[index]!;
+    const size = Buffer.byteLength(character, "utf8");
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    start -= character.length;
+  }
+  return message.slice(start);
+}
+
 function parseFinding(value: unknown, label: string): ValidationFinding {
   const object = exactObject(value, ["phase", "rule", "message"], label);
   if (typeof object.phase !== "string" || !PHASES.has(object.phase)) {
@@ -651,8 +737,8 @@ function parseFinding(value: unknown, label: string): ValidationFinding {
   }
   return {
     phase: object.phase as ValidationFinding["phase"],
-    rule: nonemptyText(object.rule, `${label} rule`, 256, false),
-    message: nonemptyText(object.message, `${label} message`, 8_000, false),
+    rule: nonemptyText(object.rule, `${label} rule`, FINDING_RULE_BYTES, false),
+    message: nonemptyText(object.message, `${label} message`, FINDING_MESSAGE_BYTES, false),
   };
 }
 
@@ -717,6 +803,24 @@ function nonemptyText(
   return result;
 }
 
+// What a report field may never carry, written once as a character-class body
+// so the checks below and the rewriting in `oneLineMessage` cannot drift
+// apart: control characters other than tab and the line terminators, DEL, the
+// line and paragraph separators, and the zero-width, bidi-override and other
+// invisible formatting marks. A one-line field forbids tab, LF and CR on top
+// of those, and \u0009-\u000d closes the range to \u0000-\u001f.
+const FORBIDDEN_ANYWHERE =
+  "\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f\\u2028\\u2029\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufeff";
+const FORBIDDEN_ON_ONE_LINE = `${FORBIDDEN_ANYWHERE}\\u0009-\\u000d`;
+const MULTILINE_FORBIDDEN = new RegExp(`[${FORBIDDEN_ANYWHERE}]`, "u");
+const ONE_LINE_FORBIDDEN = new RegExp(`[${FORBIDDEN_ON_ONE_LINE}]`, "u");
+const ONE_LINE_FORBIDDEN_GLOBAL = new RegExp(`[${FORBIDDEN_ON_ONE_LINE}]`, "gu");
+const LINE_BREAK = /\r\n|\r|\n/gu;
+/** A surrogate the string never paired. Under the `u` flag a well-formed pair
+ * is a single non-surrogate code point, so this matches exactly the lone
+ * halves `hasUnpairedSurrogate` refuses. */
+const LONE_SURROGATE = /[\ud800-\udfff]/gu;
+
 function text(
   value: unknown,
   label: string,
@@ -729,9 +833,7 @@ function text(
   if (requireNfc && value.normalize("NFC") !== value) throw new ValidationError(`${label} is not NFC-normalized`);
   if (!multiline && /[\r\n]/u.test(value)) throw new ValidationError(`${label} must be one line`);
   if (multiline && /\r/u.test(value)) throw new ValidationError(`${label} must use LF line endings`);
-  const forbidden = multiline
-    ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u
-    : /[\u0000-\u001f\u007f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u;
+  const forbidden = multiline ? MULTILINE_FORBIDDEN : ONE_LINE_FORBIDDEN;
   if (forbidden.test(value) || hasUnpairedSurrogate(value)) throw new ValidationError(`${label} contains forbidden Unicode`);
   return value;
 }

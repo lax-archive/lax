@@ -4,6 +4,7 @@
 // Pure — no I/O.
 
 import path from "node:path";
+import { oneLineMessage } from "../artifact-schema.js";
 import type { PaperEngine } from "../contracts.js";
 
 /** The latexmk engine selector; `-pdflatex` alone would be the *command*
@@ -73,15 +74,16 @@ export const ONE_LINE_TAIL_BYTES = 6_000;
  * forbids become spaces, the text is NFC, and the result fits the byte
  * budget above (cut from the front, on a character boundary). The
  * 2026-09-03 lax-65 round trip lost a publication to a web-encode warning
- * whose transcript tail spanned lines. */
+ * whose transcript tail spanned lines.
+ *
+ * The rules themselves live with the schema that enforces them, and
+ * `FindingCollector` applies them to every finding regardless; what this
+ * adds is the tighter transcript budget, so a log tail leaves room for the
+ * sentence that introduces it.
+ */
 export function oneLineTail(transcript: string, limit: number): string {
-  let text = logTail(transcript, limit)
-    .replace(/\r\n|\r|\n/gu, " ⏎ ")
-    .replace(/[\u0000-\u001f\u007f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/gu, " ")
-    .normalize("NFC");
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.length > ONE_LINE_TAIL_BYTES) {
-    text = `[…] ${bytes.subarray(bytes.length - ONE_LINE_TAIL_BYTES).toString("utf8").replace(/^\ufffd+/u, "")}`;
-  }
-  return text;
+  return oneLineMessage(logTail(transcript, limit), {
+    maxBytes: ONE_LINE_TAIL_BYTES,
+    elide: "start",
+  });
 }

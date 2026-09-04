@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseSuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
+import { DEFAULT_LIMITS } from "../../src/submission-validation/config.js";
 import type { CaptureManifest, ValidationReport } from "../../src/submission-validation/contracts.js";
+import { FindingCollector } from "../../src/submission-validation/findings.js";
 import {
   CAPTURE_FILENAME,
   GENERATED_BUILD_OUTPUT_FILENAME,
@@ -14,6 +17,7 @@ import {
   type ValidationOutcome,
   writeValidationOutputs,
 } from "../../src/submission-validation/outputs.js";
+import { webCompileProblem } from "../../src/submission-validation/paper/web.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -175,6 +179,95 @@ describe("submission validation outputs", () => {
     );
     const strayTar: ValidationOutcome = { ...paperOutcome(Buffer.from("%PDF-1.7 fixture")), paperWebPath };
     expect(() => writeValidationOutputs(directory, strayTar)).toThrow("a bundle without a web view");
+  });
+
+  // The seam the lax-65 round trip fell through: a validation that SUCCEEDS
+  // writes warnings whose text came from a transcript or a submission's own
+  // file names, and the trusted publisher re-parses that report against a
+  // schema no test used to cross. Drive the real producers into the real
+  // writer into the real publisher parser.
+  it("keeps a successful report publishable when phases warn with transcripts and NFD names", () => {
+    const directory = temporaryDirectory();
+    fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+
+    const findings = new FindingCollector("paper");
+    // A real web-compile warning, transcript and all: CRLF, LF and a tab.
+    const compile = webCompileProblem(
+      {
+        code: 12,
+        output: "! LaTeX Error: File `laxreflow.sty' not found.\r\n\tl.5 \\usepackage{laxreflow}\n",
+      },
+      path.join(directory, "web-src"),
+      "main.tex",
+      DEFAULT_LIMITS,
+    );
+    findings.warn(compile!.rule, compile!.message);
+    // The error paper/extract.ts builds when the PDF reader exits nonzero —
+    // it embeds a newline, and paper/web.ts turns it into a warning through a
+    // plain catch, with no transcript helper in between.
+    findings.warn(
+      "web-oracle",
+      "the reflow view was not derived: could not read the compiled PDF (exit 1):\n" +
+        "Traceback (most recent call last):\n  RuntimeError: cannot open document",
+    );
+    // A figure name in NFD, the way macOS stores "café.png".
+    findings.warn(
+      "web-pictures-dropped",
+      "the reflow view omits 1 included graphic(s) (cafe\u0301.png): the picture could not be sourced",
+    );
+
+    const report: ValidationReport = { ...successfulReport(), warnings: findings.warnings };
+    writeValidationOutputs(directory, report);
+
+    const written = readJson(path.join(directory, VALIDATION_REPORT_FILENAME)) as ValidationReport;
+    const generated = readJson(path.join(directory, GENERATED_BUILD_OUTPUT_FILENAME));
+    expect(() => parseSuccessfulValidationArtifacts(
+      written,
+      generated,
+      report.request,
+      report.runtime,
+    )).not.toThrow();
+
+    // Publishable, and still worth reading: the transcript survives with its
+    // line breaks marked, and the name is the NFC spelling of the same file.
+    expect(written.warnings[0]!.message).toContain("latexmk exit 12");
+    expect(written.warnings[0]!.message).toContain("laxreflow.sty");
+    expect(written.warnings[1]!.message).toContain("(exit 1): ⏎ Traceback (most recent call last): ⏎");
+    expect(written.warnings[2]!.message).toContain("café.png".normalize("NFC"));
+    for (const warning of written.warnings) {
+      expect(warning.message).not.toMatch(/[\r\n\t]/u);
+    }
+  });
+
+  // The self-check exists for everything the collector cannot reach: a
+  // report the publisher would refuse must not leave the validate job, where
+  // the artifact can still say why.
+  it("refuses to emit a successful report the trusted publisher would reject, and says so in the report", () => {
+    const directory = temporaryDirectory();
+    fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+    const report: ValidationReport = {
+      ...successfulReport(),
+      // Assembled around the collector, the way pipeline code that pushes a
+      // finding object directly would.
+      warnings: [{ phase: "paper", rule: "web-oracle", message: "the reader failed:\nexit 1" }],
+    };
+
+    expect(() => writeValidationOutputs(directory, report))
+      .toThrow("the validation report does not satisfy the publication schema");
+
+    // Nothing publishable was written, and the artifact explains itself.
+    expect(fs.existsSync(path.join(directory, GENERATED_BUILD_OUTPUT_FILENAME))).toBe(false);
+    const written = readJson(path.join(directory, VALIDATION_REPORT_FILENAME)) as ValidationReport;
+    expect(written.ok).toBe(false);
+    expect(written.buildOutput).toBeUndefined();
+    expect(written.failure).toEqual({
+      kind: "infrastructure",
+      retryable: false,
+      phase: "emit",
+      rule: "report-schema",
+      message: "the validation report does not satisfy the publication schema: "
+        + "validation warning 1 message must be one line",
+    });
   });
 
   it("rejects database-owned fields in the generated payload", () => {
