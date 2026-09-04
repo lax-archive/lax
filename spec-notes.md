@@ -6,6 +6,81 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## Hardening pass after the 0.1.35 audit (implemented, 2026-09-04)
+
+Five of the audit's fixes (`history/audit-20260903.md`) changed behaviour an
+author or the spec can see. Everything else it touched was internal.
+
+**Findings are sanitized where they are made.** `FindingCollector` now
+rewrites both halves of every finding into the shape the report schema
+accepts — line breaks folded to ` ⏎ `, other forbidden control and invisible
+characters to spaces, unpaired surrogates to U+FFFD, NFC, fitted to the
+schema's byte bounds with a visible ` […] ` elision that keeps both ends. So
+a warning or violation may show ` ⏎ ` and ` […] ` where a transcript, a
+thrown error's message or an NFD file name used to be reproduced verbatim.
+The rules have one definition (`artifact-schema.ts`), shared by `parseFinding`
+and the sanitizer. Beside it, `writeValidationOutputs` re-parses its own
+successful report with `parseSuccessfulValidationArtifacts` before writing
+it: a report the trusted publisher would refuse is written as an
+unsuccessful one carrying `failure {kind: "infrastructure", retryable:
+false, phase: "emit", rule: "report-schema"}` and the validate job fails, so
+the author reads an Archive fault instead of a publication error that
+repeats forever with nothing to point at. Motivation: the 2026-09-03 lax-65
+loss, where a non-blocking web-derivation warning on a *passing* validation
+blocked publication deterministically.
+
+**The paper's caps are capacity, not content.** A paper compile that hits
+the compile timeout or the memory ceiling is now a `resource-limit` failure
+("validation reached an Archive resource limit; the submission was not
+rejected on content") rather than a `paper/compile` violation; docker's
+reserved exits and a TeX image that will not pull are `paper/runtime`
+failures, retryable where the fault reads as transient. Every Lean phase
+already worked this way. A report still carries either a verdict or an
+operational failure and never both: where the Lean side has already refused
+the submission, the paper's trouble is recorded as a `paper/runtime` warning
+beside that verdict.
+
+**The web view's fidelity oracle is bounded.** Captured-but-unreferenced
+text (a `\marginpar` the reflow surface will not show) is still subtracted
+from the PDF side, but only up to min(max(32 tokens, 5% of the PDF's
+tokens), 20% of them) over the whole document. Past it nothing is sealed,
+the PDF stands untouched, and the report carries a `web-unreferenced-cap`
+warning naming the overrun beside the per-paragraph warnings — a derivation
+that loses more than that is a different document, not a lossy view of the
+paper. The three constants are one curve: under 160 PDF tokens the ceiling
+governs, between 160 and 640 the floor (what one honest margin note costs a
+short paper), above 640 the fraction alone. The oracle's folio stripping now
+requires a whitespace-free single-token line, so a table of small integers
+is no longer mistaken for page numbers and deleted from the PDF side.
+
+**Static validation, local path only: ignored entries are not undeclared
+files.** An entry under `concepts/`/`proofs/` that the submission's own
+ignore rules cover is no longer an `unexpected-files` violation, so a
+`.DS_Store` or an editor's `.swp` stops blocking `lax build` for a commit
+the archive would accept. The trusted path is unchanged: a fetched checkout
+has no untracked files, and `git ls-files --others --ignored` never reports
+a tracked path, so nothing a commit carries can be ignored out of validation
+(a force-added, rule-matching file is still judged). The query runs with
+system and global git config scrubbed, so only ignore files that travel with
+the commit count. Separately, `paper-web.tar` is now refused when committed
+beside a declared paper and excluded from a paper whose folder is the
+submission root — both were already true of `paper.pdf`, and a record with a
+committed `paper-web.tar` would newly fail the re-validation sweep TODO.md
+calls for. And `lax build` now warns (`static · gitignore`) when it wrote a
+generated file no ignore rule covers; it does not edit the author's
+`.gitignore`.
+
+**`lax rekey` renumbers by bytes, not by extension.** Every regular file of
+the folder is considered and its own bytes decide whether it holds text (no
+C0 control byte other than tab, newline, form feed, carriage return), so a
+file type a later feature introduces is covered without a list to remember —
+the paper layer's `% lax begin Lax0.Foo` markers were what the old list
+missed. Text is read and written latin1, the way the paper's static gate
+reads `.tex`, so a non-UTF-8 source survives a renumbering byte for byte.
+The substitution is unchanged, still anchored on `LaxNProofs`, `LaxN` and
+`lax-N` with a following digit refused. `assets/instructions.md` drops the
+retired `lax-0` parenthetical with it.
+
 ## The paper layer: archive-compiled PDF and derived web view (implemented, 2026-09-02)
 
 A submission may carry the paper itself — a LaTeX document the archive

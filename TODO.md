@@ -7,6 +7,71 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
+## Audit leftovers (audit 2026-09-03, fixes landed 2026-09-04)
+
+The record is `history/audit-20260903.md`. All three fix-now findings and
+all eleven fix-soon findings are fixed, each with the test that would have
+caught it; the spec-relevant behaviour changes are in spec-notes.md
+(2026-09-04). What the audit deliberately left, and what the fixes left
+behind:
+
+- **Two production leftovers.** lax-3's submit failed 2026-09-02 19:29 on
+  the stale-dependency guard, racing the chain-resubmit sweep, and was
+  never retried — one `/lax submit` fixes it; its live record still says
+  2026-09-02. And the pre-2026-09-03 paper records still carry blank
+  figures (below): the re-validation sweep that item calls for is exactly
+  the input shape that used to lose a publication, which is now fixed, so
+  the sweep is safe to run — but a record that committed a `paper-web.tar`
+  will newly fail the generated-file rule.
+- **Possible stranded dependents in production.** `listDependents` missed
+  the commonest edge for as long as it existed, so a delete executed on
+  its say-so may have stranded records that resolution now refuses forever.
+  Sweep `lax-database` for deleted records some live record still requires.
+- **Recorded and not fixed** (the audit's "record and move on"): `lax
+  register`'s preflight prints the permanence note and demands a typed
+  confirmation for a supersession the archive will refuse, and
+  `instructions.md` plus a docstring at `resolution.ts:251` state only the
+  weaker of the two ownership rules; the count-check diagnosis never offers
+  "that file is not part of your main document"; the oracle prints
+  `floor − 2/total` as a measurement when Myers' search exceeds its budget,
+  so a true 0.0 reads as a hairline 0.9799; a duplicate `\input` collapses
+  destinations silently (pdfTeX warns, latexmk does not fail — scan the
+  transcript for "duplicate ignored"); proof-tree housekeeping (a failed
+  re-run leaves a stale `.olean` beside no report, concurrent capture
+  promotion crashes with `ENOTEMPTY`, the runtime cache key omits the
+  toolchain `warmDir()` includes); `submit-publisher.ts:256` claims
+  `parseArchiveFiles` re-validates a published `paper` block, which it does
+  not; and a cancelled validate job leaves no comment and a stuck progress
+  reaction — 7 of the last 200 control-plane runs were cancelled, so an
+  author has probably seen an issue that simply stopped answering.
+- **The same defect class, one step out.** Findings pushed straight into
+  `violations` by `pipeline.ts` and `host/pipeline.ts` bypass
+  `FindingCollector` and so its sanitizer; they reach only `ok:false`
+  reports, which the publisher never parses, so nothing is at risk today.
+  Route them through the collector. Likewise nine separate spellings of
+  "normalize line endings" (the formatter's own is inline in
+  `safeTranscript`) want one exported helper in `comment-format.ts`, and
+  `"pics"` is a literal in four places across `web.ts` and the generated
+  converter.
+- **Coverage the fixes could not reach.** `checkGeneratedFilesIgnored` is
+  wired in the `scope === "both"` success block, which only a full Lean
+  build reaches, so no unit test crosses it — the cheapest real coverage is
+  `test/e2e/host-paper.test.ts` with `paper.pdf` dropped from
+  `test/support/host.ts:90`'s fixture ignore list. Those hand-written
+  ignore lists (also `test/smoke/submission-validation.ts:432`) are the
+  sixth copy of the generated-file names and should read
+  `generatedFilesGitignore()`.
+- **What the new typecheck does not cover.** `scripts/**` is checked for
+  `.ts` only; the `.mjs` drivers (`port-db`, `rehearsal`, `reflowtex/fetch`)
+  need `allowJs`+`checkJs`, which will surface its own list. And tsc accepts
+  the temporal-dead-zone read that started all this — an ESLint
+  `no-use-before-define` would catch that class, at the price of a linter.
+- **`proof-tree.json`'s `selection` value** changed from `"random"` to
+  `"fallback"`. Nothing in this repo or lax-website reads it; out-of-tree
+  tooling would break.
+- **`lax rekey` leaves a stale `paper.pdf`/`paper-web.tar`** in the folder
+  after renumbering (it removes `build-output.json` only).
+
 ## Pipeline simplification: rolled out and closed, 2026-08-07
 
 Nothing left here — the record is `history/pipeline-simplification-rollout.md`,

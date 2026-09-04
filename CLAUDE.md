@@ -84,12 +84,17 @@ prefer them over inferring intent from the current code.
 ## Commands
 
 ```sh
-npm run build            # compile to dist/
+npm run build            # compile to dist/ (src/** only — that is what ships)
+npm run typecheck        # tsc --noEmit over src + test + scripts
 npm test                 # vitest (unit + workflows)
-npm run check            # build + test
+npm run check            # build + typecheck + test
 npm run lax -- --help    # run the CLI from source
+npm run smoke:prooftree               # proof-tree composer end to end (needs the pinned toolchain on PATH)
 npm run smoke:submission-validation   # real-container smoke (needs docker; shares ~/.lax + ~/.elan)
 ```
+
+Both smokes run in `ci.yml`, and `workflow-definition.test.ts` fails if a
+`smoke:*` script the package declares is invoked by no CI step.
 
 The pinned page-builder consumed by `lax serve` is assembled for release with
 `page-builder:fetch`, `page-builder:package`, and `page-builder:verify`.
