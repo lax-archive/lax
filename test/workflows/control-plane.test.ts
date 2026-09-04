@@ -171,6 +171,55 @@ describe("submission control-plane routing", () => {
     ).rejects.toThrow("does not match the submission id reserved by this issue");
   });
 
+  it("still finds the reserved id after a browser edit rewrites the body with CRLF", async () => {
+    // GitHub's web editor saves the body it submits with CRLF endings, so this
+    // is the issue an author leaves behind by opening the control issue in a
+    // browser and pressing "Update comment". Both entry points have to keep
+    // reading the marker: the issue is the submission's only control plane.
+    const webEdited = (body: string): string => body.replace(/\n/gu, "\r\n");
+    const currentId = "lax-123456";
+    installCreateFetch({ body: webEdited(issueReservationBody(currentId)) });
+    await expect(
+      controlPlane().route("issues", {
+        action: "opened",
+        repository: { id: repositoryId, full_name: "lax-archive/lax" },
+        issue: {
+          number: issueNumber,
+          node_id: "I_kwDOexample",
+          created_at: "2026-07-30T10:00:00Z",
+          user: { id: 10, login: "alice", type: "User" },
+        },
+      }),
+    ).resolves.toMatchObject({ kind: "publish", request: { action: "create", id: currentId } });
+
+    installArchiveFetch(
+      alice,
+      initialFiles(currentId, { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z"),
+      { issueBody: webEdited(issueReservationBody(currentId)), submissionId: currentId },
+    );
+    await expect(
+      controlPlane().route("issue_comment", commentEvent(`/lax register ${currentId}`, alice)),
+    ).resolves.toMatchObject({ kind: "publish" });
+  });
+
+  it("rejects a reservation marker that only a second line completes", async () => {
+    // Ending the marker line at a CR must not turn the rest of the body into
+    // part of the marker: the id is what stands complete on the first line.
+    installCreateFetch({ body: "<!-- lax-submission-id:lax-1\r\n23456 -->\r\n" });
+    await expect(
+      controlPlane().route("issues", {
+        action: "opened",
+        repository: { id: repositoryId, full_name: "lax-archive/lax" },
+        issue: {
+          number: issueNumber,
+          node_id: "I_kwDOexample",
+          created_at: "2026-07-30T10:00:00Z",
+          user: { id: 10, login: "alice", type: "User" },
+        },
+      }),
+    ).rejects.toThrow("malformed reservation marker");
+  });
+
   it("aggregates independent initialization event and current-issue errors", async () => {
     const fetchMock = installCreateFetch({
       state: "closed",
