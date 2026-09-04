@@ -174,12 +174,12 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
     // The login above is stored and valid, so anything this command sends
     // would be sent successfully — which is what makes an unchanged request
     // log evidence that init itself is loginless rather than evidence about a
-    // missing credential. The hidden flag remains accepted for old scripts.
-    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "lax-offline-"));
+    // missing credential.
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "lax-local-init-"));
     const folder = path.join(parent, "work");
     try {
       const before = github.requests.length;
-      const result = await lax(["init", "--offline", folder, "--title", "Offline draft"], env);
+      const result = await lax(["init", folder, "--title", "Local draft"], env);
 
       expect(result.status).toBe(0);
       expect(github.requests.length).toBe(before);
@@ -187,8 +187,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       expect(result.stdout).not.toContain("Signed in as");
       expect(result.stdout).not.toContain("Reserving");
       expect(result.stdout).toContain("✓ Created the files");
-      expect(result.stdout).toMatch(/lax-[1-9][0-9]{5} · Offline draft/u);
-      expect(result.stdout).toContain("Nothing was sent to GitHub and no login was needed.");
+      expect(result.stdout).toMatch(/lax-[1-9][0-9]{5} · Local draft/u);
       expect(fs.readFileSync(path.join(folder, "manifest.yaml"), "utf8")).toMatch(
         /^id: lax-[1-9][0-9]{5}$/mu,
       );

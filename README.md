@@ -252,8 +252,9 @@ handles locally and authenticates and synchronizes them when the issue is bound.
 Folders created by releases that used `lax init --offline` and the `lax-0`
 placeholder are rekeyed on their first submit. Existing issue-number-based
 submissions retain their original ids; the CLI records their historical issue
-binding when it next touches a local manifest. The hidden `--offline` option is
-still accepted for script compatibility, but it no longer changes `init`.
+binding when it next touches a local manifest. The `--offline` option itself is
+gone: `init` takes it no longer, because every `init` now does what it asked
+for.
 
 `lax submit --resume` reattaches to an interrupted submit. The durable job
 record is the Actions run, correlated to the originating `/lax submit` comment
@@ -288,8 +289,9 @@ timeout.
 `lax serve [folder]` uses the current `lax-website` page-builder downloaded by
 `lax update`. If none has been downloaded yet, the first preview downloads it;
 if that fails, the revision bundled in the CLI remains the safe fallback. The
-preview starts at `http://localhost:8123/` immediately with a loading page, then
-renders the local
+preview starts immediately with a loading page and opens on the folder's own
+page — `http://localhost:8123/<id>/`, or `/local/` until a build has named it;
+`--database-only` opens on the index. It renders the local
 `~/.lax/lax-database` checkout plus the folder's `build-output.json` and
 rebuilds when either changes. The CLI and every generated page show a warning
 when the database is missing, stale, invalid, or cannot be checked. Pass
@@ -416,12 +418,18 @@ best-effort background check reports newer CLI releases without delaying
 commands.
 
 `lax login` uses the GitHub App device flow and accepts only the resulting
-`ghu_` GitHub App user access token. Expiring tokens are refreshed with the
-rotating `ghr_` refresh token stored in `~/.lax/credentials.json`. Generic
-OAuth tokens and personal access tokens are rejected. For non-interactive use,
-`LAX_GITHUB_APP_USER_TOKEN` may provide an existing `ghu_` token; the generic
-`LAX_GITHUB_TOKEN` override is intentionally unsupported. Device authorization
-is requested for the numeric `lax-archive/lax` repository id. `lax logout`
+`ghu_` GitHub App user access token. Every command that writes to a control
+issue runs that flow itself when the machine has no usable login, before it
+draws anything of its own, so the login happens inside the command the author
+asked for. Two cases are left to the command's authentication preflight, which
+still fails and names `lax login`: no terminal to authorize on, and a
+`LAX_GITHUB_APP_USER_TOKEN` supplied by the environment. Expiring tokens are
+refreshed with the rotating `ghr_` refresh token stored in
+`~/.lax/credentials.json`. Generic OAuth tokens and personal access tokens are
+rejected. For non-interactive use, `LAX_GITHUB_APP_USER_TOKEN` may provide an
+existing `ghu_` token; the generic `LAX_GITHUB_TOKEN` override is
+intentionally unsupported. Device authorization is requested for the numeric
+`lax-archive/lax` repository id. `lax logout`
 submits both stored tokens to GitHub's credential-revocation endpoint and only
 removes the local credentials after GitHub accepts the revocation.
 

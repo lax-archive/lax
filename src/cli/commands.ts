@@ -31,6 +31,7 @@ import type { ValidationFinding } from "../submission-validation/contracts.js";
 import { environments } from "../submission-validation/environments.js";
 import { checkDeleteLocally, checkRegisterLocally } from "./archive-preflight.js";
 import { AuthenticationError, ensureLoggedIn, githubAppUserToken } from "./auth.js";
+import { signInIfNeeded } from "./login.js";
 import {
   buildSubmission,
   hasCurrentLocalBuild,
@@ -92,8 +93,6 @@ async function client(): Promise<GitHubClient> {
 
 export interface InitOptions {
   title?: string;
-  /** Accepted temporarily for scripts written while loginless init was opt-in. */
-  offline?: boolean;
   /** The archive environment to scaffold in; the epoch when absent. */
   env?: string;
   /** Skip the typed confirmation an off-epoch `--env` needs. */
@@ -149,10 +148,6 @@ export async function initializeSubmission(
         ...(provisioned.reason === undefined ? [] : [ui.dim(provisioned.reason)]),
       );
     }
-    notes.add(
-      "Nothing was sent to GitHub and no login was needed.",
-      `${ui.cmd("lax submit")} will create and bind the control issue when the source is ready.`,
-    );
     try {
       repositoryRoot(root);
     } catch {
@@ -191,6 +186,7 @@ export async function replaceOwners(reference: string, handles: string[]): Promi
       return;
     }
   }
+  await signInIfNeeded();
   const target = resolveSubmissionReference(reference);
   const { id } = target;
   // Three seconds of work, so one row and no report.
@@ -227,6 +223,7 @@ export async function submitExplicitSource(
     commit: validateCommit(commitInput),
     folder: validateFolder(folderInput),
   };
+  await signInIfNeeded();
   const local = localFolder(reference);
   if (local !== undefined && await prepareBeforeSubmit(local)) return;
   const target = resolveSubmissionReference(reference);
@@ -252,6 +249,7 @@ export async function submitFolder(
   folder: string,
   options: { allowDirty?: boolean; force?: boolean } = {},
 ): Promise<void> {
+  await signInIfNeeded();
   const root = path.resolve(folder);
   const force = options.force ?? false;
   if (await prepareBeforeSubmit(root)) return;
@@ -300,6 +298,7 @@ export async function submitFolder(
  * remembered comment id would be exactly the thing that is missing.
  */
 export async function resumeSubmit(target: string): Promise<void> {
+  await signInIfNeeded();
   const reference = resolveSubmissionReference(target);
   const { id } = reference;
   const issue = reference.issue.number;
@@ -552,6 +551,7 @@ export async function requestDelete(reference: string, yes = false): Promise<num
   }
   ui.blank();
   if (!yes && !(await confirmTyped({ expected: id, action: `deleting ${id}` }))) return 1;
+  await signInIfNeeded();
   const steps = new ui.Steps();
   steps.add("delete", `Deleting ${id}`);
   try {
@@ -615,6 +615,7 @@ export async function requestRegistration(reference: string, yes = false): Promi
   }
   ui.blank();
   if (!yes && !(await confirmTyped({ expected: id, action: `registering ${id}` }))) return 1;
+  await signInIfNeeded();
   const steps = new ui.Steps();
   steps.add("register", `Registering ${id}`);
   try {

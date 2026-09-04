@@ -21,19 +21,22 @@ describe("CLI compatibility surface", () => {
     const help = cli(["--help"]);
     expect(help.code).toBe(0);
     const lines = help.output.split("\n");
-    const order = ["lax doctor", "lax login", "lax init", "lax build", "lax serve", "lax submit", "lax register"];
+    const order = ["lax doctor", "lax init", "lax build", "lax serve", "lax submit", "lax register"];
     const positions = order.map((command) =>
       lines.findIndex((line) => line.trimStart().startsWith(`${command} `) || line.trim() === command),
     );
     expect(positions.every((index) => index >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
     // and the rest are named without being explained twice
-    expect(help.output).toContain("lax owners · lax delete · lax port · lax sync · lax update · lax logout");
+    expect(help.output).toContain("lax owners · lax delete · lax port · lax sync · lax update");
+    // Signing in is not a step in the flow above — `lax submit` does it when it
+    // first needs an identity — so `lax login` is named beside its opposite.
+    expect(help.output).toContain("lax login · lax logout");
     expect(help.output).toContain("lax print spec · lax print instructions");
     expect(help.output).toContain("lax <command> --help for options");
   });
 
-  it("makes every `init` loginless without exposing the retired opt-in", () => {
+  it("makes every `init` loginless, and no longer takes the retired opt-in", () => {
     const init = cli(["init", "--help"]);
     expect(init.code).toBe(0);
     expect(init.output).toContain("--title <title>");
@@ -41,6 +44,12 @@ describe("CLI compatibility surface", () => {
     expect(init.output).toContain("without signing in");
     expect(init.output).not.toContain("--offline");
     expect(init.output).not.toContain("lax-0");
+    // The flag was kept accepted-but-hidden for one release so old scripts
+    // kept working; it is gone now, and an unknown option is the right answer
+    // rather than a silent no-op.
+    const retired = cli(["init", "--offline", "."]);
+    expect(retired.code).not.toBe(0);
+    expect(retired.output).toContain("--offline");
     // Straying off the epoch is an option an author has to find before they
     // can be nudged about it, so it is on init's own help page with the
     // confirmation escape beside it.

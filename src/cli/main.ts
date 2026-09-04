@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { Command, Help, Option } from "commander";
+import { Command, Help } from "commander";
 import type { ValidationScope } from "../submission-validation/contracts.js";
 import { logout } from "./auth.js";
 import { buildSubmission } from "./build.js";
@@ -46,7 +46,6 @@ const overview = (): string => `
 
   Getting started
     ${ui.cmd("lax doctor")}            check your setup
-    ${ui.cmd("lax login")}             sign in when you are ready to submit
 
   Making a submission
     ${ui.cmd("lax init my-work")}      create a local id and set up the folder
@@ -56,7 +55,8 @@ const overview = (): string => `
     ${ui.cmd("lax register my-work")}  make it permanent and citable
 
   Also
-    lax owners · lax delete · lax port · lax sync · lax update · lax logout
+    lax owners · lax delete · lax port · lax sync · lax update
+    lax login · lax logout
     lax print spec · lax print instructions
 
   ${ui.dim("lax <command> --help for options")}
@@ -74,15 +74,11 @@ program
   .option("--title <title>", "submission title (defaults to the folder name)")
   .option("--env <id>", "archive environment to work in (default: the epoch)")
   .option("--yes", "skip the confirmation a non-epoch --env asks for")
-  // Compatibility for scripts written while loginless init was opt-in. Every
-  // init is now local, so the flag deliberately has no distinct behavior.
-  .addOption(new Option("--offline").hideHelp())
   .description("generate a local six-digit id and scaffold without signing in")
   .action(
-    run((folder: string, options: { title?: string; offline?: boolean; env?: string; yes?: boolean }) =>
+    run((folder: string, options: { title?: string; env?: string; yes?: boolean }) =>
       initializeSubmission(folder, {
         title: options.title,
-        offline: options.offline,
         env: options.env,
         yes: options.yes,
       }),

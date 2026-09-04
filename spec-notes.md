@@ -6,6 +6,60 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## `lax serve` opens on the folder's own page (implemented, 2026-09-04)
+
+The spec says the preview "starts at ``http://localhost:8123/``". It still
+serves that, but it no longer *prints* it: an author who ran `lax serve` in a
+submission folder came to look at that submission, and the archive's front page
+is a link away from its page while its page is several clicks and a search away
+from the front page. The line the preview prints is now
+`http://localhost:8123/<id>/` — the page the renderer files the folder under,
+which is the id in its `build-output.json`, or `local` until a build has
+written one. `--database-only`, which renders no folder, still opens on the
+index.
+
+Two details keep that link honest (`src/cli/website.ts`). The loading page is
+written to the folder's page as well as the root, so the printed link answers
+from the first second rather than 404ing while the renderer loads; and when a
+build lands mid-preview and moves the folder from `local` to its allocated id,
+a request to the printed link is redirected to the new one — the renderer
+replaces the whole output tree, so the page the author already has open would
+otherwise vanish under them. An id that is not a single plain path segment is
+not spoken at all: the preview falls back to the index link, and the render
+reports whatever is wrong with the file.
+
+Spec touchpoint: the `lax serve` description.
+
+## Signing in is not a setup step (implemented, 2026-09-04)
+
+`lax login` remains exactly what the spec describes — the GitHub App device
+flow, `ghu_` only — but it is no longer something an author does before
+anything else. The commands that reach the archive (`submit`, its `--resume`
+and explicit-source forms, `owners`, `delete`, `register`) call
+`signInIfNeeded()` (`src/cli/login.ts`) at their entry, before they draw a
+step block: a usable stored login makes it a no-op, and otherwise the device
+flow runs there and then and the command continues into the run the author
+asked for. So a machine authors, builds and previews without ever having
+authenticated, and meets GitHub once, at the first command that needs an
+identity.
+
+Two situations are deliberately left to the command's own authentication
+preflight, which still fails with "run `lax login`": no terminal to authorize
+on (a script, CI — a device flow would hang there for fifteen minutes), and a
+`LAX_GITHUB_APP_USER_TOKEN` supplied by the environment, where a device flow
+would store a credential that same variable then goes on overriding. The
+preflight is unchanged and remains the boundary that decides whether a command
+may act; `signInIfNeeded` only obtains what it will ask for.
+
+`lax doctor` follows: a machine that has simply never signed in is a *note*
+now ("no GitHub login on this machine"), not the failing row that made a
+first-time `lax doctor` exit 1 on an otherwise complete setup. A login that
+exists and does not work — malformed, another App's, expired past renewal,
+rejected by GitHub — is still a problem.
+
+Spec touchpoint: the CLI command summaries for `lax login` and for the
+commands that write to the control issue, and the doctor description.
+
 ## Archive environments: a table, and the epoch (stages 1 to 5 implemented, 2026-09-04)
 
 The single archive-wide Lean/mathlib pin becomes a **table of environments**
@@ -576,8 +630,9 @@ This replaces the 2026-08-24 placeholder design above. Every `lax init` is now
 local and loginless: it draws a cryptographically random id matching
 `lax-[1-9][0-9]{5}`, scaffolds the corresponding packages, and writes an empty
 author list. It neither authenticates nor creates a GitHub issue. The retired
-`--offline` option remains hidden and accepted temporarily so existing scripts
-keep working, but all init invocations now have the same behavior.
+`--offline` option was kept hidden and accepted for one release so existing
+scripts kept working; it was dropped on 2026-09-04, so `lax init --offline`
+is now an unknown-option error rather than a flag that changes nothing.
 
 The first `lax submit` is the binding step. Before creating anything remotely,
 the CLI verifies that the manifest id agrees with the generated package paths

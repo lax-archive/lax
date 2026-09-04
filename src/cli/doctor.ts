@@ -652,6 +652,20 @@ async function diskCheck(): Promise<Check | undefined> {
 }
 
 async function githubCheck(dry: boolean): Promise<Check> {
+  // Signing in is not part of setting a machine up — the commands that reach
+  // the archive do it when they first need an identity — so a machine that has
+  // simply never signed in is a note about what could not be checked here, not
+  // a problem to fix before authoring. A login that exists and does not work
+  // still is one.
+  const supplied = process.env.LAX_GITHUB_APP_USER_TOKEN;
+  if ((supplied === undefined || supplied === "") && !fs.existsSync(credentialsFile())) {
+    return {
+      label: "Account",
+      status: "warn",
+      detail: "no GitHub login on this machine",
+      more: [`${ui.cmd("lax submit")} signs you in the first time it needs to`],
+    };
+  }
   let token: string;
   try {
     // A refresh is a change on both sides — a new credentials.json here and a
