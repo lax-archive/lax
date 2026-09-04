@@ -50,7 +50,29 @@ structure ComposeResult where
 def backgroundAxioms : NameSet :=
   NameSet.empty.insert `propext |>.insert `Classical.choice |>.insert `Quot.sound
 
-def unlimitedOptions : Options := maxHeartbeats.set {} 0
+/-- How deep the kernel may recurse while checking a copied declaration.
+`Lean.addDecl` hands `maxRecDepth` from the options straight to the kernel
+(Lean 4.33 gave `Environment.addDeclCore` that argument; the 4.30 kernel took
+no depth limit at all), so the elaborator's default of 1000 would refuse deeply
+nested generated proof terms the composer used to accept. Out of the way, not
+merely raised. -/
+def unlimitedRecDepth : Nat := USize.size - 1
+
+/-- The composer's budgets: it re-checks proofs the archive has already
+accepted, so neither heartbeats nor recursion depth may cut a run short. -/
+def unlimitedOptions : Options := maxRecDepth.set (maxHeartbeats.set {} 0) unlimitedRecDepth
+
+/-- Version-agnostic checked declaration addition: `Environment.addDeclCore`
+gained a `maxRecDepth` argument in Lean 4.33, `Lean.addDecl` did not change. -/
+def addCheckedDecl (env : Environment) (decl : Declaration) : IO (Option Environment) := do
+  let coreCtx : Core.Context :=
+    { fileName := "<laxprooftree>", fileMap := default, options := unlimitedOptions,
+      maxRecDepth := unlimitedRecDepth }
+  try
+    let (_, s) ← (Lean.addDecl decl).toIO coreCtx { env }
+    return some s.env
+  catch _ =>
+    return none
 
 structure RewriteContext where
   sourceEnv : Environment
@@ -58,7 +80,6 @@ structure RewriteContext where
   copied : IO.Ref (NameMap Name)
   memo : IO.Ref (ExprMap Expr)
   helperPrefix : Name
-  maxHeartbeats : USize
 
 mutual
 
@@ -147,9 +168,9 @@ partial def rewriteExprCore
           throw <| IO.userError s!"proof helper {name} is an unresolved axiom"
         | _ => unreachable!
       let env ← ctx.outputEnv.get
-      let env ← match Environment.addDeclCore env ctx.maxHeartbeats declaration none with
-        | .ok checked => pure checked
-        | .error _ => throw <| IO.userError s!"kernel rejected copied proof helper {generatedName}"
+      let env ← match ← addCheckedDecl env declaration with
+        | some checked => pure checked
+        | none => throw <| IO.userError s!"kernel rejected copied proof helper {generatedName}"
       ctx.outputEnv.set env
       ctx.copied.modify fun values => values.insert name generatedName
       return .const generatedName levels
@@ -249,9 +270,9 @@ partial def copyInductive
 
   let declaration := Declaration.inductDecl root.levelParams root.numParams types root.isUnsafe
   let env ← ctx.outputEnv.get
-  let env ← match Environment.addDeclCore env ctx.maxHeartbeats declaration none with
-    | .ok checked => pure checked
-    | .error _ =>
+  let env ← match ← addCheckedDecl env declaration with
+    | some checked => pure checked
+    | none =>
       throw <| IO.userError s!"kernel rejected copied proof-local inductive {inductiveName}"
   ctx.outputEnv.set env
 
@@ -289,7 +310,6 @@ unsafe def main (args : List String) : IO UInt32 := do
     copied
     memo
     helperPrefix := request.moduleName.toName ++ `_proofTreeHelpers
-    maxHeartbeats := (Core.getMaxHeartbeats unlimitedOptions).toUSize
   }
   let mut replacements : NameMap Name := {}
   let mut axiomDependencies : NameMap NameSet := {}
@@ -332,9 +352,9 @@ unsafe def main (args : List String) : IO UInt32 := do
       value := rewritten
     }
     let env ← outputEnv.get
-    let env ← match Environment.addDeclCore env rewriteContext.maxHeartbeats declaration none with
-      | .ok checked => pure checked
-      | .error _ =>
+    let env ← match ← addCheckedDecl env declaration with
+      | some checked => pure checked
+      | none =>
         throw <| IO.userError s!"kernel rejected generated theorem {generatedName}"
     outputEnv.set env
     replacements := replacements.insert statementName generatedName
