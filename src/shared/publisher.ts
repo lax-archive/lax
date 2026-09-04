@@ -39,7 +39,7 @@ import {
 } from "./workflow-comments.js";
 
 export interface PublisherControl {
-  resultExists(issueNumber: number, commentId: number): Promise<boolean>;
+  resultExists(issueNumber: number, commentId: number, since?: string): Promise<boolean>;
   successReactionExists(commentId: number): Promise<boolean>;
   resolveOwnerPairs(owners: GitHubIdentity[]): Promise<GitHubIdentity[]>;
   postIssueComment(issueNumber: number, body: string): Promise<void>;
@@ -95,7 +95,11 @@ export class Publisher {
       const alreadyFinished =
         request.action === "owners"
           ? await this.control.successReactionExists(request.commentId)
-          : await this.control.resultExists(request.issue.number, request.commentId);
+          : await this.control.resultExists(
+              request.issue.number,
+              request.commentId,
+              request.eventCreatedAt,
+            );
       if (alreadyFinished) {
         if (request.action === "owners") {
           await this.control.clearCommandProgress(request.commentId);

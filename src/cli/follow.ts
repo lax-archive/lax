@@ -84,6 +84,8 @@ export interface FollowResult {
 }
 
 export interface FollowOptions {
+  /** Restrict comment polling to the event that started this operation and later. */
+  since?: string;
   /**
    * Every change in what the run is doing. This is the only channel for
    * progress: follow prints nothing itself beyond `--verbose` internals, so the
@@ -250,6 +252,8 @@ async function follow(
   let actionsStatusAvailable = true;
   let validationRead = false;
   let stage = "";
+  const commentPath = `${base}/issues/${issueNumber}/comments` +
+    (options.since === undefined ? "" : `?since=${encodeURIComponent(options.since)}`);
 
   const report = (next: WorkflowStage): void => {
     const fingerprint = `${next.row} ${next.detail ?? ""} ${next.completed === true}`;
@@ -261,7 +265,7 @@ async function follow(
 
   while (Date.now() <= deadline) {
     const [comments, successReaction] = await Promise.all([
-      client.paginate<IssueComment>(`${base}/issues/${issueNumber}/comments`),
+      client.paginate<IssueComment>(commentPath),
       successReactionCommentId === undefined
         ? Promise.resolve(false)
         : hasSuccessReaction(client, successReactionCommentId),
@@ -282,10 +286,13 @@ async function follow(
       options.onPreview?.(renderComment(matched.preview));
     }
     if (matched.result !== undefined) {
-      // A result comment without an outcome marker predates them; the author
-      // has the text either way, so only a stated failure fails.
+      if (matched.outcome === undefined) {
+        throw new WorkflowOutcomeError(
+          `the archive result on lax-${issueNumber} did not include an authenticated outcome`,
+        );
+      }
       return {
-        outcome: matched.outcome === "failure" ? "failure" : "success",
+        outcome: matched.outcome,
         comment: matched.result,
         ...(runId === undefined ? {} : { runId }),
         ...(runUrl === undefined ? {} : { runUrl }),
@@ -356,11 +363,17 @@ function matchComments(
       comment.user.login === GITHUB_ACTIONS_BOT_LOGIN &&
       comment.user.type === "Bot";
     if (!trustedSource && !trustedBot) continue;
-    const parsed = parseWorkflowComment(comment.body);
+    const workflowOwnedBody = trustedBot
+      ? comment.body
+      : readCommandContext(comment.body, comment.id);
+    if (workflowOwnedBody === undefined) continue;
+    const parsed = parseWorkflowComment(workflowOwnedBody);
     const kind = matches(parsed, comment.id);
     if (kind === undefined) continue;
-    if (kind.preview) matched.preview = readCommandContext(comment.body, comment.id) ?? comment.body;
-    if (kind.result) {
+    if (kind.preview) matched.preview = workflowOwnedBody;
+    // Only a standalone Actions-bot comment can complete a command. The
+    // triggering user still owns and can edit the source comment.
+    if (kind.result && trustedBot) {
       matched.result = comment.body;
       matched.outcome = parsed.outcome;
     }

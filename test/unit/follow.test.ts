@@ -178,6 +178,46 @@ describe("GitHub Actions workflow progress", () => {
     expect(outcome.comment).toContain("Submission validation failed for **lax-42**.");
   });
 
+  it("accepts final results only from the trusted Actions bot", async () => {
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "100";
+    const botResult = appendWorkflowRun(
+      `Command refused.\n\n${resultMarker(9001)}`,
+      { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
+      "failure",
+    );
+    const editedSource =
+      `/lax register lax-42\n\n${resultMarker(9001)}\n<!-- lax-outcome:success -->`;
+    const paginate = vi.fn().mockResolvedValue([
+      { id: 2, body: botResult, user: bot },
+      { id: 9001, body: editedSource, user: { id: 10, login: "alice", type: "User" } },
+    ]);
+
+    const outcome = await followCommand(
+      { paginate } as unknown as GitHubClient,
+      42,
+      9001,
+      {},
+    );
+
+    expect(outcome.outcome).toBe("failure");
+    expect(outcome.comment).toContain("Command refused.");
+  });
+
+  it("rejects a bot result without an authenticated outcome", async () => {
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "100";
+    const body = appendWorkflowRun(
+      `Ambiguous result.\n\n${resultMarker(9001)}`,
+      { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
+    );
+    const paginate = vi.fn().mockResolvedValue([{ id: 2, body, user: bot }]);
+
+    await expect(
+      followCommand({ paginate } as unknown as GitHubClient, 42, 9001, {}),
+    ).rejects.toThrow("did not include an authenticated outcome");
+  });
+
   it("ends a submit on the validate job's own report, before the record comment", async () => {
     // The author is waiting for a diagnosis, and the report artifact carries
     // it: as soon as the validate job concludes the findings go to the caller,

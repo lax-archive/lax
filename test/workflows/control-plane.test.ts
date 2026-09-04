@@ -51,6 +51,11 @@ describe("submission control-plane routing", () => {
     expect(result.request.id).toBe("lax-42");
     expect(result.request.command).toMatchObject({ action: "submit", folder: "." });
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/users/alice"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => {
+      const target = new URL(String(url));
+      return target.pathname.endsWith("/issues/42/comments") &&
+        target.searchParams.get("since") === "2026-07-30T11:00:00Z";
+    })).toBe(true);
     expect(fetchMock.mock.calls.every(([url, init]) => (init as RequestInit | undefined)?.method !== "PATCH")).toBe(
       true,
     );

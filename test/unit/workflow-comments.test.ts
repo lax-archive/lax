@@ -47,6 +47,10 @@ describe("workflow comment correlation", () => {
     expect(parseWorkflowComment("<!-- lax-result-comment-id:2 --> trailing")).toEqual({
       resultCommentId: 2,
     });
+    expect(parseWorkflowComment(
+      `${resultMarker(1)}\n<!-- lax-outcome:failure -->\n` +
+      `${resultMarker(2)}\n<!-- lax-outcome:success -->`,
+    )).toEqual({ resultCommentId: 2, outcome: "success" });
   });
 
   it("replaces workflow-owned context on the original command without duplicating it", () => {
@@ -69,7 +73,7 @@ describe("workflow comment correlation", () => {
     vi.stubEnv("LAX_POLL_INTERVAL_MS", "1");
     vi.stubEnv("LAX_WORKFLOW_TIMEOUT_MS", "1000");
     const preview = appendWorkflowRun(`Preview.\n\n${previewMarker(77)}`, run());
-    const result = appendWorkflowRun(`Done.\n\n${resultMarker(77)}`, run());
+    const result = appendWorkflowRun(`Done.\n\n${resultMarker(77)}`, run(), "success");
     const paginate = vi
       .fn()
       .mockResolvedValueOnce([{ id: 1, body: preview, user: bot }])
@@ -80,8 +84,12 @@ describe("workflow comment correlation", () => {
     const previews: string[] = [];
     const outcome = await followCommand({ paginate } as unknown as GitHubClient, 42, 77, {
       onPreview: (text) => previews.push(text),
+      since: "2026-07-30T10:00:00Z",
     });
     expect(paginate).toHaveBeenCalledTimes(2);
+    expect(paginate).toHaveBeenCalledWith(
+      "/repos/lax-archive/lax/issues/42/comments?since=2026-07-30T10%3A00%3A00Z",
+    );
     expect(outcome.runId).toBe("123456789");
     expect(previews).toEqual(["Preview."]);
     expect(outcome.comment).toContain("Done.");
@@ -90,7 +98,11 @@ describe("workflow comment correlation", () => {
   it("follows initialization until the correlated final comment", async () => {
     vi.stubEnv("LAX_POLL_INTERVAL_MS", "1");
     vi.stubEnv("LAX_WORKFLOW_TIMEOUT_MS", "1000");
-    const result = appendWorkflowRun(`Initialized.\n\n${initializationMarker(42)}`, run());
+    const result = appendWorkflowRun(
+      `Initialized.\n\n${initializationMarker(42)}`,
+      run(),
+      "success",
+    );
     const paginate = vi.fn().mockResolvedValue([{ id: 1, body: result, user: bot }]);
     const outcome = await followInitialization({ paginate } as unknown as GitHubClient, 42);
     expect(outcome.outcome).toBe("success");

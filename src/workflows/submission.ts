@@ -88,8 +88,15 @@ export async function route(): Promise<void> {
     } else if (result.preview !== undefined) {
       const exists =
         result.request.commentId === undefined
-          ? await control.initializationPreviewExists(result.request.issue.number)
-          : await control.previewExists(result.request.issue.number, result.request.commentId);
+          ? await control.initializationPreviewExists(
+              result.request.issue.number,
+              result.request.eventCreatedAt,
+            )
+          : await control.previewExists(
+              result.request.issue.number,
+              result.request.commentId,
+              result.request.eventCreatedAt,
+            );
       if (!exists) {
         await control.postIssueComment(
           result.request.issue.number,
@@ -109,6 +116,7 @@ export async function route(): Promise<void> {
         id: result.request.id,
         issueNumber: result.request.issue.number,
         commentId: result.request.commentId,
+        eventCreatedAt: result.request.eventCreatedAt,
       }));
       return;
     }
@@ -128,13 +136,14 @@ interface ValidationContext {
   id: string;
   issueNumber: number;
   commentId: number;
+  eventCreatedAt: string;
 }
 
 export async function reportValidation(): Promise<void> {
   const context = parseValidationContext(decodeBase64Json(requiredEnv("VALIDATION_CONTEXT")));
   const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
   const control = new ControlPlane(client, new ArchiveRepository(client), repositoryId());
-  if (await control.resultExists(context.issueNumber, context.commentId)) {
+  if (await control.resultExists(context.issueNumber, context.commentId, context.eventCreatedAt)) {
     await clearCommandProgress(control, context.commentId);
     return;
   }
@@ -634,14 +643,29 @@ function sha256File(filename: string): string {
 }
 
 function parseValidationContext(value: unknown): ValidationContext {
-  if (!isObject(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(["commentId", "id", "issueNumber"]))
+  if (
+    !isObject(value) ||
+    JSON.stringify(Object.keys(value).sort()) !==
+      JSON.stringify(["commentId", "eventCreatedAt", "id", "issueNumber"])
+  )
     throw new ValidationError("validation context is malformed");
   if (typeof value.id !== "string" || !/^lax-[1-9][0-9]*$/u.test(value.id))
     throw new ValidationError("validation context id is malformed");
   for (const key of ["issueNumber", "commentId"] as const)
     if (!Number.isSafeInteger(value[key]) || (value[key] as number) <= 0)
       throw new ValidationError(`validation context ${key} is malformed`);
-  return { id: value.id, issueNumber: value.issueNumber as number, commentId: value.commentId as number };
+  const eventCreatedAt = typeof value.eventCreatedAt === "string" ? value.eventCreatedAt : "";
+  const eventDate = new Date(eventCreatedAt);
+  if (
+    Number.isNaN(eventDate.valueOf()) ||
+    eventDate.toISOString().replace(".000Z", "Z") !== eventCreatedAt
+  ) throw new ValidationError("validation context eventCreatedAt is malformed");
+  return {
+    id: value.id,
+    issueNumber: value.issueNumber as number,
+    commentId: value.commentId as number,
+    eventCreatedAt,
+  };
 }
 
 /**

@@ -157,7 +157,12 @@ describe("report-failure entry point", () => {
 describe("report-validation entry point", () => {
   it("posts the infrastructure-failure result once and is idempotent afterwards", async () => {
     stubWorkflowEnv({
-      VALIDATION_CONTEXT: encode({ id: "lax-42", issueNumber, commentId }),
+      VALIDATION_CONTEXT: encode({
+        id: "lax-42",
+        issueNumber,
+        commentId,
+        eventCreatedAt: "2026-07-30T11:00:00Z",
+      }),
     });
     const state: IssueState = {
       comments: [],
@@ -195,7 +200,12 @@ describe("report-validation entry point", () => {
       ],
     }));
     stubWorkflowEnv({
-      VALIDATION_CONTEXT: encode({ id: "lax-42", issueNumber, commentId }),
+      VALIDATION_CONTEXT: encode({
+        id: "lax-42",
+        issueNumber,
+        commentId,
+        eventCreatedAt: "2026-07-30T11:00:00Z",
+      }),
       VALIDATION_REPORT_PATH: reportPath,
     });
     const state: IssueState = { comments: [], reactions: [] };
@@ -236,7 +246,12 @@ describe("report-validation entry point", () => {
       },
     }));
     stubWorkflowEnv({
-      VALIDATION_CONTEXT: encode({ id: "lax-42", issueNumber, commentId }),
+      VALIDATION_CONTEXT: encode({
+        id: "lax-42",
+        issueNumber,
+        commentId,
+        eventCreatedAt: "2026-07-30T11:00:00Z",
+      }),
       VALIDATION_REPORT_PATH: reportPath,
     });
     const state: IssueState = { comments: [], reactions: [] };
@@ -270,7 +285,12 @@ describe("report-validation entry point", () => {
       },
     }));
     stubWorkflowEnv({
-      VALIDATION_CONTEXT: encode({ id: "lax-42", issueNumber, commentId }),
+      VALIDATION_CONTEXT: encode({
+        id: "lax-42",
+        issueNumber,
+        commentId,
+        eventCreatedAt: "2026-07-30T11:00:00Z",
+      }),
       VALIDATION_REPORT_PATH: reportPath,
     });
     const state: IssueState = { comments: [], reactions: [] };

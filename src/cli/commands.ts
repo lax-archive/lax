@@ -295,6 +295,7 @@ export async function resumeSubmit(target: string): Promise<void> {
       const comments = await github.paginate<{
         id: number;
         body: string | null;
+        created_at?: string;
         user: { id: number } | null;
       }>(`${base}/issues/${issue}/comments`);
       const command = [...comments]
@@ -312,7 +313,10 @@ export async function resumeSubmit(target: string): Promise<void> {
         "reattaching to " +
           `${githubOauthBase()}/${CONTROL_REPOSITORY}/issues/${issue}#issuecomment-${command.id}`,
       );
-      await followCommand(github, issue, command.id, submit.follow());
+      await followCommand(github, issue, command.id, {
+        ...submit.follow(),
+        ...(command.created_at === undefined ? {} : { since: command.created_at }),
+      });
     });
     submit.succeed();
   } finally {
@@ -758,13 +762,16 @@ async function postCommand(
   options: FollowOptions = {},
 ): Promise<FollowResult> {
   const issue = reference.issue.number;
-  const comment = await github.request<{ id: number; html_url: string; created_at: string }>(
+  const comment = await github.request<{ id: number; html_url: string; created_at?: string }>(
     "POST",
     `${base}/issues/${issue}/comments`,
     { body },
   );
   ui.verbose(`command posted: ${comment.html_url}`);
-  const result = await followCommand(github, issue, comment.id, options);
+  const result = await followCommand(github, issue, comment.id, {
+    ...options,
+    ...(comment.created_at === undefined ? {} : { since: comment.created_at }),
+  });
   if (result.outcome === "failure") {
     ui.problem(
       `the archive refused this command`,
@@ -970,7 +977,7 @@ export async function prepareLocalSubmission(
     return true;
   }
 
-  const issue = await github.request<{ number: number; html_url: string }>(
+  const issue = await github.request<{ number: number; html_url: string; created_at?: string }>(
     "POST",
     `${base}/issues`,
     { title: normalizeTitle(manifest.title), body: issueReservationBody(manifest.id) },
@@ -996,7 +1003,10 @@ export async function prepareLocalSubmission(
     );
   }
   ui.verbose(`control issue: ${issue.html_url}`);
-  const result = await followInitialization(github, issue.number, followOptions);
+  const result = await followInitialization(github, issue.number, {
+    ...followOptions,
+    ...(issue.created_at === undefined ? {} : { since: issue.created_at }),
+  });
 
   const loaded = await archive.load(manifest.id);
   if (

@@ -41,7 +41,11 @@ export class SubmitPublisher {
     artifacts: SuccessfulValidationArtifacts,
   ): Promise<{ kind: "no-op" } | { kind: "ready"; request: PublishRequest }> {
     const request = await this.canonicalRequest(untrustedRequest);
-    if (await this.control.resultExists(request.issue.number, request.commentId!)) {
+    if (await this.control.resultExists(
+      request.issue.number,
+      request.commentId!,
+      request.eventCreatedAt,
+    )) {
       await this.control.clearCommandProgress(request.commentId!);
       return { kind: "no-op" };
     }

@@ -251,6 +251,11 @@ describe("trusted Archive publisher modes", () => {
       request({ action: "delete", commentId: 78, command: { action: "delete" }, preconditions: current.preconditions }),
       run,
     );
+    expect(deletion.control.resultExists).toHaveBeenCalledWith(
+      issue.number,
+      78,
+      "2026-07-30T10:00:00Z",
+    );
     expect(Object.keys(deletion.changes()).sort()).toEqual(["build-output.json", "record.json"]);
 
     const registration = publisherHarness(current);

@@ -322,6 +322,11 @@ describe("trusted submit publisher", () => {
     await expect(
       harness.publisher.publish(request(current), successfulArtifacts(), "/capture.tar", run),
     ).resolves.toEqual({ kind: "no-op" });
+    expect(harness.control.resultExists).toHaveBeenCalledWith(
+      issue.number,
+      80,
+      "2026-07-30T11:00:00Z",
+    );
     expect(harness.load).not.toHaveBeenCalled();
     expect(harness.captureStore.promote).not.toHaveBeenCalled();
     expect(harness.clearProgress).toHaveBeenCalledWith(80);
@@ -334,6 +339,7 @@ function submitHarness(
   registeredSuperseders: string[] = [],
 ): {
   publisher: SubmitPublisher;
+  control: PublisherControl;
   captureStore: { promote: ReturnType<typeof vi.fn> };
   load: ReturnType<typeof vi.fn>;
   listRegisteredSuperseders: ReturnType<typeof vi.fn>;
@@ -372,6 +378,7 @@ function submitHarness(
   } satisfies SubmitCaptureStore;
   return {
     publisher: new SubmitPublisher(control, archive, captureStore, repositoryId),
+    control,
     captureStore,
     load,
     listRegisteredSuperseders,

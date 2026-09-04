@@ -150,16 +150,16 @@ export class ControlPlane {
     );
   }
 
-  async resultExists(issueNumber: number, commentId: number): Promise<boolean> {
-    return this.markerExists(issueNumber, resultMarker(commentId));
+  async resultExists(issueNumber: number, commentId: number, since?: string): Promise<boolean> {
+    return this.markerExists(issueNumber, [resultMarker(commentId)], since);
   }
 
-  async previewExists(issueNumber: number, commentId: number): Promise<boolean> {
-    return this.markerExists(issueNumber, previewMarker(commentId));
+  async previewExists(issueNumber: number, commentId: number, since?: string): Promise<boolean> {
+    return this.markerExists(issueNumber, [previewMarker(commentId)], since);
   }
 
-  async initializationPreviewExists(issueNumber: number): Promise<boolean> {
-    return this.markerExists(issueNumber, initializationPreviewMarker(issueNumber));
+  async initializationPreviewExists(issueNumber: number, since?: string): Promise<boolean> {
+    return this.markerExists(issueNumber, [initializationPreviewMarker(issueNumber)], since);
   }
 
   /**
@@ -169,7 +169,7 @@ export class ControlPlane {
    * being suppressed by result comments from earlier runs.
    */
   async failureReportExists(issueNumber: number, marker: string, runId: string): Promise<boolean> {
-    return this.markerExists(issueNumber, marker, workflowRunMarker(runId));
+    return this.markerExists(issueNumber, [marker, workflowRunMarker(runId)]);
   }
 
   async resolveOwnerPairs(owners: GitHubIdentity[]): Promise<GitHubIdentity[]> {
@@ -284,7 +284,7 @@ export class ControlPlane {
     const issueNodeId = problems.capture(() => nodeId(issue.node_id));
     const eventCreatedAt = problems.capture(() => normalizeTimestamp(String(comment.created_at ?? "")));
     problems.throwIfAny();
-    if (await this.resultExists(number!, commentId!)) return { kind: "ignore" };
+    if (await this.resultExists(number!, commentId!, eventCreatedAt!)) return { kind: "ignore" };
     const id = commandSubmissionId(body, legacyId);
     if (id !== reservedId) {
       throw new ValidationError(`${id} does not match the submission id reserved by this issue`);
@@ -364,9 +364,14 @@ export class ControlPlane {
     return { githubId: user.id, handle: user.login };
   }
 
-  private async markerExists(issueNumber: number, ...markers: string[]): Promise<boolean> {
+  private async markerExists(
+    issueNumber: number,
+    markers: readonly string[],
+    since?: string,
+  ): Promise<boolean> {
+    const query = since === undefined ? "" : `?since=${encodeURIComponent(since)}`;
     const comments = await this.github.paginate<CommentResponse>(
-      `${this.controlBase}/issues/${issueNumber}/comments`,
+      `${this.controlBase}/issues/${issueNumber}/comments${query}`,
     );
     return comments.some(
       (comment) =>
