@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -9,6 +9,11 @@ import type {
   ValidationFinding,
   ValidationScope,
 } from "../submission-validation/contracts.js";
+import {
+  BUILD_OUTPUT,
+  PAPER_PDF,
+  PAPER_WEB_TAR,
+} from "../submission-validation/generated-files.js";
 import { validateSubmissionOnHost } from "../submission-validation/host/pipeline.js";
 import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { hostValidationRuntime } from "../submission-validation/pins.js";
@@ -231,7 +236,9 @@ export async function buildSubmission(
     });
     const outcome: LocalBuildOutcome = {
       ok: report.ok && (scope !== "both" || report.buildOutput !== undefined),
-      warnings: report.warnings,
+      // Copied rather than shared: the build adds findings of its own about
+      // the files it writes below, which are no part of the pipeline's report.
+      warnings: [...report.warnings],
       violations: report.violations,
       ...(report.failure === undefined ? {} : { failure: report.failure }),
     };
@@ -278,12 +285,16 @@ export async function buildSubmission(
           replay: options.replay === true,
         },
       };
+      // Every generated name this build actually put in the author's folder,
+      // so the ignore rules can be held against what is really there.
+      const written: string[] = [];
       // `build-output.json` never reaches the report: the author does not open
       // it, and .gitignore already hides it.
-      const filename = path.join(submissionRoot, "build-output.json");
+      const filename = path.join(submissionRoot, BUILD_OUTPUT);
       const staging = `${filename}.${process.pid}.tmp`;
       fs.writeFileSync(staging, `${JSON.stringify(output, null, 2)}\n`);
       fs.renameSync(staging, filename);
+      written.push(BUILD_OUTPUT);
       ui.verbose(`wrote ${filename}`);
       // The compiled paper lives beside it, bound by the digest the output
       // records; a build without one (no paper, or none compiled here)
@@ -291,24 +302,27 @@ export async function buildSubmission(
       // web bundle follows the same rule — and since `lax build` does not
       // derive the web view by default (paper-web-plan.md, "CLI"), the
       // removal branch is the one an author normally sees.
-      const pdf = path.join(submissionRoot, "paper.pdf");
+      const pdf = path.join(submissionRoot, PAPER_PDF);
       if (report.paperPdfPath !== undefined) {
         const pdfStaging = `${pdf}.${process.pid}.tmp`;
         fs.copyFileSync(report.paperPdfPath, pdfStaging);
         fs.renameSync(pdfStaging, pdf);
+        written.push(PAPER_PDF);
         ui.verbose(`wrote ${pdf}`);
       } else {
         fs.rmSync(pdf, { force: true });
       }
-      const webTar = path.join(submissionRoot, "paper-web.tar");
+      const webTar = path.join(submissionRoot, PAPER_WEB_TAR);
       if (report.paperWebPath !== undefined) {
         const webStaging = `${webTar}.${process.pid}.tmp`;
         fs.copyFileSync(report.paperWebPath, webStaging);
         fs.renameSync(webStaging, webTar);
+        written.push(PAPER_WEB_TAR);
         ui.verbose(`wrote ${webTar}`);
       } else {
         fs.rmSync(webTar, { force: true });
       }
+      outcome.warnings.push(...checkGeneratedFilesIgnored(submissionRoot, written));
     }
     if (steps !== undefined) {
       const total = steps.total();
@@ -347,6 +361,64 @@ export async function buildSubmission(
 function showProfile(profiler: Profiler): void {
   ui.blank();
   for (const text of formatProfile(profiler.snapshot()).split("\n")) ui.line(text);
+}
+
+/**
+ * Say so when a name this build just wrote is covered by no ignore rule.
+ *
+ * `lax build` writes its outputs into the author's folder and `lax submit`
+ * refuses a dirty worktree, so a generated file nothing ignores turns every
+ * later submit into "the worktree is dirty" — a refusal that names nothing the
+ * author edited. Folders scaffolded before the paper layer are exactly that
+ * tree: they ignore `build-output.json` and know nothing of `paper.pdf`.
+ *
+ * git answers the question rather than a parse of the ignore file, because the
+ * file is not the whole rule: an ignore file anywhere above the submission
+ * counts, and so do the author's own global excludes — this is their machine,
+ * not the archive's hermetic checkout. A tracked name is left out: no ignore
+ * rule stops git reporting one, and static validation has its own, louder
+ * answer for a committed generated file. Outside a repository, or with no git
+ * at all, there is no worktree to keep clean and nothing to say.
+ *
+ * Reported rather than repaired, because a build cannot tell whose tree it is
+ * standing in: `lax submit --allow-dirty` builds a throwaway `git worktree`
+ * checkout of the committed HEAD and deletes it afterwards, so a line appended
+ * there would describe a change the author's repository never receives. The
+ * condition itself holds on both paths — that checkout carries the author's
+ * committed `.gitignore` — so the finding is true wherever the build ran, and
+ * it travels in `warnings`, which `lax build` prints and `lax submit` carries
+ * into its notes.
+ *
+ * Exported because the only other way to reach it is a full Lean build.
+ */
+export function checkGeneratedFilesIgnored(
+  submissionRoot: string,
+  written: readonly string[],
+): ValidationFinding[] {
+  const unignored = written.filter((name) => {
+    if (probe(submissionRoot, ["ls-files", "--error-unmatch", "--", name]) === 0) return false;
+    return probe(submissionRoot, ["check-ignore", "--quiet", "--", name]) === 1;
+  });
+  if (unignored.length === 0) return [];
+  const them = unignored.length === 1 ? "it" : "them";
+  return [
+    {
+      // The shape of the submission folder, which is what the static phase is
+      // about: the same phase carries the rule that rejects a committed copy.
+      phase: "static",
+      rule: "gitignore",
+      message:
+        `${unignored.join(", ")} ${unignored.length === 1 ? "is" : "are"} not covered by ` +
+        `.gitignore — \`lax build\` writes ${them} into the submission folder and ` +
+        `\`lax submit\` refuses a dirty worktree, so add ${them} and commit the change`,
+    },
+  ];
+}
+
+/** git's exit status, or `undefined` when git could not be run at all. */
+function probe(cwd: string, args: readonly string[]): number | undefined {
+  const finished = spawnSync("git", ["-C", cwd, ...args], { stdio: "ignore" });
+  return finished.error !== undefined || finished.status === null ? undefined : finished.status;
 }
 
 /** Errors first, then warnings: both in the notes shape, after the verdict. */

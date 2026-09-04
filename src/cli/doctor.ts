@@ -16,6 +16,7 @@ import {
   MIN_LATEXMK_VERSION,
   probeLatexmkAsync,
 } from "../submission-validation/host/paper.js";
+import { LAX_GENERATED_FILES } from "../submission-validation/generated-files.js";
 import { LEAN_TOOLCHAIN, MATHLIB_REV } from "../submission-validation/pins.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, updateDatabaseQuietly } from "./database.js";
@@ -1056,20 +1057,28 @@ function tryRead(filename: string): string | undefined {
   }
 }
 
-/** Generated Lake files git-tracked under the submission — static validation
- * rejects them at submission time, so doctor flags them early. Best-effort:
+/** Generated files git-tracked under the submission — static validation
+ * rejects them at submission time, so doctor flags them early, from the same
+ * list of names and under the same rules: the build's own root outputs count
+ * only once the manifest declares the paper that produces them. Best-effort:
  * outside a git repository there is nothing to check. */
 async function trackedGeneratedFiles(root: string): Promise<string[]> {
   try {
-    const { stdout } = await execFileAsync("git", ["ls-files"], {
+    // `-z`, because git quotes any path outside ASCII and a quoted name would
+    // match neither a basename nor a root-relative one.
+    const { stdout } = await execFileAsync("git", ["ls-files", "-z"], {
       cwd: root,
       encoding: "utf8",
     });
+    const reserved = declaresPaper(root) ? LAX_GENERATED_FILES.paper : [];
     return stdout
-      .split("\n")
-      .filter((line) =>
-        /(^|\/)(lake-manifest\.json|package-overrides\.json|build-output\.json)$/.test(line) ||
-        /(^|\/)\.lake\//.test(line),
+      .split("\0")
+      .filter(
+        (line) =>
+          line !== "" &&
+          (LAX_GENERATED_FILES.anywhere.includes(path.posix.basename(line)) ||
+            reserved.includes(line) ||
+            line.split("/").includes(LAX_GENERATED_FILES.buildTree)),
       );
   } catch {
     return [];

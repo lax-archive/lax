@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -188,6 +189,26 @@ function seedSubmission(): string {
     writeOverrides(pkg, []);
   }
   return root;
+}
+
+/** The submission folder as git would hold it: everything committed, so
+ * doctor's tracked-file check has a tree to read. */
+function commitAll(root: string): void {
+  const git = (args: string[]): void => {
+    execFileSync("git", args, { cwd: root, stdio: "ignore" });
+  };
+  git(["init", "--quiet", "--initial-branch=main"]);
+  git(["add", "-A"]);
+  git([
+    "-c",
+    "user.name=Lax Test",
+    "-c",
+    "user.email=lax@example.test",
+    "commit",
+    "--quiet",
+    "-m",
+    "fixture",
+  ]);
 }
 
 /** The report, as the author's terminal received it. */
@@ -449,6 +470,41 @@ describe("lax doctor", () => {
     expect(
       lines.some((line) => line.includes(`Lax9 → ${path.join(root, "..", "nowhere", "concepts")}`)),
     ).toBe(true);
+  });
+
+  it("names a committed build output, under the same rule static validation applies", async () => {
+    // doctor's whole job here is to say early what the archive would say
+    // late, so it flags exactly what static validation rejects: generated
+    // names anywhere in the tree, and the build's own root outputs once the
+    // manifest declares the paper that produces them.
+    const root = seedSubmission();
+    fs.writeFileSync(
+      path.join(root, "manifest.yaml"),
+      "id: lax-9\ntitle: Nine\npaper:\n  folder: paper\n  main: main.tex\n",
+    );
+    // the ignore file as it was written before the paper layer
+    fs.writeFileSync(path.join(root, ".gitignore"), "build-output.json\nlake-manifest.json\n.lake/\n");
+    fs.writeFileSync(path.join(root, "paper.pdf"), "%PDF-1.5\n");
+    commitAll(root);
+    recordSubmission(root);
+    const { log } = quiet();
+
+    await doctor();
+
+    expect(row(printed(log), "lax-9")).toContain("paper.pdf is tracked in git but must stay generated");
+  });
+
+  it("leaves a committed paper.pdf alone when no paper is declared, as the archive does", async () => {
+    const root = seedSubmission();
+    fs.writeFileSync(path.join(root, ".gitignore"), "build-output.json\nlake-manifest.json\n.lake/\n");
+    fs.writeFileSync(path.join(root, "paper.pdf"), "%PDF-1.5\n");
+    commitAll(root);
+    recordSubmission(root);
+    const { log } = quiet();
+
+    await doctor();
+
+    expect(row(printed(log), "lax-9")).toBe(`  ✓ lax-9               ${ui.tilde(root)}`);
   });
 
   it("says everything is ready when there is nothing to act on", async () => {

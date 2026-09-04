@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { generatedFilesGitignore } from "../submission-validation/generated-files.js";
 // The pins module is the single home of the archive pins, so scaffolds always
 // match what the host build and the trusted container validate against (and
 // follow the fake-mathlib test seam).
@@ -48,10 +49,10 @@ export function scaffoldSubmission(
   );
   write("abstract.md", "TODO: describe this submission.\n");
   write("LICENSE", fs.readFileSync(asset("apache-2.0.txt"), "utf8"));
-  // paper.pdf and paper-web.tar: the compiled paper (and, when derived, its
-  // web bundle) `lax build` writes beside build-output.json once a manifest
-  // declares one — generated, like the rest of the list.
-  write(".gitignore", "build-output.json\npaper.pdf\npaper-web.tar\nlake-manifest.json\n.lake/\n");
+  // Every name lax writes into this folder, from the module that also tells
+  // static validation and `lax doctor` which names those are: a build must
+  // never be able to leave a scaffolded worktree dirty.
+  write(".gitignore", generatedFilesGitignore());
   write("concepts/lean-toolchain", `${runtime.leanToolchain}\n`);
   write(
     "concepts/lakefile.toml",

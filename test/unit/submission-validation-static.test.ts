@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -470,6 +471,72 @@ describe("submission static validation retained from main", () => {
     expect(messages).toContain("proofs/Lax8Proofs/data.json");
   });
 
+  it("passes over what the submission's ignore rules cover, so local junk never fails a commit the archive would take", () => {
+    // The trusted path validates a checkout, where every file is tracked and
+    // nothing can be ignored, so the rule above is the whole rule there. `lax
+    // build` validates the working tree, where an editor's leavings sit beside
+    // the sources — and the archive will never receive them.
+    const root = makeSubmission("lax-8", undefined, { "concepts/Lax8/Basic.lean": "def a := 1\n" });
+    initializeGit(root);
+    writeFile(root, "concepts/.DS_Store", "junk");
+    writeFile(root, "concepts/Lax8/.Basic.lean.swp", "junk");
+    writeFile(root, "concepts/scratch/notes.txt", "notes");
+
+    // uncovered, they are as much a mistake as they always were
+    const bare = runStaticValidation(request("lax-8"), root, RUNTIME);
+    expect(bare.findings.violations.map((finding) => finding.message).sort()).toEqual([
+      "unexpected package file: concepts/.DS_Store",
+      "unexpected package file: concepts/Lax8/.Basic.lean.swp",
+      "unexpected package file: concepts/scratch",
+    ]);
+
+    // and gitignoring them — the fix an author reaches for first — is what
+    // silences it, which is exactly what it used to fail to do
+    fs.appendFileSync(path.join(root, ".gitignore"), ".DS_Store\n*.swp\nscratch/\n");
+    const ignored = runStaticValidation(request("lax-8"), root, RUNTIME);
+    expect(ignored.findings.violations).toEqual([]);
+    expect(ignored.findings.warnings).toEqual([]);
+  });
+
+  it("checks a submission that has never been committed, which every folder is on its first build", () => {
+    // `lax init`, write some Lean, `lax build` — nothing is in the index yet,
+    // and the walk still has to say what is wrong with the folder. Only the
+    // author's ignore rules take anything out of it.
+    const root = makeSubmission("lax-8", undefined, {
+      "concepts/Lax8/Basic.lean": "def a := 1\n",
+      "concepts/notes.md": "hello\n",
+    });
+    execFileSync("git", ["init", "--quiet", "--initial-branch=main"], { cwd: root });
+    fs.appendFileSync(path.join(root, ".gitignore"), "*.md\n");
+    writeFile(root, "concepts/scratch/one.txt", "notes");
+
+    const check = runStaticValidation(request("lax-8"), root, RUNTIME);
+
+    expect(check.findings.violations.map((finding) => finding.message)).toEqual([
+      "unexpected package file: concepts/scratch",
+    ]);
+  });
+
+  it("judges a committed file that an ignore rule matches, because git does not ignore it", () => {
+    // The rule an author could otherwise submit through: add the file, commit
+    // it, then write a `.gitignore` line that covers it. git reports a tracked
+    // path as tracked whatever the ignore rules say, and validation asks git.
+    const root = makeSubmission("lax-8", undefined, {
+      "concepts/Lax8/Basic.lean": "def a := 1\n",
+      "concepts/Lax8/data.json": "{}\n",
+      "concepts/notes.md": "hello\n",
+    });
+    initializeGit(root);
+    fs.appendFileSync(path.join(root, ".gitignore"), "*.json\n*.md\n");
+
+    const check = runStaticValidation(request("lax-8"), root, RUNTIME);
+
+    expect(check.findings.violations.map((finding) => finding.message).sort()).toEqual([
+      "unexpected package file: concepts/Lax8/data.json",
+      "unexpected package file: concepts/notes.md",
+    ]);
+  });
+
   it("rejects a checked-in package-overrides file but tolerates the gitignored lax-written one", () => {
     // tracked (the .gitignore no longer covers .lake/): a dependency-
     // redirection primitive, rejected with the lax-generated explanation
@@ -619,9 +686,12 @@ describe("paper static validation", () => {
       "main.tex": "\\documentclass{article}\\begin{document}x\\end{document}\n",
     });
     initializeGit(root);
-    // the local build leaves these beside the sources; they are never part of the compile copy
+    // the local build leaves these beside the sources; they are never part of
+    // the compile copy — a previous run's PDF and web bundle least of all,
+    // since a paper that swallowed its own output would grow with every build
     writeFile(root, "build-output.json", "{}\n");
     writeFile(root, "paper.pdf", "%PDF-1.5\n");
+    writeFile(root, "paper-web.tar", "tar\n");
     writeFile(root, "concepts/.lake/package-overrides.json", "{}\n");
 
     const check = runStaticValidation(request("lax-261"), root, RUNTIME);
@@ -632,22 +702,32 @@ describe("paper static validation", () => {
     expect(files).toContain("concepts/lakefile.toml");
     expect(files).not.toContain("build-output.json");
     expect(files).not.toContain("paper.pdf");
+    expect(files).not.toContain("paper-web.tar");
     expect(files.some((file) => file.startsWith(".git/") || file.includes("/.lake/"))).toBe(false);
     expect(check.result.paper!.texFiles).toEqual(["main.tex"]);
   });
 
-  it("rejects a committed paper.pdf only when a paper is declared", () => {
+  it("rejects every committed paper output, and only when a paper is declared", () => {
     const declared = makeSubmission("lax-261", undefined, {
       "manifest.yaml": manifest("lax-261") + PAPER_BLOCK,
       "paper/main.tex": "x\n",
       "paper.pdf": "%PDF-1.5\n",
+      "paper-web.tar": "tar\n",
     });
     initializeGit(declared);
     const rejected = runStaticValidation(request("lax-261"), declared, RUNTIME);
     const generated = rejected.findings.violations.filter((finding) => finding.rule === "generated-files");
-    expect(generated.map((finding) => finding.message)).toEqual(["generated file must not be committed: paper.pdf"]);
+    // the web bundle is written and deleted by exactly the same build step as
+    // the PDF, so a committed copy is exactly as stale
+    expect(generated.map((finding) => finding.message).sort()).toEqual([
+      "generated file must not be committed: paper-web.tar",
+      "generated file must not be committed: paper.pdf",
+    ]);
 
-    const undeclared = makeSubmission("lax-261", undefined, { "paper.pdf": "%PDF-1.5\n" });
+    const undeclared = makeSubmission("lax-261", undefined, {
+      "paper.pdf": "%PDF-1.5\n",
+      "paper-web.tar": "tar\n",
+    });
     initializeGit(undeclared);
     expect(runStaticValidation(request("lax-261"), undeclared, RUNTIME).findings.violations).toEqual([]);
   });
