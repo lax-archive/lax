@@ -22,7 +22,7 @@ import {
   environments,
   type ArchiveEnvironment,
 } from "../../src/submission-validation/environments.js";
-import { leanBinary, toolchainDir } from "../../src/submission-validation/host/leanenv.js";
+import { lakePathEnv, leanBinary, toolchainDir } from "../../src/submission-validation/host/leanenv.js";
 
 interface TheoremReport {
   statement: string;
@@ -51,6 +51,12 @@ function checkComposer(environment: ArchiveEnvironment): void {
     ...process.env,
     ELAN_TOOLCHAIN: environment.leanToolchain,
     LEAN_PATH: temporary,
+    // the composer's own `findSysroot` spawns `lean --print-prefix` by name,
+    // so the environment's bin dir leads the child's PATH the way the host
+    // pipeline and `lax generate-prooftree` already do — a CI runner's elan
+    // install puts nothing on PATH, and the first admission run (2026-09-04)
+    // failed exactly there
+    PATH: lakePathEnv(environment),
   };
   // the environment's own binary, not a PATH lookup: elan's default toolchain
   // is not this machine's business here (same reasoning as host/leanenv.ts)
