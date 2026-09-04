@@ -22,11 +22,11 @@ permissions:
 # carries hidden correlation markers and readers match on those, not on order.
 
 jobs:
-  # Ordinary project issues and their comments never allocate a runner. A
-  # current CLI puts the locally generated id in a hidden issue-body marker;
-  # the exact old CLI body remains admitted during migration. TypeScript still
-  # parses the complete marker and command under strict byte and shape limits.
-  route:
+  # Preserve the job-level expression as the zero-runner filter for ordinary
+  # project traffic. Candidate events then cross this permissionless, checkout-
+  # free byte/shape gate before any repository code or dependency executes.
+  # The route job remains authoritative and repeats every check in TypeScript.
+  precheck:
     if: >-
       (github.event_name == 'issues' &&
        (startsWith(github.event.issue.body, '<!-- lax-submission-id:') ||
@@ -35,6 +35,54 @@ jobs:
        startsWith(github.event.comment.body, '/lax') &&
        (startsWith(github.event.issue.body, '<!-- lax-submission-id:') ||
         github.event.issue.body == 'This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.'))
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check the event envelope without repository code
+        id: check
+        shell: bash
+        run: |
+          node --input-type=commonjs <<'NODE'
+          const fs = require("node:fs");
+
+          const bytes = fs.readFileSync(process.env.GITHUB_EVENT_PATH);
+          const event = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+          const legacy = "This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.";
+          const reserved = (body) =>
+            typeof body === "string" &&
+            (body === legacy ||
+             /^<!-- lax-submission-id:lax-[1-9][0-9]{5} -->(?:\r\n?|\n|$)/u.test(body));
+          const human = (user) => user !== null && typeof user === "object" && user.type === "User";
+          const envelope = event !== null && typeof event === "object" ? event : {};
+          const issue = envelope.issue;
+          const issueEvent =
+            process.env.GITHUB_EVENT_NAME === "issues" &&
+            envelope.action === "opened" &&
+            human(issue?.user) &&
+            reserved(issue?.body);
+          const comment = envelope.comment;
+          const body = typeof comment?.body === "string" ? comment.body : "";
+          const commentEvent =
+            process.env.GITHUB_EVENT_NAME === "issue_comment" &&
+            envelope.action === "created" &&
+            human(comment?.user) &&
+            Buffer.byteLength(body, "utf8") <= 16 * 1024 &&
+            /^\/lax(?:\s|$)/u.test(body) &&
+            reserved(issue?.body);
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `should_run=${issueEvent || commentEvent ? "true" : "false"}\n`,
+          );
+          NODE
+
+  # A current CLI puts the locally generated id in a hidden issue-body marker;
+  # the exact old CLI body remains admitted during migration. TypeScript parses
+  # the complete marker and command again under strict byte and shape limits.
+  route:
+    needs: precheck
+    if: needs.precheck.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     outputs:
       operation: ${{ steps.route.outputs.operation }}
@@ -376,14 +424,15 @@ jobs:
   # TypeScript reports structured routing/publication failures. This final
   # fallback also covers failures before the handlers can run: checkout,
   # dependency installation, compilation, and App-token actions. It is a thin
-  # dispatcher into the same typed, tested TS as every other job — no inline
-  # JS (rewrite-plan.md "Write runner and concurrency"). Accepted tradeoff,
-  # per the plan's explicit decision: a breakage in checkout/npm ci/build also
-  # breaks this fallback report, in exchange for zero untyped logic in YAML.
+  # dispatcher into the same typed, tested TS as every other stateful job. The
+  # permissionless envelope precheck above is the only inline JS; reporting
+  # remains here so a breakage in checkout/npm ci/build may also break this
+  # fallback, the tradeoff recorded in rewrite-plan.md.
   # A failed validate job is report-validation-failure's case, so validate is
   # not a dependency here and no double report can be posted for it.
   report-workflow-failure:
     needs:
+      - precheck
       - route
       - publish
       - publish-submit
@@ -391,7 +440,8 @@ jobs:
     if: >-
       ${{
         always() &&
-        (needs.route.result == 'failure' ||
+        (needs.precheck.result == 'failure' ||
+         needs.route.result == 'failure' ||
          needs.publish.result == 'failure' ||
          needs.publish-submit.result == 'failure' ||
          needs.report-validation-failure.result == 'failure')

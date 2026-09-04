@@ -9,6 +9,9 @@
 // lives in TS entry points and is tested behaviorally in
 // submission-entry.test.ts and its siblings.
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import {
@@ -146,8 +149,9 @@ describe("submission workflow wiring", () => {
   it("collapses validation into exactly one job", () => {
     // The single-job pipeline is the reviewed architecture; a new job name
     // appearing here must be a conscious decision, not drift. The success path
-    // is three hops: route → validate → publish-submit.
+    // is four hops: precheck → route → validate → publish-submit.
     expect(Object.keys(jobs).sort()).toEqual([
+      "precheck",
       "publish",
       "publish-submit",
       "report-validation-failure",
@@ -172,21 +176,72 @@ describe("submission workflow wiring", () => {
   // -------------------------------------------------------------------------
   // Untrusted-input gate before any checkout.
   // -------------------------------------------------------------------------
-  it("gates unrelated comments before a runner is allocated", () => {
-    // The gate is a job-level condition, not a job: an unrelated comment on
-    // this repository must not start a runner at all. It is evaluated as data
-    // — no comment text is ever interpolated into a `run:` script — and for
-    // New issue events must carry the private reservation marker (or the exact
-    // historical body during migration), and comments must be commands on one
-    // of those issues. Ordinary project issues never allocate a runner.
+  it("gates candidate events without permissions, checkout, or dependencies", () => {
+    // The job-level condition still drops ordinary traffic without a runner.
+    // Candidate envelopes then get exact byte, actor, marker, and command-word
+    // checks before any repository-controlled code executes. TypeScript repeats
+    // all validation in route; this is deliberately only a cheap outer gate.
+    const precheck = requireJob(jobs, "precheck");
+    expect(precheck.needs).toBeUndefined();
+    expect(precheck.if).toContain("startsWith(github.event.issue.body, '<!-- lax-submission-id:')");
+    expect(precheck.if).toContain("github.event_name == 'issue_comment'");
+    expect(precheck.if).toContain("startsWith(github.event.comment.body, '/lax')");
+    expect(precheck.permissions).toEqual({});
+    expect(precheck.outputs).toEqual({ should_run: "${{ steps.check.outputs.should_run }}" });
+    expect(precheck.steps).toHaveLength(1);
+    expect(precheck.steps[0]?.uses).toBeUndefined();
+    const script = precheck.steps[0]?.run ?? "";
+    expect(script).toContain('new TextDecoder("utf-8", { fatal: true })');
+    expect(script).toContain("JSON.parse");
+    expect(script).toContain('user.type === "User"');
+    expect(script).toContain('Buffer.byteLength(body, "utf8") <= 16 * 1024');
+    expect(script).toContain('/^\\/lax(?:\\s|$)/u.test(body)');
+    expect(script).toContain("lax-[1-9][0-9]{5}");
+    expect(script).not.toContain("${{ github.event");
     const route = requireJob(jobs, "route");
-    expect(route.needs).toBeUndefined();
-    expect(route.if).toContain("startsWith(github.event.issue.body, '<!-- lax-submission-id:')");
-    expect(route.if).toContain("github.event_name == 'issue_comment'");
-    expect(route.if).toContain("startsWith(github.event.comment.body, '/lax')");
-    expect(route.if).toContain("This issue is the control plane for one Lax submission.");
-    expect(workflow).not.toContain("precheck");
-    expect(workflow).not.toContain("should_run");
+    expect(route.needs).toBe("precheck");
+    expect(route.if).toBe("needs.precheck.outputs.should_run == 'true'");
+  });
+
+  it("admits only bounded human command envelopes through the precheck", () => {
+    const reservation =
+      "<!-- lax-submission-id:lax-123456 -->\n\n" +
+      "This issue is the control plane for one Lax submission. Keep it open and use `/lax` command comments through the CLI.";
+    const human = { id: 10, login: "alice", type: "User" };
+    const bot = { id: 11, login: "robot", type: "Bot" };
+    const issue = { body: reservation, user: human };
+
+    expect(runPrecheck("issues", { action: "opened", issue })).toMatchObject({
+      status: 0,
+      output: "should_run=true\n",
+    });
+    const marker = "<!-- lax-submission-id:lax-123456 -->";
+    for (const ending of ["\r\n\r\n", "\r\r", "\n\n", ""]) {
+      expect(runPrecheck("issues", {
+        action: "opened",
+        issue: { ...issue, body: ending === "" ? marker : `${marker}${ending}Control` },
+      }).output).toBe("should_run=true\n");
+    }
+    expect(runPrecheck("issues", { action: "opened", issue: { ...issue, user: bot } }).output)
+      .toBe("should_run=false\n");
+    expect(runPrecheck("issues", {
+      action: "opened",
+      issue: { ...issue, body: reservation.replace("lax-123456", "lax-12345") },
+    }).output).toBe("should_run=false\n");
+    expect(runPrecheck("issue_comment", {
+      action: "created",
+      issue,
+      comment: { body: "/lax register", user: human },
+    }).output).toBe("should_run=true\n");
+    for (const comment of [
+      { body: "/laxevil", user: human },
+      { body: `/lax ${"x".repeat(16 * 1024)}`, user: human },
+      { body: "/lax register", user: bot },
+    ]) {
+      expect(runPrecheck("issue_comment", { action: "created", issue, comment }).output)
+        .toBe("should_run=false\n");
+    }
+    expect(runPrecheck("issues", undefined, Buffer.from([0xff])).status).not.toBe(0);
   });
 
   // -------------------------------------------------------------------------
@@ -195,7 +250,7 @@ describe("submission workflow wiring", () => {
   it("checks out and then sets up through the local composite action in every job", () => {
     // A local action is only resolvable after the repository is on disk, so
     // checkout cannot move into it; everything after it can.
-    for (const [name, job] of Object.entries(jobs)) {
+    for (const [name, job] of Object.entries(jobs).filter(([name]) => name !== "precheck")) {
       const checkout = job.steps.findIndex((step) => step.uses?.startsWith("actions/checkout"));
       const setup = job.steps.findIndex((step) => step.uses === "./.github/actions/setup-lax");
       expect(checkout, name).toBe(0);
@@ -482,6 +537,7 @@ describe("submission workflow wiring", () => {
     // report-validation-failure's case, and a second dependency here would
     // double-post on it.
     expect(fallback.needs).toEqual([
+      "precheck",
       "route",
       "publish",
       "publish-submit",
@@ -506,7 +562,8 @@ describe("submission workflow wiring", () => {
     ]);
     expect(report?.env?.PUBLICATION_FAILED).toContain("needs.publish.result == 'failure'");
     expect(report?.env?.PUBLICATION_FAILED).toContain("needs.publish-submit.result == 'failure'");
-    // No inline JS anywhere: github-script was the last untyped logic host.
+    // The small permissionless precheck is the sole inline script; no
+    // privileged job may regain github-script as a second logic host.
     expect(workflow).not.toContain("actions/github-script");
   });
 
@@ -743,4 +800,33 @@ function nextJobOffset(jobText: string): number {
   match.lastIndex = 1;
   const found = match.exec(jobText);
   return found === null ? jobText.length : found.index;
+}
+
+function runPrecheck(
+  eventName: string,
+  event?: unknown,
+  eventBytes = Buffer.from(JSON.stringify(event), "utf8"),
+): { status: number | null; output: string } {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "lax-precheck-"));
+  const eventPath = path.join(directory, "event.json");
+  const outputPath = path.join(directory, "output");
+  try {
+    fs.writeFileSync(eventPath, eventBytes);
+    const precheck = requireJob(jobs, "precheck");
+    const result = spawnSync("/bin/bash", ["-c", precheck.steps[0]?.run ?? ""], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_EVENT_NAME: eventName,
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_OUTPUT: outputPath,
+      },
+    });
+    return {
+      status: result.status,
+      output: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "",
+    };
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
