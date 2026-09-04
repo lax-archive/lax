@@ -3,6 +3,13 @@ name: CI
 on:
   push:
   pull_request:
+  # The inspector-matrix job below is the only guard the non-epoch
+  # environments have, and an environment stays open forever, so it also runs
+  # on a schedule: a Lean or mathlib change that breaks an old inspector must
+  # not wait for someone to touch this repository. The other jobs answer to
+  # pushes only.
+  schedule:
+    - cron: "23 5 * * 1"
 
 permissions:
   contents: read
@@ -13,6 +20,7 @@ concurrency:
 
 jobs:
   check:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -66,19 +74,17 @@ jobs:
             ~/.lax/warm
             ~/.lax/tools
           key: ${{ steps.host-key.outputs.cache_key }}
-      # The proof-tree composer (assets/prooftree/) is Lean that only the
-      # pinned toolchain can run, and only end to end: the smoke composes the
+      # The proof-tree composer (assets/prooftree/) is Lean that only an
+      # admitted toolchain can run, and only end to end: the smoke composes the
       # eight-theorem fixture, replays it in a fresh process, and reads the
       # kernel's own `#print axioms`. It needs no container and no mathlib, so
       # it belongs to this job, right after the provisioning it depends on —
       # and after the cache save, because it is the first step here that
-      # compiles fixture code. `lean` is not on PATH: elan is installed with
-      # --no-modify-path (host/setup.ts), so the toolchain directory has to be
-      # named, and leanenv.ts is the one place that knows where it is.
+      # compiles fixture code. It resolves `lean` through each environment's
+      # entry rather than through PATH, which is what elan's --no-modify-path
+      # install (host/setup.ts) leaves it no choice about.
       - name: Run the proof-tree composer smoke
-        run: |
-          bin="$(node --input-type=module -e 'import { toolchainBinDir } from "./dist/submission-validation/host/leanenv.js"; process.stdout.write(toolchainBinDir())')"
-          PATH="$bin:$PATH" npm run smoke:prooftree
+        run: npm run smoke:prooftree
       # The paper-layer e2es compile small fixtures with the host latexmk, the
       # way `lax build` does on an author's machine; they skip themselves
       # without one, so the install is what makes them run here. Beyond the
@@ -128,6 +134,7 @@ jobs:
   # push, in a real container, against the real pins.
   smoke:
     name: Container smoke
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -199,3 +206,99 @@ jobs:
       # directory; the fixtures get throwaway job roots under $TMPDIR.
       - name: Run the real-container submission validation smoke
         run: npm run smoke:submission-validation
+
+  # Which environments the inspector still has to build for, and whether this
+  # event needs asking. The check job installs the epoch alone, so between
+  # admissions every other admitted environment's inspector is unguarded — and
+  # an environment stays open forever (environments-plan.md, "Islands"), so a
+  # release that breaks an old one has to surface here rather than in a
+  # validation run. The matrix comes from the table's own source text, so this
+  # job needs no npm install and no build, and an unreadable table fails loudly
+  # instead of yielding a short matrix that silently stops guarding a row.
+  inspector-plan:
+    name: Plan the inspector matrix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      matrix: ${{ steps.decide.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          # the push's parent has to be in this clone to diff against
+          fetch-depth: 0
+      - id: decide
+        env:
+          # Event values are untrusted (trust rule 2): they reach the script
+          # through the environment, never through an expression the shell
+          # would then parse.
+          BEFORE: ${{ github.event.before }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          matrix="$(node scripts/environments/matrix.mjs)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" != "push" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A push whose parent this clone does not have — a new branch, a
+          # force push, the first commit — cannot be compared, so it runs. The
+          # gate errs towards running: a skipped guard is worse than a spent
+          # runner minute.
+          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -Eq \
+            '^(src/submission-validation/lean/|assets/prooftree/|src/submission-validation/environments\.ts$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # One leg per admitted environment: install its toolchain (no mathlib — 3 GB
+  # and about a minute), build the inspector its entry names, and compare the
+  # golden report. The shape guards in lean/inspector/Main.lean fail the build
+  # itself when a persisted extension entry type has moved, so this job catches
+  # drift as a compile error rather than as a wrong report.
+  inspector-matrix:
+    name: Inspector (${{ matrix.id }})
+    needs: inspector-plan
+    if: needs.inspector-plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    strategy:
+      # every environment is reported, not just the first to break
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.inspector-plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # install-toolchain.mjs reaches into dist/ for the pinned elan installer
+      - run: npm run build
+      - name: Install the environment's toolchain
+        env:
+          LEAN_TOOLCHAIN: ${{ matrix.leanToolchain }}
+        run: node scripts/environments/install-toolchain.mjs "$LEAN_TOOLCHAIN"
+      # The golden test builds the inspector for, and compares against, every
+      # admitted environment whose toolchain is installed — and this leg
+      # installed exactly one.
+      - name: Build the inspector and compare the golden report
+        run: npx vitest run test/e2e/inspector-golden.test.ts
+      # The composer shares the same "one source, every environment" exposure
+      # and no test but this one covers it (spike/environments/REPORT.md: the
+      # unit and fake-mathlib e2e suites passed straight through the 4.33
+      # break). It needs no mathlib either.
+      - name: Run the proof-tree composer smoke
+        run: npm run smoke:prooftree

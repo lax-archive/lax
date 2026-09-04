@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import { epoch } from "../src/submission-validation/environments.js";
 import { inspectorBinary } from "../src/submission-validation/host/inspector.js";
+import { toolchainDir } from "../src/submission-validation/host/leanenv.js";
 import {
   buildWarmWorkspace,
   makeStoreReadOnly,
@@ -26,6 +27,11 @@ export default async function setup(): Promise<void> {
   process.env.LAX_MATHLIB_REV = rev;
   putToolchainOnPath();
   const environment = epoch();
+  // Nothing to pre-build for an environment this machine does not have. The
+  // inspector-matrix job and the admission workflow install exactly one
+  // toolchain, which is not always the epoch's, and run the golden test alone;
+  // it provisions what it needs and fails if it compared nothing.
+  if (!fs.existsSync(toolchainDir(environment))) return;
   await inspectorBinary(environment, {}, SHARED_TOOLS);
   const ws = warmDir(environment, sharedWarmBase());
   if (warmReady(ws)) {

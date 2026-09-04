@@ -1,0 +1,258 @@
+name: Environments
+
+# Admission: propose a new archive environment when mathlib cuts a release.
+#
+# environments-plan.md, "Admission: environments.yml". The archive recommends
+# one environment a year (the *epoch*) and admits mathlib's monthly `vX.Y.0`
+# releases beside it, so authors who need a newer mathlib have somewhere to go.
+# Admitting one costs a full test pass under its toolchain, which is what this
+# workflow spends, and one small pull request, which is what a human reviews.
+#
+# It runs mathlib and this repository's own tests, and nothing else: no App
+# key, no database-repository access, no author code. The only write it can perform
+# is a branch and a pull request in this repository, and only in the last job.
+
+on:
+  schedule:
+    - cron: "41 4 * * 2"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "One mathlib vX.Y.0 release tag to test (default: every new candidate)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# A second run while one is in flight would propose the same environment
+# twice; admission is never urgent, so the running one finishes.
+concurrency:
+  group: environments
+  cancel-in-progress: false
+
+jobs:
+  # Step 1: which releases are candidates. discover.mjs keeps `vX.Y.0` tags at
+  # or above the floor and above the recorded start version, drops the ids
+  # already in the table, resolves each tag to a commit, and asserts that the
+  # tag's own `lean-toolchain` is `leanprover/lean4:<tag>` — read at the
+  # commit, because tags move and the recorded commit does not.
+  discover:
+    name: Discover candidates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+      any: ${{ steps.discover.outputs.any }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # discover.mjs reads the canonical mathlib URL out of the compiled pins
+      # module rather than naming it a second time
+      - run: npm run build
+      - id: discover
+        env:
+          # A workflow_dispatch input is untrusted (trust rule 2): it reaches
+          # the script through the environment and is shape-checked there
+          # before it is ever used as a ref.
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          matrix="$(node scripts/environments/discover.mjs "${TAG:-}")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          if [ "$(node -p "JSON.parse(process.argv[1]).include.length" "$matrix")" = "0" ]; then
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Step 2: one job per candidate, with the candidate injected as an admitted
+  # environment. LAX_TEST_ENVIRONMENTS is a test seam and this is a test run —
+  # it must never appear in production, but here it is precisely the right
+  # tool: the candidate is not in the table yet, and the whole run exists to
+  # decide whether it should be.
+  #
+  # The order is cheapest-first. The unit and fake-mathlib suites are minutes;
+  # the golden test and the composer smoke are the two that actually catch a
+  # Lean release moving under us (the stage-0 spike measured a composer break
+  # that the first two passed straight through); the container smoke against
+  # the real mathlib at the candidate's commit is the ten-minute one, and the
+  # only one that produces a memory measurement.
+  test:
+    name: Test ${{ matrix.id }}
+    needs: discover
+    if: needs.discover.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    env:
+      LAX_TEST_ENVIRONMENTS: >-
+        [{"id":"${{ matrix.id }}","leanToolchain":"${{ matrix.leanToolchain }}","mathlibCommit":"${{ matrix.mathlibCommit }}"}]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Install the candidate's toolchain
+        env:
+          LEAN_TOOLCHAIN: ${{ matrix.leanToolchain }}
+        run: node scripts/environments/install-toolchain.mjs "$LEAN_TOOLCHAIN"
+      # The unit and fake-mathlib e2e suites under the candidate's toolchain:
+      # the fake mathlib has no closure, so this proves the plumbing, not the
+      # environment.
+      - run: npm test
+      # The inspector's output contract. Its build carries the shape guards,
+      # so a moved core type fails here as a compile error.
+      - name: Compare the golden inspector report
+        run: npx vitest run test/e2e/inspector-golden.test.ts
+      - name: Run the proof-tree composer smoke
+        run: npm run smoke:prooftree
+      # The real thing: the container pipeline against real mathlib at the
+      # candidate's commit. Cold `lake exe cache get` is about ten minutes on a
+      # hosted runner, and there is nothing to cache — this environment has
+      # never been provisioned here before.
+      - name: Run the real-container smoke against the candidate
+        id: container
+        run: npm run smoke:submission-validation | tee "$RUNNER_TEMP/smoke.json"
+      # The last JSON line carries the heaviest span's peak memory, sampled
+      # from the container's own cgroup by the runner. It becomes the entry's
+      # `limits` so the environment carries a budget measured on its own
+      # mathlib rather than one measured on the epoch's.
+      - name: Record the measurement
+        env:
+          ID: ${{ matrix.id }}
+          COMMIT: ${{ matrix.mathlibCommit }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/measurement"
+          node -e '
+            const fs = require("node:fs");
+            const lines = fs.readFileSync(process.env.RUNNER_TEMP + "/smoke.json", "utf8")
+              .split("\n").filter((line) => line.startsWith("{"));
+            const last = lines.at(-1);
+            const peak = last === undefined ? undefined : JSON.parse(last).peakMemoryBytes;
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/measurement/" + process.env.ID + ".json",
+              JSON.stringify({
+                id: process.env.ID,
+                mathlibCommit: process.env.COMMIT,
+                ...(typeof peak === "number" && peak > 0 ? { peakMemoryBytes: peak } : {}),
+              }));
+          '
+          cat "$RUNNER_TEMP/measurement/$ID.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: environment-${{ matrix.id }}
+          path: ${{ runner.temp }}/measurement/
+
+  # Step 3: on green, the entry and a pull request. This is the only job with
+  # a write grant, it holds no App key, and it never touches the database — a
+  # merged pull request reaches authors with the next CLI release.
+  #
+  # A pull request opened with GITHUB_TOKEN does not itself start a workflow
+  # run; the merge to main does, and that is the run whose inspector-matrix
+  # leg guards the new environment from then on.
+  admit:
+    name: Open the admission pull request
+    needs: [discover, test]
+    if: needs.discover.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: environment-*
+          merge-multiple: true
+          path: measurement
+      - name: Append the admitted entries
+        id: admit
+        run: |
+          set -euo pipefail
+          branch="environments/admit-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          summary=""
+          for file in measurement/*.json; do
+            id="$(node -p "JSON.parse(require('node:fs').readFileSync('$file','utf8')).id")"
+            commit="$(node -p "JSON.parse(require('node:fs').readFileSync('$file','utf8')).mathlibCommit")"
+            peak="$(node -p "JSON.parse(require('node:fs').readFileSync('$file','utf8')).peakMemoryBytes ?? ''")"
+            if [ -n "$peak" ]; then
+              node scripts/environments/admit.mjs --id "$id" --commit "$commit" --memory-bytes "$peak"
+              summary="$summary- \`$id\` at \`$commit\`, peak $peak bytes"$'\n'
+            else
+              node scripts/environments/admit.mjs --id "$id" --commit "$commit"
+              summary="$summary- \`$id\` at \`$commit\`, no memory measurement"$'\n'
+            fi
+          done
+          {
+            echo "summary<<EOF"
+            echo "$summary"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.admit.outputs.branch }}
+          SUMMARY: ${{ steps.admit.outputs.summary }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add src/submission-validation/environments.ts
+          git commit -m "Admit a new archive environment"
+          git push origin "$BRANCH"
+          gh pr create --base "${GITHUB_REF_NAME}" --head "$BRANCH" \
+            --title "Admit a new archive environment" \
+            --body "$(printf '%s\n\n%s\n\n%s\n' \
+              "The admission run passed under the candidate's toolchain: unit and fake-mathlib suites, the golden inspector report, the proof-tree composer smoke, and the real-container smoke against mathlib at the recorded commit." \
+              "$SUMMARY" \
+              "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")"
+
+  # On red the fix is inspector or composer source work, so it wants an issue
+  # with enough of the transcript to start from, not a silent red run nobody
+  # sees on a Tuesday morning.
+  report-failure:
+    name: Report a failed admission
+    needs: [discover, test]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      actions: read
+    steps:
+      - name: Open an issue with the log tail
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh run view "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed \
+            | tail -n 200 > "$RUNNER_TEMP/tail.txt" || echo "(no failed-step log available)" > "$RUNNER_TEMP/tail.txt"
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Environment admission failed on $(date -u +%Y-%m-%d)" \
+            --body "$(printf '%s\n\n%s\n\n```\n%s\n```\n' \
+              "The scheduled admission run did not go green, so no environment was proposed." \
+              "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              "$(cat "$RUNNER_TEMP/tail.txt")")"

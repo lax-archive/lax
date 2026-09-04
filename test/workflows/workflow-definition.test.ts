@@ -35,6 +35,10 @@ const releaseWorkflow = fs.readFileSync(
   new URL("../../.github/workflows/release.yml", import.meta.url),
   "utf8",
 );
+const environmentsWorkflow = fs.readFileSync(
+  new URL("../../.github/workflows/environments.yml", import.meta.url),
+  "utf8",
+);
 const packageScripts = (
   JSON.parse(fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
     scripts: Record<string, string>;
@@ -72,6 +76,11 @@ const ciJobs = ciParsed.jobs;
 const releaseParsed = YAML.parse(releaseWorkflow) as {
   on: unknown;
   jobs: Record<string, WorkflowJob>;
+};
+const environmentsParsed = YAML.parse(environmentsWorkflow) as {
+  on: Record<string, unknown>;
+  permissions: Record<string, string>;
+  jobs: Record<string, WorkflowJob & { "timeout-minutes"?: number; strategy?: unknown; env?: Record<string, string> }>;
 };
 
 /**
@@ -661,10 +670,18 @@ describe("submission workflow wiring", () => {
 // ---------------------------------------------------------------------------
 describe("CI workflow wiring", () => {
   it("runs the host suite and the real-container smoke on the same triggers", () => {
-    expect(Object.keys(ciJobs).sort()).toEqual(["check", "smoke"]);
-    // Workflow-level `on:`, so both jobs answer to the same events; a per-job
-    // trigger cannot exist in Actions, but a second workflow file could drift.
-    expect(ciParsed.on).toEqual({ push: null, pull_request: null });
+    expect(Object.keys(ciJobs).sort()).toEqual([
+      "check",
+      "inspector-matrix",
+      "inspector-plan",
+      "smoke",
+    ]);
+    // Workflow-level `on:`, so a per-job trigger cannot exist in Actions: the
+    // weekly cron the inspector matrix needs is declared here and the two
+    // push-only jobs opt out of it by hand.
+    expect(ciParsed.on).toMatchObject({ push: null, pull_request: null });
+    expect(requireJob(ciJobs, "check").if).toBe("github.event_name == 'push'");
+    expect(requireJob(ciJobs, "smoke").if).toBe("github.event_name == 'push'");
     for (const [name, job] of Object.entries(ciJobs)) {
       expect(job.permissions, name).toEqual({ contents: "read" });
       const checkout = job.steps.find((step) => step.uses?.startsWith("actions/checkout"));
@@ -691,13 +708,13 @@ describe("CI workflow wiring", () => {
     }
   });
 
-  it("hands the proof-tree smoke the pinned toolchain it drives", () => {
-    // test/smoke/prooftree.ts runs `lean` out of PATH, and elan is installed
-    // with --no-modify-path (host/setup.ts), so nothing the provisioning step
-    // installed is on a later step's PATH: the step has to name the toolchain
-    // directory, and leanenv.ts is the module that decides where it is. The
-    // smoke compiles fixture Lean, so it also sits after the cache save, for
-    // the reason the container smoke does.
+  it("runs the proof-tree smoke after the toolchain it drives exists", () => {
+    // The smoke resolves `lean` through each environment's own entry
+    // (leanenv.ts), which is what elan's --no-modify-path install leaves it no
+    // choice about, so the step needs no PATH surgery — but it does need the
+    // toolchain to be there, and it compiles fixture Lean, so it sits after
+    // the provisioning *and* after the cache save, for the reason the
+    // container smoke does.
     const runs = requireJob(ciJobs, "check").steps.map((step) => step.run ?? step.uses ?? "");
     const setup = runs.findIndex((run) => provisions(run));
     const save = runs.findIndex((run) => run.startsWith("actions/cache/save"));
@@ -705,9 +722,57 @@ describe("CI workflow wiring", () => {
     expect(setup).toBeGreaterThanOrEqual(0);
     expect(save).toBeGreaterThan(setup);
     expect(prooftree).toBeGreaterThan(save);
-    expect(runs[prooftree]).toContain("host/leanenv.js");
-    expect(runs[prooftree]).toContain("toolchainBinDir");
-    expect(runs[prooftree]).toContain('PATH="$bin:$PATH"');
+  });
+
+  it("guards every admitted environment's inspector, on the table and weekly", () => {
+    // The check job installs the epoch alone, so between admissions no other
+    // admitted environment's inspector is built anywhere — and an environment
+    // stays open forever (environments-plan.md, "Islands"). The matrix job is
+    // that guard: one leg per table row, its toolchain and nothing else, the
+    // inspector build (which carries Main.lean's shape guards) and the golden
+    // report. It answers to the weekly cron as well as to a push touching the
+    // Lean sources or the table.
+    expect(ciParsed.on).toMatchObject({ schedule: [{ cron: expect.any(String) }] });
+    const plan = requireJob(ciJobs, "inspector-plan");
+    expect(plan.outputs).toEqual({
+      run: "${{ steps.decide.outputs.run }}",
+      matrix: "${{ steps.decide.outputs.matrix }}",
+    });
+    const decide = plan.steps.find((step) => step.run?.includes("scripts/environments/matrix.mjs"));
+    expect(decide).toBeDefined();
+    // event values reach the script through the environment, never through an
+    // expression the shell would parse (trust rule 2)
+    expect(decide?.env?.BEFORE).toBe("${{ github.event.before }}");
+    expect(decide?.run).not.toContain("${{ github.event.before }}");
+    for (const gated of [
+      "src/submission-validation/lean/",
+      "assets/prooftree/",
+      "src/submission-validation/environments",
+    ]) {
+      expect(decide?.run, gated).toContain(gated);
+    }
+    // the parent has to be in the clone for the diff to mean anything
+    const checkout = plan.steps.find((step) => step.uses?.startsWith("actions/checkout"));
+    expect(checkout?.with).toMatchObject({ "fetch-depth": 0 });
+
+    const matrix = requireJob(ciJobs, "inspector-matrix");
+    expect(matrix.needs).toBe("inspector-plan");
+    expect(matrix.if).toBe("needs.inspector-plan.outputs.run == 'true'");
+    expect(matrix.strategy).toMatchObject({
+      "fail-fast": false,
+      matrix: "${{ fromJSON(needs.inspector-plan.outputs.matrix) }}",
+    });
+    expect(matrix["timeout-minutes"]).toBeGreaterThan(0);
+    const steps = matrix.steps.map((step) => step.run ?? step.uses ?? "");
+    const install = steps.findIndex((run) => run.includes("install-toolchain.mjs"));
+    const golden = steps.findIndex((run) => run.includes("test/e2e/inspector-golden.test.ts"));
+    const composer = steps.findIndex((run) => run.includes("npm run smoke:prooftree"));
+    expect(install).toBeGreaterThanOrEqual(0);
+    expect(golden).toBeGreaterThan(install);
+    expect(composer).toBeGreaterThan(install);
+    // no mathlib: the whole point of this job is that it costs a toolchain
+    expect(steps.some((run) => run.includes("setup-vm.js"))).toBe(false);
+    expect(matrix.steps[install]?.env?.LEAN_TOOLCHAIN).toBe("${{ matrix.leanToolchain }}");
   });
 
   it("typechecks the trees it never compiles", () => {
@@ -809,6 +874,89 @@ describe("CI workflow wiring", () => {
     expect(ciWorkflow).not.toContain("LAX_MATHLIB_");
     expect(ciWorkflow).not.toContain("LAX_CAPTURE_REGISTRY_URL");
     expect(ciWorkflow).not.toContain("LAX_GITHUB_API_URL");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Admission: environments.yml proposes a new archive environment. It runs
+// mathlib and this repository's tests and nothing else; the only write it can
+// perform is a branch and a pull request here, and only after a green run.
+// ---------------------------------------------------------------------------
+describe("environments workflow wiring", () => {
+  const jobsOf = environmentsParsed.jobs;
+
+  it("runs weekly and on request, with no key and no database", () => {
+    expect(Object.keys(environmentsParsed.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
+    expect(environmentsParsed.on.schedule).toMatchObject([{ cron: expect.any(String) }]);
+    expect(environmentsParsed.permissions).toEqual({ contents: "read" });
+    // Trust rule 1: nothing here checks out or executes submission code, and
+    // nothing here may hold an App key or reach lax-database either.
+    expect(environmentsWorkflow).not.toContain("LAX_APP_PRIVATE_KEY");
+    expect(environmentsWorkflow).not.toContain("lax-database");
+    // A second run while one is in flight would propose the same environment
+    // twice; admission is never urgent.
+    expect(environmentsWorkflow).toContain("cancel-in-progress: false");
+  });
+
+  it("discovers candidates before testing any of them", () => {
+    const discover = requireJob(jobsOf, "discover");
+    expect(discover.permissions).toEqual({ contents: "read" });
+    expect(discover.outputs).toMatchObject({ any: expect.any(String) });
+    const step = discover.steps.find((one) => one.run?.includes("discover.mjs"));
+    // a workflow_dispatch input is untrusted: through the environment, never
+    // interpolated into the shell (trust rule 2)
+    expect(step?.env?.TAG).toBe("${{ inputs.tag }}");
+    expect(step?.run).not.toContain("${{ inputs.tag }}");
+  });
+
+  it("gives each candidate the whole gate, in cheapest-first order", () => {
+    const test = requireJob(jobsOf, "test");
+    expect(test.needs).toBe("discover");
+    expect(test.permissions).toEqual({ contents: "read" });
+    expect(test["timeout-minutes"]).toBeGreaterThan(0);
+    expect(test.strategy).toMatchObject({ "fail-fast": false });
+    // LAX_TEST_ENVIRONMENTS is a test seam, and an admission run is a test:
+    // the candidate is not in the table yet, and the run exists to decide
+    // whether it belongs there.
+    expect(test.env?.LAX_TEST_ENVIRONMENTS).toContain("${{ matrix.id }}");
+    expect(test.env?.LAX_TEST_ENVIRONMENTS).toContain("${{ matrix.mathlibCommit }}");
+    const runs = test.steps.map((step) => step.run ?? step.uses ?? "");
+    const install = runs.findIndex((run) => run.includes("install-toolchain.mjs"));
+    const unit = runs.indexOf("npm test");
+    const golden = runs.findIndex((run) => run.includes("test/e2e/inspector-golden.test.ts"));
+    const composer = runs.findIndex((run) => run.includes("npm run smoke:prooftree"));
+    const container = runs.findIndex((run) => run.includes("npm run smoke:submission-validation"));
+    expect(install).toBeGreaterThanOrEqual(0);
+    expect(unit).toBeGreaterThan(install);
+    // The spike's lesson: the unit and fake-mathlib suites passed straight
+    // through the v4.33 composer break, so these two are the ones that decide.
+    expect(golden).toBeGreaterThan(unit);
+    expect(composer).toBeGreaterThan(unit);
+    expect(container).toBeGreaterThan(composer);
+    // The measurement the entry's `limits` is written from.
+    const measure = runs.findIndex((run) => run.includes("peakMemoryBytes"));
+    expect(measure).toBeGreaterThan(container);
+    expect(runs.some((run) => run.startsWith("actions/upload-artifact"))).toBe(true);
+  });
+
+  it("writes only after a green run, and only a pull request", () => {
+    const admit = requireJob(jobsOf, "admit");
+    expect(admit.needs).toEqual(["discover", "test"]);
+    // No `if: always()`: a red leg means no entry is proposed at all.
+    expect(admit.if).not.toContain("always");
+    expect(admit.permissions).toEqual({ contents: "write", "pull-requests": "write" });
+    const runs = admit.steps.map((step) => step.run ?? step.uses ?? "");
+    expect(runs.some((run) => run.includes("admit.mjs"))).toBe(true);
+    expect(runs.some((run) => run.includes("gh pr create"))).toBe(true);
+    // The table is the only file an admission may touch.
+    const commit = runs.find((run) => run.includes("git commit"));
+    expect(commit).toContain("src/submission-validation/environments.ts");
+    expect(runs.some((run) => run.includes("git push origin main"))).toBe(false);
+
+    const report = requireJob(jobsOf, "report-failure");
+    expect(report.if).toBe("failure()");
+    expect(report.permissions).toEqual({ issues: "write", actions: "read" });
+    expect(report.steps.some((step) => step.run?.includes("gh issue create"))).toBe(true);
   });
 });
 
