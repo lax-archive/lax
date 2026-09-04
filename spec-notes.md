@@ -208,6 +208,68 @@ the CLI section: `lax init` gains `--env` and `--yes`, `lax doctor` gains
 sentence: a port across environments is an ordinary successor and needs no
 rule of its own.
 
+## Maintainer commands: `/lax admin` (implemented, 2026-09-04)
+
+spec.md's lifecycle says registered and deleted records are immutable and
+that only an owner may change a record, through commands on an open issue.
+Both statements gain the same asterisk: *except by maintainer action,
+publicly logged on the submission's issue.* The design is admin-plan.md;
+this entry records what the archive now does.
+
+**The grammar.** `/lax admin <verb> [<id>] [<JSON>]`, with the verbs
+`revalidate`, `delete`, `reset-draft`, and `owners`. The head is read from
+the closed vocabulary before any argument, like the author verbs; an
+unknown verb is an unknown command. The route job admits the form only from
+the numeric ids in `ADMIN_GITHUB_IDS` (`src/shared/constants.ts`; changed
+only by a reviewed commit to `main`, the branch the publish environment
+deploys from), and both trusted publishers repeat that check and the
+per-verb lifecycle check, credential-free, on the canonical actor and the
+current record before any token is minted (trust rule 2). What the form
+bypasses: the owner gate (a maintainer need not own the record), the
+open-issue gate (registered and deleted records live on closed issues), and
+the init/draft state gate. What it keeps, per verb: `revalidate` needs a
+draft or registered record with a recorded source; `reset-draft` needs a
+registered one; `delete` and `owners` refuse only a tombstone.
+
+**`revalidate`** is a submit whose source the route job reads from the
+record itself — the comment carries none — and which republishes under the
+record's *current* state. The whole pipeline runs (fetch, static,
+resolution, Compile → Replay → Inspect, the paper containers), the capture
+and paper layers are pushed to ghcr afresh, and `build-output.json` and
+`record.json` are rewritten; a registered record stays registered, and the
+supersedes claim must come out identical (same commit, same manifest) rather
+than being re-admitted, since the maintainer need not own the target.
+This is how a registered record picks up a pipeline change — the reflowtex
+web view of a paper derived before 2026-09-03, say — without a superseding
+submission. Dependents are unaffected: cross-submission edges are rev-pinned
+git requires, and a dependent's own capture is its own.
+
+**`delete`** tombstones in any state, including registered — the takedown
+power. The tombstone is the ordinary three-file one; the rationale belongs
+in the issue comment, never in the record (the moderation lesson of
+`history/front-worker-split.md`). **`reset-draft`** is the inverse of
+registration: the record keeps its source and build output and becomes
+mutable again. It is refused while a *registered* successor claims the
+record, because chain acyclicity is proved by registered-target
+immutability (the 2026-08-23 entry): demote a claimed target and it could
+re-register claiming its own successor. **`owners`** replaces the list
+outright, without the retain-the-commenter rule, to recover an orphaned
+record.
+
+**The audit trail.** Every maintainer action is a comment on the
+submission's issue, a preview the route job posts (`Revalidation preview
+…`, `… by maintainer action`), a result comment with the usual markers,
+and a lax-database commit whose headline is `admin <verb> <id> by <handle>
+(<numeric id>)` with the same trailers as an author's. The driver that
+posts these (`npm run admin`, `scripts/admin/`) uses the maintainer's own
+GitHub token to comment and read; it holds no App key and writes nothing.
+Its typed confirmation for `delete` and `reset-draft` replaces the plan's
+server-side two-phase confirm.
+
+Spec touchpoint: the lifecycle section (registered-is-forever,
+delete-is-permanent), the authorization sentence (owners only), the
+open-issue rule for commands, and the control-plane command table.
+
 ## Hardening pass after the 0.1.35 audit (implemented, 2026-09-04)
 
 Five of the audit's fixes (`history/audit-20260903.md`) changed behaviour an

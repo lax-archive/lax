@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArchiveRepository } from "../../src/shared/archive.js";
-import { initialFiles, registeredFiles } from "../../src/shared/archive-schema.js";
+import { initialFiles, jsonFile, registeredFiles } from "../../src/shared/archive-schema.js";
 import { ControlPlane } from "../../src/shared/control-plane.js";
 import { GitHubClient } from "../../src/shared/github.js";
 import {
@@ -420,9 +420,121 @@ describe("submission control-plane routing", () => {
   });
 });
 
-function controlPlane(): ControlPlane {
+describe("maintainer commands", () => {
+  const maintainers = new Set([alice.githubId]);
+  const registered = registeredWithSource(files);
+
+  it("routes a revalidation of a registered record on a closed issue, with the recorded source", async () => {
+    installArchiveFetch(alice, registered, { issueState: "closed" });
+    const result = await controlPlane(maintainers).route(
+      "issue_comment",
+      commentEvent("/lax admin revalidate", alice),
+    );
+    expect(result.kind).toBe("validate");
+    if (result.kind !== "validate") throw new Error("unexpected route result");
+    expect(result.request.action).toBe("revalidate");
+    expect(result.request.command).toEqual({ action: "revalidate", admin: true, source: recordedSource });
+    expect(result.request.legacyManifestWithoutIssue).toBe(true);
+    expect(result.preview).toContain("Revalidation preview for **lax-42** (currently `registered`)");
+    expect(result.preview).toContain(recordedSource.commit);
+    expect(result.preview).toContain("lax-preview-comment-id:9001");
+  });
+
+  it("refuses the maintainer form from anyone else before parsing arguments", async () => {
+    installArchiveFetch(alice, registered);
+    await expect(
+      controlPlane(new Set([99])).route("issue_comment", commentEvent("/lax admin owners not-json", alice)),
+    ).rejects.toThrow("alice is not an archive maintainer");
+    // the ordinary gates still apply to the ordinary form, maintainer or not
+    installArchiveFetch(alice, registered);
+    await expect(
+      controlPlane(maintainers).route("issue_comment", commentEvent("/lax register", alice)),
+    ).rejects.toThrow("is registered and cannot be changed");
+  });
+
+  it("keeps the lifecycle rules each verb needs", async () => {
+    installArchiveFetch(alice, files);
+    await expect(
+      controlPlane(maintainers).route("issue_comment", commentEvent("/lax admin reset-draft", alice)),
+    ).rejects.toThrow("only a registered submission can be reset to draft");
+    installArchiveFetch(alice, files);
+    await expect(
+      controlPlane(maintainers).route("issue_comment", commentEvent("/lax admin revalidate", alice)),
+    ).rejects.toThrow("has no validated source to revalidate");
+    installArchiveFetch(alice, registered);
+    await expect(
+      controlPlane(maintainers).route("issue_comment", commentEvent("/lax admin frobnicate", alice)),
+    ).rejects.toThrow("unknown /lax command");
+  });
+
+  it("previews a maintainer delete of a registered record and a reset to draft", async () => {
+    installArchiveFetch(alice, registered);
+    const deletion = await controlPlane(maintainers).route(
+      "issue_comment",
+      commentEvent("/lax admin delete lax-42", alice),
+    );
+    expect(deletion).toMatchObject({
+      kind: "publish",
+      request: { action: "delete", command: { action: "delete", admin: true }, dependents: [] },
+    });
+    if (deletion.kind !== "publish") throw new Error("unexpected result");
+    expect(deletion.preview).toContain("(currently `registered`) by maintainer action");
+
+    installArchiveFetch(alice, registered);
+    const reset = await controlPlane(maintainers).route(
+      "issue_comment",
+      commentEvent("/lax admin reset-draft", alice),
+    );
+    expect(reset).toMatchObject({
+      kind: "publish",
+      request: { action: "reset-draft", command: { action: "reset-draft", admin: true } },
+    });
+    if (reset.kind !== "publish") throw new Error("unexpected result");
+    expect(reset.preview).toContain("Reset-to-draft preview for **lax-42**");
+  });
+
+  it("lets a maintainer replace the owner list without retaining themselves", async () => {
+    installArchiveFetch(alice, registered, { users: { bob: 20 } });
+    const result = await controlPlane(maintainers).route(
+      "issue_comment",
+      commentEvent('/lax admin owners [{"githubId":20,"handle":"bob"}]', alice),
+    );
+    expect(result).toMatchObject({
+      kind: "publish",
+      request: {
+        action: "owners",
+        actor: alice,
+        command: { action: "owners", admin: true, owners: [{ githubId: 20, handle: "bob" }] },
+      },
+    });
+    installArchiveFetch(alice, files, { users: { bob: 20 } });
+    await expect(
+      controlPlane(maintainers).route(
+        "issue_comment",
+        commentEvent('/lax owners [{"githubId":20,"handle":"bob"}]', alice),
+      ),
+    ).rejects.toThrow("must retain the commenter");
+  });
+});
+
+const recordedSource = {
+  repository: "https://github.com/alice/formalization",
+  commit: "0123456789abcdef0123456789abcdef01234567",
+  folder: ".",
+};
+
+/** The initial files, registered with a recorded source — what a revalidation acts on. */
+function registeredWithSource(initial: Record<string, string>): Record<string, string> {
+  const record = JSON.parse(initial["record.json"]!) as Record<string, unknown>;
+  return {
+    ...initial,
+    "record.json": jsonFile({ ...record, state: "registered", source: recordedSource }),
+  };
+}
+
+function controlPlane(admins?: ReadonlySet<number>): ControlPlane {
   const github = new GitHubClient("test-token");
-  return new ControlPlane(github, new ArchiveRepository(github), repositoryId);
+  return new ControlPlane(github, new ArchiveRepository(github), repositoryId, admins);
 }
 
 function commentEvent(body: string, actor: { githubId: number; handle: string }): unknown {
@@ -447,6 +559,9 @@ function installArchiveFetch(
     fileMode?: string;
     issueBody?: string;
     submissionId?: string;
+    issueState?: string;
+    /** Further resolvable handles beside the actor's, by numeric id. */
+    users?: Record<string, number>;
   } = {},
 ): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
@@ -456,7 +571,7 @@ function installArchiveFetch(
       return json({
         number: 42,
         node_id: "I_kwDOexample",
-        state: "open",
+        state: options.issueState ?? "open",
         title: "Example",
         body: options.issueBody ?? LEGACY_ISSUE_RESERVATION_BODY,
         created_at: "2026-07-30T10:00:00Z",
@@ -504,6 +619,10 @@ function installArchiveFetch(
     }
     if (path === `/users/${actor.handle}`) {
       return json({ id: actor.githubId, login: actor.handle, type: "User" });
+    }
+    const user = /^\/users\/([^/]+)$/u.exec(path)?.[1];
+    if (user !== undefined && options.users?.[user] !== undefined) {
+      return json({ id: options.users[user], login: user, type: "User" });
     }
     return json({ message: `unhandled ${path}` }, 500);
   });

@@ -66,6 +66,14 @@ prefer them over inferring intent from the current code.
   why), and the renderer that emits the machine index is pinned. Stage 6
   and the open admission items are in TODO.md; the admission checklist is
   in the plan; `spike/environments/REPORT.md` holds the stage-0 verdict.
+- **admin-plan.md** — maintainer-only operations. The issue-scoped verbs
+  (`/lax admin revalidate|delete|reset-draft|owners`, allowlisted by
+  numeric id in `ADMIN_GITHUB_IDS`, gates repeated credential-free in the
+  publishers) and the local driver `npm run admin` (`scripts/admin/`,
+  comments and reads with the maintainer's own token, never a database
+  write) landed 2026-09-04; its status header records where the
+  implementation deviates from the plan. `undelete`, `verify`, and
+  `gc-captures` remain open in TODO.md.
 - **one-axiom-plan.md** — the old one-statement-per-concept design. The
   bound was lifted on 2026-08-06 (a concept declares any number of
   statements; see the spec-notes entry), and the plan document was deleted
@@ -116,6 +124,11 @@ change ships) is scripted in `scripts/rehearsal/` — see its README. The
 one-shot go-live migration that re-validates every existing `lax-database`
 record through the control plane, bottom-up in dependency order, is
 `scripts/port-db/` — start with `node scripts/port-db/port.mjs --dry-run`.
+Its per-record successor is the maintainer driver, `npm run admin -- status`
+/ `revalidate <id>` / `delete` / `reset-draft` / `owners` /
+`rebuild-website` (`scripts/admin/README.md`): every mutation is a
+`/lax admin` comment the trusted workflow routes and publishes, so the
+driver holds no key and writes nothing itself.
 
 ## Architecture (current state; rewrite-plan.md governs upcoming changes)
 

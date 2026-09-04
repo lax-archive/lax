@@ -260,13 +260,44 @@ export function registeredFiles(id: string, current: Record<string, string>): Re
   return next;
 }
 
+/**
+ * The maintainer inverse of registration: a registered record returns to
+ * draft, keeping its source and validated build output. Only the lifecycle
+ * gate differs from `registeredFiles`; the file shapes are the ordinary ones.
+ */
+export function redraftedFiles(id: string, current: Record<string, string>): Record<string, string> {
+  const parsed = parseArchiveFiles(id, current);
+  if (parsed.record.state !== "registered") {
+    throw new ValidationError("only a registered submission can be reset to draft");
+  }
+  if (parsed.record.source === undefined) {
+    throw new ValidationError(`${id} is registered without a recorded source and cannot become a draft`);
+  }
+  const next = {
+    ...current,
+    "record.json": jsonFile({ ...parsed.record, state: "draft" }),
+  };
+  parseArchiveFiles(id, next);
+  return next;
+}
+
+/**
+ * The tombstone. Authors may delete only what is still theirs to change (an
+ * init or draft record); `byMaintainer` admits a registered record too, which
+ * is the takedown power `/lax admin delete` carries. A tombstone is never
+ * re-tombstoned in either form.
+ */
 export function deletedFiles(
   id: string,
   current: Record<string, string>,
   deletedAt: string,
+  options: { byMaintainer?: boolean } = {},
 ): Record<string, string> {
   const parsed = parseArchiveFiles(id, current);
-  if (parsed.record.state !== "init" && parsed.record.state !== "draft") {
+  if (parsed.record.state === "deleted") {
+    throw new ValidationError(`${id} is already deleted`);
+  }
+  if (options.byMaintainer !== true && parsed.record.state !== "init" && parsed.record.state !== "draft") {
     throw new ValidationError("only an init or draft submission can be deleted");
   }
   const next = {

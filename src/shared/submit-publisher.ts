@@ -1,7 +1,9 @@
+import { adminStateProblem, maintainerProblem } from "./admin.js";
 import type { ArchiveSnapshot, LoadedSubmission } from "./archive.js";
 import { samePreconditions } from "./archive.js";
-import { parseArchiveFiles, type ArchiveChanges } from "./archive-schema.js";
+import { parseArchiveFiles, supersedesClaim, type ArchiveChanges } from "./archive-schema.js";
 import type { GhcrCaptureStore } from "./capture-store.js";
+import { ADMIN_GITHUB_IDS } from "./constants.js";
 import {
   commitMessage,
   parsePublishRequest,
@@ -34,6 +36,8 @@ export class SubmitPublisher {
     private readonly archive: PublisherArchive,
     private readonly captureStore: SubmitCaptureStore | undefined,
     private readonly repositoryId: number,
+    /** Maintainer ids; injectable for tests, ADMIN_GITHUB_IDS in production. */
+    private readonly admins: ReadonlySet<number> = ADMIN_GITHUB_IDS,
   ) {}
 
   async preflight(
@@ -130,8 +134,13 @@ export class SubmitPublisher {
 
   private async canonicalRequest(untrustedRequest: PublishRequest): Promise<PublishRequest> {
     let request = parsePublishRequest(untrustedRequest, this.repositoryId);
-    if (request.action !== "submit" || request.command?.action !== "submit" || request.commentId === undefined) {
-      throw new ValidationError("trusted submit publication requires a submit request");
+    // A maintainer revalidation is a submit whose source the route job read
+    // from the record; it runs the same pipeline and lands here the same way.
+    const validated =
+      (request.action === "submit" && request.command?.action === "submit") ||
+      (request.action === "revalidate" && request.command?.action === "revalidate");
+    if (!validated || request.commentId === undefined) {
+      throw new ValidationError("trusted submit publication requires a submit or revalidate request");
     }
     const actor = (await this.control.resolveOwnerPairs([request.actor]))[0];
     if (actor === undefined) throw new ValidationError("submit actor no longer resolves on GitHub");
@@ -150,18 +159,44 @@ export class SubmitPublisher {
       current.files.buildOutput.issue.repositoryId !== request.issue.repositoryId ||
       current.files.buildOutput.issue.number !== request.issue.number
     ) problems.push(`${request.id} no longer has the expected issue binding`);
-    if (!current.files.ownerList.owners.some((owner) => owner.githubId === request.actor.githubId)) {
-      problems.push(`${request.actor.handle} is no longer an owner of ${request.id}`);
-    }
-    if (current.files.record.state !== "init" && current.files.record.state !== "draft") {
-      problems.push(`${request.id} is now ${current.files.record.state}`);
+    const revalidation = request.action === "revalidate";
+    const commandSource = commandSourceOf(request);
+    if (revalidation) {
+      // The route job's maintainer and lifecycle gates, repeated on the
+      // canonical actor and the current record (trust rule 2) — plus the one
+      // rule that makes a revalidation what it is: the source is the record's
+      // own, and still is.
+      const maintainer = maintainerProblem(request.actor, this.admins);
+      if (maintainer !== undefined) problems.push(maintainer);
+      const state = adminStateProblem(
+        "revalidate",
+        request.id,
+        current.files.record.state,
+        current.files.record.source !== undefined,
+      );
+      if (state !== undefined) problems.push(state);
+      if (
+        commandSource === undefined ||
+        JSON.stringify(commandSource) !== JSON.stringify(current.files.record.source ?? null)
+      ) {
+        problems.push(`${request.id} no longer records the source the revalidation was authorized for`);
+      }
+    } else {
+      if (!current.files.ownerList.owners.some((owner) => owner.githubId === request.actor.githubId)) {
+        problems.push(`${request.actor.handle} is no longer an owner of ${request.id}`);
+      }
+      if (current.files.record.state !== "init" && current.files.record.state !== "draft") {
+        problems.push(`${request.id} is now ${current.files.record.state}`);
+      }
     }
     if (
       request.preconditions === undefined ||
       !samePreconditions(current.preconditions, request.preconditions, ["record", "buildOutput"])
     ) problems.push(`${request.id} changed after validation; submit a new command comment`);
-    const command = request.command?.action === "submit" ? request.command : undefined;
-    if (command === undefined || JSON.stringify(source(command)) !== JSON.stringify(artifacts.report.request.source)) {
+    if (
+      commandSource === undefined ||
+      JSON.stringify(commandSource) !== JSON.stringify(artifacts.report.request.source)
+    ) {
       problems.push("validated source does not match the authorized submit command");
     }
     const dependencyProblems = await this.validateDependencies(
@@ -169,17 +204,32 @@ export class SubmitPublisher {
       current.snapshot,
     );
     problems.push(...dependencyProblems);
-    // The claim only binds at registration, but a submit that can never
-    // register is refused here, where the author still holds a fresh build.
-    problems.push(
-      ...(await supersedesProblems(
-        this.archive,
-        artifacts.buildOutput.inputs.manifest.supersedes,
-        request.id,
-        request.actor,
-        current.snapshot,
-      )),
-    );
+    if (revalidation) {
+      // Same source, same manifest, same claim — and a registered record's
+      // claim is already bound, so it is compared, not re-admitted (the
+      // maintainer need not own the target).
+      let recorded: string | undefined;
+      try {
+        recorded = supersedesClaim(current.files.buildOutput);
+      } catch (error) {
+        problems.push((error as Error).message);
+      }
+      if (artifacts.buildOutput.inputs.manifest.supersedes !== recorded) {
+        problems.push("a revalidation may not change the recorded supersedes claim");
+      }
+    } else {
+      // The claim only binds at registration, but a submit that can never
+      // register is refused here, where the author still holds a fresh build.
+      problems.push(
+        ...(await supersedesProblems(
+          this.archive,
+          artifacts.buildOutput.inputs.manifest.supersedes,
+          request.id,
+          request.actor,
+          current.snapshot,
+        )),
+      );
+    }
     if (problems.length > 0) throw new ValidationError(problems.join("\n- "));
   }
 
@@ -248,13 +298,17 @@ function constructSubmitChanges(
   paperBlob: string | undefined,
   paperWebBlob?: string,
 ): ArchiveChanges {
-  if (request.command?.action !== "submit") throw new ValidationError("submit command is missing");
+  const commandSource = commandSourceOf(request);
+  if (commandSource === undefined) throw new ValidationError("submit command is missing");
+  // A submit lands as a draft; a revalidation republishes the build output
+  // under whatever state the record already has (validateCurrent has just
+  // confirmed the source is unchanged, so a registered record stays one).
   const record = {
     specVersion: "1",
     id: request.id,
-    state: "draft",
+    state: request.action === "revalidate" ? current.files.record.state : "draft",
     createdAt: current.files.record.createdAt,
-    source: source(request.command),
+    source: commandSource,
   };
   // A recorded `paper.web` gains its bundle's registry address the same way
   // the pdf does; parseArchiveFiles below refuses a published web block
@@ -296,6 +350,14 @@ function constructSubmitChanges(
 
 function source(value: SourceLocation): SourceLocation {
   return { repository: value.repository, commit: value.commit, folder: value.folder };
+}
+
+/** The source a validated request authorizes: typed on a submit, recorded on a revalidation. */
+function commandSourceOf(request: PublishRequest): SourceLocation | undefined {
+  const command = request.command;
+  if (command?.action === "submit") return source(command);
+  if (command?.action === "revalidate" && command.source !== undefined) return source(command.source);
+  return undefined;
 }
 
 function requiredPackages(current: LoadedSubmission, kind: "concepts" | "proofs"): string[] {

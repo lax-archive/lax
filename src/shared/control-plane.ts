@@ -1,7 +1,9 @@
+import { adminStateProblem, maintainerProblem } from "./admin.js";
 import { ArchiveRepository } from "./archive.js";
 import { initialFiles } from "./archive-schema.js";
-import { commandSubmissionId, commandWord, parseRoutedCommand } from "./commands.js";
+import { commandHead, commandSubmissionId, parseRoutedCommand } from "./commands.js";
 import {
+  ADMIN_GITHUB_IDS,
   CONTROL_REPOSITORY,
   GITHUB_ACTIONS_BOT_ID,
   GITHUB_ACTIONS_BOT_LOGIN,
@@ -11,12 +13,19 @@ import {
   isLegacyIssueReservationBody,
   submissionIdFromIssueBody,
 } from "./issue-reservation.js";
-import type { GitHubIdentity, ParsedCommand, PublishRequest } from "./types.js";
+import type {
+  AdminVerb,
+  GitHubIdentity,
+  ParsedCommand,
+  PublishRequest,
+  SourceLocation,
+} from "./types.js";
 import {
   isObject,
   normalizeTitle,
   submissionId,
   validateIdentity,
+  validateSource,
   ValidationCollector,
   ValidationError,
 } from "./validation.js";
@@ -75,6 +84,8 @@ export class ControlPlane {
     private readonly github: GitHubClient,
     private readonly archive: ArchiveRepository,
     private readonly repositoryId: number,
+    /** Maintainer ids; injectable for tests, ADMIN_GITHUB_IDS in production. */
+    private readonly admins: ReadonlySet<number> = ADMIN_GITHUB_IDS,
   ) {
     if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) {
       throw new Error("LAX_REPOSITORY_ID must be the positive numeric id of lax-archive/lax");
@@ -265,9 +276,13 @@ export class ControlPlane {
     const number = problems.capture(() => positiveInteger(payloadIssue.number, "issue number"));
     const comment = object(event.comment, "event comment");
     const body = typeof comment.body === "string" ? comment.body : "";
-    const word = commandWord(body);
-    if (word === "ignore") return { kind: "ignore" };
-    if (word === "unknown") problems.add("unknown /lax command");
+    const head = commandHead(body);
+    if (head === "ignore") return { kind: "ignore" };
+    if (head === "unknown") problems.add("unknown /lax command");
+    // The maintainer form is decided from the closed head alone; its actor
+    // gate replaces the owner gate below, and its lifecycle gate is per verb.
+    const adminVerb = head !== "unknown" && head.admin ? (head.action as AdminVerb) : undefined;
+    const admin = adminVerb !== undefined;
     if (number === undefined) problems.throwIfAny();
     const issue = await this.github.request<IssueResponse>("GET", `${this.controlBase}/issues/${number!}`);
     const legacyId = submissionId(number!);
@@ -278,7 +293,9 @@ export class ControlPlane {
       problems.throwIfAny();
       return { kind: "ignore" };
     }
-    if (issue.state !== "open") problems.add("commands are accepted only on open issues");
+    // Registered and deleted records live on closed issues — exactly the ones
+    // a maintainer must still reach — so only author commands need an open one.
+    if (issue.state !== "open" && !admin) problems.add("commands are accepted only on open issues");
     if ("pull_request" in issue) problems.add("commands are not accepted on pull requests");
     const commentId = problems.capture(() => positiveInteger(comment.id, "comment id"));
     const issueNodeId = problems.capture(() => nodeId(issue.node_id));
@@ -303,11 +320,21 @@ export class ControlPlane {
       eventActor === undefined
         ? undefined
         : await problems.captureAsync(() => this.resolveIdentity(eventActor));
-    if (loaded.files.record.state !== "init" && loaded.files.record.state !== "draft") {
-      problems.add(`${id} is ${loaded.files.record.state} and cannot be changed`);
-    }
-    if (actor !== undefined && !loaded.files.ownerList.owners.some((owner) => owner.githubId === actor.githubId)) {
-      problems.add(`${actor.handle} is not an owner of ${id}`);
+    const state = loaded.files.record.state;
+    if (adminVerb !== undefined) {
+      if (actor !== undefined) {
+        const problem = maintainerProblem(actor, this.admins);
+        if (problem !== undefined) problems.add(problem);
+      }
+      const problem = adminStateProblem(adminVerb, id, state, loaded.files.record.source !== undefined);
+      if (problem !== undefined) problems.add(problem);
+    } else {
+      if (state !== "init" && state !== "draft") {
+        problems.add(`${id} is ${state} and cannot be changed`);
+      }
+      if (actor !== undefined && !loaded.files.ownerList.owners.some((owner) => owner.githubId === actor.githubId)) {
+        problems.add(`${actor.handle} is not an owner of ${id}`);
+      }
     }
     problems.throwIfAny();
 
@@ -315,10 +342,17 @@ export class ControlPlane {
     let { command } = parseRoutedCommand(body, legacyId);
     if (command.action === "owners") {
       const owners = await this.resolveOwnerPairs(command.owners);
-      if (!owners.some((owner) => owner.githubId === actor!.githubId)) {
+      // A maintainer replaces the list outright — recovering an orphaned
+      // record is the point — so only the author form keeps the commenter.
+      if (!admin && !owners.some((owner) => owner.githubId === actor!.githubId)) {
         throw new ValidationError("the replacement owner list must retain the commenter");
       }
-      command = { action: "owners", owners };
+      command = admin ? { action: "owners", owners, admin: true } : { action: "owners", owners };
+    }
+    if (command.action === "revalidate") {
+      // The source is the record's own, re-read through the same validator
+      // the author form applies to a typed triple; the comment carries none.
+      command = { action: "revalidate", admin: true, source: validateSource(loaded.files.record.source) };
     }
     const dependents = command.action === "delete" ? await this.archive.listDependents(id, snapshot) : undefined;
     const request: PublishRequest = {
@@ -333,7 +367,7 @@ export class ControlPlane {
       archiveSha: snapshot.sha,
       preconditions: loaded.preconditions,
       dependents,
-      ...(command.action === "submit" && legacyReservation
+      ...((command.action === "submit" || command.action === "revalidate") && legacyReservation
         ? { legacyManifestWithoutIssue: true as const }
         : {}),
     };
@@ -344,12 +378,21 @@ export class ControlPlane {
         preview: submitPreview(id, command, commentId!),
       };
     }
+    if (command.action === "revalidate") {
+      return {
+        kind: "validate",
+        request,
+        preview: revalidatePreview(id, state, command.source!, commentId!),
+      };
+    }
     const preview =
       command.action === "delete"
-        ? deletePreview(id, loaded.files.record.state, dependents ?? [], commentId!)
+        ? deletePreview(id, state, dependents ?? [], commentId!, admin)
         : command.action === "register"
-          ? registerPreview(id, loaded.files.record.state, commentId!)
-          : undefined;
+          ? registerPreview(id, state, commentId!)
+          : command.action === "reset-draft"
+            ? resetDraftPreview(id, state, commentId!)
+            : undefined;
     return { kind: "publish", request, preview };
   }
 
@@ -426,14 +469,40 @@ function submitPreview(id: string, command: Extract<ParsedCommand, { action: "su
   );
 }
 
-function deletePreview(id: string, state: string, dependents: string[], commentId: number): string {
+function deletePreview(
+  id: string,
+  state: string,
+  dependents: string[],
+  commentId: number,
+  byMaintainer = false,
+): string {
   const dependentText =
     dependents.length === 0
       ? "No known live dependents were found."
       : `Known dependents that will be stranded: ${dependents.map((value) => `\`${value}\``).join(", ")}.`;
+  const who = byMaintainer ? " by maintainer action" : "";
   return (
-    `Delete preview for **${id}** (currently \`${state}\`). Deletion is permanent and the id will ` +
+    `Delete preview for **${id}** (currently \`${state}\`)${who}. Deletion is permanent and the id will ` +
     `never be reused. ${dependentText}\n\n${previewMarker(commentId)}`
+  );
+}
+
+function revalidatePreview(id: string, state: string, source: SourceLocation, commentId: number): string {
+  return (
+    `Revalidation preview for **${id}** (currently \`${state}\`), by maintainer action. The recorded ` +
+    `source is rebuilt from scratch and its build output republished; the state does not change.\n\n` +
+    `- Repository: \`${source.repository}\`\n` +
+    `- Commit: \`${source.commit}\`\n` +
+    `- Folder: \`${source.folder}\`\n\n` +
+    previewMarker(commentId)
+  );
+}
+
+function resetDraftPreview(id: string, state: string, commentId: number): string {
+  return (
+    `Reset-to-draft preview for **${id}** (currently \`${state}\`), by maintainer action. The record ` +
+    `becomes a draft again — mutable, and no longer citable until it is re-registered.\n\n` +
+    previewMarker(commentId)
   );
 }
 

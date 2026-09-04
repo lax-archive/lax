@@ -38,6 +38,18 @@ export function githubOauthBase(): string {
 export const GITHUB_ACTIONS_BOT_ID = 41_898_282;
 export const GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]";
 
+/**
+ * Archive maintainers, by immutable numeric GitHub id. `/lax admin` commands
+ * are accepted only from these accounts: the route job checks the list, and
+ * the trusted publisher checks it again, credential-free, before any token is
+ * minted (trust rule 2). The list changes only by a reviewed commit to `main`
+ * — the one branch the `lax-database-publish` environment deploys from — so
+ * there is no org-membership lookup to spoof and nothing to configure.
+ */
+export const ADMIN_GITHUB_IDS: ReadonlySet<number> = new Set([
+  2_657_497, // jan3er
+]);
+
 export const SUBMISSION_ID_PATTERN = /^lax-[1-9][0-9]*$/;
 export const LEGACY_SUBMISSION_ID_PATTERN = /^Lax([1-9][0-9]*)$/;
 /** IDs allocated locally by current CLIs before an issue binding exists. */

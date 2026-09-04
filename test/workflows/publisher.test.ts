@@ -585,12 +585,155 @@ describe("trusted Archive publisher modes", () => {
   });
 });
 
+describe("maintainer publications", () => {
+  const maintainers = new Set([alice.githubId]);
+  const registered = (): LoadedSubmission => {
+    const texts = initialFiles("lax-42", issue, alice, "2026-07-30T10:00:00Z");
+    const record = JSON.parse(texts["record.json"]!) as Record<string, unknown>;
+    texts["record.json"] = jsonFile({
+      ...record,
+      state: "registered",
+      source: { repository: "https://github.com/alice/repo", commit: "b".repeat(40), folder: "." },
+    });
+    return loaded(texts);
+  };
+
+  it("tombstones a registered record on a maintainer delete, attributed in the commit", async () => {
+    const current = registered();
+    const harness = publisherHarness(current, current, () => undefined, {}, [], maintainers);
+    const result = await harness.publisher.publish(
+      request({
+        action: "delete",
+        commentId: 78,
+        command: { action: "delete", admin: true },
+        preconditions: current.preconditions,
+        dependents: ["lax-50"],
+      }),
+      run,
+    );
+    expect(result.kind).toBe("committed");
+    expect(Object.keys(harness.changes()).sort()).toEqual(["build-output.json", "record.json"]);
+    expect(JSON.parse(harness.changes()["record.json"]!)).toMatchObject({ state: "deleted" });
+    const message = harness.writeFiles.mock.calls[0]![0].message;
+    expect(message.startsWith("admin delete lax-42 by alice (10)\n")).toBe(true);
+    expect(message).toContain("lax-actor-id: 10");
+  });
+
+  it("returns a registered record to draft, unless a registered successor claims it", async () => {
+    const current = registered();
+    const reset = publisherHarness(current, current, () => undefined, {}, [], maintainers);
+    await reset.publisher.publish(
+      request({
+        action: "reset-draft",
+        commentId: 79,
+        command: { action: "reset-draft", admin: true },
+        preconditions: current.preconditions,
+      }),
+      run,
+    );
+    expect(Object.keys(reset.changes())).toEqual(["record.json"]);
+    expect(JSON.parse(reset.changes()["record.json"]!)).toMatchObject({
+      state: "draft",
+      source: { commit: "b".repeat(40) },
+    });
+    expect(reset.listRegisteredSuperseders).toHaveBeenCalledWith("lax-42", current.snapshot);
+
+    const claimed = publisherHarness(current, current, () => undefined, {}, ["lax-77"], maintainers);
+    await expect(
+      claimed.publisher.publish(
+        request({
+          action: "reset-draft",
+          commentId: 79,
+          command: { action: "reset-draft", admin: true },
+          preconditions: current.preconditions,
+        }),
+        run,
+      ),
+    ).rejects.toThrow("lax-77 supersedes lax-42; a superseded submission cannot be reset to draft");
+    expect(claimed.website.request).not.toHaveBeenCalled();
+  });
+
+  it("replaces owners outright for a maintainer and refuses the form to anyone else", async () => {
+    const current = registered();
+    const harness = publisherHarness(current, current, () => undefined, {}, [], maintainers);
+    await harness.publisher.publish(
+      request({
+        action: "owners",
+        commentId: 77,
+        command: { action: "owners", owners: [bob], admin: true },
+        preconditions: current.preconditions,
+      }),
+      run,
+    );
+    expect(JSON.parse(harness.changes()["owner-list.json"]!)).toEqual({ specVersion: "1", owners: [bob] });
+
+    const stranger = publisherHarness(current, current, () => undefined, {}, [], new Set([99]));
+    await expect(
+      stranger.publisher.publish(
+        request({
+          action: "delete",
+          commentId: 78,
+          command: { action: "delete", admin: true },
+          preconditions: current.preconditions,
+        }),
+        run,
+      ),
+    ).rejects.toThrow("alice is not an archive maintainer");
+    expect(stranger.website.request).not.toHaveBeenCalled();
+    expect(stranger.successes).toEqual([]);
+  });
+
+  it("admits the maintainer flag only where the grammar does", () => {
+    const initial = initialFiles("lax-42", issue, alice, "2026-07-30T10:00:00Z");
+    const preconditions = fileDigests(initial);
+    const parsed = parsePublishRequest(
+      request({ action: "delete", commentId: 78, command: { action: "delete", admin: true }, preconditions }),
+      issue.repositoryId,
+    );
+    expect(parsed.command).toEqual({ action: "delete", admin: true });
+    expect(() =>
+      parsePublishRequest(
+        request({
+          action: "register",
+          commentId: 78,
+          command: { action: "register", admin: true } as never,
+          preconditions,
+        }),
+        issue.repositoryId,
+      ),
+    ).toThrow("exactly");
+    expect(() =>
+      parsePublishRequest(
+        request({
+          action: "delete",
+          commentId: 78,
+          command: { action: "delete", admin: false } as never,
+          preconditions,
+        }),
+        issue.repositoryId,
+      ),
+    ).toThrow("maintainer flag is invalid");
+    expect(() =>
+      parsePublishRequest(
+        request({
+          action: "revalidate",
+          commentId: 78,
+          command: { action: "revalidate", admin: true },
+          preconditions,
+        }),
+        issue.repositoryId,
+      ),
+    ).toThrow("exactly");
+  });
+});
+
 function publisherHarness(
   current: LoadedSubmission | undefined,
   latest = current,
   afterValidation: () => void = () => undefined,
   dependencies: Record<string, LoadedSubmission> = {},
   registeredSuperseders: string[] = [],
+  admins?: ReadonlySet<number>,
 ): {
   publisher: Publisher;
   control: PublisherControl;
@@ -638,7 +781,7 @@ function publisherHarness(
     request: Mock;
   };
   return {
-    publisher: new Publisher(control, archive, issue.repositoryId),
+    publisher: new Publisher(control, archive, issue.repositoryId, admins),
     control,
     changes: () => changes,
     comments,

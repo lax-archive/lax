@@ -43,11 +43,32 @@ export interface ArchiveFiles {
   ownerList: OwnerList;
 }
 
+/**
+ * The closed command vocabulary. `admin: true` marks the maintainer form of a
+ * verb (`/lax admin <verb>`), which the route job admits only from
+ * ADMIN_GITHUB_IDS and which bypasses the owner, open-issue, and lifecycle
+ * gates ordinary commands must pass. `revalidate` and `reset-draft` exist only
+ * in that form; a revalidation's `source` is filled in by the route job from
+ * the record itself, never read from the comment.
+ */
 export type ParsedCommand =
-  | { action: "owners"; owners: GitHubIdentity[] }
+  | { action: "owners"; owners: GitHubIdentity[]; admin?: true }
   | ({ action: "submit" } & SourceLocation)
-  | { action: "delete" }
-  | { action: "register" };
+  | { action: "delete"; admin?: true }
+  | { action: "register" }
+  | { action: "revalidate"; admin: true; source?: SourceLocation }
+  | { action: "reset-draft"; admin: true };
+
+export const ADMIN_VERBS = ["revalidate", "delete", "reset-draft", "owners"] as const;
+export type AdminVerb = (typeof ADMIN_VERBS)[number];
+
+export function isAdminVerb(value: unknown): value is AdminVerb {
+  return (ADMIN_VERBS as readonly unknown[]).includes(value);
+}
+
+export function isAdminCommand(command: ParsedCommand | undefined): boolean {
+  return command !== undefined && "admin" in command && command.admin === true;
+}
 
 export interface FilePreconditions {
   record: string;

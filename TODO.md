@@ -204,8 +204,9 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   into a JPEG the sanitizer then dropped, and every plain
   `\includegraphics` was dropped to a kern; both are fixed in the
   derivation, not the site, so lax-48 keeps its blank figures and missing
-  icons. It is *registered*, so `/lax submit` refuses it: this needs the
-  admin `revalidate` verb (admin-plan.md), or a superseding submission.
+  icons. It is *registered*, so `/lax submit` refuses it: run
+  `npm run admin -- revalidate lax-48` (the admin `revalidate` verb landed
+  2026-09-04; this is its first production use — see the admin section).
 - **Cache the PyMuPDF wheel in the Validate job** (optional): `npm run
   reflowtex:fetch` now downloads 25 MB per paper-bearing run. The existing
   `actions/cache` pair covers `reflowtex/venv`, keyed on
@@ -331,15 +332,32 @@ second. What remains is listed per stage below, then stage 6 (docs).
   (README, CLAUDE.md, and the spec-notes entry are written; the plan
   retires to `history/` with that note).
 
-## Admin tool (admin-plan.md — designed, not implemented)
+## Admin tool (admin-plan.md — issue-scoped verbs and the driver landed 2026-09-04)
 
-Maintainer-only operations: `/lax admin <verb>` issue commands
-(delete/reset-draft/undelete/revalidate/owners, two-phase confirm for the
-destructive ones) plus an `admin.yml` workflow_dispatch for repo-wide work
-(rebuild-website, sweep, verify, gc-captures). Numeric-id allowlist in
-constants, checks repeated credential-free in the publisher; no standalone
-tool, no direct database writes. See admin-plan.md; spec-notes entry due
-when it lands. Partially answers the abuse-stance item below.
+`/lax admin revalidate|delete|reset-draft|owners` are live in the control
+plane (numeric-id allowlist `ADMIN_GITHUB_IDS`, gates repeated
+credential-free in both publishers; spec-notes entry 2026-09-04), driven
+from a maintainer's machine by `npm run admin -- …` (`scripts/admin/`,
+the maintainer's own `gh` token, comments and reads only). Still owed:
+
+- **Production round trip**: `npm run admin -- revalidate lax-48` is the
+  first real use (see the lax-48 item above). Watch the run once: the
+  Validate job on a closed issue, the `revalidate` result comment, the
+  ghcr push, and the Website rebuild of a record whose state did not
+  change. A scratch-repo rehearsal (`scripts/rehearsal/`) first if the
+  shape of the Actions-side change feels risky.
+- **Not built**: `undelete` (restore from git history; needs the
+  tombstone → pre-tombstone diff and a rule for the retired id),
+  `verify` (the archive-level `lax doctor`), and `gc-captures`
+  (unreferenced ghcr artifacts). `sweep` is `revalidate --all`.
+- **Deferred by design**: the plan's server-side two-phase confirm
+  (`/lax admin confirm <preview-id>`) — the typed confirmation lives in
+  the driver, as it does for `lax delete`; and an `admin.yml`
+  `workflow_dispatch` — `rebuild-website` is a `repository_dispatch` the
+  maintainer's own token already may send, so nothing new runs in the
+  publish environment.
+- Partially answers the abuse-stance item below; the takedown rationale
+  goes in the issue comment, never in the record.
 
 ## spec.md reconciliation queue (Jan, manually)
 

@@ -86,7 +86,11 @@ export async function route(): Promise<void> {
           ? appendWorkflowRun(result.preview, run)
           : workflowRunMarker(run.id);
       await control.annotateIssueComment(result.request.commentId, context);
-      if (result.request.action === "owners" || result.request.action === "submit") {
+      if (
+        result.request.action === "owners" ||
+        result.request.action === "submit" ||
+        result.request.action === "revalidate"
+      ) {
         await control.markCommandStarted(result.request.commentId);
         startedCommandCommentId = result.request.commentId;
       }
@@ -110,11 +114,13 @@ export async function route(): Promise<void> {
       }
     }
     if (result.kind === "validate") {
-      if (result.request.command?.action !== "submit" || result.request.commentId === undefined)
+      const validated =
+        result.request.command?.action === "submit" || result.request.command?.action === "revalidate";
+      if (!validated || result.request.commentId === undefined)
         throw new Error("validated submit route has no submit command context");
       const request = validationRequest(result.request);
       writeOutput("operation", "validate");
-      writeOutput("action", "submit");
+      writeOutput("action", result.request.action);
       writeOutput("validation_request", encode(request));
       writeOutput("publish_request", encode(result.request));
       writeOutput("context", encode({
@@ -372,7 +378,10 @@ export async function reportFailure(): Promise<void> {
   const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
   const control = new ControlPlane(client, new ArchiveRepository(client), repositoryId());
   const action = process.env.ACTION;
-  if ((action === "owners" || action === "submit") && triggeringComment !== undefined) {
+  if (
+    (action === "owners" || action === "submit" || action === "revalidate") &&
+    triggeringComment !== undefined
+  ) {
     await clearCommandProgress(control, triggeringComment);
   }
   const run = workflowRun();
@@ -517,18 +526,21 @@ function readPublishRequest(expectedRepositoryId: number): PublishRequest {
 }
 
 function validationRequest(request: PublishRequest): ValidationRequest {
-  if (request.action !== "submit" || request.command?.action !== "submit") {
-    throw new ValidationError("validation artifacts require a submit publication request");
+  const command = request.command;
+  const source =
+    request.action === "submit" && command?.action === "submit"
+      ? { repository: command.repository, commit: command.commit, folder: command.folder }
+      : request.action === "revalidate" && command?.action === "revalidate" && command.source !== undefined
+        ? { ...command.source }
+        : undefined;
+  if (source === undefined) {
+    throw new ValidationError("validation artifacts require a submit or revalidate publication request");
   }
   return {
     requestVersion: 1,
     id: request.id,
     issue: request.issue,
-    source: {
-      repository: request.command.repository,
-      commit: request.command.commit,
-      folder: request.command.folder,
-    },
+    source,
     archiveSha: request.archiveSha,
     ...(request.legacyManifestWithoutIssue === undefined
       ? {}

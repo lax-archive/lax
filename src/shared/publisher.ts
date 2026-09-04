@@ -1,9 +1,11 @@
+import { adminStateProblem, maintainerProblem } from "./admin.js";
 import {
   deletedFiles,
   initialFiles,
   parseIssueBinding,
   parseArchiveFiles,
   parseOwnerList,
+  redraftedFiles,
   registeredFiles,
   replaceOwnerList,
   supersedesClaim,
@@ -12,13 +14,15 @@ import {
 } from "./archive-schema.js";
 import { samePreconditions, type ArchiveSnapshot, type LoadedSubmission } from "./archive.js";
 import { compareSubmissionIds, requiredSubmissionIds } from "../submission-validation/contracts.js";
-import { WEBSITE_REPOSITORY } from "./constants.js";
+import { ADMIN_GITHUB_IDS, WEBSITE_REPOSITORY } from "./constants.js";
 import { repositoryPath } from "./github.js";
-import type {
-  FilePreconditions,
-  GitHubIdentity,
-  ParsedCommand,
-  PublishRequest,
+import {
+  isAdminCommand,
+  type AdminVerb,
+  type FilePreconditions,
+  type GitHubIdentity,
+  type ParsedCommand,
+  type PublishRequest,
 } from "./types.js";
 import {
   isObject,
@@ -84,11 +88,13 @@ export class Publisher {
     private readonly control: PublisherControl,
     private readonly archive: PublisherArchive,
     private readonly repositoryId: number,
+    /** Maintainer ids; injectable for tests, ADMIN_GITHUB_IDS in production. */
+    private readonly admins: ReadonlySet<number> = ADMIN_GITHUB_IDS,
   ) {}
 
   async publish(untrustedRequest: PublishRequest, run: WorkflowRunRef): Promise<PublishResult> {
     let request = parsePublishRequest(untrustedRequest, this.repositoryId);
-    if (request.action === "submit") {
+    if (request.action === "submit" || request.action === "revalidate") {
       throw new ValidationError("validated submit publication must use SubmitPublisher");
     }
     if (request.commentId !== undefined) {
@@ -134,7 +140,11 @@ export class Publisher {
     const actor = (await this.control.resolveOwnerPairs([request.actor]))[0]!;
     if (request.command?.action !== "owners") return { ...request, actor };
     const owners = await this.control.resolveOwnerPairs(request.command.owners);
-    return { ...request, actor, command: { action: "owners", owners } };
+    // The maintainer flag travels with the canonical list: dropping it here
+    // would silently demote the command to the author form and its gates.
+    const command: ParsedCommand =
+      request.command.admin === true ? { action: "owners", owners, admin: true } : { action: "owners", owners };
+    return { ...request, actor, command };
   }
 
   private preparePlan(request: PublishRequest, current: LoadedSubmission | undefined): PublishPlan {
@@ -164,7 +174,9 @@ export class Publisher {
       };
     }
     if (request.action === "delete") {
-      const files = deletedFiles(request.id, current.texts, request.eventCreatedAt);
+      const files = deletedFiles(request.id, current.texts, request.eventCreatedAt, {
+        byMaintainer: isAdminCommand(request.command),
+      });
       return {
         mode: "update",
         changes: selectChanges(files, ["record.json", "build-output.json"]),
@@ -173,6 +185,14 @@ export class Publisher {
     }
     if (request.action === "register") {
       const files = registeredFiles(request.id, current.texts);
+      return {
+        mode: "update",
+        changes: selectChanges(files, ["record.json"]),
+        relevantPreconditions: ["record", "buildOutput", "ownerList"],
+      };
+    }
+    if (request.action === "reset-draft") {
+      const files = redraftedFiles(request.id, current.texts);
       return {
         mode: "update",
         changes: selectChanges(files, ["record.json"]),
@@ -199,11 +219,38 @@ export class Publisher {
     ) {
       problems.push(`${request.id} no longer has the expected issue binding`);
     }
-    if (!current.files.ownerList.owners.some((owner) => owner.githubId === request.actor.githubId)) {
-      problems.push(`${request.actor.handle} is no longer an owner of ${request.id}`);
+    const admin = isAdminCommand(request.command);
+    if (admin) {
+      // The route job's maintainer and lifecycle gates, repeated here on the
+      // canonical actor and the current record (trust rule 2).
+      const maintainer = maintainerProblem(request.actor, this.admins);
+      if (maintainer !== undefined) problems.push(maintainer);
+      const state = adminStateProblem(
+        request.action as AdminVerb,
+        request.id,
+        current.files.record.state,
+        current.files.record.source !== undefined,
+      );
+      if (state !== undefined) problems.push(state);
+    } else {
+      if (!current.files.ownerList.owners.some((owner) => owner.githubId === request.actor.githubId)) {
+        problems.push(`${request.actor.handle} is no longer an owner of ${request.id}`);
+      }
+      if (current.files.record.state !== "init" && current.files.record.state !== "draft") {
+        problems.push(`${request.id} is now ${current.files.record.state}`);
+      }
     }
-    if (current.files.record.state !== "init" && current.files.record.state !== "draft") {
-      problems.push(`${request.id} is now ${current.files.record.state}`);
+    if (request.action === "reset-draft") {
+      // Supersedes chains are acyclic because a claim binds only against an
+      // already-registered target, so registration order strictly decreases
+      // along a chain. Demoting a claimed target would let it re-register
+      // claiming its own successor; refusing here keeps the premise intact.
+      const superseders = await this.archive.listRegisteredSuperseders(request.id, current.snapshot);
+      if (superseders.length > 0) {
+        problems.push(
+          `${superseders.join(", ")} supersedes ${request.id}; a superseded submission cannot be reset to draft`,
+        );
+      }
     }
     if (request.action === "register") {
       // Registration admits only registered dependencies (spec.md). States
@@ -244,7 +291,7 @@ export class Publisher {
     ) {
       problems.push(`${request.id} changed after validation; submit a new command comment`);
     }
-    if (plan.mode === "owners") {
+    if (plan.mode === "owners" && !admin) {
       const owners = request.command?.action === "owners" ? request.command.owners : [];
       if (!owners.some((owner) => owner.githubId === request.actor.githubId)) {
         problems.push("the replacement owner list no longer retains the commenter");
@@ -340,9 +387,17 @@ export async function dispatchWebsiteAndReport(
           dispatched && titleSyncError === "" ? "success" : "failure",
         ),
       );
-      if (request.action === "submit" && dispatched && titleSyncError === "") {
+      if (
+        (request.action === "submit" || request.action === "revalidate") &&
+        dispatched &&
+        titleSyncError === ""
+      ) {
         await control.completeCommand(request.commentId!);
-      } else if (request.action === "owners" || request.action === "submit") {
+      } else if (
+        request.action === "owners" ||
+        request.action === "submit" ||
+        request.action === "revalidate"
+      ) {
         await control.clearCommandProgress(request.commentId!);
       }
     }
@@ -489,7 +544,9 @@ export class PostCommitError extends Error {
 type PublishAction = PublishRequest["action"];
 
 function isPublishAction(value: unknown): value is PublishAction {
-  return ["create", "owners", "submit", "delete", "register"].includes(String(value));
+  return ["create", "owners", "submit", "delete", "register", "revalidate", "reset-draft"].includes(
+    String(value),
+  );
 }
 
 function trustedNodeId(value: unknown): string {
@@ -539,9 +596,18 @@ function trustedCommand(value: unknown, expectedAction: Exclude<PublishAction, "
   if (value.action !== expectedAction) {
     throw new ValidationError("publication action and command action do not match");
   }
+  // The maintainer flag is exact where it is admitted and absent everywhere
+  // else: an `admin` key on a register or submit command is a malformed
+  // request, not a harmless extra.
+  const admin = "admin" in value;
+  if (admin && value.admin !== true) {
+    throw new ValidationError("publication command maintainer flag is invalid");
+  }
+  const adminKey = admin ? ["admin"] : [];
   if (expectedAction === "owners") {
-    requireExactKeys(value, ["action", "owners"], "publication owners command");
-    return { action: "owners", owners: parseOwnerList({ specVersion: "1", owners: value.owners }).owners };
+    requireExactKeys(value, ["action", "owners", ...adminKey], "publication owners command");
+    const owners = parseOwnerList({ specVersion: "1", owners: value.owners }).owners;
+    return admin ? { action: "owners", owners, admin: true } : { action: "owners", owners };
   }
   if (expectedAction === "submit") {
     requireExactKeys(
@@ -554,6 +620,18 @@ function trustedCommand(value: unknown, expectedAction: Exclude<PublishAction, "
       commit: value.commit,
       folder: value.folder,
     }) };
+  }
+  if (expectedAction === "revalidate") {
+    requireExactKeys(value, ["action", "admin", "source"], "publication revalidate command");
+    return { action: "revalidate", admin: true, source: validateSource(value.source) };
+  }
+  if (expectedAction === "reset-draft") {
+    requireExactKeys(value, ["action", "admin"], "publication reset-draft command");
+    return { action: "reset-draft", admin: true };
+  }
+  if (expectedAction === "delete") {
+    requireExactKeys(value, ["action", ...adminKey], "publication delete command");
+    return admin ? { action: "delete", admin: true } : { action: "delete" };
   }
   requireExactKeys(value, ["action"], `publication ${expectedAction} command`);
   return { action: expectedAction };
@@ -616,7 +694,7 @@ export function commitMessage(request: PublishRequest, runUrl: string): string {
   const headline =
     request.action === "create"
       ? `initialize ${request.id} by ${actor}`
-      : `${request.action} ${request.id} by ${actor}`;
+      : `${isAdminCommand(request.command) ? "admin " : ""}${request.action} ${request.id} by ${actor}`;
   const trailers = [
     `lax-repository-id: ${request.issue.repositoryId}`,
     `lax-issue-number: ${request.issue.number}`,
@@ -635,16 +713,22 @@ function successComment(
   dispatchError: string,
   titleSyncError: string,
 ): string {
+  const byMaintainer = isAdminCommand(request.command) ? " by maintainer action" : "";
   const actionText =
     request.action === "create"
       ? `Initialized **${request.id}** in lax-database.`
       : request.action === "owners"
-        ? `Updated the owners of **${request.id}**.`
+        ? `Updated the owners of **${request.id}**${byMaintainer}.`
         : request.action === "delete"
-          ? `Deleted **${request.id}**; the id is permanently retired.`
+          ? `Deleted **${request.id}**${byMaintainer}; the id is permanently retired.`
           : request.action === "submit"
             ? `Updated **${request.id}** from its validated immutable source.`
-          : `Registered **${request.id}**; it is now immutable.`;
+            : request.action === "revalidate"
+              ? `Revalidated **${request.id}** from its recorded source${byMaintainer}; ` +
+                "its build output is republished and its state is unchanged."
+              : request.action === "reset-draft"
+                ? `Reset **${request.id}** to draft${byMaintainer}; it is mutable again and no longer citable.`
+                : `Registered **${request.id}**; it is now immutable.`;
   const dispatchText = dispatched
     ? "The Website rebuild event was accepted."
     : `lax-database changed, but the Website rebuild was not dispatched (${safe(dispatchError)}).`;

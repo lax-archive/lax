@@ -1,10 +1,34 @@
 # Admin tool plan
 
-Status: planned, not implemented (2026-08-14). This is the design for
-maintainer-only operations on the archive — deleting or resetting
-submissions regardless of state, retriggering validation, and repo-wide
-maintenance. When implementation lands, the lifecycle deviations below get
-a spec-notes.md entry; this file then closes into `history/`.
+Status: designed 2026-08-14; the issue-scoped verbs (`revalidate`,
+`delete`, `reset-draft`, `owners`) and a local driver landed 2026-09-04
+(spec-notes entry of that date; `scripts/admin/README.md` is the manual).
+What landed differs from the text below in three places, recorded here
+rather than rewritten so the reasoning stays legible:
+
+- **There is a local tool after all — but it writes nothing.**
+  `npm run admin -- <verb>` (`scripts/admin/`) posts the `/lax admin`
+  comments and follows them with the maintainer's own `gh` token, exactly
+  as `scripts/port-db/` did for the port. The "no standalone tool" rule
+  below was about direct database writes and App keys; a driver that only
+  comments keeps both doctrines and removes the copy-paste.
+- **The typed confirmation lives in the driver**, as it does for
+  `lax delete`, instead of the server-side two-phase
+  `/lax admin confirm` below. The route job still posts the preview, so
+  the issue thread records what was about to happen.
+- **No `admin.yml` yet.** `rebuild-website` is a `repository_dispatch`
+  the maintainer's token may already send to lax-website; `sweep` is
+  `revalidate --all`, ordered dependencies-first by the driver. `verify`,
+  `gc-captures`, and `undelete` are not built (TODO.md).
+
+Also decided at implementation: `reset-draft` refuses a record that a
+*registered* successor claims (the supersedes caveat below), and a
+revalidation must reproduce the recorded supersedes claim — same source,
+same manifest — rather than re-admitting it, since the maintainer need not
+own the target. The file closes into `history/` once the remaining verbs
+land or are struck.
+
+The original design follows.
 
 ## Shape: no standalone tool, no direct writes
 

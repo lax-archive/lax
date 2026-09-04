@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  commandHead,
   commandSubmissionId,
   commandWord,
   parseCommand,
@@ -139,5 +140,60 @@ describe("issue command parser", () => {
       expect(message).toContain("owner 3 has an invalid handle");
       expect(message).toContain("owner 4 must be an object");
     }
+  });
+});
+
+describe("maintainer command grammar", () => {
+  it("reads the maintainer head from the closed vocabulary only", () => {
+    expect(commandWord("/lax admin revalidate")).toBe("admin");
+    expect(commandHead("/lax admin revalidate lax-123456")).toEqual({
+      word: "admin",
+      action: "revalidate",
+      prefix: "/lax admin revalidate",
+      admin: true,
+    });
+    expect(commandHead("/lax admin frobnicate")).toBe("unknown");
+    expect(commandHead("/lax admin")).toBe("unknown");
+    expect(commandHead("/lax delete")).toEqual({
+      word: "delete",
+      action: "delete",
+      prefix: "/lax delete",
+      admin: false,
+    });
+  });
+
+  it("routes maintainer verbs by the same embedded id and marks the parsed command", () => {
+    expect(commandSubmissionId("/lax admin revalidate lax-123456", "lax-42")).toBe("lax-123456");
+    expect(commandSubmissionId("/lax admin reset-draft", "lax-42")).toBe("lax-42");
+    expect(parseRoutedCommand("/lax admin revalidate lax-123456", "lax-42")).toEqual({
+      id: "lax-123456",
+      command: { action: "revalidate", admin: true },
+    });
+    expect(parseRoutedCommand("/lax admin delete", "lax-42")).toEqual({
+      id: "lax-42",
+      command: { action: "delete", admin: true },
+    });
+    expect(parseRoutedCommand("/lax admin reset-draft lax-42", "lax-42")).toEqual({
+      id: "lax-42",
+      command: { action: "reset-draft", admin: true },
+    });
+    expect(
+      parseRoutedCommand('/lax admin owners lax-123456 [{"githubId":20,"handle":"bob"}]', "lax-42"),
+    ).toEqual({
+      id: "lax-123456",
+      command: { action: "owners", owners: [{ githubId: 20, handle: "bob" }], admin: true },
+    });
+    // the author form never carries the flag
+    expect(parseCommand("/lax delete")).toEqual({ action: "delete" });
+  });
+
+  it("keeps the argument rules of the underlying verb", () => {
+    expect(() => parseCommand("/lax admin revalidate extra")).toThrow("does not accept arguments");
+    expect(() => parseCommand("/lax admin reset-draft lax-42 now")).toThrow("does not accept arguments");
+    expect(() => parseCommand("/lax admin owners")).toThrow("followed by JSON");
+    expect(() => parseCommand("/lax admin owners ")).toThrow("requires a JSON argument");
+    expect(() => parseCommand("/lax admin owners {}")).toThrow("owners must be a JSON array");
+    expect(() => parseCommand("/lax admin register")).toThrow("unknown command");
+    expect(() => parseCommand("/lax admin submit {}")).toThrow("unknown command");
   });
 });

@@ -333,10 +333,86 @@ describe("trusted submit publisher", () => {
   });
 });
 
+describe("maintainer revalidation", () => {
+  const maintainers = new Set([alice.githubId]);
+  /** lax-42 registered with the very source the test artifacts were validated from. */
+  const registeredCurrent = (source = TEST_SOURCE): LoadedSubmission => {
+    const texts = initialFiles("lax-42", issue, alice, "2026-07-30T10:00:00Z");
+    texts["record.json"] = jsonFile({
+      specVersion: "1",
+      id: "lax-42",
+      state: "registered",
+      createdAt: "2026-07-30T10:00:00Z",
+      source,
+    });
+    return loaded(texts);
+  };
+  const revalidation = (current: LoadedSubmission): PublishRequest => ({
+    ...request(current),
+    action: "revalidate",
+    command: { action: "revalidate", admin: true, source: { ...TEST_SOURCE } },
+  });
+
+  it("republishes a registered record's build output without changing its state", async () => {
+    const current = registeredCurrent();
+    const harness = submitHarness(new Map([["lax-42", current]]), false, [], maintainers);
+    const result = await harness.publisher.publish(revalidation(current), successfulArtifacts(), "/capture.tar", run);
+    expect(result.kind).toBe("committed");
+    expect(harness.captureStore.promote).toHaveBeenCalledTimes(1);
+    expect(Object.keys(harness.changes).sort()).toEqual(["build-output.json", "record.json"]);
+    expect(JSON.parse(harness.changes["record.json"]!)).toMatchObject({
+      state: "registered",
+      source: TEST_SOURCE,
+      createdAt: "2026-07-30T10:00:00Z",
+    });
+    expect(JSON.parse(harness.changes["build-output.json"]!)).toMatchObject({
+      capture: { registryBlob: expect.stringContaining("sha256:") },
+    });
+    const message = harness.writeFiles.mock.calls[0]![0].message;
+    expect(message.startsWith("admin revalidate lax-42 by alice (10)\n")).toBe(true);
+    // a maintainer need not own the record: the owner gate is replaced, not widened
+    expect(current.files.ownerList.owners).toEqual([alice]);
+  });
+
+  it("refuses a non-maintainer, a record whose source moved, and a changed supersedes claim", async () => {
+    const current = registeredCurrent();
+    const stranger = submitHarness(new Map([["lax-42", current]]), false, [], new Set([99]));
+    await expect(
+      stranger.publisher.publish(revalidation(current), successfulArtifacts(), "/capture.tar", run),
+    ).rejects.toThrow("alice is not an archive maintainer");
+    expect(stranger.captureStore.promote).not.toHaveBeenCalled();
+
+    const moved = registeredCurrent({ ...TEST_SOURCE, commit: "e".repeat(40) });
+    const stale = submitHarness(new Map([["lax-42", moved]]), false, [], maintainers);
+    await expect(
+      stale.publisher.publish(revalidation(current), successfulArtifacts(), "/capture.tar", run),
+    ).rejects.toThrow("no longer records the source the revalidation was authorized for");
+
+    const claiming = successfulArtifacts();
+    claiming.buildOutput.inputs.manifest.supersedes = "lax-7";
+    claiming.report.buildOutput.inputs.manifest.supersedes = "lax-7";
+    const changed = submitHarness(new Map([["lax-42", current]]), false, [], maintainers);
+    await expect(
+      changed.publisher.publish(revalidation(current), claiming, "/capture.tar", run),
+    ).rejects.toThrow("may not change the recorded supersedes claim");
+    // the target is not re-admitted: no ownership walk of a claim that is already bound
+    expect(changed.listRegisteredSuperseders).not.toHaveBeenCalled();
+  });
+
+  it("keeps an ordinary submit on the ordinary gates", async () => {
+    const current = registeredCurrent();
+    const harness = submitHarness(new Map([["lax-42", current]]), false, [], maintainers);
+    await expect(
+      harness.publisher.publish(request(current), successfulArtifacts(), "/capture.tar", run),
+    ).rejects.toThrow("is now registered");
+  });
+});
+
 function submitHarness(
   values: Map<string, LoadedSubmission>,
   resultExists = false,
   registeredSuperseders: string[] = [],
+  admins?: ReadonlySet<number>,
 ): {
   publisher: SubmitPublisher;
   control: PublisherControl;
@@ -377,7 +453,7 @@ function submitHarness(
     })),
   } satisfies SubmitCaptureStore;
   return {
-    publisher: new SubmitPublisher(control, archive, captureStore, repositoryId),
+    publisher: new SubmitPublisher(control, archive, captureStore, repositoryId, admins),
     control,
     captureStore,
     load,
