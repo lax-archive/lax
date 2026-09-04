@@ -1,5 +1,4 @@
 # Trusted publication and authorization boundaries.
-/.github/workflows/submission.yml @lax-archive/maintainers
 /src/workflows/ @lax-archive/maintainers
 /src/shared/archive.ts @lax-archive/maintainers
 /src/shared/archive-schema.ts @lax-archive/maintainers
@@ -19,5 +18,5 @@
 /test/workflows/capture-store.test.ts @lax-archive/maintainers
 /test/workflows/update-publisher.test.ts @lax-archive/maintainers
 
-# Both teams may review and debug every automation workflow.
-/.github/workflows/ @lax-archive/maintainers @lax-archive/lean-check
+# Automation can grant publication credentials; maintainers own every workflow.
+/.github/workflows/ @lax-archive/maintainers

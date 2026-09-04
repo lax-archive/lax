@@ -42,6 +42,7 @@ const packageScripts = (
 ).scripts;
 /** The second TypeScript project: everything in the repository, emitting nothing. */
 const TYPECHECK_PROJECT = "tsconfig.typecheck.json";
+const codeowners = fs.readFileSync(new URL("../../.github/CODEOWNERS", import.meta.url), "utf8");
 
 interface WorkflowJob {
   needs?: string | string[];
@@ -109,6 +110,16 @@ describe("GitHub Actions dependency pins", () => {
       if (reference.startsWith("./")) continue;
       expect(reference, `${path}: ${reference}`).toMatch(/^[^@\s]+@[0-9a-f]{40}$/u);
     }
+  });
+});
+
+describe("workflow ownership", () => {
+  it("assigns the complete workflow namespace to maintainers only", () => {
+    const workflowRules = codeowners
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("/.github/workflows/"));
+    expect(workflowRules).toEqual(["/.github/workflows/ @lax-archive/maintainers"]);
   });
 });
 
