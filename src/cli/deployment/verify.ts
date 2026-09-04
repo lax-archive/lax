@@ -35,6 +35,7 @@ for (const relative of [
   "package.json",
   "dist/sitegen/generate.js",
   "dist/sitegen/assets.js",
+  "dist/sitegen/machine-index.js",
   "assets/site",
   "assets/site/pdfjs",
   "assets/site/reflowtex",

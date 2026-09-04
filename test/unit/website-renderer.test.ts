@@ -30,6 +30,7 @@ describe("downloaded Website renderer", () => {
     for (const relative of [
       "dist/sitegen/generate.js",
       "dist/sitegen/assets.js",
+      "dist/sitegen/machine-index.js",
       "assets/site",
       "assets/site/pdfjs",
       "assets/site/reflowtex",
