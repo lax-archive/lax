@@ -18,7 +18,17 @@ export interface ValidationLimits {
   minFreeDiskBytes: number;
   memoryBytes: number;
   cpuCount: number;
+  /** Lean task-manager threads (LEAN_NUM_THREADS) for Replay and Inspect:
+   * leanchecker and the inspector hold one full environment import per
+   * concurrent task, so this is the memory-critical budget. */
   leanThreads: number;
+  /** LEAN_NUM_THREADS for Compile (`lake build`, both pipelines). Distinct
+   * from `leanThreads` on purpose: a lake worker holds one module's
+   * environment (the submission's own imports), not a whole-mathlib import
+   * per task, so compile fits more workers under the same memory cap. The
+   * rule: never a literal at a call site — every phase reads its budget
+   * here, and an environment row overrides both counts independently. */
+  compileLeanThreads: number;
   pids: number;
   /** Wall clock for one latexmk run of a declared paper. */
   paperCompileTimeoutMs: number;
@@ -88,6 +98,11 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   // peak at ~11-12 GiB — the most a 16 GB swapless hosted runner fits.
   // Replay and Inspect must also never run concurrently with each other.
   leanThreads: 2,
+  // Compile worker budget, measured in the same 2026-08-05 session
+  // (history/rework-execution.md, "the three load-bearing unknowns"): a
+  // `lake build` peaked at 3.84 GiB at 4 threads, a quarter of the cap, so
+  // compile keeps four where replay must stop at two.
+  compileLeanThreads: 4,
   pids: 1_024,
   paperCompileTimeoutMs: 10 * 60_000,
   paperExtractTimeoutMs: 2 * 60_000,

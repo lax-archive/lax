@@ -87,6 +87,55 @@ describe("validation runtime boundaries retained from main", () => {
     expect(checkRunner).not.toContain('LEAN_NUM_THREADS: "4"');
     // replay/inspect run at the measured 2-thread budget (red-team addendum)
     expect(DEFAULT_LIMITS.leanThreads).toBe(2);
+    // compile keeps its own measured budget (3.84 GiB at 4 threads,
+    // history/rework-execution.md), named in config.ts — never a literal at
+    // either `lake build` call site, so an environment row can lower it
+    expect(DEFAULT_LIMITS.compileLeanThreads).toBe(4);
+    for (const file of ["../../src/submission-validation/phases/compile.ts", "../../src/submission-validation/host/pipeline.ts"]) {
+      const source = fs.readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(source, file).toContain("LEAN_NUM_THREADS: String(");
+      expect(source, file).not.toMatch(/LEAN_NUM_THREADS:\s*"\d+"/u);
+    }
+  });
+
+  it("compiles at the configured compile thread budget, not a literal", async () => {
+    const repositoryRoot = temporary("lax-compile-threads-source-");
+    const buildRoot = temporary("lax-compile-threads-build-");
+    writeFile(repositoryRoot, "concepts/Lax9.lean", "def archived := true\n");
+    const calls: ContainerInvocation[] = [];
+    const runner: ValidationRunner = {
+      run: async (invocation: ContainerInvocation) => {
+        calls.push(invocation);
+        return { code: 0, output: "", timedOut: false };
+      },
+      verifyRuntime: async () => {},
+      verifyImage: async () => {},
+    };
+    const workspace = {
+      repositoryRoot,
+      submissionRoot: repositoryRoot,
+      containerSubmissionRoot: "/source",
+      manifests: { concepts: "{}", proofs: "{}" },
+      libraries: {
+        concepts: path.join(buildRoot, "build", "lib", "lean"),
+        proofs: path.join(buildRoot, "proofs", "build", "lib", "lean"),
+      },
+      buildMounts: {
+        concepts: [{ source: buildRoot, target: "/source/concepts/.lake", writable: true }],
+        proofs: [],
+      },
+    };
+    const missing = path.join(repositoryRoot, "missing-dependencies");
+
+    // the default budget
+    await compileConcepts(workspace, missing, runner, DEFAULT_LIMITS);
+    expect(calls[0]!.env).toMatchObject({ LEAN_NUM_THREADS: "4", LAKE_ARTIFACT_CACHE: "false" });
+    // an environment tuned down for memory (limitsFor merges its row over
+    // the defaults) compiles at its own count, independent of leanThreads
+    await compileConcepts(workspace, missing, runner, { ...DEFAULT_LIMITS, compileLeanThreads: 1 });
+    expect(calls[1]!.env).toMatchObject({ LEAN_NUM_THREADS: "1" });
+    await compileConcepts(workspace, missing, runner, { ...DEFAULT_LIMITS, leanThreads: 1 });
+    expect(calls[2]!.env).toMatchObject({ LEAN_NUM_THREADS: "4" });
   });
 
   it("checks a complete package inventory through one root-module replay", async () => {
@@ -418,6 +467,8 @@ describe("validation runtime boundaries retained from main", () => {
       "--security-opt=no-new-privileges",
       "--network=none",
       `--memory=${16 * 1024 * 1024 * 1024}`,
+      // swap never extends the cap (history/oom.md)
+      `--memory-swap=${16 * 1024 * 1024 * 1024}`,
       "--workdir=/input",
       "--env",
       "ALPHA=first",
@@ -505,6 +556,32 @@ describe("validation runtime boundaries retained from main", () => {
     expect(binds).toEqual([`type=bind,src=${path.resolve(source)},dst=/paper`]);
     // The runner owns PATH in every image.
     await expect(runner.run({ ...invocation, env: { PATH: "/evil" } })).rejects.toThrow("cannot set PATH");
+  });
+
+  it("pins the container's swap allowance to the memory cap", async () => {
+    // A runner with a swapfile would otherwise let a phase use up to twice
+    // the cap before the kernel enforces it (history/oom.md: the archive box
+    // filled 31.9 GiB of swap before each OOM kill). Whatever the
+    // environment's measured cap is, --memory-swap must equal --memory.
+    const source = temporary("lax-container-swap-");
+    const record = path.join(temporary("lax-container-bin-"), "arguments.txt");
+    installDockerRecorder(record);
+    const memoryBytes = 12 * 1024 * 1024 * 1024;
+    const runner = new ContainerRunner(
+      epoch(),
+      RUNTIME,
+      { ...DEFAULT_LIMITS, memoryBytes, minFreeDiskBytes: 0 },
+      source,
+      undefined,
+      fakeLayout(),
+    );
+    await runner.run({ label: "swap", args: ["tool"], timeoutMs: 5_000, maxOutputBytes: 64 * 1024 });
+    const args = fs.readFileSync(record, "utf8").trim().split("\n");
+    const memory = args.find((argument) => argument.startsWith("--memory="));
+    const memorySwap = args.find((argument) => argument.startsWith("--memory-swap="));
+    expect(memory).toBe(`--memory=${memoryBytes}`);
+    expect(memorySwap).toBe(`--memory-swap=${memoryBytes}`);
+    expect(memory!.slice("--memory=".length)).toBe(memorySwap!.slice("--memory-swap=".length));
   });
 
   it("refuses to run before the runtime layout is verified", async () => {

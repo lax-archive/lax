@@ -48,7 +48,8 @@ async function compile(
       // comment in host/warmstore.ts (lake would write .hash files beside
       // the shared oleans)
       LAKE_ARTIFACT_CACHE: "false",
-      LEAN_NUM_THREADS: "4",
+      // the compile budget, never a literal here (config.ts, history/oom.md)
+      LEAN_NUM_THREADS: String(limits.compileLeanThreads),
     },
     timeoutMs: limits.compileTimeoutMs,
     maxOutputBytes: limits.maxOutputBytes,

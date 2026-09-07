@@ -36,8 +36,10 @@ export interface ArchiveEnvironment {
   admittedAt: string;
   /** Inspector source directory under src/submission-validation/lean/. */
   inspector: "inspector" | string;
-  /** Measured overrides of DEFAULT_LIMITS (leanThreads, memoryBytes). */
-  limits?: Partial<Pick<ValidationLimits, "leanThreads" | "memoryBytes">>;
+  /** Measured overrides of DEFAULT_LIMITS (leanThreads, memoryBytes, and
+   * compileLeanThreads — the admission script writes the first two; the
+   * compile count is lowered by hand when a `lake build` outgrows the cap). */
+  limits?: Partial<Pick<ValidationLimits, "leanThreads" | "compileLeanThreads" | "memoryBytes">>;
   /** Lever, unused so far: after this date new drafts are refused here. */
   closedAt?: string;
 }

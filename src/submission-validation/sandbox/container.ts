@@ -189,6 +189,11 @@ export class ContainerRunner implements ValidationRunner {
       "--security-opt=no-new-privileges",
       `--network=${invocation.network === true ? "bridge" : "none"}`,
       `--memory=${this.limits.memoryBytes}`,
+      // memory-swap equal to memory: swap adds nothing to the cap, so a runner
+      // with a swapfile enforces the same ceiling as the swapless one the
+      // budget was measured on (history/oom.md: 31.9 GiB of swap only delayed
+      // the OOM kill).
+      `--memory-swap=${this.limits.memoryBytes}`,
       `--cpus=${this.limits.cpuCount}`,
       `--pids-limit=${this.limits.pids}`,
       "--tmpfs=/tmp:rw,nosuid,nodev,size=1073741824",
@@ -276,9 +281,11 @@ export function cgroupMemoryPeakPath(procCgroup: string): string | undefined {
  * Best-effort peak-memory monitor for one container run: resolve the
  * container's cgroup through its init pid (docker inspect), then poll the
  * cgroup's kernel-maintained `memory.peak` — a monotonic high-water mark
- * covering everything the `--memory` cap is enforced against, so the last
- * successful read before the container exits is the run's peak (modulo the
- * final poll interval). Every step may fail (container not started yet,
+ * covering everything the `--memory` cap is enforced against (and, with
+ * `--memory-swap` pinned to the same value, nothing can spill past it into
+ * swap unrecorded), so the last successful read before the container exits
+ * is the run's peak (modulo the final poll interval). Every step may fail
+ * (container not started yet,
  * already reaped by `--rm`, cgroup v1 host); each failure just means no
  * number — profiling never fails a validation. Returns the stop function.
  */

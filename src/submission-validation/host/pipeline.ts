@@ -344,7 +344,12 @@ export async function validateSubmissionOnHost(
       const build = await state.phase(`compile ${kind}`, () =>
         run(lakeBinary(state.environment), ["build"], pkgDir, {
           echo,
-          env: { LAKE_ARTIFACT_CACHE: "false", LEAN_NUM_THREADS: "4", PATH: lakePathEnv(state.environment) },
+          env: {
+            LAKE_ARTIFACT_CACHE: "false",
+            // the same compile budget the container phase pins (config.ts)
+            LEAN_NUM_THREADS: String(state.limits.compileLeanThreads),
+            PATH: lakePathEnv(state.environment),
+          },
           maxOutputBytes: state.limits.maxOutputBytes,
         }));
       if (build.code !== 0) {
