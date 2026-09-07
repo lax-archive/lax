@@ -94,8 +94,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      # Every job needs this one, so it is the only job that writes the shared
-      # node_modules+dist cache; see the action for why the key is exact.
+      # Builds from its own checkout, then saves the tree for the validate
+      # job. The save is refused in production today (cache write denied on
+      # issue_comment runs, history/environments-roundtrip-20260904.md) and
+      # stays because it is harmless and hands the only restoring job a free
+      # 13 s the day the token's scope changes; see the action for the rule.
       - uses: ./.github/actions/setup-lax
         with:
           save: "true"
@@ -124,6 +127,8 @@ jobs:
     # Every phase has its own cap (config.ts) and the pipeline never waits
     # on anything unbounded; this is the backstop for a hung runner, well
     # above the longest observed validation (~30 min) plus a cold image pull.
+    # Expiry ends the job as `cancelled`, not `failure`, which is why the
+    # reporter below accepts both.
     timeout-minutes: 180
     permissions:
       contents: read
@@ -131,7 +136,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      # The one job allowed to restore route's cached tree: its token is
+      # read-only and it runs submission code regardless, so the cache can
+      # hand it nothing an escape would not already hold.
       - uses: ./.github/actions/setup-lax
+        with:
+          restore: "true"
       # Fetch, static validation, and dependency resolution only — seconds,
       # and no toolchain needed. A manifest typo or an unresolvable dependency
       # fails the job here instead of after a multi-GB cache restore and a
@@ -281,6 +291,14 @@ jobs:
         needs.validate.result == 'success'
       }}
     runs-on: ubuntu-latest
+    # A backstop while App tokens are held, sized over the summed ceilings of
+    # what the job does: the artifact download (a capture is at most 2 GiB),
+    # the credential-free preflight, the ghcr blob push whose own per-request
+    # cap is 60 min (capture-store.ts UPLOAD_TIMEOUT_MS), and the same
+    # publication loop the publish job runs (~45 min at its designed worst,
+    # see there). Expiry ends the job as `cancelled`; the fallback reporter
+    # treats that like a failure and keeps the wording open about a commit.
+    timeout-minutes: 120
     environment: lax-database-publish
     permissions:
       contents: read
@@ -359,6 +377,15 @@ jobs:
     needs: route
     if: needs.route.outputs.operation == 'publish'
     runs-on: ubuntu-latest
+    # A backstop while App tokens are held. The handler makes one writeFiles
+    # call (src/shared/archive.ts): up to 100 compare-and-swap rounds, each a
+    # bounded set of API calls plus a backoff capped at 2 s — roughly 40 min
+    # if the head moved on every one of them — and inside it a branch guard
+    # that waits at most 60 × 5 s = 5 min once before it throws. An App
+    # installation token expires an hour after minting anyway, so nothing
+    # useful can happen past that; this only releases the runner and routes
+    # the run to report-workflow-failure (as `cancelled`).
+    timeout-minutes: 60
     environment: lax-database-publish
     permissions:
       contents: read
@@ -405,13 +432,17 @@ jobs:
   # unsuccessful outcome from the typed report. It never checks out or
   # executes submission code — it reads the report artifact as data, and the
   # artifact may be absent when validate died before writing it.
+  # `cancelled` is the result of a timeout-minutes expiry or a manual cancel;
+  # both must reach the author and clear the progress reaction, so it is
+  # reported the same way (audit-20260903: a cancelled validate job used to
+  # leave the issue silent). Only `skipped` stays out.
   report-validation-failure:
     needs: [route, validate]
     if: >-
       ${{
         always() &&
         needs.route.outputs.operation == 'validate' &&
-        needs.validate.result == 'failure'
+        contains(fromJSON('["failure","cancelled"]'), needs.validate.result)
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -445,6 +476,8 @@ jobs:
   # fallback, the tradeoff recorded in rewrite-plan.md.
   # A failed validate job is report-validation-failure's case, so validate is
   # not a dependency here and no double report can be posted for it.
+  # `cancelled` — a job timeout or a manual cancel — counts as a failure for
+  # every job here: the author must still hear that the run ended.
   report-workflow-failure:
     needs:
       - precheck
@@ -455,11 +488,11 @@ jobs:
     if: >-
       ${{
         always() &&
-        (needs.precheck.result == 'failure' ||
-         needs.route.result == 'failure' ||
-         needs.publish.result == 'failure' ||
-         needs.publish-submit.result == 'failure' ||
-         needs.report-validation-failure.result == 'failure')
+        (contains(fromJSON('["failure","cancelled"]'), needs.precheck.result) ||
+         contains(fromJSON('["failure","cancelled"]'), needs.route.result) ||
+         contains(fromJSON('["failure","cancelled"]'), needs.publish.result) ||
+         contains(fromJSON('["failure","cancelled"]'), needs.publish-submit.result) ||
+         contains(fromJSON('["failure","cancelled"]'), needs.report-validation-failure.result))
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -477,7 +510,7 @@ jobs:
           ACTION: ${{ needs.route.outputs.action }}
           OPERATION: ${{ needs.route.outputs.operation }}
           # Only these two jobs can create a lax-database commit, and a job
-          # that died mid-publication cannot report whether it did, so the
-          # wording has to stay open about it.
-          PUBLICATION_FAILED: ${{ needs.publish.result == 'failure' || needs.publish-submit.result == 'failure' }}
+          # that died mid-publication — failed or cancelled — cannot report
+          # whether it did, so the wording has to stay open about it.
+          PUBLICATION_FAILED: ${{ contains(fromJSON('["failure","cancelled"]'), needs.publish.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish-submit.result) }}
         run: node dist/workflows/submission.js report-failure

@@ -53,6 +53,7 @@ interface WorkflowJob {
   if?: string;
   permissions?: Record<string, string>;
   outputs?: Record<string, string>;
+  "timeout-minutes"?: number;
   steps: Array<{
     name?: string;
     id?: string;
@@ -294,22 +295,42 @@ describe("submission workflow wiring", () => {
       expect(job.steps.some((step) => step.run === "npm run build"), name).toBe(false);
     }
     // Exactly one job saves the shared entry: route, which precedes every
-    // other job, so nothing else can claim the key first.
+    // other job, so nothing else can claim the key first. (The save is
+    // refused in production — history/environments-roundtrip-20260904.md —
+    // and kept because it is harmless; the restore side below is what the
+    // trust argument rests on.)
     const savers = Object.entries(jobs).filter(
       ([, job]) => job.steps[1]?.with?.save === "true",
     );
     expect(savers.map(([name]) => name)).toEqual(["route"]);
+    // Exactly one job restores it: validate, whose token is read-only and
+    // which runs submission code anyway, so a poisoned entry could hand it
+    // nothing an escape would not already hold. Every other job — the two
+    // that mint App tokens, and the three whose GITHUB_TOKEN carries
+    // `issues: write`, the author-facing channel — builds from its own
+    // checkout. The route job's save is not gated on a restore, so this
+    // stays true of it too.
+    const restorers = Object.entries(jobs).filter(
+      ([, job]) => job.steps[1]?.with?.restore === "true",
+    );
+    expect(restorers.map(([name]) => name)).toEqual(["validate"]);
   });
 
-  it("keys the shared dist cache on the commit, with no prefix fallback", () => {
-    // Trust: a restore-keys prefix could match an entry saved from the
-    // validate VM (its cache token is reachable from an escaped process) and
-    // a privileged job would then execute those bytes. Exact per-commit keys
-    // plus immutable cache entries mean route's bytes are the only ones a
-    // publish job can ever restore.
+  it("keys the shared dist cache on the commit, with no prefix fallback, and restores only on request", () => {
+    // Trust: the runner's cache token is reachable from a process that
+    // escaped the validate sandbox, and the route job's save is denied in
+    // production, so the per-commit key is unclaimed while submission code
+    // runs. An exact key with no restore-keys keeps a restoring job from
+    // matching anything but this commit's entry; only *not restoring* keeps
+    // a credentialed job from executing whatever sits under it, so the
+    // restore is opt-in and off by default — a job added later builds its
+    // own tree unless it argues otherwise.
     const action = YAML.parse(setupAction) as {
+      inputs: Record<string, { default?: string }>;
       runs: { steps: Array<{ uses?: string; if?: string; with?: Record<string, unknown> }> };
     };
+    expect(action.inputs.restore?.default).toBe("false");
+    expect(action.inputs.save?.default).toBe("false");
     const cacheSteps = action.runs.steps.filter((step) => step.uses?.startsWith("actions/cache/"));
     expect(cacheSteps).toHaveLength(2);
     for (const step of cacheSteps) {
@@ -318,7 +339,15 @@ describe("submission workflow wiring", () => {
       for (const cached of ["node_modules", "dist"]) expect(step.with?.path).toContain(cached);
     }
     expect(setupAction).not.toMatch(/^\s*restore-keys:/mu);
-    expect(cacheSteps.at(-1)?.if).toContain("inputs.save == 'true'");
+    const [restore, save] = cacheSteps;
+    expect(restore?.uses).toContain("actions/cache/restore");
+    expect(restore?.if).toBe("inputs.restore == 'true'");
+    expect(save?.uses).toContain("actions/cache/save");
+    expect(save?.if).toContain("inputs.save == 'true'");
+    // With the restore skipped, cache-hit is empty and the build step runs:
+    // the install condition must key off that output and nothing else.
+    const install = action.runs.steps.find((step) => step.uses === undefined && step.if !== undefined);
+    expect(install?.if).toBe("steps.dist-cache.outputs.cache-hit != 'true'");
   });
 
   // -------------------------------------------------------------------------
@@ -526,11 +555,16 @@ describe("submission workflow wiring", () => {
 
     const reporter = requireJob(jobs, "report-validation-failure");
     expect(reporter.needs).toEqual(["route", "validate"]);
-    // always(), so a failed validate still reports; the failure test keeps it
-    // off skipped and cancelled runs.
+    // always(), so a failed validate still reports. `cancelled` — the result
+    // of a timeout-minutes expiry or a manual cancel — reports too: without
+    // it the issue stayed silent and the progress reaction stuck (audit
+    // 2026-09-03, 7 of 200 runs). Only `skipped` stays out, and `success`
+    // is publish-submit's.
     expect(reporter.if).toContain("always()");
     expect(reporter.if).toContain("needs.route.outputs.operation == 'validate'");
-    expect(reporter.if).toContain("needs.validate.result == 'failure'");
+    expect(reporter.if).toContain(`contains(fromJSON('["failure","cancelled"]'), needs.validate.result)`);
+    expect(reporter.if).not.toContain("needs.validate.result == 'failure'");
+    expect(reporter.if).not.toContain("needs.validate.result != 'success'");
     expect(reporter.permissions).toEqual({ contents: "read", issues: "write" });
     const download = reporter.steps.find((step) =>
       step.uses?.startsWith("actions/download-artifact"),
@@ -604,6 +638,38 @@ describe("submission workflow wiring", () => {
     expect(workflow).not.toContain("secrets.LAX_APP_PRIVATE_KEY");
   });
 
+  it("builds the credentialed jobs from their own checkout, bounded in time", () => {
+    // A job that mints or holds an App token runs only bytes it built itself:
+    // it never opts into the shared dist cache (the setup action's restore
+    // defaults off and is asserted off here explicitly, so a future
+    // `restore: "true"` on one of these jobs fails this test rather than
+    // silently widening the validate VM's reach), and it never falls back
+    // to a bare `npm ci`/`npm run build` of its own either — the action is
+    // the one build path.
+    for (const name of ["publish", "publish-submit"]) {
+      const job = requireJob(jobs, name);
+      const setup = job.steps.find((step) => step.uses === "./.github/actions/setup-lax");
+      expect(setup?.with?.restore, name).not.toBe("true");
+      expect(setup?.with?.save, name).not.toBe("true");
+      expect(JSON.stringify(job), name).not.toContain("actions/cache");
+      // Both run a bounded CAS retry loop while the tokens are live
+      // (archive.ts writeFiles: 100 conflict rounds with a capped backoff,
+      // plus one 60 × 5 s branch-guard wait), so the job must not be able to
+      // hold a runner for the six-hour default; the YAML comment states the
+      // sizing. An installation token expires after an hour, so the budget
+      // for the plain publisher need not exceed that.
+      expect(job["timeout-minutes"], name).toBeGreaterThan(0);
+    }
+    expect(requireJob(jobs, "publish")["timeout-minutes"]).toBeLessThanOrEqual(60);
+    // The submit publisher also downloads the capture (≤ 2 GiB) and pushes it
+    // to ghcr under capture-store.ts's own 60-minute upload cap before the
+    // same loop, so it gets more — but never more than the validate job
+    // whose output it publishes.
+    const submit = requireJob(jobs, "publish-submit")["timeout-minutes"] ?? 0;
+    expect(submit).toBeGreaterThan(requireJob(jobs, "publish")["timeout-minutes"] ?? 0);
+    expect(submit).toBeLessThanOrEqual(requireJob(jobs, "validate")["timeout-minutes"] ?? 0);
+  });
+
   // -------------------------------------------------------------------------
   // Fallback failure reporter: a thin dispatcher, wired to every branch.
   // -------------------------------------------------------------------------
@@ -623,9 +689,15 @@ describe("submission workflow wiring", () => {
       "report-validation-failure",
     ]);
     expect(fallback.if).toContain("always()");
+    // Every covered job fires the fallback on `cancelled` as well as on
+    // `failure`: a publish job's timeout-minutes expiry ends as `cancelled`,
+    // and a job that died while holding an App token must still be reported.
     for (const dependency of fallback.needs as string[]) {
-      expect(fallback.if).toContain(`needs.${dependency}.result == 'failure'`);
+      expect(fallback.if).toContain(
+        `contains(fromJSON('["failure","cancelled"]'), needs.${dependency}.result)`,
+      );
     }
+    expect(fallback.if).not.toMatch(/result == 'failure'/u);
     expect(fallback.if).not.toContain("needs.validate.result");
     expect(fallback.permissions).toEqual({ contents: "read", issues: "write" });
     const report = fallback.steps.at(-1);
@@ -639,8 +711,14 @@ describe("submission workflow wiring", () => {
       "OPERATION",
       "PUBLICATION_FAILED",
     ]);
-    expect(report?.env?.PUBLICATION_FAILED).toContain("needs.publish.result == 'failure'");
-    expect(report?.env?.PUBLICATION_FAILED).toContain("needs.publish-submit.result == 'failure'");
+    // A cancelled publisher cannot say whether it committed any more than a
+    // failed one can, so the open wording covers both results.
+    for (const publisher of ["publish", "publish-submit"]) {
+      expect(report?.env?.PUBLICATION_FAILED).toContain(
+        `contains(fromJSON('["failure","cancelled"]'), needs.${publisher}.result)`,
+      );
+    }
+    expect(report?.env?.PUBLICATION_FAILED).not.toMatch(/result == 'failure'/u);
     // The small permissionless precheck is the sole inline script; no
     // privileged job may regain github-script as a second logic host.
     expect(workflow).not.toContain("actions/github-script");

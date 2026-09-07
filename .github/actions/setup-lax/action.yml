@@ -1,21 +1,36 @@
 name: Set up lax
 description: >-
-  Node, dependencies, and a compiled dist/, shared across the jobs of one
-  workflow run through a per-commit cache.
+  Node, dependencies, and a compiled dist/ — built from the calling job's own
+  checkout, or, for a read-only job that opts in, restored from the
+  per-commit cache the route job saves.
 
 # Checkout deliberately stays in the calling workflow: a local action is only
 # resolvable once the repository is on disk, so every job runs its own
 # actions/checkout (persist-credentials: false) before this action.
 #
-# Exact keys only, and deliberately no restore-keys: a prefix fallback could
-# match an entry saved from the validate VM — the runner's cache token is
-# reachable from a process that escaped the sandbox — and a privileged job
-# would then run those bytes. With an exact per-commit key the route job saves
-# the entry before validate starts, and GitHub cache entries are immutable
-# once saved, so privileged jobs can only ever restore route's bytes. On a
-# miss a job simply builds the tree it checked out.
+# The cache is a throughput convenience for read-only jobs and nothing more.
+# The invariant that matters: a job that mints or holds an App token — or any
+# token a sandbox escape does not already have, such as `issues: write` — runs
+# only bytes it built itself from its own checkout, so the default here is no
+# restore and no save. The build costs about thirteen seconds. What the cache
+# must never become is a channel from the validate VM into a privileged job:
+# the runner's cache token is reachable from a process that escaped the
+# sandbox, and in production the route job's save is refused anyway ("cache
+# write denied: token has no writable scopes" on every issue_comment run,
+# history/environments-roundtrip-20260904.md), so the per-commit key stays
+# unclaimed while submission code runs. An exact key with no restore-keys
+# keeps a restoring job from matching anything but this commit's entry, but
+# only opting out of the restore keeps a credentialed job from executing
+# whatever sits under it.
 
 inputs:
+  restore:
+    description: >-
+      Restore node_modules and dist from this run's key instead of building.
+      Only for a job whose token could do nothing a sandbox escape could not
+      already do: today that is the validate job alone.
+    required: false
+    default: "false"
   save:
     description: >-
       Save the built tree under this run's key. Only the route job sets this:
@@ -32,12 +47,15 @@ runs:
         cache: npm
     - name: Restore dependencies and the compiled tree
       id: dist-cache
+      if: inputs.restore == 'true'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
           node_modules
           dist
         key: lax-dist-${{ github.sha }}
+    # A skipped restore leaves cache-hit empty, so every job that did not opt
+    # in builds its own tree here.
     - name: Install and build
       if: steps.dist-cache.outputs.cache-hit != 'true'
       shell: bash
