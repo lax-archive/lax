@@ -1,3 +1,12 @@
+> **Shipped; moved to `history/` 2026-09-07.** The rules below are the ones
+> `src/cli/ui.ts` enforces (title, step rows, verdict, notes block, `-v`/`--verbose`,
+> `--no-color`/`NO_COLOR`), and Jan's answers to the open questions all landed:
+> `lax sync`, `lax print spec|instructions`, `lax serve` walking past a taken port,
+> `\cite{lax-N}` after `lax register`, and `lax doctor` collapsing its rows into
+> `Lax` and `Lean`. Not taken: `lax --help` (`src/cli/main.ts`) keeps `lax login`
+> under "Also" rather than "Getting started", and `lax init` stayed loginless, so
+> the "Signed in" row it sketches for init never existed.
+
 # CLI output — a draft
 
 A proposal for what every `lax` command prints on its happy path. Not

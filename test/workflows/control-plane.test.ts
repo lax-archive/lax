@@ -464,7 +464,22 @@ describe("maintainer commands", () => {
     installArchiveFetch(alice, registered);
     await expect(
       controlPlane(maintainers).route("issue_comment", commentEvent("/lax admin frobnicate", alice)),
-    ).rejects.toThrow("unknown /lax command");
+    ).rejects.toThrow(
+      "unknown /lax command; the author verbs are owners, submit, delete, register; " +
+        "the maintainer form is admin revalidate|delete|reset-draft|owners",
+    );
+  });
+
+  it("answers an unknown verb with the verbs the commenter may use", async () => {
+    // An author who typed `/lax update` by hand (issue #68) is told the author
+    // verbs, and not the maintainer form nobody but a maintainer can use.
+    installArchiveFetch(alice, registered);
+    const error = await controlPlane(new Set([99]))
+      .route("issue_comment", commentEvent('/lax update {"repository":"x"}', alice))
+      .then(() => undefined, (reason: unknown) => reason as Error);
+    expect(error?.message).toContain("unknown /lax command; the author verbs are owners, submit, delete, register");
+    expect(error?.message).not.toContain("admin");
+    expect(error?.message.split("\n")).toHaveLength(1);
   });
 
   it("previews a maintainer delete of a registered record and a reset to draft", async () => {

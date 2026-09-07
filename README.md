@@ -189,7 +189,7 @@ The CLI creates a control issue when a local submission is first submitted and
 posts exact command comments thereafter; it never writes the database directly:
 
 ```sh
-lax init submission            # --env <id> to work outside the epoch
+lax init submission            # --title "…" (default: the folder name); --env <id> to work outside the epoch
 lax build submission
 lax serve submission
 lax generate-prooftree lax-N
@@ -200,6 +200,7 @@ lax register submission
 lax delete submission
 lax port lax-N submission-v2  # --env <id>; default the epoch
 lax sync
+lax <command> -v               # every command takes -v/--verbose and --no-color
 ```
 
 Everything a command prints is one report, not a log. A slow command opens with
@@ -249,12 +250,10 @@ manifest, generated paths, package names, imports, and namespaces before any
 issue is created. `lax owners` used before that first submit stores provisional
 handles locally and authenticates and synchronizes them when the issue is bound.
 
-Folders created by releases that used `lax init --offline` and the `lax-0`
-placeholder are rekeyed on their first submit. Existing issue-number-based
-submissions retain their original ids; the CLI records their historical issue
-binding when it next touches a local manifest. The `--offline` option itself is
-gone: `init` takes it no longer, because every `init` now does what it asked
-for.
+Two older folder shapes are still read: a folder carrying the historical
+`lax-0` placeholder id is rekeyed on its first submit, and an issue-number-based
+submission keeps its original id, with its historical issue binding recorded
+the next time the CLI touches its manifest.
 
 `lax submit --resume` reattaches to an interrupted submit. The durable job
 record is the Actions run, correlated to the originating `/lax submit` comment
@@ -295,7 +294,9 @@ page — `http://localhost:8123/<id>/`, or `/local/` until a build has named it;
 `~/.lax/lax-database` checkout plus the folder's `build-output.json` and
 rebuilds when either changes. The CLI and every generated page show a warning
 when the database is missing, stale, invalid, or cannot be checked. Pass
-`--database-only` to omit the local folder or `--port` to choose another port.
+`--database-only` to omit the local folder. A taken port is walked past — a
+second preview binds the next free port above 8123 and prints it — and
+`--port` only changes where that walk starts.
 Paper surfaces ride along: the local folder's own `paper.pdf` and
 `paper-web.tar` are handed to the renderer directly, and a database record's
 recorded blobs resolve through `~/.lax/papers/<digest>.pdf` and
@@ -349,7 +350,7 @@ blocking: a derivation failure is a warning with the reason in the submit
 report, and `paper.web: false` in the manifest opts out. The website's
 paper page shows both surfaces — the reflow rendering at the reader's
 width, and the as-printed PDF behind a toggle — with a card for every
-marked passage. The author-facing contract is in `instructions.md`, the
+marked passage. The author-facing contract is in `assets/instructions.md`, the
 proposed spec amendment in spec-notes.md (2026-09-02); the design records
 are `paper-plan.md` and `paper-web-plan.md` (all code stages are
 implemented; the rehearsal, renderer release, and production round trips

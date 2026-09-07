@@ -43,6 +43,32 @@ type the environment id back, or `--yes` when you are not on a terminal. `lax
 doctor` lists the environments this CLI admits and which are installed here,
 and `lax doctor --env <id>` installs one ahead of time.
 
+`lax init` signs in nowhere and opens no issue: it generates the id locally
+and scaffolds the folder. So the first `lax submit` from a fresh folder does
+not submit. It signs in, checks that the id is still free, opens the control
+issue that binds it, writes that binding into `manifest.yaml`, and then stops
+and asks you to commit and push the changed files and run `lax submit` again.
+The second run is the one that validates the source and publishes the draft.
+(In the rare case that the id was taken meanwhile, the same step renumbers the
+folder — manifest, package names, imports, namespaces, and paper markers — so
+read that diff before committing it.) Expect two runs; nothing went wrong.
+
+Before that first submit, go through what the scaffold left as placeholders.
+Static validation accepts every one of them as it is, so they would be
+published exactly like that:
+
+- `abstract.md` still reads `TODO: describe this submission.` Write the
+  abstract.
+- `authors: []` in `manifest.yaml` is empty. List the authors, each a mapping
+  with `name` and optionally `orcid` and `github`; ask the user who belongs
+  there.
+- `title:` is the folder name unless `lax init --title` was given. Make it
+  the title a reader would search for.
+- `bibEntries: []` may stay empty, but a formalized paper usually has at
+  least the entry for the result itself.
+- `LICENSE` is Apache-2.0. Confirm with the user that this is the license
+  they want to publish under.
+
 To publish an improved version of a submission that is already registered,
 do not edit it — registered submissions are immutable. Instead create a new
 submission (`lax init`) and add `supersedes: lax-N` to its `manifest.yaml`,

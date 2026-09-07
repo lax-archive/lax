@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { MAX_COMMAND_BYTES, MAX_OWNERS } from "./constants.js";
-import { isAdminVerb, type GitHubIdentity, type ParsedCommand } from "./types.js";
+import { ADMIN_VERBS, isAdminVerb, type GitHubIdentity, type ParsedCommand } from "./types.js";
 import {
   isObject,
   normalizeSubmissionId,
@@ -12,8 +12,15 @@ import {
   ValidationError,
 } from "./validation.js";
 
+/**
+ * The author verbs, the one table `commandWord` reads and every "did you
+ * mean" message is derived from — never copy the list into a string.
+ */
+export const AUTHOR_VERBS = ["owners", "submit", "delete", "register"] as const;
+export type AuthorVerb = (typeof AUTHOR_VERBS)[number];
+
 /** The first word after `/lax`: the four author verbs, or `admin` for the maintainer form. */
-export type CommandWord = "owners" | "submit" | "delete" | "register" | "admin";
+export type CommandWord = AuthorVerb | "admin";
 
 export interface RoutedCommand {
   id: string;
@@ -38,16 +45,20 @@ export function commandWord(body: string): CommandWord | "unknown" | "ignore" {
   if (!body.startsWith("/lax")) return "ignore";
   const match = /^\/lax(?:\s+([^\s]+))?/u.exec(body);
   const word = match?.[1];
-  if (
-    word === "owners" ||
-    word === "submit" ||
-    word === "delete" ||
-    word === "register" ||
-    word === "admin"
-  ) {
-    return word;
+  if (word === "admin" || (AUTHOR_VERBS as readonly unknown[]).includes(word)) {
+    return word as CommandWord;
   }
   return "unknown";
+}
+
+/**
+ * The verbs a commenter may use, for the message an unknown verb gets back:
+ * the author verbs always, the maintainer form only for a maintainer, since
+ * nobody else can use it. One line, derived from the tables above.
+ */
+export function commandVocabulary(maintainer: boolean): string {
+  const authors = `the author verbs are ${AUTHOR_VERBS.join(", ")}`;
+  return maintainer ? `${authors}; the maintainer form is admin ${ADMIN_VERBS.join("|")}` : authors;
 }
 
 /** The command head, or why there is none: an unknown verb is `unknown`, a non-command `ignore`. */
@@ -67,9 +78,7 @@ export function parseCommand(body: string): ParsedCommand {
   }
   const head = commandHead(body);
   if (head === "ignore" || head === "unknown") {
-    throw new ValidationError(
-      "unknown command; use owners, submit, delete, register, or admin revalidate|delete|reset-draft|owners",
-    );
+    throw new ValidationError(`unknown command; ${commandVocabulary(true)}`);
   }
   const { action, prefix } = head;
   if (action === "delete" || action === "register" || action === "revalidate" || action === "reset-draft") {

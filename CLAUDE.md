@@ -16,10 +16,14 @@ state changes, and trusted GitHub Actions jobs publish to the public
 AI rewrite of the old repository (`../lax`, now `lax-legacy` on GitHub) and
 then reshaped to our design per `rewrite.md` (Jan's change list, written in
 the old repo — "this folder" there means `../lax`) and `rewrite-plan.md`
-(the reviewed plan). All stages ran 2026-08-05/06 and the system went live
+(the reviewed plan). Neither file is in this tree any more: `rewrite.md`
+lives in `lax-legacy`, and `rewrite-plan.md` only in this repository's git
+history (older than the shallow clone a session gets, so ask for it rather
+than searching). All stages ran 2026-08-05/06 and the system went live
 2026-08-06 (`history/rework-execution.md`, `history/go-live.md`). The
 charter documents remain the intent record for structural questions —
-prefer them over inferring intent from the current code.
+prefer them, and the executed record in `history/rework-execution.md`, over
+inferring intent from the current code.
 
 ## The documents and their roles
 
@@ -34,7 +38,8 @@ prefer them over inferring intent from the current code.
   proposed amendments to spec.md. Record spec-relevant design changes here.
 - **TODO.md** — the canonical list of next steps, and *only* next steps:
   history belongs in `history/` or git, not here. Keep it updated.
-- **rewrite.md / rewrite-plan.md** — the rework charter (see above).
+- **rewrite.md / rewrite-plan.md** — the rework charter (see above); not in
+  this tree — `lax-legacy` and git history respectively.
 - **paper-plan.md** — the paper layer (LaTeX documents with comment
   markers, compiled by the archive, shown beside concept/proof cards):
   planned, spiked, and implemented through all six stages 2026-09-02
@@ -77,7 +82,9 @@ prefer them over inferring intent from the current code.
   statements; see the spec-notes entry), and the plan document was deleted
   in `edf2e70`; it survives only in git history.
 - **README.md** — user-facing status, trust model, and command table.
-- **instructions.md** — the author-facing guide to creating a submission.
+- **assets/instructions.md** — the author-facing guide to creating a
+  submission, shipped in the npm package and printed verbatim by `lax print
+  instructions` (`src/cli/spec.ts`).
 - **history/** — closed records, kept for their lessons and never a plan:
   `front-worker-split.md` (the reverted 2026-07 split), `oom.md` (the
   server OOM postmortem — source of the LEAN_NUM_THREADS and env-delivery
@@ -85,7 +92,7 @@ prefer them over inferring intent from the current code.
   `sibling-paths-plan.md` (the old cross-submission path-require design;
   the feature was removed in stage 6a per rewrite.md — cross-submission
   edges are rev-pinned git requires only, landed by the chain workflow
-  documented in instructions.md), `live-rehearsal.md` (the 2026-08-06
+  documented in assets/instructions.md), `live-rehearsal.md` (the 2026-08-06
   stages-3+4 scratch-repo rehearsal — its setup recipe, the ir-companions
   bug it caught, and the smoke-gating lesson), `rework-execution.md` (the
   executed rewrite stages, measurements, and spike verdicts), `go-live.md`
@@ -102,7 +109,8 @@ prefer them over inferring intent from the current code.
   (the multi-environment design, retired executed) and
   `environments-roundtrip-20260904.md` (the first off-epoch round trip:
   timings, the limits decision, and why the validate job cannot save
-  caches).
+  caches), and `cli-output-draft.md` (the CLI output proposal that
+  `src/cli/ui.ts` implements; its header records what was not taken).
 
 ## Commands
 
@@ -132,14 +140,16 @@ Its per-record successor is the maintainer driver, `npm run admin -- status`
 `/lax admin` comment the trusted workflow routes and publishes, so the
 driver holds no key and writes nothing itself.
 
-## Architecture (current state; rewrite-plan.md governs upcoming changes)
+## Architecture (current state; the open plans are the `*-plan.md` files above and TODO.md)
 
 `.github/workflows/submission.yml` is the only issue-event entry point. Its
 success path is three jobs — route → validate → publish-submit — beside
 `publish` (the non-submit branch), `report-validation-failure`, and
 `report-workflow-failure`; every job shares `.github/actions/setup-lax`
-(checkout, node, exact-key `dist`+`node_modules` cache that only route
-saves). The read-only Validate job runs a fetch → static → resolution gate
+(node, then a `dist`+`node_modules` build from the job's own checkout —
+only the read-only validate job may restore the exact-key cache route
+saves, because a job that holds any token runs only bytes it built
+itself). The read-only Validate job runs a fetch → static → resolution gate
 first, before the lean cache restore and host provisioning, then Compile →
 Replay → Inspect sequential through one container runner. Both publish jobs
 dispatch the Website rebuild themselves, so both App keys live in the

@@ -1,7 +1,7 @@
 import { adminStateProblem, maintainerProblem } from "./admin.js";
 import { ArchiveRepository } from "./archive.js";
 import { initialFiles } from "./archive-schema.js";
-import { commandHead, commandSubmissionId, parseRoutedCommand } from "./commands.js";
+import { commandHead, commandSubmissionId, commandVocabulary, parseRoutedCommand } from "./commands.js";
 import {
   ADMIN_GITHUB_IDS,
   CONTROL_REPOSITORY,
@@ -279,7 +279,14 @@ export class ControlPlane {
     const body = typeof comment.body === "string" ? comment.body : "";
     const head = commandHead(body);
     if (head === "ignore") return { kind: "ignore" };
-    if (head === "unknown") problems.add("unknown /lax command");
+    if (head === "unknown") {
+      // Only the wording is decided from the event's own commenter id — which
+      // verbs to name back — never any permission; the maintainer gate below
+      // resolves the identity properly before anything else is trusted.
+      const commenter = isObject(comment.user) ? comment.user.id : undefined;
+      const maintainer = typeof commenter === "number" && this.admins.has(commenter);
+      problems.add(`unknown /lax command; ${commandVocabulary(maintainer)}`);
+    }
     // The maintainer form is decided from the closed head alone; its actor
     // gate replaces the owner gate below, and its lifecycle gate is per verb.
     const adminVerb = head !== "unknown" && head.admin ? (head.action as AdminVerb) : undefined;
