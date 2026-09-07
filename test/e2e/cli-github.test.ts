@@ -391,22 +391,21 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       ],
     });
     // The run finishes only once the reattached CLI has polled it at least
-    // once, so the test proves the live poll rather than racing it. Both
-    // progress requests must have been served before the flip: the CLI fetches
-    // the run status and the job list in parallel, and flipping between them
-    // would hand the job/step assertion an already-emptied job list.
+    // once, so the test proves the live poll rather than racing it. The flip
+    // is keyed on the fake having *answered* both progress requests, not on a
+    // timer: the CLI fetches the run status and the job list in parallel, and
+    // flipping between the two would hand it an already-emptied job list —
+    // "queued" instead of the validate stage — whenever the second request
+    // landed late, which under a loaded machine it regularly did.
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), "lax-resume-"));
     writeBoundManifest(folder, 77);
-    const finish = setInterval(() => {
-      const polled =
-        github.requests.some(
-          (request) => request.path === "/repos/lax-archive/lax/actions/runs/777",
-        ) &&
-        github.requests.some((request) =>
-          request.path.startsWith("/repos/lax-archive/lax/actions/runs/777/jobs"),
-        );
-      if (!polled) return;
-      clearInterval(finish);
+    const runPath = "/repos/lax-archive/lax/actions/runs/777";
+    const served = new Set<string>();
+    github.state.onRequest = (request) => {
+      if (request.path === runPath) served.add("run");
+      if (request.path.startsWith(`${runPath}/jobs`)) served.add("jobs");
+      if (served.size < 2) return;
+      delete github.state.onRequest;
       github.state.actionsRuns.set("777", { status: "completed", conclusion: "success", jobs: [] });
       github.state.issueComments.get(77)!.push({
         id: 5002,
@@ -417,7 +416,7 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
         ),
         user: { id: GITHUB_ACTIONS_BOT_ID, login: GITHUB_ACTIONS_BOT_LOGIN, type: "Bot" },
       });
-    }, 20);
+    };
 
     try {
       // --verbose so the correlation this test is about is on screen; without
@@ -445,13 +444,23 @@ describe.sequential("CLI against the fake GitHub (subprocess)", () => {
       expect(result.stdout).toContain("https://laxarchive.org/lax-77/");
       expect(result.stdout).not.toContain("lax-result-comment-id");
       // resume polled the correlated run itself, and posted no new command
-      expect(github.requests.map((r) => r.path)).toContain(
-        "/repos/lax-archive/lax/actions/runs/777",
-      );
+      const paths = github.requests.map((r) => r.path);
+      expect(paths).toContain(runPath);
       expect(github.state.issueComments.get(77)).toHaveLength(2);
+      // ...and the live poll is what ended it: the run was still in progress
+      // when its status and jobs were served, and the record comment was
+      // only read (and could only exist) after both had been.
+      expect(served).toEqual(new Set(["run", "jobs"]));
+      const commentsPath = "/repos/lax-archive/lax/issues/77/comments";
+      const lastComments =
+        paths.length - 1 - [...paths].reverse().findIndex((p) => p.startsWith(commentsPath));
+      const jobsAt = paths.findIndex((p) => p.startsWith(`${runPath}/jobs`));
+      expect(jobsAt).toBeGreaterThanOrEqual(0);
+      expect(lastComments).toBeGreaterThan(paths.indexOf(runPath));
+      expect(lastComments).toBeGreaterThan(jobsAt);
       expect(result.stderr).toBe("");
     } finally {
-      clearInterval(finish);
+      delete github.state.onRequest;
       fs.rmSync(folder, { recursive: true, force: true });
     }
   });

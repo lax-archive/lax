@@ -120,12 +120,6 @@ permission the report download needs.
 - **Scratch-repo teardown**: delete `jan3er/lax-scratch-{control,database,
   submission}` and ghcr package `lax-scratch-captures`, and rotate the
   personal token that stood in for the App mints (Jan).
-- **Flaky `--resume` e2e under parallel load**: `test/e2e/cli-github.test.ts`
-  "reattaches an interrupted submit" intermittently sees
-  `waiting for workflow` instead of `validate · Compile` when the full
-  suite runs concurrently; passes in isolation. A timing race in the
-  fake-Actions poller — fix the test (or the poller's readiness signal),
-  found 2026-08-06 by the CI-gate worker.
 - **port-db driver robustness** (matters only if the driver runs again):
   retry transient `gh` failures during polling instead of failing the
   record; check for our command marker before re-posting after a timed-out

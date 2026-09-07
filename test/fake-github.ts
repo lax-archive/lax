@@ -16,7 +16,9 @@
 // posted command, e.g. with a refusal carrying the result marker), workflow
 // runs (`GET /repos/:owner/:repo/actions/runs/:id[/jobs]`, backed by
 // `state.actionsRuns`, which is what `follow`/`lax submit --resume` poll once
-// a comment's hidden marker names a run), and that run's artifacts (`GET
+// a comment's hidden marker names a run; `state.onRequest` fires after each
+// answer, so a test can move a run along only once the CLI has been served
+// the state before it), and that run's artifacts (`GET
 // .../actions/runs/:id/artifacts` plus `GET .../actions/artifacts/:id/zip`,
 // backed by `state.actionsArtifacts`; `artifactZip()` builds a real zip, and
 // the download answers a redirect to an unauthenticated blob path exactly as
@@ -97,6 +99,13 @@ export interface FakeGitHubState {
   artifactListStatus?: number;
   /** Called after a comment is stored — a test's chance to answer as the bot. */
   onComment?: (issue: number, comment: FakeIssueComment) => void;
+  /**
+   * Called once a request has been answered (the response is already on the
+   * wire, computed from the state as it was) — a test's chance to advance the
+   * world between two polls of a CLI subprocess, keyed on exactly what that
+   * process has been told so far rather than on a timer guessing at it.
+   */
+  onRequest?: (request: RecordedRequest) => void;
 }
 
 export interface FakeGitHub {
@@ -320,6 +329,7 @@ export async function startFakeGitHub(options: FakeGitHubOptions = {}): Promise<
         res.writeHead(status, { "content-type": "application/json" });
         res.end(JSON.stringify(body));
       }
+      state.onRequest?.(recorded);
     });
   });
 
