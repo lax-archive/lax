@@ -1,6 +1,4 @@
-import { adminStateProblem, maintainerProblem } from "./admin.js";
 import type { ArchiveSnapshot, LoadedSubmission } from "./archive.js";
-import { samePreconditions } from "./archive.js";
 import { parseArchiveFiles, supersedesClaim, type ArchiveChanges } from "./archive-schema.js";
 import type { GhcrCaptureStore } from "./capture-store.js";
 import { ADMIN_GITHUB_IDS } from "./constants.js";
@@ -11,6 +9,7 @@ import {
   type PublisherArchive,
   type PublisherControl,
 } from "./publisher.js";
+import { AUTHOR_MUTABLE_STATES, recordGateProblems, requireCurrentRecord } from "./record-gates.js";
 import type { PublishRequest, SourceLocation } from "./types.js";
 import { ValidationError } from "./validation.js";
 import type {
@@ -77,9 +76,9 @@ export class SubmitPublisher {
     const ready = await this.preflight(untrustedRequest, artifacts);
     if (ready.kind === "no-op") return { kind: "no-op" };
     const request = ready.request;
-    const current = await this.archive.load(request.id);
-    await this.validateCurrent(request, artifacts, current);
-    if (current === undefined) throw new ValidationError(`${request.id} no longer exists in lax-database`);
+    const loaded = await this.archive.load(request.id);
+    await this.validateCurrent(request, artifacts, loaded);
+    const current = requireCurrentRecord(request.id, loaded);
     // Ordering invariant: the ghcr push (blob, manifest, and tag) completes
     // before the database CAS commit below references the blob's digest — a
     // record must never point at a blob that is not durably stored. If the
@@ -151,48 +150,31 @@ export class SubmitPublisher {
   private async validateCurrent(
     request: PublishRequest,
     artifacts: SuccessfulValidationArtifacts,
-    current: LoadedSubmission | undefined,
+    loaded: LoadedSubmission | undefined,
   ): Promise<void> {
-    if (current === undefined) throw new ValidationError(`${request.id} no longer exists in lax-database`);
-    const problems: string[] = [];
-    if (
-      current.files.buildOutput.issue.repositoryId !== request.issue.repositoryId ||
-      current.files.buildOutput.issue.number !== request.issue.number
-    ) problems.push(`${request.id} no longer has the expected issue binding`);
+    const current = requireCurrentRecord(request.id, loaded);
+    // The route job's binding, actor, state, and stale-write gates, repeated
+    // on the canonical actor and the record at the CAS snapshot (trust rule
+    // 2). A validated write reads record.json and build-output.json only:
+    // the owner list may change underneath it, and the current numeric
+    // ownership is what the gate rechecks.
+    const problems = recordGateProblems(request, current, {
+      authorStates: AUTHOR_MUTABLE_STATES,
+      relevantPreconditions: ["record", "buildOutput"],
+      admins: this.admins,
+    });
     const revalidation = request.action === "revalidate";
     const commandSource = commandSourceOf(request);
     if (revalidation) {
-      // The route job's maintainer and lifecycle gates, repeated on the
-      // canonical actor and the current record (trust rule 2) — plus the one
-      // rule that makes a revalidation what it is: the source is the record's
-      // own, and still is.
-      const maintainer = maintainerProblem(request.actor, this.admins);
-      if (maintainer !== undefined) problems.push(maintainer);
-      const state = adminStateProblem(
-        "revalidate",
-        request.id,
-        current.files.record.state,
-        current.files.record.source !== undefined,
-      );
-      if (state !== undefined) problems.push(state);
+      // The one rule that makes a revalidation what it is: the source is the
+      // record's own, and still is.
       if (
         commandSource === undefined ||
         JSON.stringify(commandSource) !== JSON.stringify(current.files.record.source ?? null)
       ) {
         problems.push(`${request.id} no longer records the source the revalidation was authorized for`);
       }
-    } else {
-      if (!current.files.ownerList.owners.some((owner) => owner.githubId === request.actor.githubId)) {
-        problems.push(`${request.actor.handle} is no longer an owner of ${request.id}`);
-      }
-      if (current.files.record.state !== "init" && current.files.record.state !== "draft") {
-        problems.push(`${request.id} is now ${current.files.record.state}`);
-      }
     }
-    if (
-      request.preconditions === undefined ||
-      !samePreconditions(current.preconditions, request.preconditions, ["record", "buildOutput"])
-    ) problems.push(`${request.id} changed after validation; submit a new command comment`);
     if (
       commandSource === undefined ||
       JSON.stringify(commandSource) !== JSON.stringify(artifacts.report.request.source)

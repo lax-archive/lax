@@ -1,4 +1,3 @@
-import { adminStateProblem, maintainerProblem } from "./admin.js";
 import {
   deletedFiles,
   initialFiles,
@@ -12,14 +11,14 @@ import {
   type ArchiveChanges,
   type ArchiveFilename,
 } from "./archive-schema.js";
-import { samePreconditions, type ArchiveSnapshot, type LoadedSubmission } from "./archive.js";
+import type { ArchiveSnapshot, LoadedSubmission } from "./archive.js";
 import { compareSubmissionIds, requiredSubmissionIds } from "../submission-validation/contracts.js";
 import { ADMIN_GITHUB_IDS, WEBSITE_REPOSITORY } from "./constants.js";
 import { repositoryPath } from "./github.js";
+import { AUTHOR_MUTABLE_STATES, recordGateProblems, requireCurrentRecord } from "./record-gates.js";
 import {
   isAdminCommand,
   validatesManifest,
-  type AdminVerb,
   type FilePreconditions,
   type GitHubIdentity,
   type ParsedCommand,
@@ -54,6 +53,7 @@ export interface PublisherControl {
 
 export interface PublisherArchive {
   load(id: string, snapshot?: ArchiveSnapshot): Promise<LoadedSubmission | undefined>;
+  listDependents(id: string, snapshot: ArchiveSnapshot): Promise<string[]>;
   listRegisteredSuperseders(targetId: string, snapshot: ArchiveSnapshot): Promise<string[]>;
   writeFiles(args: {
     id: string;
@@ -148,7 +148,7 @@ export class Publisher {
     return { ...request, actor, command };
   }
 
-  private preparePlan(request: PublishRequest, current: LoadedSubmission | undefined): PublishPlan {
+  private preparePlan(request: PublishRequest, loaded: LoadedSubmission | undefined): PublishPlan {
     if (request.action === "create") {
       if (request.initialFiles === undefined) {
         throw new ValidationError("initialization files were not prepared by the unprivileged route job");
@@ -164,7 +164,7 @@ export class Publisher {
         relevantPreconditions: [],
       };
     }
-    if (current === undefined) throw new ValidationError(`${request.id} no longer exists in lax-database`);
+    const current = requireCurrentRecord(request.id, loaded);
     if (request.action === "owners") {
       if (request.command?.action !== "owners") throw new ValidationError("owners request is malformed");
       const files = replaceOwnerList(request.id, current.texts, request.command.owners);
@@ -205,40 +205,40 @@ export class Publisher {
 
   private async validateCurrent(
     request: PublishRequest,
-    current: LoadedSubmission | undefined,
+    loaded: LoadedSubmission | undefined,
     plan: PublishPlan,
   ): Promise<void> {
     if (plan.mode === "init") {
-      if (current !== undefined) throw new ValidationError(`${request.id} already exists in lax-database`);
+      if (loaded !== undefined) throw new ValidationError(`${request.id} already exists in lax-database`);
       return;
     }
-    if (current === undefined) throw new ValidationError(`${request.id} no longer exists in lax-database`);
-    const problems: string[] = [];
-    if (
-      current.files.buildOutput.issue.repositoryId !== request.issue.repositoryId ||
-      current.files.buildOutput.issue.number !== request.issue.number
-    ) {
-      problems.push(`${request.id} no longer has the expected issue binding`);
-    }
+    const current = requireCurrentRecord(request.id, loaded);
+    // The route job's binding, actor, state, and stale-write gates, repeated
+    // here on the canonical actor and the record at the CAS snapshot (trust
+    // rule 2); the verb-specific gates follow.
+    const problems = recordGateProblems(request, current, {
+      authorStates: AUTHOR_MUTABLE_STATES,
+      relevantPreconditions: plan.relevantPreconditions,
+      admins: this.admins,
+    });
     const admin = isAdminCommand(request.command);
-    if (admin) {
-      // The route job's maintainer and lifecycle gates, repeated here on the
-      // canonical actor and the current record (trust rule 2).
-      const maintainer = maintainerProblem(request.actor, this.admins);
-      if (maintainer !== undefined) problems.push(maintainer);
-      const state = adminStateProblem(
-        request.action as AdminVerb,
-        request.id,
-        current.files.record.state,
-        current.files.record.source !== undefined,
-      );
-      if (state !== undefined) problems.push(state);
-    } else {
-      if (!current.files.ownerList.owners.some((owner) => owner.githubId === request.actor.githubId)) {
-        problems.push(`${request.actor.handle} is no longer an owner of ${request.id}`);
-      }
-      if (current.files.record.state !== "init" && current.files.record.state !== "draft") {
-        problems.push(`${request.id} is now ${current.files.record.state}`);
+    if (request.action === "delete") {
+      // The route job listed the dependents this deletion strands and put
+      // them in its preview — that list is what the commenter consented to.
+      // A submit that lands between route and this snapshot adds a dependent
+      // nobody saw, so the list is read again at the snapshot the CAS
+      // commits against and any difference refuses: a commit only ever
+      // strands the dependents its command announced, and the success
+      // comment's list is therefore the snapshot's, not the route job's.
+      const dependents = await this.archive.listDependents(request.id, current.snapshot);
+      if (!sameIds(dependents, request.dependents ?? [])) {
+        problems.push(
+          `the dependents of ${request.id} changed after the command was routed (` +
+            (dependents.length === 0
+              ? "none remain"
+              : `now ${dependents.map((id) => `\`${id}\``).join(", ")}`) +
+            "); review the current list and submit a new delete command comment",
+        );
       }
     }
     if (request.action === "reset-draft") {
@@ -285,12 +285,6 @@ export class Publisher {
           current.snapshot,
         )),
       );
-    }
-    if (
-      request.preconditions === undefined ||
-      !samePreconditions(current.preconditions, request.preconditions, plan.relevantPreconditions)
-    ) {
-      problems.push(`${request.id} changed after validation; submit a new command comment`);
     }
     if (plan.mode === "owners" && !admin) {
       const owners = request.command?.action === "owners" ? request.command.owners : [];
@@ -670,6 +664,10 @@ function trustedDependents(value: unknown): string[] {
   return dependents;
 }
 
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
 function sameOwners(left: GitHubIdentity[], right: GitHubIdentity[]): boolean {
   return (
     left.length === right.length &&
@@ -733,6 +731,9 @@ function successComment(
   const dispatchText = dispatched
     ? "The Website rebuild event was accepted."
     : `lax-database changed, but the Website rebuild was not dispatched (${safe(dispatchError)}).`;
+  // A delete commits only after Publisher.validateCurrent re-listed the
+  // dependents at the CAS snapshot and found the routed list unchanged, so
+  // the list printed here is the snapshot's, not merely the route job's.
   const dependents =
     request.action === "delete" && (request.dependents?.length ?? 0) > 0
       ? `\n\nKnown dependents: ${request.dependents!.map((id) => `\`${id}\``).join(", ")}.`

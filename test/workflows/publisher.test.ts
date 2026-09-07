@@ -271,6 +271,62 @@ describe("trusted Archive publisher modes", () => {
     expect(Object.keys(registration.changes())).toEqual(["record.json"]);
   });
 
+  it("delete re-lists dependents at the CAS snapshot and refuses a list the commenter never saw", async () => {
+    const current = loaded();
+    const deletion = (dependents?: string[]): PublishRequest =>
+      request({
+        action: "delete",
+        commentId: 78,
+        command: { action: "delete" },
+        preconditions: current.preconditions,
+        ...(dependents === undefined ? {} : { dependents }),
+      });
+
+    // A submit landed between route and the snapshot: lax-50 now builds on
+    // lax-42, and nobody was warned it would be stranded.
+    const gained = publisherHarness(current, current, () => undefined, {}, [], undefined, ["lax-50"]);
+    await expect(gained.publisher.publish(deletion([]), run)).rejects.toThrow(
+      "the dependents of lax-42 changed after the command was routed (now `lax-50`); " +
+        "review the current list and submit a new delete command comment",
+    );
+    expect(gained.listDependents).toHaveBeenCalledWith("lax-42", current.snapshot);
+    expect(gained.website.request).not.toHaveBeenCalled();
+
+    // A request with no routed list is treated as having announced none.
+    const unannounced = publisherHarness(current, current, () => undefined, {}, [], undefined, ["lax-50"]);
+    await expect(unannounced.publisher.publish(deletion(), run)).rejects.toThrow(
+      "changed after the command was routed (now `lax-50`)",
+    );
+
+    // Any difference refuses, including one the commenter would welcome: the
+    // list the success comment prints must be the snapshot's.
+    const lost = publisherHarness(current, current, () => undefined, {}, [], undefined, []);
+    await expect(lost.publisher.publish(deletion(["lax-50"]), run)).rejects.toThrow(
+      "the dependents of lax-42 changed after the command was routed (none remain)",
+    );
+    const reordered = publisherHarness(current, current, () => undefined, {}, [], undefined, ["lax-50", "lax-51"]);
+    await expect(reordered.publisher.publish(deletion(["lax-51"]), run)).rejects.toThrow(
+      "(now `lax-50`, `lax-51`)",
+    );
+
+    // Unchanged: the commit proceeds and the comment names exactly that list.
+    const unchanged = publisherHarness(current, current, () => undefined, {}, [], undefined, ["lax-50", "lax-51"]);
+    const publication = deletion(["lax-50", "lax-51"]);
+    const result = await unchanged.publisher.publish(publication, run);
+    expect(result.kind).toBe("committed");
+    if (result.kind !== "committed") throw new Error("expected a commit");
+    await dispatchWebsiteAndReport(
+      unchanged.control,
+      unchanged.website,
+      publication,
+      issue.repositoryId,
+      result.archiveCommit,
+      run,
+    );
+    expect(unchanged.comments[0]).toContain("Deleted **lax-42**");
+    expect(unchanged.comments[0]).toContain("Known dependents: `lax-50`, `lax-51`.");
+  });
+
   it("register admits only registered dependencies", async () => {
     const current = loadedWithRequires(["Lax7", "mathlib"]);
     const harness = publisherHarness(current, current, () => undefined, {
@@ -645,7 +701,7 @@ describe("maintainer publications", () => {
 
   it("tombstones a registered record on a maintainer delete, attributed in the commit", async () => {
     const current = registered();
-    const harness = publisherHarness(current, current, () => undefined, {}, [], maintainers);
+    const harness = publisherHarness(current, current, () => undefined, {}, [], maintainers, ["lax-50"]);
     const result = await harness.publisher.publish(
       request({
         action: "delete",
@@ -662,6 +718,8 @@ describe("maintainer publications", () => {
     const message = harness.writeFiles.mock.calls[0]![0].message;
     expect(message.startsWith("admin delete lax-42 by alice (10)\n")).toBe(true);
     expect(message).toContain("lax-actor-id: 10");
+    // the routed list is re-read at the snapshot the CAS commits against
+    expect(harness.listDependents).toHaveBeenCalledWith("lax-42", current.snapshot);
   });
 
   it("returns a registered record to draft, unless a registered successor claims it", async () => {
@@ -779,6 +837,8 @@ function publisherHarness(
   dependencies: Record<string, LoadedSubmission> = {},
   registeredSuperseders: string[] = [],
   admins?: ReadonlySet<number>,
+  /** What the dependent scan finds at the CAS snapshot. */
+  dependents: string[] = [],
 ): {
   publisher: Publisher;
   control: PublisherControl;
@@ -787,6 +847,7 @@ function publisherHarness(
   successes: number[];
   clearedProgress: number[];
   load: ReturnType<typeof vi.fn>;
+  listDependents: ReturnType<typeof vi.fn>;
   listRegisteredSuperseders: ReturnType<typeof vi.fn>;
   writeFiles: ReturnType<typeof vi.fn>;
   website: PublisherWebsite & { request: Mock };
@@ -816,8 +877,9 @@ function publisherHarness(
     return "c".repeat(40);
   });
   const load = vi.fn(async (id: string) => (id === "lax-42" ? current : dependencies[id]));
+  const listDependents = vi.fn(async () => dependents);
   const listRegisteredSuperseders = vi.fn(async () => registeredSuperseders);
-  const archive: PublisherArchive = { load, listRegisteredSuperseders, writeFiles };
+  const archive: PublisherArchive = { load, listDependents, listRegisteredSuperseders, writeFiles };
   // `PublisherWebsite.request` is generic in the response type it parses, and
   // no mock can honestly hand back a `Promise<T>` for a T it never sees — the
   // dispatch under test discards the response. So the spy is a plain mock and
@@ -833,6 +895,7 @@ function publisherHarness(
     successes,
     clearedProgress,
     load,
+    listDependents,
     listRegisteredSuperseders,
     writeFiles,
     website,

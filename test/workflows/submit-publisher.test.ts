@@ -440,7 +440,9 @@ function submitHarness(
     return "c".repeat(40);
   });
   const listRegisteredSuperseders = vi.fn(async () => registeredSuperseders);
-  const archive: PublisherArchive = { load, listRegisteredSuperseders, writeFiles };
+  // A validated write never deletes, so the dependent scan is never reached.
+  const listDependents = vi.fn(async () => [] as string[]);
+  const archive: PublisherArchive = { load, listDependents, listRegisteredSuperseders, writeFiles };
   const publishedCapture: PublishedCapture = {
     ...TEST_CAPTURE,
     registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`,
