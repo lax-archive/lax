@@ -7,6 +7,29 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
+## Stability pass 2026-09-07: what it owes
+
+Landed on `claude/lax-repo-improvements-qruciz` (compile thread budget
+named and per-environment, `--memory-swap` pinned to the cap, credentialed
+jobs building from their own checkout, cancelled runs reported, publish
+job timeouts, the record gates placed once in `record-gates.ts`, delete
+re-listing dependents at the snapshot, the unknown-verb reply naming the
+verbs, the instructions' two-run first submit). Still owed before it ships:
+
+- **Scratch-repo rehearsal** (`scripts/rehearsal/`) for the
+  `submission.yml`/`setup-lax` change — the standing rule for any
+  Actions-side change. What to watch: the publish jobs building their own
+  tree (about 13 s more each), a deliberately cancelled validate job
+  producing a failure comment and clearing the reaction, and a delete
+  raced by a submit refusing with the fresh dependents list.
+- The failure comment a cancelled validate job now gets is the
+  infrastructure wording ("no trustworthy report was produced"), accurate
+  for a timeout and slightly misleading for a manual cancel; the reporter
+  cannot tell the two apart from the report alone. Reword if it confuses
+  an author.
+- `scripts/environments/admit.mjs`/`table.mjs` render only `leanThreads`
+  and `memoryBytes`; a `compileLeanThreads` override is written by hand.
+
 ## Audit leftovers (audit 2026-09-03, fixes landed 2026-09-04)
 
 The record is `history/audit-20260903.md`. All three fix-now findings and
@@ -35,9 +58,8 @@ behind:
   promotion crashes with `ENOTEMPTY`, the runtime cache key omits the
   toolchain `warmDir()` includes); `submit-publisher.ts:256` claims
   `parseArchiveFiles` re-validates a published `paper` block, which it does
-  not; and a cancelled validate job leaves no comment and a stuck progress
-  reaction — 7 of the last 200 control-plane runs were cancelled, so an
-  author has probably seen an issue that simply stopped answering.
+  not. (The cancelled-validate silence — 7 of 200 runs — was fixed
+  2026-09-07: both reporters accept `cancelled`.)
 - **The same defect class, one step out.** Findings pushed straight into
   `violations` by `pipeline.ts` and `host/pipeline.ts` bypass
   `FindingCollector` and so its sanitizer; they reach only `ok:false`
@@ -260,7 +282,11 @@ is `history/environments-roundtrip-20260904.md`. What stays open:
   environment on table changes and weekly — after weighing the 10 GB
   repository cache ceiling (~3.3 GB per environment, LRU eviction). Do
   not fix it by giving the validate job a writable scope: that job runs
-  submission code. The dead save steps in `submission.yml` could then go.
+  submission code — and since 2026-09-07 no job that holds a token
+  restores the `dist` cache at all, so a writable validate token could
+  poison nothing privileged, but the rule stands. The dead save steps in
+  `submission.yml` could then go (route's is kept deliberately; see its
+  comment).
 - **The admission's measurement is a note, not a cap** (decided
   2026-09-04, after the first run nearly merged the smoke's 1.15 GiB
   fixture peak as the container cap). The admit job records the peak in
