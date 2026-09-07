@@ -1,4 +1,4 @@
-import Lax0.Planar
+import Lax68.Planar
 
 /-!
 ---
@@ -13,7 +13,7 @@ three vertices this is equivalent to every face being a triangle.
 
 set_option autoImplicit false
 
-namespace Lax0.Triangulations
+namespace Lax68.Triangulations
 
 def IsTriangulation {V : Type*} (G : SimpleGraph V) : Prop :=
   Planar.IsPlanar G ∧
@@ -21,4 +21,4 @@ def IsTriangulation {V : Type*} (G : SimpleGraph V) : Prop :=
       G < H →
       ¬ Planar.IsPlanar H
 
-end Lax0.Triangulations
+end Lax68.Triangulations

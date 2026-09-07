@@ -1,4 +1,4 @@
-import Lax0.Outerplanar
+import Lax68.Outerplanar
 
 /-!
 ---
@@ -11,7 +11,7 @@ its existing vertices while preserving outerplanarity.
 
 set_option autoImplicit false
 
-namespace Lax0.MaximalOuterplanar
+namespace Lax68.MaximalOuterplanar
 
 def IsMaximalOuterplanar {V : Type*} (G : SimpleGraph V) : Prop :=
   Outerplanar.IsOuterplanar G ∧
@@ -19,4 +19,4 @@ def IsMaximalOuterplanar {V : Type*} (G : SimpleGraph V) : Prop :=
       G < H →
       ¬ Outerplanar.IsOuterplanar H
 
-end Lax0.MaximalOuterplanar
+end Lax68.MaximalOuterplanar

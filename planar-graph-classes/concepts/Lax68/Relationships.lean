@@ -1,16 +1,16 @@
-import Lax0.Planar
-import Lax0.Outerplanar
-import Lax0.MaximalOuterplanar
-import Lax0.GridsAndWalls
-import Lax0.Triangles
-import Lax0.Stars
-import Lax0.Ladders
-import Lax0.HalinGraphs
-import Lax0.Wheels
-import Lax0.SeriesParallel
-import Lax0.Trees
-import Lax0.Paths
-import Lax0.Triangulations
+import Lax68.Planar
+import Lax68.Outerplanar
+import Lax68.MaximalOuterplanar
+import Lax68.GridsAndWalls
+import Lax68.Triangles
+import Lax68.Stars
+import Lax68.Ladders
+import Lax68.HalinGraphs
+import Lax68.Wheels
+import Lax68.SeriesParallel
+import Lax68.Trees
+import Lax68.Paths
+import Lax68.Triangulations
 
 /-!
 ---
@@ -25,7 +25,7 @@ below.
 
 set_option autoImplicit false
 
-namespace Lax0.Relationships
+namespace Lax68.Relationships
 
 axiom outerplanar_planar {V : Type*} {G : SimpleGraph V} :
   Outerplanar.IsOuterplanar G →
@@ -133,4 +133,4 @@ axiom triangulation_planar {V : Type*} {G : SimpleGraph V} :
   Triangulations.IsTriangulation G →
   Planar.IsPlanar G
 
-end Lax0.Relationships
+end Lax68.Relationships

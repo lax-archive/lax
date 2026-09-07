@@ -1,5 +1,5 @@
 import Mathlib.Combinatorics.SimpleGraph.Hasse
-import Lax0.Planar
+import Lax68.Planar
 
 /-!
 ---
@@ -14,7 +14,7 @@ drawing certificate.
 
 set_option autoImplicit false
 
-namespace Lax0.GridsAndWalls
+namespace Lax68.GridsAndWalls
 
 def consecutive (a b : ℕ) : Prop :=
   a + 1 = b ∨ b + 1 = a
@@ -42,4 +42,4 @@ def IsGrid {V : Type*} (G : SimpleGraph V) : Prop :=
 def IsWall {V : Type*} (G : SimpleGraph V) : Prop :=
   HasWallShape G ∧ Planar.IsPlanar G
 
-end Lax0.GridsAndWalls
+end Lax68.GridsAndWalls

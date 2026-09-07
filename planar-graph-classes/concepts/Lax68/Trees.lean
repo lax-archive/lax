@@ -1,5 +1,5 @@
 import Mathlib.Combinatorics.SimpleGraph.Acyclic
-import Lax0.Outerplanar
+import Lax68.Outerplanar
 
 /-!
 ---
@@ -13,9 +13,9 @@ with all vertices on the outer face.
 
 set_option autoImplicit false
 
-namespace Lax0.Trees
+namespace Lax68.Trees
 
 def IsTree {V : Type*} (G : SimpleGraph V) : Prop :=
   G.IsTree ∧ Outerplanar.IsOuterplanar G
 
-end Lax0.Trees
+end Lax68.Trees

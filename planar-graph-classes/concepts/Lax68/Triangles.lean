@@ -1,4 +1,4 @@
-import Lax0.MaximalOuterplanar
+import Lax68.MaximalOuterplanar
 
 /-!
 ---
@@ -11,11 +11,11 @@ outerplanar certificate is recorded explicitly.
 
 set_option autoImplicit false
 
-namespace Lax0.Triangles
+namespace Lax68.Triangles
 
 def IsTriangle {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
   Fintype.card V = 3 ∧
     G = SimpleGraph.completeGraph V ∧
     MaximalOuterplanar.IsMaximalOuterplanar G
 
-end Lax0.Triangles
+end Lax68.Triangles

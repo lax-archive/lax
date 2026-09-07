@@ -1,6 +1,6 @@
-import Lax0.GridsAndWalls
-import Lax0.Outerplanar
-import Lax0.SeriesParallel
+import Lax68.GridsAndWalls
+import Lax68.Outerplanar
+import Lax68.SeriesParallel
 
 /-!
 ---
@@ -13,7 +13,7 @@ grid, outerplanar, and series-parallel certificates are recorded explicitly.
 
 set_option autoImplicit false
 
-namespace Lax0.Ladders
+namespace Lax68.Ladders
 
 def HasLadderShape {V : Type*} (G : SimpleGraph V) : Prop :=
   ∃ n : ℕ,
@@ -26,4 +26,4 @@ def IsLadder {V : Type*} (G : SimpleGraph V) : Prop :=
     Outerplanar.IsOuterplanar G ∧
     SeriesParallel.IsSeriesParallel G
 
-end Lax0.Ladders
+end Lax68.Ladders

@@ -1,5 +1,5 @@
 import Mathlib.Combinatorics.SimpleGraph.Hasse
-import Lax0.Trees
+import Lax68.Trees
 
 /-!
 ---
@@ -12,11 +12,11 @@ edges join consecutive elements.  Its tree certificate is recorded explicitly.
 
 set_option autoImplicit false
 
-namespace Lax0.Paths
+namespace Lax68.Paths
 
 def IsPath {V : Type*} (G : SimpleGraph V) : Prop :=
   (∃ n : ℕ,
       Nonempty (G ≃g SimpleGraph.pathGraph n)) ∧
     Trees.IsTree G
 
-end Lax0.Paths
+end Lax68.Paths

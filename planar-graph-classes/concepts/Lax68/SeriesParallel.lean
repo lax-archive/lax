@@ -1,4 +1,4 @@
-import Lax0.Planar
+import Lax68.Planar
 
 /-!
 ---
@@ -13,7 +13,7 @@ planar drawing certificate.
 
 set_option autoImplicit false
 
-namespace Lax0.SeriesParallel
+namespace Lax68.SeriesParallel
 
 def edgeGraph {V : Type*} (s t : V) : SimpleGraph V :=
   SimpleGraph.fromRel fun u v =>
@@ -50,4 +50,4 @@ def IsSeriesParallel {V : Type*} (G : SimpleGraph V) : Prop :=
   (∃ s t : V, TwoTerminal G s t) ∧
     Planar.IsPlanar G
 
-end Lax0.SeriesParallel
+end Lax68.SeriesParallel

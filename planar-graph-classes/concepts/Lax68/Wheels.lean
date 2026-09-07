@@ -1,5 +1,5 @@
 import Mathlib.Combinatorics.SimpleGraph.UniversalVerts
-import Lax0.HalinGraphs
+import Lax68.HalinGraphs
 
 /-!
 ---
@@ -13,7 +13,7 @@ star whose leaves are joined cyclically.
 
 set_option autoImplicit false
 
-namespace Lax0.Wheels
+namespace Lax68.Wheels
 
 def HasWheelShape {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
   ∃ hub : V,
@@ -28,4 +28,4 @@ def HasWheelShape {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
 def IsWheel {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
   HasWheelShape G ∧ HalinGraphs.IsHalin G
 
-end Lax0.Wheels
+end Lax68.Wheels

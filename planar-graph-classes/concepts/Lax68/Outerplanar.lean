@@ -1,4 +1,4 @@
-import Lax0.Planar
+import Lax68.Planar
 
 /-!
 ---
@@ -12,7 +12,7 @@ vertices on one circle is used as an equivalent certificate.
 
 set_option autoImplicit false
 
-namespace Lax0.Outerplanar
+namespace Lax68.Outerplanar
 
 structure OuterplaneDrawing {V : Type*} (G : SimpleGraph V)
     extends Planar.StraightLineDrawing G where
@@ -26,4 +26,4 @@ structure OuterplaneDrawing {V : Type*} (G : SimpleGraph V)
 def IsOuterplanar {V : Type*} (G : SimpleGraph V) : Prop :=
   Nonempty (OuterplaneDrawing G)
 
-end Lax0.Outerplanar
+end Lax68.Outerplanar

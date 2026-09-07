@@ -1,5 +1,5 @@
 import Mathlib.Combinatorics.SimpleGraph.UniversalVerts
-import Lax0.Trees
+import Lax68.Trees
 
 /-!
 ---
@@ -12,7 +12,7 @@ tree certificate is recorded explicitly.
 
 set_option autoImplicit false
 
-namespace Lax0.Stars
+namespace Lax68.Stars
 
 def HasStarShape {V : Type*} (G : SimpleGraph V) : Prop :=
   ∃ centre : V,
@@ -23,4 +23,4 @@ def IsStar {V : Type*} (G : SimpleGraph V) : Prop :=
   HasStarShape G ∧
     Trees.IsTree G
 
-end Lax0.Stars
+end Lax68.Stars

@@ -1,6 +1,6 @@
 import Mathlib.Combinatorics.SimpleGraph.Acyclic
 import Mathlib.Combinatorics.SimpleGraph.Finite
-import Lax0.Planar
+import Lax68.Planar
 
 /-!
 ---
@@ -15,7 +15,7 @@ plane embedding.
 
 set_option autoImplicit false
 
-namespace Lax0.HalinGraphs
+namespace Lax68.HalinGraphs
 
 def IsLeaf {V : Type*} [Fintype V] (T : SimpleGraph V) (v : V) : Prop :=
   (T.neighborSet v).ncard = 1
@@ -45,4 +45,4 @@ def HasHalinShape {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
 def IsHalin {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
   HasHalinShape G ∧ Planar.IsPlanar G
 
-end Lax0.HalinGraphs
+end Lax68.HalinGraphs

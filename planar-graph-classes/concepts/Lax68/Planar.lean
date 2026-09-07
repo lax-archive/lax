@@ -15,7 +15,7 @@ to the usual topological definition of planarity.
 
 set_option autoImplicit false
 
-namespace Lax0.Planar
+namespace Lax68.Planar
 
 abbrev Point := ℝ × ℝ
 
@@ -40,4 +40,4 @@ structure StraightLineDrawing {V : Type*} (G : SimpleGraph V) where
 def IsPlanar {V : Type*} (G : SimpleGraph V) : Prop :=
   Nonempty (StraightLineDrawing G)
 
-end Lax0.Planar
+end Lax68.Planar
