@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.StarPlanar
 
-axiom star_planar {V : Type*} {G : SimpleGraph V} :
+axiom star_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
   Lax68.Stars.IsStar G →
   Lax68.Planar.IsPlanar G
 

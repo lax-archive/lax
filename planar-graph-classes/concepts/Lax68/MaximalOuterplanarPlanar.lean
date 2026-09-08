@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.MaximalOuterplanarPlanar
 
-axiom maximalOuterplanar_planar {V : Type*} {G : SimpleGraph V} :
+axiom maximalOuterplanar_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
   Lax68.MaximalOuterplanar.IsMaximalOuterplanar G →
   Lax68.Planar.IsPlanar G
 

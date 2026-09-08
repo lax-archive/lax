@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.TriangulationPlanar
 
-axiom triangulation_planar {V : Type*} {G : SimpleGraph V} :
+axiom triangulation_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
   Lax68.Triangulations.IsTriangulation G →
   Lax68.Planar.IsPlanar G
 

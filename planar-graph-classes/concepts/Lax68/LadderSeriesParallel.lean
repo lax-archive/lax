@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.LadderSeriesParallel
 
-axiom ladder_seriesParallel {V : Type*} {G : SimpleGraph V} :
+axiom ladder_seriesParallel {V : Type*} [Fintype V] {G : SimpleGraph V} :
   Lax68.Ladders.IsLadder G →
   Lax68.SeriesParallel.IsSeriesParallel G
 

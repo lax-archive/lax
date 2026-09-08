@@ -5,9 +5,10 @@ import Lax68.Planar
 title: Outerplanar graphs
 type: definition
 ---
-An outerplanar graph has a plane drawing in which every vertex lies on the
-boundary of the outer face.  A crossing-free straight-line drawing with all
-vertices on one circle is used as an equivalent certificate.
+A finite graph is outerplanar when it has a crossing-free plane drawing in
+which every vertex lies on the boundary of the outer face. We use the
+equivalent certificate of a straight-line drawing with every vertex on one
+circle.
 -/
 
 set_option autoImplicit false
@@ -23,7 +24,7 @@ structure OuterplaneDrawing {V : Type*} (G : SimpleGraph V)
       let p := toStraightLineDrawing.point v
       p.1 ^ 2 + p.2 ^ 2 = radius ^ 2
 
-def IsOuterplanar {V : Type*} (G : SimpleGraph V) : Prop :=
+def IsOuterplanar {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
   Nonempty (OuterplaneDrawing G)
 
 end Lax68.Outerplanar

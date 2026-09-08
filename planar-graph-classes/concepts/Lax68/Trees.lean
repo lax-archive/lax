@@ -1,21 +1,19 @@
 import Mathlib.Combinatorics.SimpleGraph.Acyclic
-import Lax68.Outerplanar
 
 /-!
 ---
 title: Trees
 type: definition
 ---
-A tree is a connected acyclic simple graph.  The concept also records an
-outerplane drawing certificate, the standard elementary embedding of a tree
-with all vertices on the outer face.
+A finite tree is a connected acyclic simple graph, using mathlib's native
+`SimpleGraph.IsTree` predicate.
 -/
 
 set_option autoImplicit false
 
 namespace Lax68.Trees
 
-def IsTree {V : Type*} (G : SimpleGraph V) : Prop :=
-  G.IsTree ∧ Outerplanar.IsOuterplanar G
+def IsTree {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+  G.IsTree
 
 end Lax68.Trees

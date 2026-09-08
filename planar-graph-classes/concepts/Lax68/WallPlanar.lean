@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.WallPlanar
 
-axiom wall_planar {V : Type*} {G : SimpleGraph V} :
+axiom wall_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
   Lax68.GridsAndWalls.IsWall G →
   Lax68.Planar.IsPlanar G
 

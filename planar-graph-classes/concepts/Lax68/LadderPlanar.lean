@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.LadderPlanar
 
-axiom ladder_planar {V : Type*} {G : SimpleGraph V} :
+axiom ladder_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
   Lax68.Ladders.IsLadder G →
   Lax68.Planar.IsPlanar G
 

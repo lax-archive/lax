@@ -1,12 +1,11 @@
-import Lax68.MaximalOuterplanar
+import Mathlib.Combinatorics.SimpleGraph.Basic
 
 /-!
 ---
 title: Triangles
 type: definition
 ---
-A triangle is the complete graph on exactly three vertices.  Its maximal
-outerplanar certificate is recorded explicitly.
+A triangle is a finite complete graph on exactly three vertices.
 -/
 
 set_option autoImplicit false
@@ -15,7 +14,6 @@ namespace Lax68.Triangles
 
 def IsTriangle {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
   Fintype.card V = 3 ∧
-    G = SimpleGraph.completeGraph V ∧
-    MaximalOuterplanar.IsMaximalOuterplanar G
+    G = SimpleGraph.completeGraph V
 
 end Lax68.Triangles

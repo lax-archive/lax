@@ -1,15 +1,13 @@
 import Mathlib.Combinatorics.SimpleGraph.Hasse
-import Lax68.Planar
 
 /-!
 ---
 title: Grids and walls
 type: definition
 ---
-A rectangular grid has vertices in rows and columns, with edges between
-orthogonally consecutive positions.  A wall is the brick-wall subgraph obtained
-by retaining alternating vertical grid edges.  Both predicates record a planar
-drawing certificate.
+A nonempty rectangular grid has vertices in rows and columns, with edges
+between orthogonally consecutive positions. A wall is the brick-wall subgraph
+obtained by retaining alternating vertical grid edges.
 -/
 
 set_option autoImplicit false
@@ -27,19 +25,23 @@ def WallAdjacent {m n : ℕ} (u v : Fin m × Fin n) : Prop :=
 
 def HasGridShape {V : Type*} (G : SimpleGraph V) : Prop :=
   ∃ m n : ℕ,
+    0 < m ∧
+    0 < n ∧
     Nonempty
       (G ≃g (SimpleGraph.pathGraph m □ SimpleGraph.pathGraph n))
 
 def HasWallShape {V : Type*} (G : SimpleGraph V) : Prop :=
   ∃ m n : ℕ,
+    0 < m ∧
+    0 < n ∧
     ∃ e : Fin m × Fin n ≃ V,
       ∀ u v,
         G.Adj (e u) (e v) ↔ WallAdjacent u v
 
-def IsGrid {V : Type*} (G : SimpleGraph V) : Prop :=
-  HasGridShape G ∧ Planar.IsPlanar G
+def IsGrid {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+  HasGridShape G
 
-def IsWall {V : Type*} (G : SimpleGraph V) : Prop :=
-  HasWallShape G ∧ Planar.IsPlanar G
+def IsWall {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+  HasWallShape G
 
 end Lax68.GridsAndWalls

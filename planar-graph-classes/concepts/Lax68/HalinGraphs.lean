@@ -7,10 +7,10 @@ import Lax68.Planar
 title: Halin graphs
 type: definition
 ---
-A Halin graph is obtained from a finite plane tree with no vertex of degree two
-by joining its leaves in their cyclic order.  Here the tree and leaf cycle give
-the combinatorial shape, while a planar drawing certificate records the chosen
-plane embedding.
+A finite Halin graph is obtained from a finite plane tree with no vertex of
+degree two by joining its leaves in their cyclic order. The construction
+contains the chosen crossing-free embedding because the word "plane" is part
+of the defining data, rather than attaching a separate planarity proposition.
 -/
 
 set_option autoImplicit false
@@ -35,14 +35,16 @@ def IsCycleOn {V : Type*}
         ∀ i j,
           R.Adj (e i).1 (e j).1 ↔ CycleAdjacent i j
 
-def HasHalinShape {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
-  ∃ T R : SimpleGraph V,
-    T.IsTree ∧
-    (∀ v, (T.neighborSet v).ncard ≠ 2) ∧
-    IsCycleOn R {v | IsLeaf T v} ∧
-    G = T ⊔ R
+structure Construction {V : Type*} [Fintype V] (G : SimpleGraph V) where
+  tree : SimpleGraph V
+  rim : SimpleGraph V
+  tree_isTree : tree.IsTree
+  noDegreeTwo : ∀ v, (tree.neighborSet v).ncard ≠ 2
+  rimCycle : IsCycleOn rim {v | IsLeaf tree v}
+  graph_eq : G = tree ⊔ rim
+  drawing : Planar.StraightLineDrawing G
 
 def IsHalin {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
-  HasHalinShape G ∧ Planar.IsPlanar G
+  Nonempty (Construction G)
 
 end Lax68.HalinGraphs

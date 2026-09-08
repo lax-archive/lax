@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.TreePlanar
 
-axiom tree_planar {V : Type*} {G : SimpleGraph V} :
+axiom tree_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
   Lax68.Trees.IsTree G →
   Lax68.Planar.IsPlanar G
 

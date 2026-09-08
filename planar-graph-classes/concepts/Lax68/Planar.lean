@@ -7,10 +7,10 @@ import Mathlib.Data.Real.Basic
 title: Planar graphs
 type: definition
 ---
-A simple graph is planar when it admits a drawing in the plane with distinct
-vertices and with edges meeting only at a common endpoint.  We use a
-straight-line drawing as the certificate.  By Fáry's theorem this is equivalent
-to the usual topological definition of planarity.
+A finite simple graph is planar when it admits a drawing in the plane with
+distinct vertices and with edges meeting only at a common endpoint. We use a
+straight-line drawing as the certificate; for finite simple graphs this is
+equivalent to the usual topological definition by Fáry's theorem.
 -/
 
 set_option autoImplicit false
@@ -37,7 +37,7 @@ structure StraightLineDrawing {V : Type*} (G : SimpleGraph V) where
         (segment ℝ (point a) (point b))
         (segment ℝ (point c) (point d))
 
-def IsPlanar {V : Type*} (G : SimpleGraph V) : Prop :=
+def IsPlanar {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
   Nonempty (StraightLineDrawing G)
 
 end Lax68.Planar

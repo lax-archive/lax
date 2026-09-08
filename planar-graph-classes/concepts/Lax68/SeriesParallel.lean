@@ -1,14 +1,14 @@
-import Lax68.Planar
+import Mathlib.Combinatorics.SimpleGraph.Basic
 
 /-!
 ---
 title: Series-parallel graphs
 type: definition
 ---
-A two-terminal series-parallel graph is built from a single terminal edge by
-series and parallel composition.  The side conditions say that the composed
-graphs meet only at the intended terminals.  The class predicate records a
-planar drawing certificate.
+A finite two-terminal series-parallel graph is built from a single terminal
+edge by series and parallel composition. The side conditions say that the
+composed graphs meet only at the intended terminals, and the final support
+condition excludes unused isolated vertices.
 -/
 
 set_option autoImplicit false
@@ -46,8 +46,9 @@ inductive TwoTerminal {V : Type*} : SimpleGraph V → V → V → Prop
           v = s ∨ v = t) :
       TwoTerminal (G ⊔ H) s t
 
-def IsSeriesParallel {V : Type*} (G : SimpleGraph V) : Prop :=
-  (∃ s t : V, TwoTerminal G s t) ∧
-    Planar.IsPlanar G
+def IsSeriesParallel {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+  ∃ s t,
+    TwoTerminal G s t ∧
+    G.support = Set.univ
 
 end Lax68.SeriesParallel
