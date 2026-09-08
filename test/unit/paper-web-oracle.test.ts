@@ -13,12 +13,16 @@ import {
   assemblePdfText,
   BOUNDARY_MERGE_SEARCH_FLOOR,
   compareTokens,
+  extractMarginText,
   foldBoundaryRegions,
   isFolioLine,
   judgeWebOracle,
   MARGIN_NUMBER_TOLERANCE,
+  MARGIN_TEXT_GUTTER,
+  MARGIN_TEXT_WIDTH_FRACTION,
   mergeTokenBoundaries,
   oracleTokens,
+  pdfLineItems,
   pdfLines,
   relocateRuns,
   removeTokenRun,
@@ -281,9 +285,9 @@ describe("unreferenced-paragraph removal", () => {
     expect(budgetOf(2_000)).toBe(UNREFERENCED_BUDGET_FRACTION * 2_000);
     expect(budgetOf(300)).toBe(UNREFERENCED_BUDGET_MINIMUM);
     expect(budgetOf(60)).toBe(UNREFERENCED_BUDGET_CEILING_FRACTION * 60);
-    // The one-page paper the e2e compiles measures 56 PDF tokens against a
-    // 7-token \marginpar: its own fraction is two tokens, the floor lifts
-    // the budget, and the ceiling still leaves the note room.
+    // A one-page paper of 56 PDF tokens whose serializer drops a 7-token
+    // \marginpar: its own fraction is two tokens, the floor lifts the
+    // budget, and the ceiling still leaves the note room.
     expect(budgetOf(56)).toBeGreaterThan(7);
   });
 
@@ -567,6 +571,130 @@ describe("margin line numbers", () => {
     expect(oracleTokens(assembled.text)).toEqual(oracleTokens(
       "The coefficients, row by row: 1 1 2 3 and the text resumes here at the column's full width.",
     ));
+  });
+});
+
+describe("margin text", () => {
+  const at = (text: string, x: number, y: number, width: number, eol: 0 | 1 = 0): ExtractedTextItem =>
+    [text, eol, x, y, width];
+  // The one-page article the e2e compiles, as pdf.js reads it: the column
+  // runs from x=133.77 to x=477.48, and the \marginpar note's three lines
+  // sit at x=488.44 — spliced after the body line they share a baseline
+  // with, then as lines of their own.
+  const note = "A marginal note that only print shows";
+  const articlePage: ExtractedTextItem[] = [
+    at("1", 133.77, 707.13, 8.07), at(" ", 141.84, 707.13, 16.14), at("OVERVIEW OF THE MACHINERY", 157.98, 707.13, 266.43),
+    at("", 133.77, 685.3, 0, 1),
+    at("Incomprehensibility characterizes extraordinarily overparameterized representa-", 133.77, 685.3, 343.71, 1),
+    at("tions; internationalization necessitates uncharacteristically comprehensive hy-", 133.77, 673.35, 343.71, 1),
+    at("phenation demonstrations of the utmost thoroughness.", 133.77, 661.39, 244.2),
+    at(" ", 377.97, 661.39, 15.58), // the marker's box: a wide space one line has and the others cover
+    at("The text continues", 393.55, 661.39, 83.93),
+    at(" ", 477.48, 661.39, 10.96), // \marginparsep, spanned by a blank that starts in the column
+    at("A", 488.44, 661.39, 7.47), at(" ", 495.91, 661.39, 19.06), at("marginal", 514.97, 661.39, 38.22, 1),
+    at("note that only", 488.44, 649.44, 64.76, 1),
+    at("print shows", 488.44, 637.48, 49.95, 1),
+    at("after the marginal note with additional words to fill the line.", 133.77, 649.44, 264.7, 1),
+    at("The “quoted–text” uses ligatures: efficient offices affirm fluffy waffles, and", 148.71, 637.48, 328.76),
+    at("", 133.77, 625.53, 0, 1),
+    at("α", 133.77, 625.53, 6.37), at(" ", 140.14, 625.53, 2.8), at("≤", 142.95, 625.53, 7.75), at(" ", 150.69, 625.53, 2.77),
+    at("β", 153.46, 625.53, 5.63), at(" ", 159.1, 625.53, 3.85), at("holds inline.", 162.94, 625.53, 52.63, 1),
+    at("1", 303.13, 139.25, 4.98),
+  ];
+  const body =
+    "1 OVERVIEW OF THE MACHINERY\n" +
+    "Incomprehensibility characterizes extraordinarily overparameterized representations; internationalization " +
+    "necessitates uncharacteristically comprehensive hyphenation demonstrations of the utmost thoroughness. " +
+    "The text continues after the marginal note with additional words to fill the line.\n" +
+    "The “quoted–text” uses ligatures: efficient offices affirm fluffy waffles, and α ≤ β holds inline.";
+
+  it("takes a \\marginpar note off the body lines as one run and leaves the body whole", () => {
+    const assembled = assemblePdfText([articlePage]);
+    expect(assembled.marginText).toEqual(["A marginal\nnote that only\nprint shows"]);
+    expect(assembled.marginTextItems).toBe(4);
+    expect(assembled.marginNumbers).toBe(0);
+    expect(assembled.folioLines).toBe(1);
+    expect(oracleTokens(assembled.text)).toEqual(oracleTokens(body));
+  });
+
+  it("settles the note against the stream, which carries it as a paragraph in reading order", () => {
+    const stream = body.replace("fill the line.\n", `fill the line.\n${note}\n`);
+    const judged = judgeWebOracle({ pdfPages: [articlePage], stream: { text: stream, unreferenced: [], relocated: [] }, floor: 0.98 });
+    expect(judged.margin.matched).toBe(1);
+    expect(judged.margin.unmatched).toEqual([]);
+    expect(judged.passes).toBe(true);
+    expect(judged.verdict).toEqual({ similarity: 1 });
+    expect(judged.pdfTokenCount).toBe(oracleTokens(body).length + oracleTokens(note).length);
+    // Unsettled, the same page costs the note twice its length and fails.
+    const spliced = assemblePdfText([articlePage.map((item): ExtractedTextItem => [item[0], item[1]])]);
+    expect(spliced.marginText).toEqual([]);
+    expect(compareTokens(oracleTokens(spliced.text), oracleTokens(stream), 0.98).divergence).toBeDefined();
+  });
+
+  it("puts a note the stream lacks back on the PDF side, where an unreferenced capture of it is still forgiven and named", () => {
+    // A serializer that dropped the note: the stream neither carries it nor
+    // declares anything, and the PDF has text the reader will not see.
+    const dropped = judgeWebOracle({ pdfPages: [articlePage], stream: { text: body, unreferenced: [], relocated: [] }, floor: 0.98 });
+    expect(dropped.margin.matched).toBe(0);
+    expect(dropped.margin.unmatched).toEqual([{ text: "A marginal\nnote that only\nprint shows" }]);
+    expect(dropped.passes).toBe(false);
+    expect(dropped.firstDifference!.pdf).toContain("a marginal note that only print shows");
+    // The same serializer capturing the note without referencing it: the
+    // budgeted subtraction finds the restored run and names it.
+    const captured = judgeWebOracle({ pdfPages: [articlePage], stream: { text: body, unreferenced: [{ text: note }], relocated: [] }, floor: 0.98 });
+    expect(captured.subtraction.omitted).toEqual([{ text: note }]);
+    expect(captured.subtraction.removedTokens).toBe(oracleTokens(note).length);
+    expect(captured.passes).toBe(true);
+    expect(captured.verdict).toEqual({ similarity: 1 });
+  });
+
+  it("leaves the second column of a two-column page where it is", () => {
+    const page: ExtractedTextItem[] = [
+      at("Left column text of the first line.", 72, 700, 230), at(" ", 302, 700, 12), at("Right column text of its line.", 314, 700, 226, 1),
+      at("Left column text of the second line.", 72, 688, 230), at(" ", 302, 688, 12), at("Right column text again.", 314, 688, 226, 1),
+    ];
+    expect(extractMarginText(pdfLineItems(page), () => false).runs).toEqual([]);
+    // Narrower than half the column and a gutter away, the same items are margin.
+    const narrow: ExtractedTextItem[] = [
+      at("Left column text of the first line.", 72, 700, 230), at(" ", 302, 700, 12), at("Short note.", 314, 700, 40, 1),
+      at("Left column text of the second line.", 72, 688, 230), at(" ", 302, 688, 12), at("Still short.", 314, 688, 40, 1),
+    ];
+    expect(extractMarginText(pdfLineItems(narrow), () => false).runs).toEqual(["Short note.\nStill short."]);
+    expect(MARGIN_TEXT_WIDTH_FRACTION * 230).toBeGreaterThan(40);
+  });
+
+  it("opens no gutter for one line's wide space, and none narrower than the gutter", () => {
+    // Two words far apart on one line, the other lines covering the space.
+    const covered: ExtractedTextItem[] = [
+      at("Proof.", 90, 700, 30), at(" ", 120, 700, 60), at("Trivial.", 180, 700, 40, 1),
+      at("A line of text that runs the whole width of the column.", 90, 688, 300, 1),
+    ];
+    expect(extractMarginText(pdfLineItems(covered), () => false).runs).toEqual([]);
+    // A narrow item just under the gutter away from the column edge is column.
+    const close: ExtractedTextItem[] = [
+      at("A line of text that runs the whole width of the column.", 90, 700, 300),
+      at("x", 390 + MARGIN_TEXT_GUTTER - 1, 700, 5, 1),
+    ];
+    expect(extractMarginText(pdfLineItems(close), () => false).runs).toEqual([]);
+    const apart: ExtractedTextItem[] = [
+      at("A line of text that runs the whole width of the column.", 90, 700, 300),
+      at("x", 390 + MARGIN_TEXT_GUTTER, 700, 5, 1),
+    ];
+    expect(extractMarginText(pdfLineItems(apart), () => false).runs).toEqual(["x"]);
+  });
+
+  it("never touches items without geometry, and skips running heads", () => {
+    const bare: ExtractedTextItem[] = [["Some text", 0], ["A note", 1], ["More text", 1]];
+    expect(assemblePdfText([bare]).marginText).toEqual([]);
+    expect(assemblePdfText([bare]).text).toBe("Some textA note\nMore text");
+    // A right-set running head is furniture: neither measured nor taken.
+    const page = (folio: string): ExtractedTextItem[] => [
+      at("Anonymous", 90.71, 771.59, 55.49), at(" ", 146.2, 771.59, 362.42), at(`XX:${folio}`, 508.62, 771.59, 24.29, 1),
+      at("Body text of the page, wide enough to be the column.", 90.71, 733.28, 396.85, 1),
+    ];
+    const assembled = assemblePdfText([page("3"), page("5")]);
+    expect(assembled.headerLines).toBe(2);
+    expect(assembled.marginText).toEqual([]);
   });
 });
 

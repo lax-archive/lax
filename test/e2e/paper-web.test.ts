@@ -169,7 +169,13 @@ describe.skipIf(!withWeb)("paper web derivation (host path, real fork)", () => {
     expect(withoutWeb.paperWebPath).toBeUndefined();
   }, 600_000);
 
-  it("names dropped \\marginpar text in its own warning while the oracle still passes", async () => {
+  it("carries a \\marginpar note as its own paragraph, and the oracle settles where the PDF put it", async () => {
+    // The fork's page walk reads \@addmarginpar's box (a \vtop beside the
+    // line) as a column, so the note is in the stream, after the paragraph
+    // it hangs off — nothing is dropped and no paragraph is unreferenced.
+    // pdf.js splices the note's lines into the body lines they share a
+    // baseline with; the oracle's margin-text rule takes them off the PDF
+    // side and finds them on the stream side, so the view derives clean.
     const result = await derivePaper(`\\documentclass{article}
 \\begin{document}
 \\section{\\MakeUppercase{Overview of the machinery}}
@@ -187,12 +193,8 @@ waffles, and $\\alpha \\le \\beta$ holds inline.
 \\end{document}
 `);
     expect(result.findings.violations).toEqual([]);
+    expect(result.findings.warnings).toEqual([]);
     expect(result.compiled?.web).toBeDefined();
-    const warnings = result.findings.warnings;
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]!.rule).toBe("web-unreferenced-paragraph");
-    expect(warnings[0]!.message).toContain("A marginal note that only print shows");
-    expect(warnings[0]!.message).toContain("\\marginpar");
   }, 600_000);
 
   it("skips with the first divergence location when print-only text breaks the oracle floor", async () => {

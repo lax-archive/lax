@@ -18,6 +18,14 @@
 //   lines repeated across pages, and margin line numbers (`lineno`'s, which
 //   sit outside the text column and which pdf.js glues onto the neighbouring
 //   word) are stripped;
+// - margin text, PDF side only: a `\marginpar` note sits beside the column
+//   and pdf.js splices its lines into the body lines they share a baseline
+//   with, while the stream carries the note as a paragraph of its own in
+//   reading order — both substrates show it, in different places. Items in
+//   a narrow ink interval a clear gutter away from the text column are taken
+//   off their lines and settled as runs the way relocated footnotes are:
+//   removed from the stream side when it carries them, put back on the PDF
+//   side when it does not, so only order evidence is given up;
 // - casing and punctuation (`\MakeUppercase`, class-specific heading dots):
 //   tokens are lowercased alphanumeric runs, so casing and punctuation
 //   never count as divergence;
@@ -158,24 +166,184 @@ export function stripMarginNumbers(
     item[2] + item[4] < left - MARGIN_NUMBER_TOLERANCE || item[2] > right + MARGIN_NUMBER_TOLERANCE;
   let stripped = 0;
   const kept = lines.map((line) => {
-    const out: ExtractedTextItem[] = [];
-    for (const item of line) {
-      if (!(placed(item) && isNumber(item) && inMargin(item))) {
-        out.push(item);
-        continue;
-      }
-      stripped += 1;
-      // The line end travels with the last item; a stripped one hands it on.
-      if (item[1] === 1) {
-        const previous = out.pop();
-        const carrier: ExtractedTextItem = previous === undefined ? ["", 1] : ([...previous] as ExtractedTextItem);
-        carrier[1] = 1;
-        out.push(carrier);
-      }
-    }
-    return out;
+    const taken = takeFromLine(line, (item) => placed(item) && isNumber(item) && inMargin(item));
+    stripped += taken.taken.length;
+    return taken.kept;
   });
   return { lines: kept, stripped };
+}
+
+/**
+ * Split a line's items into the ones `take` selects and the rest. The line
+ * end travels with the last item; a taken one hands it on to the item
+ * before it, or to an empty item when nothing is left, so a line never
+ * loses its break.
+ */
+function takeFromLine(
+  line: readonly ExtractedTextItem[],
+  take: (item: ExtractedTextItem) => boolean,
+): { kept: ExtractedTextItem[]; taken: ExtractedTextItem[] } {
+  const kept: ExtractedTextItem[] = [];
+  const taken: ExtractedTextItem[] = [];
+  for (const item of line) {
+    if (!take(item)) {
+      kept.push(item);
+      continue;
+    }
+    taken.push(item);
+    if (item[1] === 1) {
+      const previous = kept.pop();
+      const carrier: ExtractedTextItem = previous === undefined ? ["", 1] : ([...previous] as ExtractedTextItem);
+      carrier[1] = 1;
+      kept.push(carrier);
+    }
+  }
+  return { kept, taken };
+}
+
+/**
+ * The least clear space, in points, that has to separate a margin item
+ * from the text column on *every* line of the page before it is margin
+ * text. `\marginparsep` is 11pt in article and 7pt in book, `\columnsep`
+ * and `\linenumbersep` 10pt; a justified line's word space stretches to
+ * 5pt at 10pt before TeX calls the line underfull, and one line's wide
+ * space is covered by the lines above and below it anyway.
+ */
+export const MARGIN_TEXT_GUTTER = 6;
+
+/**
+ * How wide, as a share of the text column, an ink interval beside it may
+ * be and still be a margin. `\marginparwidth` is a fifth to a third of
+ * `\textwidth` in the standard classes; the other column of a two-column
+ * page is as wide as the first and is never margin.
+ */
+export const MARGIN_TEXT_WIDTH_FRACTION = 0.5;
+
+/**
+ * Take margin text off a page's lines. A `\marginpar` note is set beside
+ * the column, and pdf.js emits each of its lines as items on the baseline
+ * of the body line it shares, after that line's text — the plain join reads
+ * `The text continues A marginal note that only print shows` — while the
+ * stream carries the note as one paragraph in reading order, after the
+ * paragraph it hangs off. Both substrates show the text; an ordered
+ * comparison charges the note twice its length for the difference in place.
+ *
+ * The rule is geometric, like the margin-number rule, but it cannot measure
+ * the column from "every other item" when any item may be the candidate.
+ * Instead the page's ink is projected onto the horizontal axis: the extents
+ * of its non-blank items, running heads excluded, merged wherever two are
+ * closer than the gutter. The widest interval is the text column (the most
+ * items, on a tie); every other interval narrower than half the column is
+ * a margin, and its items leave their lines. Items in an interval as wide
+ * as the column — the second column of a two-column page — stay where they
+ * are. A gutter has to be clear on every line of the page, so one line's
+ * stretched word space or a table's `\tabcolsep` never opens one; only a
+ * space the whole page keeps does.
+ *
+ * The runs come back as text: the fragments of one margin interval on
+ * consecutive lines are one note, joined with the body's hyphenation rule
+ * (a note whose word breaks at its own line end is still one word). Two
+ * notes on adjacent lines become one run and go unmatched — the skip
+ * direction, and what an undeclared move costs today.
+ *
+ * What the rule gives up is order evidence, never presence: the caller
+ * settles each run against the stream (`settleRuns`), removing it there
+ * when the stream carries it and restoring it to the PDF side when the
+ * stream does not, so text one substrate lacks is still counted. A body
+ * item mistaken for margin text (a table wider than the column, a short
+ * second column) therefore costs the paper nothing it should be measuring;
+ * a note the rule misses is the divergence it always was. Items without
+ * geometry are never touched.
+ */
+export function extractMarginText(
+  lines: readonly (readonly ExtractedTextItem[])[],
+  isFurniture: (lineIndex: number) => boolean,
+): { lines: ExtractedTextItem[][]; runs: string[]; items: number } {
+  const isInk = (item: ExtractedTextItem): item is PlacedTextItem => placed(item) && item[0].trim() !== "";
+  // The page's ink intervals, merged across the gutter.
+  const extents: Array<[number, number]> = [];
+  lines.forEach((line, index) => {
+    if (isFurniture(index)) return;
+    for (const item of line) if (isInk(item)) extents.push([item[2], item[2] + item[4]]);
+  });
+  extents.sort((a, b) => a[0] - b[0]);
+  const intervals: Array<{ left: number; right: number; items: number }> = [];
+  for (const [left, right] of extents) {
+    const last = intervals[intervals.length - 1];
+    if (last !== undefined && left < last.right + MARGIN_TEXT_GUTTER) {
+      last.right = Math.max(last.right, right);
+      last.items += 1;
+    } else {
+      intervals.push({ left, right, items: 1 });
+    }
+  }
+  if (intervals.length < 2) return { lines: lines.map((line) => [...line]), runs: [], items: 0 };
+  const width = (interval: { left: number; right: number }): number => interval.right - interval.left;
+  const column = intervals.reduce((best, interval) =>
+    width(interval) > width(best) || (width(interval) === width(best) && interval.items > best.items) ? interval : best,
+  );
+  const margins = intervals.filter((interval) => interval !== column && width(interval) < MARGIN_TEXT_WIDTH_FRACTION * width(column));
+  if (margins.length === 0) return { lines: lines.map((line) => [...line]), runs: [], items: 0 };
+  const marginOf = (item: PlacedTextItem): number =>
+    margins.findIndex((interval) => item[2] >= interval.left && item[2] + item[4] <= interval.right);
+
+  // Take the items off their lines, fragment by line, and group the
+  // fragments of one margin on consecutive lines into a run.
+  const runs: string[] = [];
+  let items = 0;
+  const open = new Map<number, string[]>(); // margin index → the run's lines so far
+  const close = (margin: number): void => {
+    const fragments = open.get(margin);
+    if (fragments === undefined) return;
+    open.delete(margin);
+    const run = joinBrokenLines(fragments).join("\n");
+    if (run.trim() !== "") runs.push(run);
+  };
+  const kept = lines.map((line, index) => {
+    if (isFurniture(index)) {
+      for (const margin of [...open.keys()]) close(margin);
+      return [...line];
+    }
+    // The note's own word spaces (blank items inside the margin) travel
+    // with it; the blank that spans the gutter starts in the column and
+    // stays on the line.
+    const taken = takeFromLine(line, (item) => placed(item) && marginOf(item) >= 0);
+    items += taken.taken.filter(isInk).length;
+    const fragments = new Map<number, string>();
+    for (const item of taken.taken) {
+      const margin = marginOf(item as PlacedTextItem);
+      fragments.set(margin, `${fragments.get(margin) ?? ""}${item[0]}`);
+    }
+    for (const margin of [...open.keys()]) if (!fragments.has(margin)) close(margin);
+    for (const [margin, text] of fragments) {
+      const fragment = text.trim();
+      if (fragment === "") continue;
+      const collected = open.get(margin) ?? [];
+      collected.push(fragment);
+      open.set(margin, collected);
+    }
+    return taken.kept;
+  });
+  for (const margin of [...open.keys()]) close(margin);
+  return { lines: kept, runs, items };
+}
+
+/**
+ * Join hyphen-broken lines: a line ending in `-` whose continuation starts
+ * lowercase is one word the stream never broke. Applied across page
+ * boundaries too.
+ */
+function joinBrokenLines(lines: readonly string[]): string[] {
+  const joined: string[] = [];
+  for (const line of lines) {
+    const previous = joined[joined.length - 1];
+    if (previous !== undefined && /-\s*$/u.test(previous) && /^\s*\p{Ll}/u.test(line)) {
+      joined[joined.length - 1] = previous.replace(/-\s*$/u, "") + line.replace(/^\s+/u, "");
+    } else {
+      joined.push(line);
+    }
+  }
+  return joined;
 }
 
 /** A well-formed roman numeral, upper or lower case, i to mmmmcmxcix — the
@@ -213,6 +381,12 @@ export interface AssembledPdfText {
   headerLines: number;
   /** How many margin line-number items were stripped. */
   marginNumbers: number;
+  /** The margin text runs taken off the body lines (`extractMarginText`),
+   * in page and line order, hyphen-joined; `judgeWebOracle` settles them
+   * against the stream side. */
+  marginText: string[];
+  /** How many text items those runs took off the lines. */
+  marginTextItems: number;
 }
 
 /**
@@ -243,13 +417,21 @@ export function assemblePdfText(pages: ExtractedTextItem[][]): AssembledPdfText 
   let folioLines = 0;
   let headerLines = 0;
   let marginNumbers = 0;
+  const marginText: string[] = [];
+  let marginTextItems = 0;
   const kept: string[] = [];
   for (const rawLines of pageItems) {
     // The text column is measured without the running head, whose folio
-    // or right-set title would widen it past the margin numbers.
-    const stripped = stripMarginNumbers(rawLines, (index) => isHead(rawLines, index));
+    // or right-set title would widen it past the margin numbers. Numbers
+    // first: what lineno sets is dropped, not settled, because the stream
+    // drops it too; the margin text rule then sees a page without them.
+    const isFurniture = (index: number): boolean => isHead(rawLines, index);
+    const stripped = stripMarginNumbers(rawLines, isFurniture);
     marginNumbers += stripped.stripped;
-    const lines = stripped.lines.map(lineText);
+    const margins = extractMarginText(stripped.lines, isFurniture);
+    marginText.push(...margins.runs);
+    marginTextItems += margins.items;
+    const lines = margins.lines.map(lineText);
     let sawFirst = false;
     for (const line of lines) {
       if (line.trim() === "") continue;
@@ -267,18 +449,7 @@ export function assemblePdfText(pages: ExtractedTextItem[][]): AssembledPdfText 
       kept.push(line);
     }
   }
-  // Hyphenation joining, across page boundaries too: a line ending in `-`
-  // whose continuation starts lowercase is one word the stream never broke.
-  const joined: string[] = [];
-  for (const line of kept) {
-    const previous = joined[joined.length - 1];
-    if (previous !== undefined && /-\s*$/u.test(previous) && /^\s*\p{Ll}/u.test(line)) {
-      joined[joined.length - 1] = previous.replace(/-\s*$/u, "") + line.replace(/^\s+/u, "");
-    } else {
-      joined.push(line);
-    }
-  }
-  return { text: joined.join("\n"), folioLines, headerLines, marginNumbers };
+  return { text: joinBrokenLines(kept).join("\n"), folioLines, headerLines, marginNumbers, marginText, marginTextItems };
 }
 
 export interface TokenRunRemoval {
@@ -458,27 +629,65 @@ export function relocateRuns<T extends { text: string }>(
   streamTokens: readonly string[],
   relocated: readonly T[],
 ): RelocationResult<T> {
-  let pdf = [...pdfTokens];
-  const stream = [...streamTokens];
+  const settled = settleRuns(pdfTokens, streamTokens, relocated);
+  return {
+    pdfTokens: settled.carrier,
+    streamTokens: settled.other,
+    matched: settled.matched,
+    matchedTokens: settled.matchedTokens,
+    unmatched: settled.unmatched,
+    unmatchedTokens: settled.unmatchedTokens,
+  };
+}
+
+export interface RunSettlement<T> {
+  /** The side the runs were looked for on, with the found ones removed. */
+  carrier: string[];
+  /** The side the runs came from, with the ones not found appended. */
+  other: string[];
+  matched: number;
+  matchedTokens: number;
+  /** The runs the carrier does not hold contiguously, in input order. */
+  unmatched: T[];
+  unmatchedTokens: number;
+}
+
+/**
+ * Settle runs one substrate is known to hold out of order — the mechanism
+ * behind `relocateRuns`, with the sides named by role. A run is looked for
+ * on the `carrier` side as a contiguous token run (on characters, boundaries
+ * aside); found, it is removed there and added nowhere, since the `other`
+ * side already had it taken out; not found, its tokens are appended to the
+ * `other` side, where the comparison still sees them as text the carrier
+ * lacks. The multiset difference between the two sides is exactly what it
+ * was; only the order evidence for the declared runs is given up.
+ */
+export function settleRuns<T extends { text: string }>(
+  carrierTokens: readonly string[],
+  otherTokens: readonly string[],
+  runs: readonly T[],
+): RunSettlement<T> {
+  let carrier = [...carrierTokens];
+  const other = [...otherTokens];
   let matched = 0;
   let matchedTokens = 0;
   const unmatched: T[] = [];
   let unmatchedTokens = 0;
-  for (const paragraph of relocated) {
+  for (const paragraph of runs) {
     const run = oracleTokens(paragraph.text);
     if (run.length === 0) continue; // marker-only, or a footnote of pure symbols
-    const removal = removeTokenRun(pdf, run);
+    const removal = removeTokenRun(carrier, run);
     if (removal.removed) {
-      pdf = removal.tokens;
+      carrier = removal.tokens;
       matched += 1;
       matchedTokens += removal.removedTokens;
     } else {
-      stream.push(...run);
+      other.push(...run);
       unmatched.push(paragraph);
       unmatchedTokens += run.length;
     }
   }
-  return { pdfTokens: pdf, streamTokens: stream, matched, matchedTokens, unmatched, unmatchedTokens };
+  return { carrier, other, matched, matchedTokens, unmatched, unmatchedTokens };
 }
 
 // ── token-boundary merging ─────────────────────────────────────────────────
@@ -869,6 +1078,10 @@ export interface WebOracleJudgment<T extends { text: string }> {
   pdfTokens: string[];
   streamTokens: string[];
   relocation: RelocationResult<T>;
+  /** The PDF's margin text runs (`assembled.marginText`) settled against
+   * the stream side: `matched` were found there and taken off it,
+   * `unmatched` went back onto the PDF side. */
+  margin: RunSettlement<{ text: string }>;
   subtraction: UnreferencedSubtraction<T>;
   /** The boundary merge that produced the compared sequences. */
   merge: BoundaryMerge;
@@ -899,12 +1112,24 @@ export function judgeWebOracle<T extends { text: string }>(input: WebOracleInput
   // the subtraction's "does the stream carry it" check sees every
   // relocated paragraph, matched or not, beside the in-place text.
   const relocation = relocateRuns(extracted, inPlace, input.stream.relocated);
+  // The mirror image for the PDF's margin text: the assembly took each
+  // `\marginpar` note off the body lines pdf.js spliced it into; the
+  // stream carries the note as a paragraph in reading order, so it comes
+  // off the stream side where found. A note the stream does not carry goes
+  // back onto the PDF side *before* the subtraction, where an unreferenced
+  // capture of it — a serializer that dropped the note — is still found,
+  // forgiven within the budget, and named.
+  const margin = settleRuns(
+    relocation.streamTokens,
+    relocation.pdfTokens,
+    assembled.marginText.map((text) => ({ text })),
+  );
   const carried = [...inPlace, ...input.stream.relocated.flatMap((paragraph) => oracleTokens(paragraph.text))];
-  const subtraction = subtractUnreferenced(relocation.pdfTokens, carried, input.stream.unreferenced);
+  const subtraction = subtractUnreferenced(margin.other, carried, input.stream.unreferenced);
   // Last, once both sides hold what they will be compared on: the
   // boundary-only divergences fold away, and the sequences reported and
   // dumped are the folded ones, so a diff of them shows the residue.
-  const merge = mergeTokenBoundaries(subtraction.tokens, relocation.streamTokens);
+  const merge = mergeTokenBoundaries(subtraction.tokens, margin.carrier);
   const pdfTokens = merge.pdfTokens;
   const streamTokens = merge.streamTokens;
   const verdict = compareTokens(pdfTokens, streamTokens, input.floor);
@@ -912,10 +1137,12 @@ export function judgeWebOracle<T extends { text: string }>(input: WebOracleInput
   const first = compareTokens(pdfTokens, streamTokens, 1);
   return {
     assembled,
-    pdfTokenCount: extracted.length,
+    // the margin runs are the PDF's tokens too, taken off before tokenizing
+    pdfTokenCount: extracted.length + assembled.marginText.reduce((sum, text) => sum + oracleTokens(text).length, 0),
     pdfTokens,
     streamTokens,
     relocation,
+    margin,
     subtraction,
     merge,
     verdict,

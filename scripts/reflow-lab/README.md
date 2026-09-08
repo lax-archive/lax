@@ -156,7 +156,8 @@ code `encodeAndSealWebBundle` runs (`paper/web.ts`): `stream.json` through
 the deriver's `parseStreamReport`, the PDF's text layer through pdf.js, and
 both into `judgeWebOracle` (`paper/web-oracle.ts`) — assembly with the
 furniture stripped (folios, running heads, margin line numbers), the
-relocated footnotes settled against the PDF, `subtractUnreferenced` under
+relocated footnotes settled against the PDF, the PDF's margin text
+(`\marginpar` notes) settled against the stream, `subtractUnreferenced` under
 its budget, `compareTokens` at the production floor for the verdict and the
 divergence. The lab adds one more comparison at 0.5 for the number
 (`bounded: true` means the pair is under 0.5 and the number is the bound

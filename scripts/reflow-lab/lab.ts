@@ -323,6 +323,13 @@ interface OracleReport {
   folioLines: number;
   headerLines: number;
   marginNumbers: number;
+  /** The PDF's margin text runs (`\marginpar` notes pdf.js splices into
+   * the body lines): how many the assembly took off, how many the stream
+   * carried and were taken off its side, and how many it lacked, which
+   * went back onto the PDF side. */
+  marginTextRuns: number;
+  marginTextMatched: number;
+  marginTextUnmatched: number;
   /** The stream's relocated paragraphs (footnotes set as endnotes): how
    * many the PDF carried and were taken off its side, the tokens that
    * took, and how many it lacked, which stand on the stream side. */
@@ -431,6 +438,9 @@ async function recomputeOracle(jobDir: string, main: string, limits: ValidationL
     folioLines: judged.assembled.folioLines,
     headerLines: judged.assembled.headerLines,
     marginNumbers: judged.assembled.marginNumbers,
+    marginTextRuns: judged.assembled.marginText.length,
+    marginTextMatched: judged.margin.matched,
+    marginTextUnmatched: judged.margin.unmatched.length,
     relocatedParagraphs: stream.relocated.length,
     relocatedMatched: judged.relocation.matched,
     relocatedTokens: judged.relocation.matchedTokens,

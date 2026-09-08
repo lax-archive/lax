@@ -47,7 +47,7 @@ compile's 10: externalization re-runs the whole document once per picture,
 so a long figure-rich paper costs figures × pages. Exceeding it is a skip
 with a note, not a failure.
 
-**The text cross-check gained three tolerances.** The archive compares the
+**The text cross-check gained four tolerances.** The archive compares the
 derived view's text against the PDF's before it will show the view, and
 that comparison is order-sensitive, so anything the renderer deliberately
 moves used to be charged twice. It now (a) settles each *relocated*
@@ -61,8 +61,15 @@ puts them in the text layer where pdf.js glues them onto the neighbouring
 word; and (c) reads a **vector picture's own text** (a tikz label, a
 figure's lettering) from the export and folds it into the derived side at
 the picture's position, since the PDF's text layer has it and the node list
-does not. Each tolerance still errs towards a skip: none of them can hide
-text one substrate shows and the other does not.
+does not; and (d, 2026-09-08) settles **margin text** — a `\marginpar`
+note, which the view carries as a paragraph of its own in reading order
+while pdf.js splices its lines into the body lines they share a baseline
+with — the way it settles footnotes, recognised geometrically as the items
+of a narrow ink interval a clear gutter away from the page's text column:
+taken off the PDF side and removed from the view's side where the view
+carries them, put back on the PDF side where it does not. Each tolerance
+still errs towards a skip: none of them can hide text one substrate shows
+and the other does not.
 
 Spec touchpoints: Build Pipeline (the web derivation's own compile limit
 and its injected shims); Archive Database (nothing changes in the recorded
