@@ -34,6 +34,7 @@ import {
   type WebDerivation,
   type WebDeriver,
   parseEncodeReport,
+  parseStreamReport,
 } from "../../src/submission-validation/paper/web.js";
 import { tmpDir } from "../support/host.js";
 
@@ -219,6 +220,7 @@ describe("paper phase web threading", () => {
 interface StandInStream {
   text: string;
   unreferenced?: string[];
+  relocated?: string[];
 }
 
 /**
@@ -234,6 +236,7 @@ function standInFork(stream: StandInStream): ReflowtexInstallation {
     markers: [],
     text: stream.text,
     unreferenced: (stream.unreferenced ?? []).map((text) => ({ text, markers: [] })),
+    ...(stream.relocated === undefined ? {} : { relocated: stream.relocated.map((text) => ({ text, markers: [] })) }),
   };
   const script = path.join(root, "encode_web.mjs");
   fs.writeFileSync(
@@ -372,6 +375,35 @@ describe("the oracle over the encode reports", () => {
     expect(derivation.web).toBeDefined();
   });
 
+  it("seals a view whose footnote the stream sets as an endnote, without a warning", async () => {
+    // The print sets the footnote at the page bottom, after the body; the
+    // stream carries it as an endnote and says so. The move costs nothing.
+    const footnote = "1 A footnote the print sets at the page bottom and the stream at the very end.";
+    // The page bottom falls after the third body line; the print sets the
+    // footnote there, then the body goes on.
+    const printed = [...body.slice(0, 3), footnote, ...body.slice(3)];
+    const { derivation, bundlePath } = await derive(printed, {
+      text: body.join(" "),
+      relocated: [footnote],
+    });
+    expect(derivation.warnings).toEqual([]);
+    expect(derivation.web).toBeDefined();
+    expect(fs.existsSync(bundlePath)).toBe(true);
+    // Undeclared, the same stream is a divergence the floor does not absorb.
+    const undeclared = await derive(printed, { text: [...body, footnote].join(" ") });
+    expect(undeclared.derivation.web).toBeUndefined();
+    expect(undeclared.derivation.warnings.map((warning) => warning.rule)).toEqual(["web-oracle"]);
+  });
+
+  it("skips when a relocated footnote is not in the PDF at all", async () => {
+    const footnote = "1 A footnote the print sets at the page bottom and the stream at the very end.";
+    const { derivation, bundlePath } = await derive(body, { text: body.join(" "), relocated: [footnote] });
+    expect(derivation.web).toBeUndefined();
+    expect(fs.existsSync(bundlePath)).toBe(false);
+    expect(derivation.warnings.map((warning) => warning.rule)).toEqual(["web-oracle"]);
+    expect(derivation.warnings[0]!.message).toContain("diverges from the PDF text");
+  });
+
   it("skips, loudly, when the stream really does diverge from the PDF", async () => {
     const printOnly = Array.from(
       { length: 6 },
@@ -449,6 +481,32 @@ describe("join passthrough", () => {
     expect(joined.problems).toEqual([]);
     expect(joined.output!.web).toBeUndefined();
     expect("web" in joined.output!).toBe(false);
+  });
+});
+
+describe("the stream report, parsed as data", () => {
+  const base = { markers: [{ side: "b", n: 1, at: "paragraph" }], text: "body", unreferenced: [] };
+
+  it("accepts a report without relocated paragraphs, as an older child writes it", () => {
+    expect(parseStreamReport(base)).toEqual({
+      markers: [{ side: "b", n: 1, at: "paragraph" }],
+      text: "body",
+      unreferenced: [],
+      relocated: [],
+    });
+  });
+
+  it("accepts relocated paragraphs with their text and markers", () => {
+    const parsed = parseStreamReport({ ...base, relocated: [{ text: "a footnote", markers: [["e", 1]] }] });
+    expect(parsed.relocated).toEqual([{ text: "a footnote", markers: [["e", 1]] }]);
+  });
+
+  it("rejects a relocated list of the wrong shape", () => {
+    expect(() => parseStreamReport({ ...base, relocated: "footnote" })).toThrow("relocated must be an array");
+    expect(() => parseStreamReport({ ...base, relocated: [{ text: "no markers" }] })).toThrow("invalid relocated paragraph");
+    expect(() => parseStreamReport({ ...base, relocated: [{ text: 7, markers: [] }] })).toThrow("invalid relocated paragraph");
+    expect(() => parseStreamReport({ ...base, relocated: ["a footnote"] })).toThrow("relocated paragraph must be an object");
+    expect(() => parseStreamReport({ ...base, unreferenced: [{ text: "no markers" }] })).toThrow("invalid unreferenced paragraph");
   });
 });
 

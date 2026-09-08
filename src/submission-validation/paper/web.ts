@@ -30,13 +30,9 @@ import { engineAvailable, laxmarkDirectory, MIN_LATEXMK_VERSION, probeLatexmkAsy
 import { REFLOWTEX_REV } from "../pins.js";
 import { oneLineTail, paperJobName } from "./compile.js";
 import { extractPdfText } from "./extract.js";
+import type { ExtractedTextItem } from "./extract-destinations.js";
 import { copyPaperFolder } from "./phase.js";
-import {
-  assemblePdfText,
-  compareTokens,
-  oracleTokens,
-  subtractUnreferenced,
-} from "./web-oracle.js";
+import { judgeWebOracle } from "./web-oracle.js";
 
 /** What the paper phase hands a web deriver, after the PDF path succeeded. */
 export interface WebDeriveInput {
@@ -246,10 +242,21 @@ function padding(size: number): Buffer {
 
 // ── the encode child's reports, parsed as data ─────────────────────────────
 
-interface StreamReport {
+export interface StreamParagraph {
+  text: string;
+  markers: Array<[string, number]>;
+}
+
+export interface StreamReport {
   markers: StreamMarkerInstance[];
   text: string;
-  unreferenced: Array<{ text: string; markers: Array<[string, number]> }>;
+  /** Captured paragraphs the page stream never references. */
+  unreferenced: StreamParagraph[];
+  /** Referenced paragraphs the stream carries out of page order — the
+   * footnotes it sets as endnotes. Optional in the report (an older child
+   * relocates nothing); their text is kept out of `text`, their markers
+   * stay counted in `markers`. */
+  relocated: StreamParagraph[];
 }
 
 interface EncodeReport {
@@ -260,7 +267,7 @@ interface EncodeReport {
   droppedPictures: number;
 }
 
-function parseStreamReport(value: unknown): StreamReport {
+export function parseStreamReport(value: unknown): StreamReport {
   const object = asObject(value, "stream report");
   if (!Array.isArray(object.markers)) throw new Error("stream report: markers must be an array");
   const markers = object.markers.map((entry): StreamMarkerInstance => {
@@ -272,15 +279,18 @@ function parseStreamReport(value: unknown): StreamReport {
     return { side: marker.side, n: marker.n as number, at: marker.at };
   });
   if (typeof object.text !== "string") throw new Error("stream report: text must be a string");
-  if (!Array.isArray(object.unreferenced)) throw new Error("stream report: unreferenced must be an array");
-  const unreferenced = object.unreferenced.map((entry) => {
-    const paragraph = asObject(entry, "unreferenced paragraph");
-    if (typeof paragraph.text !== "string" || !Array.isArray(paragraph.markers)) {
-      throw new Error("stream report: invalid unreferenced paragraph");
-    }
-    return { text: paragraph.text, markers: paragraph.markers as Array<[string, number]> };
-  });
-  return { markers, text: object.text, unreferenced };
+  const paragraphs = (key: "unreferenced" | "relocated", fallback?: unknown[]): StreamParagraph[] => {
+    const raw = object[key] ?? fallback;
+    if (!Array.isArray(raw)) throw new Error(`stream report: ${key} must be an array`);
+    return raw.map((entry) => {
+      const paragraph = asObject(entry, `${key} paragraph`);
+      if (typeof paragraph.text !== "string" || !Array.isArray(paragraph.markers)) {
+        throw new Error(`stream report: invalid ${key} paragraph`);
+      }
+      return { text: paragraph.text, markers: paragraph.markers as Array<[string, number]> };
+    });
+  };
+  return { markers, text: object.text, unreferenced: paragraphs("unreferenced"), relocated: paragraphs("relocated", []) };
 }
 
 export function parseEncodeReport(value: unknown): EncodeReport {
@@ -388,7 +398,7 @@ export function webCompileProblem(
       rule: "web-compile",
       message:
         (result.code === 124 || result.timedOut === true
-          ? `the reflow view was not derived: the web compile did not finish within ${Math.round(limits.paperCompileTimeoutMs / 60_000)} minutes`
+          ? `the reflow view was not derived: the web compile did not finish within ${Math.round(limits.paperWebCompileTimeoutMs / 60_000)} minutes`
           : `the reflow view was not derived: lualatex failed under laxreflow (latexmk exit ${result.code})`) +
         `; the end of the transcript: ${oneLineTail(result.output, limits.paperLogTailChars)}`,
     };
@@ -558,22 +568,22 @@ export async function encodeAndSealWebBundle(
   }
 
   // ── the oracle: PDF text layer vs stream glyph text ────────────────────
-  let pdfTokens: string[];
+  let pages: ExtractedTextItem[][];
   try {
-    const pages = await extractPdfText(input.pdfPath, {
+    pages = await extractPdfText(input.pdfPath, {
       timeoutMs: input.limits.paperExtractTimeoutMs,
       maxOutputBytes: input.limits.maxOutputBytes,
     });
-    pdfTokens = oracleTokens(assemblePdfText(pages).text);
   } catch (error) {
     return skip("web-oracle", `the reflow view was not derived: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const streamTokens = oracleTokens(stream.text);
-  // The subtraction of unreferenced captures and the budget that bounds it
-  // are one decision, taken in the oracle (web-oracle.ts): the PDF side may
-  // never be trimmed here without the bound that keeps the trimmed remnant
-  // the same document.
-  const subtracted = subtractUnreferenced(pdfTokens, streamTokens, stream.unreferenced);
+  // The whole verdict — assembly, tokenization, the relocated footnotes,
+  // the subtraction of unreferenced captures and the budget that bounds
+  // it, the comparison — is one decision, taken in the oracle
+  // (web-oracle.ts) and shared with the reflow lab's recompute: the PDF
+  // side is never trimmed here, and nothing here restates the rules.
+  const judged = judgeWebOracle({ pdfPages: pages, stream, floor: input.limits.paperWebOracleSimilarity });
+  const subtracted = judged.subtraction;
   for (const paragraph of subtracted.omitted) {
     // The cheap loud diagnostic for \marginpar and friends: text the
     // reflow surface will not show, named, whether or not the web view
@@ -593,12 +603,12 @@ export async function encodeAndSealWebBundle(
     return skip(
       "web-unreferenced-cap",
       `the reflow view was not derived: the page stream never references ${subtracted.omitted.length} captured ` +
-        `paragraph(s) carrying ${subtracted.removedTokens} of the PDF's ${pdfTokens.length} tokens, past the ` +
+        `paragraph(s) carrying ${subtracted.removedTokens} of the PDF's ${judged.pdfTokenCount} tokens, past the ` +
         `${subtracted.budgetTokens} the oracle forgives as marginal text for a document this size; ` +
         "the reflow view would show a different paper than the PDF beside it",
     );
   }
-  const verdict = compareTokens(subtracted.tokens, streamTokens, input.limits.paperWebOracleSimilarity);
+  const verdict = judged.verdict;
   if (verdict.divergence !== undefined) {
     return skip(
       "web-oracle",
@@ -723,7 +733,7 @@ export function hostWebDeriver(options: { echo?: boolean } = {}): WebDeriver {
         ...webCompileEnvironment(webSrc, styDir, input.sourceDateEpoch),
         PATH: process.env.PATH ?? "/usr/bin:/bin",
       },
-      timeoutMs: input.limits.paperCompileTimeoutMs,
+      timeoutMs: input.limits.paperWebCompileTimeoutMs,
       maxOutputBytes: input.limits.maxOutputBytes,
     });
     const compileProblem = webCompileProblem(compile, webSrc, paper.manifest.main, input.limits);

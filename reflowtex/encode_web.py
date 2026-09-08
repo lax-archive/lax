@@ -12,14 +12,22 @@ ReflowTeX source. Runs inside reflowtex/venv — the hash-pinned environment
         [--fonts <dir>]
 
 reads the injected lualatex run's `<job>/output.json` (plus `<job>/pics/`
-for externalized tikz pictures), and writes into `<out>/`:
+for externalized tikz pictures, and the `<picture>.txt` the trusted export
+leaves beside a converted picture's SVG — its page's text, for the oracle
+only), and writes into `<out>/`:
 
   - `stream.json` — the oracle's stream side, taken from the *pristine*
     node list before any transform rewrites glyph codepoints: the
     linearized glyph text of referenced content, every marker instance in
-    referenced content (`at: paragraph|stream`), and each unreferenced
+    referenced content (`at: paragraph|stream`), each unreferenced
     paragraph with its text and trapped markers (the `\\marginpar`
-    diagnostic; the glyphless hoist leaves marker-only ones here too);
+    diagnostic; the glyphless hoist leaves marker-only ones here too),
+    and under `relocated` each paragraph the serializer moved out of
+    page order — footnotes, which the stream carries as endnotes while
+    the PDF keeps them at page bottoms — with its text and markers, in
+    stream order. A relocated paragraph is referenced content: its text
+    is kept out of `text` (the oracle matches it against the PDF on its
+    own) but its markers stay counted in `markers`;
   - `blocks/000.pb` — the encoded document, after the fork's proven
     transform order (convert_pictures, strip_unsupported_nodes, the two
     font normalisations, deterministic serialization);
@@ -77,9 +85,20 @@ def _is_legacy(info: dict) -> bool:
     return not filename.lower().endswith((".otf", ".ttf"))
 
 
-def decode_glyph(char: int, info: dict | None) -> str:
-    """A glyph's contribution to the oracle text; '' when undecodable."""
+def decode_glyph(char: int, info: dict | None, text: str | None = None) -> str:
+    """A glyph's contribution to the oracle text; '' when undecodable.
+
+    `text` is the serializer's reading of the glyph when its codepoint is
+    not its text (a ligature, a small cap, an old-style figure — see the
+    serializer's "Glyph text"): for an OpenType face it wins outright, so
+    a private-use codepoint that carries text is never dropped. Without
+    it a PUA glyph behaves as before — its codepoint is emitted verbatim
+    (Plane 0/15 PUA), which the tokenizer discards as neither letter nor
+    digit. Legacy 8-bit faces keep their slot tables regardless.
+    """
     if info is None or not _is_legacy(info):
+        if isinstance(text, str) and text != "":
+            return text
         if 0x20 <= char < 0xF0000:
             return chr(char)
         return ""
@@ -120,15 +139,88 @@ def linearize(nodes, fonts, out, markers):
             char = n.get("char")
             font = fonts.get(str(n.get("font", "")))
             if isinstance(char, int):
-                out.append(decode_glyph(char, font))
+                out.append(decode_glyph(char, font, n.get("text")))
         elif t == "glue":
-            out.append(" ")
+            # A glue is a word break when it has natural width, as interword
+            # glue does. A zero-width glue is padding — listings' `\hss`
+            # around each column-aligned character, `\hfil` alignment fill,
+            # `\hspace{0pt}` — whose *set* width pdf.js does not read as a
+            # space either (it sets to a fraction of an em at most), so it
+            # separates nothing; splitting there read "f o r" for "for".
+            if (n.get("width") or 0) > 0:
+                out.append(" ")
         elif t == "disc":
             linearize(n.get("replace") or [], fonts, out, markers)
+        elif t == "picture":
+            # The picture's own text (a tikz label, a vector figure's
+            # caption inside the drawing) is in the PDF's text layer but
+            # not in the node list; `attach_picture_texts` read it from
+            # the export's sidecar. Spaces around it: it is never part of
+            # a neighbouring word.
+            text = n.get(PICTURE_TEXT_KEY)
+            if isinstance(text, str) and text != "":
+                out.append(" " + text + " ")
         else:
             children = n.get("children")
             if children:
                 linearize(children, fonts, out, markers)
+
+
+# ── picture text (oracle side only) ────────────────────────────────────────
+
+# The node key the sidecar text is stashed under. Not a schema field, so the
+# fork's `fill` drops it on the way into the block (encode_pb.NOT_ENCODED
+# style): the rendered SVG already carries the picture, and this text exists
+# only to meet the PDF's text layer in stream.json.
+PICTURE_TEXT_KEY = "lax_oracle_text"
+# What the trusted converter caps a picture's text at (web-container.ts,
+# MAX_TEXT_BYTES); read here to the same bound so a planted file cannot
+# grow the stream past it.
+PICTURE_TEXT_BYTES = 64 * 1024
+
+
+def read_picture_text(job: Path, src: str) -> str:
+    """The `<job>/<src>.txt` the export left beside `<src>.svg`, whitespace
+    collapsed, or '' when there is none (a downsampled raster carries no
+    text; a picture the converter refused has no sidecar either)."""
+    try:
+        with open(job / f"{src}.txt", "rb") as handle:
+            data = handle.read(PICTURE_TEXT_BYTES)
+    except OSError:
+        return ""
+    return " ".join(data.decode("utf-8", errors="ignore").split())
+
+
+def attach_picture_texts(data: dict, job: Path) -> int:
+    """Stash each sourced picture node's sidecar text on the node, before
+    convert_pictures pops the `file` the sidecar is named after. Returns
+    how many pictures carried text."""
+    attached = 0
+
+    def walk(nodes) -> None:
+        nonlocal attached
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            if n.get("type") == "picture":
+                src = n.get("file")
+                text = read_picture_text(job, src) if isinstance(src, str) and src else ""
+                if text:
+                    n[PICTURE_TEXT_KEY] = text
+                    attached += 1
+            for key in ("children", "replace", "pre", "post", "nobreak"):
+                if n.get(key):
+                    walk(n[key])
+            if n.get("leader"):
+                walk([n["leader"]])
+
+    for paragraph in data.get("paragraphs", []):
+        walk(paragraph.get("nodes", []))
+    for item in data.get("content", []):
+        box = item.get("box") if isinstance(item, dict) else None
+        if isinstance(box, dict):
+            walk(box.get("children", []))
+    return attached
 
 
 def fonts_table(data: dict) -> dict:
@@ -146,19 +238,35 @@ def stream_report(data: dict) -> dict:
 
     markers: list = []
     pieces: list = []
+    relocated: list = []
     for item in data.get("content", []):
         kind = item.get("kind")
         if kind == "paragraph":
             index = item.get("para")
             if isinstance(index, int) and 1 <= index <= len(paragraphs):
+                paragraph = paragraphs[index - 1]
                 para_markers: list = []
                 para_pieces: list = []
-                linearize(paragraphs[index - 1].get("nodes", []), fonts, para_pieces, para_markers)
+                linearize(paragraph.get("nodes", []), fonts, para_pieces, para_markers)
                 # In-paragraph markers surface in stream order beside the
                 # stream items; their intra-paragraph order is preserved.
+                # A relocated paragraph's markers are counted the same way
+                # — a marker inside a footnote is still a marker instance
+                # in referenced content — while its text goes aside.
                 for m in para_markers:
                     markers.append({**m, "at": "paragraph"})
-                pieces.append("".join(para_pieces))
+                # The serializer marks a footnote's paragraphs with the
+                # footnote's ordinal (an earlier serializer said `true`;
+                # both read as relocated). A `footnote_ref` node in the
+                # body carries no text and falls through `linearize`.
+                footnote = paragraph.get("footnote")
+                if isinstance(footnote, int) and footnote > 0:
+                    relocated.append({
+                        "text": "".join(para_pieces),
+                        "markers": [[m.get("side"), m.get("n")] for m in para_markers],
+                    })
+                else:
+                    pieces.append("".join(para_pieces))
         elif kind == "marker":
             markers.append({"side": item.get("side"), "n": item.get("n"), "at": "stream"})
         elif "box" in item:
@@ -181,7 +289,12 @@ def stream_report(data: dict) -> dict:
             "markers": [[m.get("side"), m.get("n")] for m in para_markers],
         })
 
-    return {"markers": markers, "text": "\n".join(pieces), "unreferenced": unreferenced}
+    return {
+        "markers": markers,
+        "text": "\n".join(pieces),
+        "unreferenced": unreferenced,
+        "relocated": relocated,
+    }
 
 
 # ── main ───────────────────────────────────────────────────────────────────
@@ -220,6 +333,9 @@ def main() -> None:
     # hook never stamped — degrade to width-keeping kerns and are counted;
     # the deriver turns the count into a `web-pictures-dropped` warning.
     dropped_pictures: list = []
+    # (lax) The pictures' own text, for the oracle's stream side: read
+    # before convert_pictures pops each node's `file`.
+    picture_texts = attach_picture_texts(data, job)
     transforms.convert_pictures(data, job, dropped_pictures)
     transforms.strip_unsupported_nodes(data)
     transforms.normalise_legacy_font_addressing(data, pipe.fonts)
@@ -250,7 +366,8 @@ def main() -> None:
         "fonts": font_map,
         "droppedPictures": len(dropped_pictures),
     }))
-    print(f"encoded {len(blob)} bytes; {len(font_map)} font(s)")
+    print(f"encoded {len(blob)} bytes; {len(font_map)} font(s); "
+          f"{picture_texts} picture text(s) folded into the oracle stream")
 
 
 if __name__ == "__main__":

@@ -74,13 +74,16 @@ export const PAPER_IMAGE = `${PAPER_IMAGE_NAME}@sha256:${PAPER_IMAGE_DIGEST}`;
  * `reflowtex/README.md`. fetch.mjs parses these two constants, so this
  * module stays the single source of truth.
  *
- * This rev adds the `image` element with magic-number-checked PNG/JPEG
- * data URIs to the sanitizer and lets the encode consume a pre-converted
- * `<src>.svg` with no `<src>.pdf` beside it (the `\includegraphics`
- * slots), plus a comment on what the dvisvgm seam is for now.
+ * This rev (the 2026-09-08 corpus pass, `history/reflow-maturation-20260908.md`)
+ * walks boxes, columns, vertical rules and footnotes in the shipout walk,
+ * addresses legacy Type1 and ligature glyphs by their Unicode meaning,
+ * records the page an included picture shows, and carries footnote
+ * references, footnote ordinals and the paragraph band width in the wire
+ * format (`fnref`, `footnote_ref`, `Paragraph.width`, `Paragraph.footnote`
+ * — the surface `reflowtex/fetch.mjs` asserts).
  */
 export const REFLOWTEX_URL = "https://github.com/lax-archive/reflowtex";
-export const REFLOWTEX_REV = "61dc460c117a7ab121d761563bef8e3f91610956";
+export const REFLOWTEX_REV = "907fe6243edbe166dcf56f691fce51dedad7de07";
 
 /**
  * PyMuPDF, the paper web view's picture converter (TODO.md, "Transparency in

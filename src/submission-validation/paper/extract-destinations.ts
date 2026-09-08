@@ -5,8 +5,10 @@
 //
 //   node extract-destinations.js [--text] <pdf>
 //
-// `--text` additionally emits each page's text items as `[str, hasEOL]`
-// pairs — the PDF side of the web derivation's oracle (paper-web-plan.md).
+// `--text` additionally emits each page's text items as
+// `[str, hasEOL, x, y, width]` tuples — the PDF side of the web derivation's
+// oracle (paper-web-plan.md); the geometry is what lets the oracle tell a
+// margin line number from a number in the text.
 //
 // pdf.js runs on the host of the job, never in the TeX image (which has no
 // node); on the trusted path that host is the credential-free Validate job.
@@ -24,7 +26,9 @@ interface PdfDocumentLike {
   numPages: number;
   getPage(index: number): Promise<{
     view: number[];
-    getTextContent(): Promise<{ items: Array<{ str?: string; hasEOL?: boolean }> }>;
+    getTextContent(): Promise<{
+      items: Array<{ str?: string; hasEOL?: boolean; transform?: number[]; width?: number }>;
+    }>;
   }>;
   getDestinations(): Promise<Map<string, unknown[]> | Record<string, unknown[]>>;
   getPageIndex(ref: unknown): Promise<number>;
@@ -40,9 +44,13 @@ export interface ExtractedDestination {
   y: number;
 }
 
-/** One text item of a page: the string and whether pdf.js marks a line end
- * after it. A tuple keeps a chapter-scale emission compact. */
-export type ExtractedTextItem = [string, 0 | 1];
+/** One text item of a page: the string, whether pdf.js marks a line end
+ * after it, and — when the reader supplied them — its position and advance
+ * in page units (points from the page's lower left corner, the baseline
+ * origin of the item's transform, and its width). A tuple keeps a
+ * chapter-scale emission compact; the geometry is optional so a bare
+ * `[str, eol]` pair stays a valid item for consumers that need only text. */
+export type ExtractedTextItem = [text: string, eol: 0 | 1, x?: number, y?: number, width?: number];
 
 export interface ExtractedPdf {
   pages: number;
@@ -71,10 +79,21 @@ async function main(pdfPath: string, withText: boolean): Promise<ExtractedPdf> {
       pageSizes.push([round(x1 - x0), round(y1 - y0)]);
       if (withText) {
         const content = await page.getTextContent();
-        text.push(content.items.map((item): ExtractedTextItem => [
-          typeof item.str === "string" ? item.str : "",
-          item.hasEOL === true ? 1 : 0,
-        ]));
+        text.push(content.items.map((item): ExtractedTextItem => {
+          const transform = Array.isArray(item.transform) ? item.transform : [];
+          const x = transform[4];
+          const y = transform[5];
+          const width = item.width;
+          const str = typeof item.str === "string" ? item.str : "";
+          const eol = item.hasEOL === true ? 1 : 0;
+          // A text item pdf.js gives no placement for (it never does, but
+          // the contract allows it) is emitted as the bare pair.
+          if (
+            typeof x !== "number" || typeof y !== "number" || typeof width !== "number" ||
+            !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width)
+          ) return [str, eol];
+          return [str, eol, round(x), round(y), round(width)];
+        }));
       }
     }
     // pdfjs-dist ≥ 5 returns a Map here; older versions a plain object.

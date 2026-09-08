@@ -48,6 +48,14 @@
 \newif\iflaxweb
 \laxwebtrue
 
+%% pdfTeX-era primitives for the author's packages: LuaTeX 0.85+ dropped
+%% \pdftexversion and the \pdf... primitive names, and packages that still
+%% probe them (xy-pic's pdf driver refuses to run without \pdftexversion
+%% >= 140) abort the web compile. luatex85 is the LaTeX team's alias layer
+%% for exactly this; loaded here, before the author's class, so every later
+%% probe sees the aliases. Under any other engine it \endinput's itself.
+\RequirePackage{luatex85}
+
 %% Prefer texmf fonts over same-named OS fonts, before any font loads
 %% (the wrapper template's location-precedence fix: glyphs are addressed
 %% by the index LuaTeX assigns, so compiling and serving must resolve a
@@ -67,6 +75,16 @@
 %% by the kernel, so \numexpr yields its number.
 \AddToHook{shipout/before}{\directlua{Serializer.shipout(\the\numexpr\ShipoutBox\relax)}}
 
+%% Positive body identification. The kernel's \@outputpage builds the page
+%% as head box, \headsep, \box\@outputbox, foot; the walk used to locate
+%% the body by that anatomy alone. Just before \@outputpage runs, the
+%% \@outputbox (a \chardef'd box number, like \ShipoutBox) is stamped with
+%% attribute 905 on its vlist node -- \box moves that node into the page, so
+%% the stamp arrives at shipout -- and the walk prefers stamped vlists over
+%% the anatomy. The generic cmd hook patches whatever \@outputpage the
+%% author's class ends up with, at \begin{document}.
+\AddToHook{cmd/@outputpage/before}{\directlua{Serializer.mark_body(\the\numexpr\@outputbox\relax)}}
+
 %% Picture capture, armed only if the author loads tikz: externalise each
 %% tikzpicture and stamp attribute 902 (the serializer's PIC_ATTR) on its
 %% nodes so the picture node can be joined to its PDF, which the encode
@@ -74,7 +92,52 @@
 \newcount\laxreflowPicCount
 \AddToHook{package/tikz/after}{%
   \usetikzlibrary{external}%
+  %% A failed export must not kill the run. The library's own recovery
+  %% (\tikzexternal@externalizefig@systemcall@@) already re-typesets the
+  %% picture inline when the expected image file is missing -- but it
+  %% announces the miss with \tikzerror, and the driver runs with
+  %% -halt-on-error, so the whole compile dies on a picture the sub-run
+  %% could not build (a `remember picture' annotation reaching for a node
+  %% no sub-run can see, a \ref not yet resolved, ...). Downgrade that one
+  %% message to a warning and let the recovery do its work.
+  \def\tikzexternal@externalizefig@systemcall@handleexception@msg#1{%
+    \PackageWarning{laxreflow}{Externalization of picture
+      '\tikzexternal@curfilename' failed; typesetting it inline instead}}%
+  %% Better still: do not start the doomed sub-run at all. A picture that
+  %% says `remember picture' addresses nodes by absolute page position,
+  %% and the export sub-run typesets that one picture alone -- the node it
+  %% points at (todonotes' \tikz[remember picture] \node (inText), say)
+  %% simply is not there, and pgf aborts with "No shape named ... is
+  %% known". The library decides whether to export *before* the picture's
+  %% options are parsed (\tikzexternal@tikzpicture@replacement calls
+  %% \tikzexternal@getnextfilename first), and for an exported picture it
+  %% then collects the body without executing it -- so `remember
+  %% picture/.append code' never runs and `external/export=false' inside
+  %% the option list is a picture too late. Peek at the bracket group
+  %% instead, before handing it on: \tikzexternalexportnextfalse is
+  %% exactly the per-picture switch \tikzexternal@getnextfilename honours,
+  %% and it resets itself after the picture. A style that hides `remember
+  %% picture' behind another key still slips through -- that is what the
+  %% warning above is for.
+  \let\laxreflow@extpicture\tikzexternal@tikzpicture@replacement
+  \def\tikzexternal@tikzpicture@replacement{%
+    \pgfutil@ifnextchar[{\laxreflow@extpicture@opt}{\laxreflow@extpicture}}%
+  \def\laxreflow@extpicture@opt[#1]{%
+    \in@{remember picture}{#1}%
+    \ifin@\tikzexternalexportnextfalse\fi
+    \laxreflow@extpicture[#1]}%
   \tikzexternalize[prefix=pics/]%
+  %% Externalization is armed here but switched off again until
+  %% \begin{document}: a class may typeset a tikzpicture in the *preamble*
+  %% (lmcs.cls builds its QED symbol with \savebox{...}{\begin{tikzpicture}
+  %% ...}), and pgf's shipout takeover -- \global\let\pgfexternal@
+  %% originalshipout\shipout -- is an \AtBeginDocument hook that has not run
+  %% yet. Exporting a preamble picture therefore reaches \pgf@externalend
+  %% with \pgfexternal@originalshipout undefined and the sub-run dies. Such
+  %% pictures are class furniture, not figures; typeset them inline (they
+  %% then consume no figure number either, in the main run and in every
+  %% sub-run alike).
+  \tikzexternaldisable
   %% The externalization sub-run recompiles the document under the
   %% picture's jobname, and the stock system call re-inputs the main file
   %% *without* the pretex injection -- so the sub-run would never load
@@ -93,6 +156,48 @@
     \directlua{Serializer.note_picture(\the\laxreflowPicCount, "\luaescapestring{#1}")}%
     \begingroup\attribute902=\laxreflowPicCount\relax\laxreflow@orig{#1}\endgroup}}
 
+\AddToHook{begindocument/before}{%
+  \ifdefined\tikzexternalenable\tikzexternalenable\fi}
+
+%% tikz-cd under externalization. \begin{tikzcd} is \tikzpicture[...] plus a
+%% \matrix, with \endtikzcd closing both -- so the environment's end token is
+%% \end{tikzcd}, and the external library's LaTeX-dialect collector, which
+%% reads a picture's body up to \end{tikzpicture}, overshoots: in the sub-run
+%% that exports another picture it swallows everything to the next real
+%% tikzpicture and then ends the tikzcd group with \end{tikzpicture} (the
+%% "\begin{tikzcd} ended by \end{tikzpicture}" abort), and in the main run
+%% the collected "body" that the md5 up-to-date check hashes is that same
+%% overshoot. Inside every tikzcd, tell the collector the environment it
+%% must stop at, and make the library's end-of-picture command end that
+%% environment: when the picture was skipped or consumed as a graphic
+%% (\tikzexternal@closeenvironments has \let\endtikzpicture\relax) no
+%% matrix was ever begun, so \endtikzcd is neutralised and \end{tikzcd}
+%% only closes the group; on the library's error-recovery path, which
+%% re-typesets the body, the real \endtikzcd finishes the matrix and the
+%% picture. That path re-reads the body through \scantokens, and the body
+%% starts with the rest of \tikzcd@'s own expansion (\tikzcd@arrow, the
+%% \matrix keys), so @ is made a letter for the environment. All of it is
+%% local to the tikzcd group; nothing happens when the external library
+%% (armed above only if tikz loads) is absent.
+\AddToHook{env/tikzcd/begin}{%
+  \ifdefined\tikzexternal@laTeX@collect@until@end@tikzpicturetikzpicturestring
+    \def\tikzexternal@laTeX@collect@until@end@tikzpicturetikzpicturestring{tikzcd}%
+    \def\tikzexternal@TEXDIALECT@endpicture{%
+      \ifx\endtikzpicture\relax\let\endtikzcd\relax\fi\end{tikzcd}}%
+    \catcode`\@=11\relax
+  \fi}
+
+%% tcolorbox under externalization. A tcolorbox skin draws its frame and
+%% title with tikzpictures from inside its own macros; the external library
+%% then treats each as a picture to export, and the sub-run's skip-collector,
+%% reading up to \end{tikzpicture} through the skin's conditionals, leaves
+%% a stray \else behind ("! Extra \else." in \tcb@titlebox). tcolorbox
+%% ships the fix as a key -- `shield externalize` runs \tikzexternaldisable
+%% inside every box -- and this arms it globally once the package loads. The
+%% boxes are then typeset inline: their text reaches the stream, their
+%% frames are pgf literals the serializer does not carry.
+\AddToHook{package/tcolorbox/after}{\tcbset{shield externalize}}
+
 %% The same capture for a plain \includegraphics -- a class logo, an ORCID
 %% icon, a photograph, a figure exported as PDF or PNG. graphics.sty routes
 %% every one of them through \Gin@setfile{<type>}{<read ext>}{<file>}, whose
@@ -102,6 +207,15 @@
 %% Without this the rule reaches the encode unsourced and keeps only its
 %% width as blank space (a `web-pictures-dropped` warning).
 %%
+%% The page goes with the file. graphicx's `page=` key sets \Gin@page (as
+%% a \number, so plain digits) inside the \includegraphics group, before
+%% \Ginclude@graphics reaches \Gin@setfile in that same group, and it is
+%% \@empty when the key was not given (graphics.sty defines it so, and a
+%% plain graphics.sty has no key at all); the serializer always gets a
+%% number, 1 for the first page. One multi-page PDF holding every figure of
+%% a paper, addressed by page, is how whole books ship theirs, and without
+%% the page every one of those figures was the file's first.
+%%
 %% No double stamping with the tikz capture above: pgf includes an
 %% externalized picture through its own \pgfimage -> \pgfsys@defineimage,
 %% which under LuaTeX is \saveimageresource and never reaches graphics.sty.
@@ -109,16 +223,129 @@
 %% re-injected, so it installs this hook too -- harmless: the sub-run
 %% typesets one picture and its own output.json is overwritten by the
 %% parent run's.)
+%%
+%% Clipping is switched off inside the wrapper. An include with `clip` and
+%% a `trim`/`viewport` takes luatex.def's \GPT@DoClipEnd path: the image
+%% is typeset into a box, and the *box* is placed as a box resource
+%% (\saveboxresource, \useboxresource), which reaches the node list as a
+%% rule of subtype 1 (box) -- not the subtype-2 image rule the serializer
+%% joins pictures on. The attribute is stamped and the file is noted, and
+%% the picture is still lost: a paper that trims every figure showed none
+%% on the web target. With the flag off the same include takes the plain
+%% viewport path, the image rule itself sits in the box, and the picture
+%% is captured; what the web view then shows is the untrimmed file, as it
+%% already does for a viewport without clip (the picture pipeline converts
+%% whole files -- carrying the viewport through the serializer is the
+%% follow-up). Local to the group, so the PDF target and the author's
+%% flag are untouched; \includegraphics* sets the same flag.
 \AddToHook{package/graphics/after}{%
   \let\laxreflow@setfile\Gin@setfile
   \def\Gin@setfile#1#2#3{%
     \global\advance\laxreflowPicCount by 1
-    \directlua{Serializer.note_picture(\the\laxreflowPicCount, "\luaescapestring{#3}")}%
+    \directlua{Serializer.note_picture(\the\laxreflowPicCount, "\luaescapestring{#3}",
+      \ifx\Gin@page\@empty 1\else\Gin@page\fi)}%
     \begingroup\attribute902=\laxreflowPicCount\relax
+      \Gin@clipfalse
       \laxreflow@setfile{#1}{#2}{#3}%
     \endgroup}}
 
+%% \boundary: a LuaTeX primitive the author's pdfTeX build does not have.
+%% LuaTeX adds \boundary as a primitive, so a preamble that says
+%% \newcommand{\boundary}{...} -- perfectly legal under pdfTeX, where the
+%% name is free -- aborts the web compile with "! LaTeX Error: Command
+%% \boundary already defined."  Hide the primitive before the author's
+%% class and preamble run, and put it back at begindocument/before if by
+%% then nobody has claimed the name, so a document that really wants the
+%% primitive still gets it. LaTeX's own \boundary user is expl3, which
+%% aliased it to \tex_boundary:D when the format was built; luaotfload and
+%% fontspec build boundary *nodes* from Lua (node.new("boundary")) and
+%% never touch the control sequence.
+\let\laxreflow@boundary\boundary
+\let\boundary\@undefined
+\AddToHook{begindocument/before}{%
+  \ifdefined\boundary\else\let\boundary\laxreflow@boundary\fi}
+
+%% Math accents applied to a bare font switch (unicode-math only).
+%% acmart (and other classes that branch on the engine) loads newtxmath
+%% under pdfTeX but fontspec/unicode-math under LuaTeX. newtxmath does
+%%
+%%   \xdef\widehat#1{\mathaccent"0\hexnumber@\symlargesymbols 62{#1}}
+%%   \xdef\widetilde#1{\mathaccent"0\hexnumber@\symlargesymbols 65{#1}}
+%%
+%% -- it turns those two accents into one-argument macros that brace what
+%% they grab. unicode-math instead leaves them as the bare primitive
+%% (\widehat = \Umathaccent 7\symoperators "00302\scan_stop:), which scans
+%% its math field with expansion: a following \CC that expands to
+%% \mathcal C reaches the unexpandable \__um_group_begin: of \symcal and
+%% aborts with "! Missing { inserted." So `$\widehat\CC$', which the
+%% author's pdfTeX build typesets, kills the web compile.
+%%
+%% Mirror newtxmath, and only it: wrap exactly \widehat and \widetilde in
+%% the same one-argument macro. \widehat{X} then expands to the very same
+%% token stream as before, and \widehat X to the \widehat{X} TeX already
+%% collapses it to (the accent's nucleus is fetched through a clean box,
+%% and a box holding one glyph is re-read as that character).  The other
+%% accents (\hat, \bar, \vec, \dot ...) are \DeclareMathAccent primitives
+%% under *both* engines, so a bare font switch after them fails on the
+%% author's own build too; they are left alone rather than made to render
+%% something the PDF path cannot.
+%%
+%% Installed at begindocument/before, not package/unicode-math/after: a
+%% class loads unicode-math and then calls \setmathfont, and \setmathfont
+%% redefines the accent commands for the new font -- the wrap has to be
+%% the last word. Nothing happens when unicode-math was never loaded.
+\def\laxreflow@wrapaccent#1#2{%
+  \ifdefined#2\relax
+    \let#1#2%
+    \protected\def#2##1{#1{##1}}%
+  \fi}
+\AddToHook{begindocument/before}{%
+  \@ifpackageloaded{unicode-math}{%
+    \laxreflow@wrapaccent\laxreflow@widehat\widehat
+    \laxreflow@wrapaccent\laxreflow@widetilde\widetilde
+  }{}}
+
 \newskip\laxreflow@skip
+
+%% Heading skips at page tops. \@startsection puts a section's beforeskip
+%% above the heading with \addvspace, and when the heading opens a page TeX
+%% discards that glue with the rest of the top-of-page furniture. The
+%% shipout walk sees only finished pages, so it could not tell the
+%% heading's skip from the furniture and welded the heading -- or the
+%% paragraph a run-in \paragraph heading opens -- to the paragraph before
+%% it. Recorded here is the glue TeX actually left above the heading:
+%% \lastskip at the moment \@sect or \@ssect begins, right after
+%% \addvspace, already merged with a preceding display's below skip or a
+%% list's \topsep exactly as \addvspace merges them, and exactly what the
+%% page builder discards at a page top. It goes into a user_defined whatsit
+%% (user_id 90212, the width in sp) written below that glue, where it
+%% survives the page break the glue does not, and the walk restores it when
+%% the heading turns out to open a page (in unbroken flow the glue itself
+%% is walked and the whatsit is inert). The kernel's \@sect/\@ssect are
+%% hooked rather than \@startsection wrapped: the arguments are not needed,
+%% and a class that rebuilds \@startsection but still ends in \@sect is
+%% covered. Lifted below the glue as \laxmark is, so \lastskip stays what
+%% it was for whatever follows.
+\def\laxreflow@headingnode{\directlua{
+  local n = node.new("whatsit", "user_defined")
+  n.user_id = 90212
+  n.type = 100
+  n.value = \number\laxreflow@skip
+  node.write(n)
+}}
+\def\laxreflow@headingskip{%
+  \ifvmode
+    \laxreflow@skip\lastskip
+    \ifdim\laxreflow@skip=\z@
+      \laxreflow@headingnode
+    \else
+      \vskip-\laxreflow@skip
+      \laxreflow@headingnode
+      \vskip\laxreflow@skip
+    \fi
+  \fi}
+\AddToHook{cmd/@sect/before}{\laxreflow@headingskip}
+\AddToHook{cmd/@ssect/before}{\laxreflow@headingskip}
 
 %% The whatsit: node type user_defined, user_id 90210, value "b:12"/"e:12".
 %% type 115 = string-valued ('s'). node.write appends it to the current

@@ -6,6 +6,71 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## The web view after the corpus pass: footnotes, paged figures, compile shims (implemented, 2026-09-08)
+
+A day of running the derived web view over 44 real papers
+(`history/reflow-maturation-20260908.md`) changed five things an author
+can see. None of them changes what an author writes, and none of them
+changes the layer's standing promise: **the web view still never fails
+validation** — every class below either renders or is skipped with a note
+in the report, and the PDF page remains.
+
+**Footnotes become sidenotes, or endnotes.** The shipout walk used to leave
+a footnote wherever TeX had floated it — at a page bottom, in the middle of
+the running prose, with no rule and no back-reference. A footnote now
+reaches the viewer as a unit: its reference point is carried in the wire
+format (a `fnref` node in a paragraph, a `footnote_ref` stream item for a
+vertical-mode `\thanks` or `\footnotetext`), and its paragraphs carry the
+footnote's ordinal. Where the page has a margin rail the viewer sets
+footnote *k* beside its reference as a sidenote; otherwise the fallback is
+endnotes, in document order, behind TeX's own footnote rule. Either way the
+marker stays where the author put it.
+
+**Paged figures are supported.** `\includegraphics[page=N]{figures.pdf}` —
+one multi-page PDF holding every figure of a paper, addressed by page,
+which is how books commonly ship them — used to reach the derivation as the
+file alone, so every such figure was that file's first page or nothing. The
+page now travels with the file, the archive converts one slot per
+*(file, page)* pair, and a page the document does not have is refused and
+reported rather than silently substituted.
+
+**The web compile carries shims, and its own time limit.** The derived view
+is compiled by lualatex with restricted-plus-shell-escape and an injected
+package, which breaks documents whose own pdflatex build is fine. Three
+shims are loaded for the author, before their class: `luatex85` (so a
+package that still probes `\pdftexversion` — xy-pic's pdf driver — runs),
+a `tikzcd` fix for the tikz externalization collector, and tcolorbox's
+`shield externalize` (so a `tcolorbox` typesets inline: its text reaches
+the view, its frame does not). The web compile also has its own wall clock,
+**30 minutes** (`paperWebCompileTimeoutMs`), separate from the PDF
+compile's 10: externalization re-runs the whole document once per picture,
+so a long figure-rich paper costs figures × pages. Exceeding it is a skip
+with a note, not a failure.
+
+**The text cross-check gained three tolerances.** The archive compares the
+derived view's text against the PDF's before it will show the view, and
+that comparison is order-sensitive, so anything the renderer deliberately
+moves used to be charged twice. It now (a) settles each *relocated*
+paragraph — the footnotes, which the view sets as endnotes while the PDF
+sets them at page bottoms — against the PDF on its own, removing it from
+the PDF side when the PDF carries it and counting it as divergence when it
+does not; (b) strips **margin line numbers** from the PDF side, recognised
+geometrically (a digits-only item lying wholly outside the page's own
+measured text column), because `lineno` — every LIPIcs submission version —
+puts them in the text layer where pdf.js glues them onto the neighbouring
+word; and (c) reads a **vector picture's own text** (a tikz label, a
+figure's lettering) from the export and folds it into the derived side at
+the picture's position, since the PDF's text layer has it and the node list
+does not. Each tolerance still errs towards a skip: none of them can hide
+text one substrate shows and the other does not.
+
+Spec touchpoints: Build Pipeline (the web derivation's own compile limit
+and its injected shims); Archive Database (nothing changes in the recorded
+shape — `Paragraph.width`/`Paragraph.footnote` and the footnote node forms
+are inside the bundle's own schema, which the site gate already versions);
+Site Generator (the paper page's reflow surface sets footnotes as sidenotes
+where there is a rail).
+
 ## `lax serve` opens on the folder's own page (implemented, 2026-09-04)
 
 The spec says the preview "starts at ``http://localhost:8123/``". It still

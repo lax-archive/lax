@@ -32,6 +32,11 @@ export interface ValidationLimits {
   pids: number;
   /** Wall clock for one latexmk run of a declared paper. */
   paperCompileTimeoutMs: number;
+  /** Wall clock for the web derivation's lualatex run. Longer than the PDF
+   * compile's: tikz externalization re-runs the whole document once per
+   * picture, so a long figure-rich paper costs figures × pages, and the
+   * derivation is non-blocking and concurrent with the Lean chain. */
+  paperWebCompileTimeoutMs: number;
   /** Wall clock for the pdf.js destination read of the compiled PDF. */
   paperExtractTimeoutMs: number;
   /** How much of a failed compile's transcript a finding carries. */
@@ -105,6 +110,7 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   compileLeanThreads: 4,
   pids: 1_024,
   paperCompileTimeoutMs: 10 * 60_000,
+  paperWebCompileTimeoutMs: 30 * 60_000,
   paperExtractTimeoutMs: 2 * 60_000,
   paperLogTailChars: 12_000,
   paperWebEncodeTimeoutMs: 5 * 60_000,

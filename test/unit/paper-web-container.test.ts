@@ -8,6 +8,7 @@
 // stage-2 tail sealing a real bundle. The real container path is the docker
 // smoke (test/smoke/submission-validation.ts, `paper-web` fixture).
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -27,6 +28,7 @@ import {
   sharedSlots,
   assignIncludedPictureSlots,
   dropUnconvertedPictures,
+  includedPictureName,
   webConvertScript,
   webDownsampledPictures,
   webExportProblem,
@@ -38,10 +40,12 @@ import {
   WEB_EXPORT_PFB_LIST,
   WEB_EXPORT_PICTURE_LIST,
   WEB_EXPORT_SCRIPT,
+  WEB_EXPORT_TEXT_SUFFIX,
   WEB_INCLUDED_SLOT_PREFIX,
   WEB_PYMUPDF_PATH,
 } from "../../src/submission-validation/paper/web-container.js";
 import {
+  reflowtexDirectory,
   webFontFilenames,
   webLatexmkArguments,
   webLegacyFontNames,
@@ -61,17 +65,24 @@ const SCHEMA = Buffer.from('syntax = "proto2";\npackage latex;\n');
 
 // ── a real minimal PDF so the shared oracle genuinely runs ─────────────────
 
-function minimalPdf(text: string): Buffer {
+/** A PDF of one text-only page per entry of `texts` — real enough for the
+ * oracle's text extraction and for the in-image converter (PyMuPDF) to draw. */
+function pagesPdf(texts: readonly string[]): Buffer {
+  const pageObject = (index: number) => 3 + 2 * index;
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R " +
-      "/Resources << /Font << /F1 5 0 R >> >> >>",
-    "",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Type /Pages /Kids [${texts.map((_, index) => `${pageObject(index)} 0 R`).join(" ")}] /Count ${texts.length} >>`,
   ];
-  const stream = `BT /F1 12 Tf 72 720 Td (${text}) Tj ET`;
-  objects[3] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+  const fontObject = 3 + 2 * texts.length;
+  texts.forEach((text, index) => {
+    objects.push(
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " +
+        `/Contents ${pageObject(index) + 1} 0 R /Resources << /Font << /F1 ${fontObject} 0 R >> >> >>`,
+    );
+    const stream = `BT /F1 12 Tf 72 720 Td (${text}) Tj ET`;
+    objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+  });
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   let body = "%PDF-1.4\n";
   const offsets: number[] = [];
   objects.forEach((object, index) => {
@@ -83,6 +94,10 @@ function minimalPdf(text: string): Buffer {
   for (const offset of offsets) body += `${String(offset).padStart(10, "0")} 00000 n \n`;
   body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(body, "latin1");
+}
+
+function minimalPdf(text: string): Buffer {
+  return pagesPdf([text]);
 }
 
 // ── a fake fetched fork: probe-satisfying files plus an executable encode
@@ -174,6 +189,9 @@ interface FakeRunnerOptions {
   downsampled?: string[];
   /** What the fake encode child reports as unsourced picture nodes. */
   droppedPictures?: number;
+  /** Files the compile leaves in the web copy, by name and content — what
+   * a `-shell-escape` run can put at any name the host will use after it. */
+  planted?: Record<string, string>;
   /** Symlinks the compile leaves in the web copy, by their name in it and
    * the absolute path each points at — the reach a `-shell-escape` run has
    * over every name the host writes to, reads, or reaches through after it.
@@ -218,6 +236,10 @@ function fakeRunner(options: FakeRunnerOptions = {}): ValidationRunner & { calls
         }
         if (options.droppedPictures !== undefined) {
           fs.writeFileSync(path.join(webSrc, "fake-dropped.txt"), String(options.droppedPictures));
+        }
+        for (const [name, content] of Object.entries(options.planted ?? {})) {
+          fs.mkdirSync(path.dirname(path.join(webSrc, name)), { recursive: true });
+          fs.writeFileSync(path.join(webSrc, name), content);
         }
         for (const [name, target] of Object.entries(options.plantedSymlinks ?? {})) {
           fs.rmSync(path.join(webSrc, name), { recursive: true, force: true });
@@ -306,7 +328,7 @@ describe("container web deriver", () => {
     });
     expect(compile.env).not.toHaveProperty("PATH");
     expect(compile.network).toBeUndefined();
-    expect(compile.timeoutMs).toBe(DEFAULT_LIMITS.paperCompileTimeoutMs);
+    expect(compile.timeoutMs).toBe(DEFAULT_LIMITS.paperWebCompileTimeoutMs);
     // The deviation is one-sided: the PDF compile never gets -shell-escape.
     expect(latexmkArguments("pdflatex", "main.tex")).not.toContain("-shell-escape");
     expect(latexmkArguments("lualatex", "main.tex")).not.toContain("-shell-escape");
@@ -427,15 +449,20 @@ describe("container web deriver", () => {
 
   // ── plain \includegraphics: slots, validation, accounting ────────────────
 
-  /** A serialized stream carrying one picture node per `file` value, plus a
+  /** A picture node's source as the serializer records it: the file alone
+   * (unpaged), or the file with the `page` field laxreflow.sty passes through
+   * — given here as whatever an untrusted output.json might hold. */
+  type PictureSource = string | undefined | { file: string; page: unknown };
+
+  /** A serialized stream carrying one picture node per source, plus a
    * nested one so the walk is exercised at depth. */
-  function streamWithPictures(files: Array<string | undefined>): string {
-    const picture = (file: string | undefined) => ({
+  function streamWithPictures(files: PictureSource[]): string {
+    const picture = (source: PictureSource) => ({
       type: "picture",
       width: 100,
       height: 100,
       depth: 0,
-      ...(file === undefined ? {} : { file }),
+      ...(source === undefined ? {} : typeof source === "string" ? { file: source } : source),
     });
     return JSON.stringify({
       // The same font table the default stream carries, so the fake encode's
@@ -484,10 +511,12 @@ describe("container web deriver", () => {
 
     const assigned = assignIncludedPictureSlots(webSrc, DEFAULT_LIMITS);
     expect(assigned.refused).toEqual([]);
+    // An unpaged file is its first page: the converter shows page 1, as
+    // graphicx does.
     expect(assigned.included).toEqual([
-      { slot: `${WEB_INCLUDED_SLOT_PREFIX}0`, file: "orcid.pdf" },
-      { slot: `${WEB_INCLUDED_SLOT_PREFIX}1`, file: "figures/plot.PNG" },
-      { slot: `${WEB_INCLUDED_SLOT_PREFIX}2`, file: "/usr/local/texlive/2025/texmf-dist/doc/logo.pdf" },
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}0`, file: "orcid.pdf", page: 1 },
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}1`, file: "figures/plot.PNG", page: 1 },
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}2`, file: "/usr/local/texlive/2025/texmf-dist/doc/logo.pdf", page: 1 },
     ]);
     // The author's own paths never reach the encode: only slots do.
     expect(pictureFiles(webSrc)).toEqual([
@@ -498,6 +527,65 @@ describe("container web deriver", () => {
       `${WEB_INCLUDED_SLOT_PREFIX}0`,
       undefined,
     ]);
+  });
+
+  it("keys slots by file and page: one multi-page PDF of figures is one slot per page addressed", () => {
+    // The Transducers book keeps its 50 figures in one PDF and includes each
+    // as \includegraphics[page=N]{transducer-book-pics.pdf}; laxreflow.sty
+    // passes the page through, and every page is its own conversion.
+    const webSrc = tmpDir("lax-web-slots-pages-");
+    fs.mkdirSync(path.join(webSrc, "pics"), { recursive: true });
+    fs.writeFileSync(
+      path.join(webSrc, "output.json"),
+      streamWithPictures([
+        { file: "figures.pdf", page: 3 }, // slot 0
+        { file: "figures.pdf", page: 7 }, // slot 1: the same file, another page
+        { file: "figures.pdf", page: 3 }, // page 3 again: slot 0 again
+        { file: "figures.pdf", page: 1 }, // slot 2, which an unpaged include shares…
+        "figures.pdf", // …because the first page is what graphicx shows for it
+        { file: "figures.pdf", page: 0 }, // not a page: refused
+        { file: "figures.pdf", page: "7" }, // a string is not a page either
+        { file: "figures.pdf", page: 2.5 }, // nor a fraction
+        { file: "figures.pdf", page: 1e300 }, // nor something no document has
+      ]),
+    );
+
+    const assigned = assignIncludedPictureSlots(webSrc, DEFAULT_LIMITS);
+    expect(assigned.included).toEqual([
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}0`, file: "figures.pdf", page: 3 },
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}1`, file: "figures.pdf", page: 7 },
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}2`, file: "figures.pdf", page: 1 },
+    ]);
+    // The refusals are named by the file; the page they asked for was none.
+    expect(assigned.refused).toEqual(["figures.pdf"]);
+    expect(pictureFiles(webSrc)).toEqual([
+      `${WEB_INCLUDED_SLOT_PREFIX}0`,
+      `${WEB_INCLUDED_SLOT_PREFIX}1`,
+      `${WEB_INCLUDED_SLOT_PREFIX}0`,
+      `${WEB_INCLUDED_SLOT_PREFIX}2`,
+      `${WEB_INCLUDED_SLOT_PREFIX}2`,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    // A slot stands for one page already, so no node keeps a `page` field
+    // for anything downstream to read.
+    expect(fs.readFileSync(path.join(webSrc, "output.json"), "utf8")).not.toContain('"page"');
+
+    // The count cap counts slots, so the same file's pages spend it too.
+    const capped = tmpDir("lax-web-slots-pages-cap-");
+    fs.writeFileSync(
+      path.join(capped, "output.json"),
+      streamWithPictures([{ file: "figures.pdf", page: 1 }, { file: "figures.pdf", page: 2 }, { file: "figures.pdf", page: 3 }]),
+    );
+    const bounded = assignIncludedPictureSlots(capped, { ...DEFAULT_LIMITS, paperWebIncludedPictures: 2 });
+    expect(bounded.included.map((picture) => picture.page)).toEqual([1, 2]);
+    expect(bounded.refused).toEqual(["figures.pdf[page=3]"]);
+
+    // The report names a page-addressed picture the way the author wrote it.
+    expect(includedPictureName({ file: "figures.pdf", page: 1 })).toBe("figures.pdf");
+    expect(includedPictureName({ file: "figures.pdf", page: 12 })).toBe("figures.pdf[page=12]");
   });
 
   it("refuses an included graphic by name shape, extension, or count, leaving it a kern", () => {
@@ -535,23 +623,66 @@ describe("container web deriver", () => {
   it("drops a slot the export could not convert and names the raster ones it downsampled", () => {
     const webSrc = tmpDir("lax-web-slots-convert-");
     fs.mkdirSync(path.join(webSrc, "pics"), { recursive: true });
-    fs.writeFileSync(path.join(webSrc, "output.json"), streamWithPictures(["orcid.pdf", "photo.jpg"]));
+    fs.writeFileSync(
+      path.join(webSrc, "output.json"),
+      streamWithPictures(["orcid.pdf", "photo.jpg", { file: "figures.pdf", page: 9 }]),
+    );
     const assigned = assignIncludedPictureSlots(webSrc, DEFAULT_LIMITS);
-    expect(assigned.included).toHaveLength(2);
+    expect(assigned.included).toHaveLength(3);
 
     // Only the second slot came back converted, and it had to be downsampled.
     fs.writeFileSync(path.join(webSrc, `${WEB_INCLUDED_SLOT_PREFIX}1.svg`), "<svg/>");
     fs.writeFileSync(path.join(webSrc, `${WEB_INCLUDED_SLOT_PREFIX}1.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`), "");
+    // The third has only a text sidecar — the converter writes one after the
+    // SVG, never alone, so this one is not the converter's; a picture is its
+    // SVG and nothing else counts as converted.
+    fs.writeFileSync(path.join(webSrc, `${WEB_INCLUDED_SLOT_PREFIX}2.${WEB_EXPORT_TEXT_SUFFIX}`), "a label");
 
-    expect(dropUnconvertedPictures(webSrc, assigned.included, DEFAULT_LIMITS)).toEqual(["orcid.pdf"]);
-    expect(pictureFiles(webSrc)).toEqual([undefined, `${WEB_INCLUDED_SLOT_PREFIX}1`]);
+    expect(dropUnconvertedPictures(webSrc, assigned.included, DEFAULT_LIMITS)).toEqual([
+      "figures.pdf[page=9]",
+      "orcid.pdf",
+    ]);
+    expect(pictureFiles(webSrc)).toEqual([undefined, `${WEB_INCLUDED_SLOT_PREFIX}1`, undefined]);
     expect(webDownsampledPictures(webSrc, assigned.included)).toEqual(["photo.jpg"]);
   });
 
+  it("clears what the compile left at a slot's names before the export fills them", async () => {
+    // Slot names belong to the host: an SVG, a `.downsampled` marker or a
+    // text sidecar the compile planted under one must not pre-seed the export
+    // — here the fake export converts nothing, and nothing survives.
+    const slot = `${WEB_INCLUDED_SLOT_PREFIX}0`;
+    const { input, run } = derive({
+      outputJson: streamWithPictures(["orcid.pdf"]),
+      planted: {
+        [`${slot}.svg`]: "<svg><text>planted</text></svg>",
+        [`${slot}.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`]: "",
+        [`${slot}.${WEB_EXPORT_TEXT_SUFFIX}`]: "planted oracle text",
+      },
+      unconvertible: [slot],
+      droppedPictures: 1,
+    });
+    const derived = await run();
+    expect(derived.web).toBeDefined();
+    const webSrc = path.join(input.jobDir, "paper", "web", "src");
+    for (const suffix of ["svg", WEB_EXPORT_DOWNSAMPLED_SUFFIX, WEB_EXPORT_TEXT_SUFFIX]) {
+      expect(fs.existsSync(path.join(webSrc, `${slot}.${suffix}`))).toBe(false);
+    }
+    expect(derived.warnings.map((warning) => warning.rule)).toEqual(["web-pictures-dropped"]);
+    expect(derived.warnings[0]!.message).toContain("orcid.pdf");
+  });
+
   it("shows an included graphic, and names the ones it could not, through the whole deriver", async () => {
-    const stream = streamWithPictures(["orcid.pdf", "photo.png", "cover.svg"]);
-    const shown = await derive({ outputJson: stream, downsampled: [`${WEB_INCLUDED_SLOT_PREFIX}1`] }).run();
+    const stream = streamWithPictures(["orcid.pdf", "photo.png", "cover.svg", { file: "figures.pdf", page: 4 }]);
+    const first = derive({ outputJson: stream, downsampled: [`${WEB_INCLUDED_SLOT_PREFIX}1`] });
+    const shown = await first.run();
     expect(shown.web).toBeDefined();
+    // The list the converter reads carries each slot's page.
+    const webSrc = path.join(first.input.jobDir, "paper", "web", "src");
+    expect(JSON.parse(fs.readFileSync(path.join(webSrc, WEB_EXPORT_PICTURE_LIST), "utf8"))).toEqual([
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}0`, file: "orcid.pdf", page: 1 },
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}1`, file: "photo.png", page: 1 },
+      { slot: `${WEB_INCLUDED_SLOT_PREFIX}2`, file: "figures.pdf", page: 4 },
+    ]);
     // The raster is carried, at a bounded resolution, and said so.
     const raster = shown.warnings.filter((warning) => warning.rule === "web-pictures-raster");
     expect(raster).toHaveLength(1);
@@ -564,15 +695,16 @@ describe("container web deriver", () => {
     // A slot the export cannot fill degrades the same way, by name.
     const missing = await derive({
       outputJson: stream,
-      unconvertible: [`${WEB_INCLUDED_SLOT_PREFIX}0`],
-      droppedPictures: 2,
+      unconvertible: [`${WEB_INCLUDED_SLOT_PREFIX}0`, `${WEB_INCLUDED_SLOT_PREFIX}2`],
+      droppedPictures: 3,
     }).run();
     expect(missing.web).toBeDefined();
     const dropped = missing.warnings.filter((warning) => warning.rule === "web-pictures-dropped");
     expect(dropped).toHaveLength(1);
     expect(dropped[0]!.message).toContain("cover.svg");
     expect(dropped[0]!.message).toContain("orcid.pdf");
-    expect(dropped[0]!.message).toContain("2 included graphic(s)");
+    expect(dropped[0]!.message).toContain("figures.pdf[page=4]");
+    expect(dropped[0]!.message).toContain("3 included graphic(s)");
   });
 
   it("writes the converter with the caps baked in and never names an author's file to it", () => {
@@ -581,13 +713,78 @@ describe("container web deriver", () => {
     expect(script).toContain("get_svg_image(text_as_path=True)");
     expect(script).toContain(`MAX_SVG_BYTES = ${DEFAULT_LIMITS.paperWebPictureBytes}`);
     expect(script).toContain(`RASTER_LONG_EDGE = ${DEFAULT_LIMITS.paperWebRasterLongEdge}`);
-    // One page only, and every resolved path checked against the roots.
-    expect(script).toContain("expected exactly 1");
+    // The slot's page and no other, refused when the document lacks it, and
+    // every resolved path checked against the roots.
+    expect(script).toContain("document[page - 1]");
+    expect(script).toContain("is out of range");
+    expect(script).not.toContain("expected exactly 1");
     expect(script).toContain("def contained(path):");
     expect(script).toContain("kpsewhich");
+    // The page's text beside the SVG, bounded, under the suffix the host
+    // clears and counts.
+    expect(script).toContain('get_text("text")');
+    expect(script).toContain("MAX_TEXT_BYTES = 64 * 1024");
+    expect(script).toContain(`TEXT_SUFFIX = "${WEB_EXPORT_TEXT_SUFFIX}"`);
     // The file names live in the list the host writes, never in the script.
     expect(script).toContain(WEB_EXPORT_PICTURE_LIST);
   });
+
+  // The real converter, over the unpacked PyMuPDF `npm run reflowtex:fetch`
+  // leaves (the wheel the export container mounts); skipped, not faked,
+  // where that is not fetched.
+  const pymupdfLib = path.join(reflowtexDirectory(), "pymupdf", "lib");
+  const python = spawnSync("python3", ["--version"]).status === 0;
+  it.skipIf(!python || !fs.existsSync(path.join(pymupdfLib, "pymupdf")))(
+    "converts the page a slot names, refuses one the document lacks, and leaves the page's text beside the SVG",
+    () => {
+      const work = tmpDir("lax-web-convert-real-");
+      fs.mkdirSync(path.join(work, "pics"));
+      fs.writeFileSync(path.join(work, "figures.pdf"), pagesPdf(["alpha one", "beta two", "gamma three"]));
+      fs.writeFileSync(path.join(work, "single.pdf"), pagesPdf(["solo"]));
+      fs.writeFileSync(path.join(work, "pics", "fig0.pdf"), pagesPdf(["tikz label"]));
+      const slot = (index: number) => `${WEB_INCLUDED_SLOT_PREFIX}${index}`;
+      fs.writeFileSync(
+        path.join(work, WEB_EXPORT_PICTURE_LIST),
+        JSON.stringify([
+          { slot: slot(0), file: "figures.pdf", page: 2 },
+          { slot: slot(1), file: "figures.pdf", page: 3 },
+          { slot: slot(2), file: "figures.pdf", page: 4 }, // the document has three
+          { slot: slot(3), file: "single.pdf", page: 1 }, // today's one-page case
+          { slot: slot(4), file: "figures.pdf" }, // unpaged: the first page
+          { slot: slot(5), file: "figures.pdf", page: 0 }, // never written by the host
+        ]),
+      );
+      // The script is written for the container's work path; point it here.
+      const container = `WORK = "${PAPER_CONTAINER_PATHS.work}"`;
+      const script = webConvertScript(DEFAULT_LIMITS);
+      expect(script).toContain(container);
+      fs.writeFileSync(path.join(work, WEB_EXPORT_CONVERTER), script.replace(container, `WORK = ${JSON.stringify(work)}`));
+      const run = spawnSync("python3", [path.join(work, WEB_EXPORT_CONVERTER)], {
+        encoding: "utf8",
+        env: { ...process.env, PYTHONPATH: pymupdfLib },
+      });
+      expect(run.status, run.stderr).toBe(0);
+
+      const converted = (name: string) => fs.readFileSync(path.join(work, name), "utf8");
+      // Each slot got its own page: the drawing, and beside it that page's
+      // text — and no other page's.
+      for (const [index, text] of [[0, "beta two"], [1, "gamma three"], [3, "solo"], [4, "alpha one"]] as const) {
+        expect(converted(`${slot(index)}.svg`), slot(index)).toContain("<path");
+        expect(converted(`${slot(index)}.${WEB_EXPORT_TEXT_SUFFIX}`)).toBe(text);
+      }
+      // The page the document lacks is refused, not substituted; the page
+      // that is none never reaches the converter's PDF reader.
+      for (const index of [2, 5]) {
+        expect(fs.existsSync(path.join(work, `${slot(index)}.svg`))).toBe(false);
+        expect(fs.existsSync(path.join(work, `${slot(index)}.${WEB_EXPORT_TEXT_SUFFIX}`))).toBe(false);
+      }
+      expect(run.stderr).toContain("page 4 is out of range, the document has 3 page(s)");
+      expect(run.stderr).toContain("not a page number: 0");
+      // The externalized tikz picture goes the same way, page 1, text beside it.
+      expect(converted("pics/fig0.svg")).toContain("<path");
+      expect(converted(`pics/fig0.${WEB_EXPORT_TEXT_SUFFIX}`)).toBe("tikz label");
+    },
+  );
 
   it("skips over the export caps: too many font files before the run, too many bytes after it", async () => {
     const tightFiles = { ...DEFAULT_LIMITS, paperWebExportFiles: 0 };
@@ -658,8 +855,10 @@ describe("container web deriver", () => {
     // place, and the marker a slot's pre-clear deletes before the export.
     const drawing = path.join(outside, "figure.svg");
     const marker = path.join(outside, `lax-inc0.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`);
+    const sidecar = path.join(outside, `lax-inc0.${WEB_EXPORT_TEXT_SUFFIX}`);
     fs.writeFileSync(drawing, "<svg version='1.1' viewBox='0 -18 74 18'><g id='page1'/></svg>");
     fs.writeFileSync(marker, "");
+    fs.writeFileSync(sidecar, "the runner's own text");
     const { input, run } = derive({
       outputJson: streamWithPictures(["orcid.pdf"]),
       pictures: ["fig0"],
@@ -673,6 +872,7 @@ describe("container web deriver", () => {
     expect(fs.readdirSync(outside).sort()).toEqual([
       "figure.svg",
       `lax-inc0.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`,
+      `lax-inc0.${WEB_EXPORT_TEXT_SUFFIX}`,
     ]);
     const webSrc = path.join(input.jobDir, "paper", "web", "src");
     expect(fs.lstatSync(path.join(webSrc, "pics")).isSymbolicLink()).toBe(false);
@@ -779,9 +979,16 @@ describe("export helpers", () => {
     fs.writeFileSync(path.join(webSrc, "pics", "fig0.pdf"), "%PDF"); // not part of the bounded set
 
     expect(webExportProblem(webSrc, [FONT], DEFAULT_LIMITS)).toBeUndefined();
+    expect(webExportProblem(webSrc, [FONT], { ...DEFAULT_LIMITS, paperWebExportFiles: 2 })).toBeUndefined();
     expect(webExportProblem(webSrc, [FONT], { ...DEFAULT_LIMITS, paperWebExportFiles: 1 })?.rule).toBe(
       "web-export-cap",
     );
+    // A picture's text sidecar leaves the container too, so it is counted.
+    fs.writeFileSync(path.join(webSrc, "pics", `fig0.${WEB_EXPORT_TEXT_SUFFIX}`), "a label");
+    expect(webExportProblem(webSrc, [FONT], { ...DEFAULT_LIMITS, paperWebExportFiles: 2 })?.rule).toBe(
+      "web-export-cap",
+    );
+    expect(webExportProblem(webSrc, [FONT], { ...DEFAULT_LIMITS, paperWebExportFiles: 3 })).toBeUndefined();
     expect(webExportProblem(webSrc, [FONT], { ...DEFAULT_LIMITS, paperWebExportBytes: 4 })?.rule).toBe(
       "web-export-cap",
     );
@@ -941,15 +1148,18 @@ describe("export helpers", () => {
 
   it("does not let a picture's own side files make the export look unconverted", () => {
     // Only a `.pdf` without its `.svg` is an unconverted picture; the
-    // converter's `.downsampled` markers and a slot's SVG are not pictures.
+    // converter's `.downsampled` markers, its text sidecars and a slot's SVG
+    // are not pictures.
     const webSrc = tmpDir("lax-web-sidefiles-");
     fs.mkdirSync(path.join(webSrc, "pics"), { recursive: true });
     fs.mkdirSync(path.join(webSrc, WEB_EXPORT_FONTS_DIR), { recursive: true });
     fs.writeFileSync(path.join(webSrc, WEB_EXPORT_FONTS_DIR, FONT), FONT_BYTES);
     fs.writeFileSync(path.join(webSrc, "pics", "fig0.pdf"), "%PDF");
     fs.writeFileSync(path.join(webSrc, "pics", "fig0.svg"), "<svg/>");
+    fs.writeFileSync(path.join(webSrc, "pics", `fig0.${WEB_EXPORT_TEXT_SUFFIX}`), "a label");
     fs.writeFileSync(path.join(webSrc, "pics", "lax-inc0.svg"), "<svg/>");
     fs.writeFileSync(path.join(webSrc, "pics", `lax-inc0.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`), "");
+    fs.writeFileSync(path.join(webSrc, "pics", `lax-inc1.${WEB_EXPORT_TEXT_SUFFIX}`), "text without a picture");
     expect(webExportProblem(webSrc, [FONT], DEFAULT_LIMITS)).toBeUndefined();
   });
 
@@ -961,6 +1171,8 @@ describe("export helpers", () => {
     fs.writeFileSync(path.join(webSrc, "pics", "fig0.pdf"), "%PDF");
     fs.writeFileSync(path.join(webSrc, "pics", "fig0.svg"), "<svg/>");
     fs.writeFileSync(path.join(webSrc, "pics", "fig1.pdf"), "%PDF"); // no fig1.svg
+    // A text sidecar alone does not make it converted, whoever left it.
+    fs.writeFileSync(path.join(webSrc, "pics", `fig1.${WEB_EXPORT_TEXT_SUFFIX}`), "a label");
 
     const problem = webExportProblem(webSrc, [FONT], DEFAULT_LIMITS);
     expect(problem?.rule).toBe("web-picture-export");

@@ -6,22 +6,66 @@ node-list serializer and the Python encode pipeline — that derives the
 reflowable HTML view of a declared paper. The fork itself lives at
 [`lax-archive/reflowtex`](https://github.com/lax-archive/reflowtex); its
 `lax` branch is upstream at 36f8365 plus one commit per changed file, and
-its `FORK.md` describes them. In short, the fork adds exactly what the
-stage-0 spike (`spike/paper/reflow/REPORT.md`) proved necessary:
+its `FORK.md` describes them. In short, the fork adds what the stage-0
+spike (`spike/paper/reflow/REPORT.md`) proved necessary and what the
+2026-09-08 corpus pass (`history/reflow-maturation-20260908.md`) found
+missing over 44 real papers:
 
 - **Marker capture at three sites** (`src/extract/serializer.lua`):
   in-paragraph whatsits as `marker` nodes, shipout-walk whatsits as
   `marker` stream items (stock code silently drops every vertical-mode
   marker), the glyphless-resumed-paragraph hoist, and `last_flow`
   transparency so markers never perturb the walk's display-spacing logic.
-- **Marker forms in the wire schema** (`src/schema/latex.proto`): a
-  `marker` NodeType and a `marker` ItemKind, each with `side`/`n` — stock
-  `encode_pb` dies with `KeyError: 'marker'` on a stream marker.
+- **A shipout walk that keeps the page** (`src/extract/serializer.lua`):
+  stock told two box shapes apart — columns and everything else — so a
+  plain hlist in a vertical list (a two-column body, a short caption,
+  `\centerline`, a class title block) was dropped, vertical rules
+  vanished, rule-only paragraphs failed the ink gate, and footnotes
+  surfaced wherever TeX had floated them. Columns are walked in reading
+  order, inky boxes become re-breakable synthesized paragraphs, rules
+  become rule displays, footnotes become endnotes behind TeX's own
+  footnote rule, and the page body is identified by the attribute
+  `laxreflow.sty` stamps on `\@outputbox` (falling back to the kernel's
+  `\@outputpage` anatomy) so running heads and folios stay out. Two more
+  shapes are told apart: a box holding a stamped line or a display is a
+  *frame*, walked with line and display semantics; a box whose ink lies
+  wholly outside its own horizontal extent is a *margin decoration*
+  (`lineno`'s numbers) and is dropped, its height and depth kept as glue.
+  A heading that opens a page gets back the `\@startsection` skip TeX
+  discarded with the top-of-page furniture, from a whatsit the package
+  wrote below that glue.
+- **Footnote references** (`src/extract/serializer.lua`,
+  `src/schema/latex.proto`): a footnote's insert at its reference point
+  becomes a `footnote_ref` node (wire name `fnref`, `n` = the footnote's
+  ordinal), a vertical-mode insert (`\thanks`, `\footnotetext`) leaves a
+  stand-in the walk emits as a `footnote_ref` stream item, and each
+  footnote paragraph carries `Paragraph.footnote = k` — so a viewer with
+  a margin rail can set footnote *k* beside its reference while the
+  endnote emission stays the fallback.
+- **Glyph text and the paragraph band** (`src/extract/serializer.lua`,
+  `src/schema/latex.proto`): a glyph whose codepoint is not its text (an
+  OpenType ligature, a small cap, an old-style figure — Libertine's `Th`,
+  `ft`, `.sc`) carries a `text` field, so the stream no longer reads "e"
+  for "the"; and `Paragraph.width` (wire field 7) lets a renderer keep a
+  band's right inset.
+- **The page of an included picture** (`src/extract/serializer.lua`):
+  `note_picture` takes an optional page, so
+  `\includegraphics[page=N]{figures.pdf}` — one multi-page PDF holding a
+  paper's figures — no longer collapses to that file's first page.
+- **Marker and footnote forms in the wire schema**
+  (`src/schema/latex.proto`): a `mark` NodeType and a `marker` ItemKind,
+  an `fnref` NodeType and a `footnote_ref` ItemKind, each with `side`/`n`;
+  plus `Paragraph.width` and `Paragraph.footnote`. Stock `encode_pb` dies
+  with `KeyError: 'marker'` on a stream marker.
 - **Encode hardening** (`src/encode/encode_pb.py`): prefer the
   fetch-regenerated `latex_pb2.py`, a loud error on unknown enum values,
   and `serialize_document()` with explicit deterministic serialization.
-- **Transforms** (`src/encode/transforms.py`): markers survive
-  `strip_unsupported_nodes`; every converted picture passes an
+- **Transforms** (`src/encode/transforms.py`): markers and `fnref` nodes
+  survive `strip_unsupported_nodes`; a glyph the 8-bit font had no slot
+  for (LuaTeX's "Missing character" record, zero-metric) is dropped rather
+  than passed on, where the converted OTF's cmap would otherwise draw
+  some other glyph at zero advance, stacked on the next letter like a
+  diacritic; every converted picture passes an
   element/attribute-allowlist SVG sanitizer (the web compile runs
   `-shell-escape` for tikz externalization, so a paper can emit arbitrary
   SVG through dvisvgm-raw specials — CSP is defense in depth, not the
@@ -35,6 +79,15 @@ stage-0 spike (`spike/paper/reflow/REPORT.md`) proved necessary:
   consumed as-is, with or without a PDF beside it (a plain
   `\includegraphics` has none), the sanitizer still applied to every
   consumed SVG.
+- **Type1 glyphs addressed by their Unicode meaning**
+  (`src/encode/t1_convert.py`): stock gave a real codepoint only to glyph
+  names inside a short allowlist of ranges, so every math operator and
+  relation (minus, `∈`, `⩾`, `Ω`, the AMS relations, the cmex delimiters)
+  went to `U+E000 + slot` — mathematics that copies and searches as
+  private-use garbage. Names now resolve through texglyphlist (the table
+  pdfTeX builds its ToUnicode maps from) plus AGL and a suffix rule for
+  size and style variants; combining marks and nameless pieces keep the
+  private fallback.
 - **Map-aware, injectable Type1 lookup** (`src/encode/t1_convert.py`):
   `find_outline` resolves a legacy 8-bit face the way the engines do,
   through its `pdftex.map` line — the outline plus, for a re-encoded
@@ -68,8 +121,10 @@ hash-pinned Python environment into `venv/` from
 `requirements.lock` (`pip install --require-hashes`; the venv is reused
 while the lock is unchanged), regenerates `checkout/build/latex_pb2.py`
 from the patched schema with grpcio-tools' bundled `protoc` (no apt
-protoc), verifies the result — the marker forms present in the generated
-module, which stock upstream lacks — and finally downloads the pinned
+protoc), verifies the result — both marker forms, both footnote forms
+(`NodeType.fnref`, `ItemKind.footnote_ref`), and `Paragraph.width` +
+`Paragraph.footnote` present in the generated module, none of which stock
+upstream has — and finally downloads the pinned
 **PyMuPDF** wheel (`pins.ts`, `PYMUPDF_*`), checks its sha256 before
 unpacking it into `pymupdf/lib/`, and leaves it there.
 

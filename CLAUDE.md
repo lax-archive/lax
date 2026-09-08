@@ -109,8 +109,12 @@ inferring intent from the current code.
   (the multi-environment design, retired executed) and
   `environments-roundtrip-20260904.md` (the first off-epoch round trip:
   timings, the limits decision, and why the validate job cannot save
-  caches), and `cli-output-draft.md` (the CLI output proposal that
-  `src/cli/ui.ts` implements; its header records what was not taken).
+  caches), `cli-output-draft.md` (the CLI output proposal that
+  `src/cli/ui.ts` implements; its header records what was not taken), and
+  `reflow-maturation-20260908.md` (the reflow web view's corpus pass over
+  44 real papers: the lab harness, the defect classes by layer, and why a
+  declared relocation must be settled before an order-sensitive oracle
+  charges it twice).
 
 ## Commands
 

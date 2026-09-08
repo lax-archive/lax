@@ -16,8 +16,9 @@
 //   3. regenerate latex_pb2.py from the fork's schema into checkout/build/
 //      with grpcio-tools' bundled protoc (never apt protoc, and never at
 //      pipeline run time — the fork's _ensure_pb2 is verify-only);
-//   4. import the generated module and assert both marker forms are present
-//      (the proof that the checkout is the fork's branch, not stock upstream);
+//   4. import the generated module and assert both marker forms, both
+//      footnote forms, and the paragraph band fields are present (the proof
+//      that the checkout is the fork's branch, not stock upstream);
 //   5. download the pinned PyMuPDF wheel into pymupdf/ (gitignored), verify
 //      its sha256 *before* unpacking, and unpack it into pymupdf/lib/. That
 //      one is not part of the encode environment at all: it is the picture
@@ -157,7 +158,14 @@ run(
       "for m in (L.Node, L.ContentItem):",
       "    fields = m.DESCRIPTOR.fields_by_name",
       "    assert 'side' in fields and 'n' in fields, m.DESCRIPTOR.full_name + ' lacks side/n'",
-      "print('latex_pb2: both marker forms present')",
+      "# The footnote forms follow the same split (NodeType.fnref, ItemKind.",
+      "# footnote_ref, both on `n`), and a footnote's paragraphs carry its",
+      "# ordinal beside the band width.",
+      "assert 'fnref' in L.NodeType.keys(), 'NodeType.fnref missing'",
+      "assert 'footnote_ref' in L.ItemKind.keys(), 'ItemKind.footnote_ref missing'",
+      "para = L.Paragraph.DESCRIPTOR.fields_by_name",
+      "assert 'width' in para and 'footnote' in para, 'Paragraph lacks width/footnote'",
+      "print('latex_pb2: both marker forms, both footnote forms, and the paragraph band present')",
     ].join("\n"),
   ],
   { env: { ...process.env, PYTHONPATH: pb2Dir } },

@@ -118,10 +118,16 @@ function parseExtracted(value: unknown, withText = false): ExtractedPdf {
     text = object.text.map((page) => {
       if (!Array.isArray(page)) throw new Error("PDF reader: invalid text page");
       return page.map((item): ExtractedTextItem => {
-        if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== "string" || (item[1] !== 0 && item[1] !== 1)) {
+        if (!Array.isArray(item) || typeof item[0] !== "string" || (item[1] !== 0 && item[1] !== 1)) {
           throw new Error("PDF reader: invalid text item");
         }
-        return [item[0], item[1]];
+        // `[str, eol]` or `[str, eol, x, y, width]` — nothing in between.
+        if (item.length === 2) return [item[0], item[1]];
+        const geometry = item.slice(2);
+        if (geometry.length !== 3 || !geometry.every((value) => typeof value === "number" && Number.isFinite(value))) {
+          throw new Error("PDF reader: invalid text item");
+        }
+        return [item[0], item[1], geometry[0] as number, geometry[1] as number, geometry[2] as number];
       });
     });
   }

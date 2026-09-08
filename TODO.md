@@ -152,41 +152,124 @@ PDF the archive derives a reflowable web view (ReflowTeX, non-blocking,
 `web: false` opts out), and the site's paper page shows both surfaces with
 a card per marked passage. All code stages of both plans are merged
 (lax-website 2026-09-03 morning, lax the same day); the author contract
-is in instructions.md, the proposed spec amendment in spec-notes.md
-(2026-09-02). The fork `lax-archive/reflowtex` exists (`lax` branch, one
-commit per changed file) and the pin points at it. The paper-web docker
-smoke first ran 2026-09-03 on Jan's machine and found the pinned image's
-dvisvgm cannot read PDF (Ghostscript 10.07, no mutool) — fixed with the
-Ghostscript EPS detour in `web-container.ts`; the web compile of the
-tikz fixture takes ~16 s in the image. Jan waived the scratch-repo
-rehearsal for this merge (2026-09-03, "finish all the way"); the standing
-rule itself stands for the next Actions-side change. The first real paper
-(lax-65, LIPIcs, 2026-09-03) then found three trusted-path gaps the tikz
-fixture could not: the fork's opt-in list for unsourced pictures shadowed
-a local (UnboundLocalError; renamed, fork 74215bf); every text face of an
-lmodern/lipics paper is a re-encoded legacy Type1 (`ec-lmr10` is
-`lmr10.pfb` through `lm-ec.enc`, no `ec-lmr10.pfb` exists) that stock
-lookup never finds — and on the TeX-less Validate host the fallback
-`kpsewhich` call crashed the encode; and the oracle read those faces'
-slots through a Computer-Modern-keyed table ("deøned", vanished accents,
-"1γ"), subtracted trial typesettings (`\caption`'s measuring box, a
-paragraph's opening letters) from the PDF side, and landed at 0.9799
-against the 0.98 floor. Now: the fork resolves legacy faces through
-`pdftex.map` with their encoding vectors (exported in-image as
-`<name>.pfb` + `<name>.enc`, `find_outline`), f-ligatures address their
-presentation forms, `provision` survives a missing kpsewhich, the oracle
-text is taken after the legacy re-addressing, and a capture whose text
-the stream carries is no omission (`web.ts`); the smoke fixture typesets
-in T1 Latin Modern so the map route runs in the pinned image. What remains:
+is in instructions.md, the proposed spec amendments in spec-notes.md
+(2026-09-02, 2026-09-08). The fork `lax-archive/reflowtex` exists (`lax`
+branch, one commit per changed file) and the pin points at it. Jan waived
+the scratch-repo rehearsal for the 2026-09-03 merge ("finish all the
+way"); the standing rule itself stands for the next Actions-side change.
+The first real papers (lax-65, then the 2026-09-08 corpus pass over 44
+papers — `history/reflow-maturation-20260908.md`, which holds the defect
+classes, the per-round numbers and the lessons) closed the trusted-path
+and rendering defects that one fixture could not reach. What remains:
 
-- **Renderer release: done.** The bundled fallback and the download share
-  one surface again: the pin names lax-website `30927d2d` (2026-09-04,
-  the paper viewers, the multi-statement presentation, and the machine
-  index), `https://laxarchive.org/_renderer/latest.json` serves it, and
-  `release.yml` packages it on the `v*` tag. (The picture converter's
-  wheel is *not* part of this: only the trusted container derivation uses
-  it, and `npm run reflowtex:fetch` already brings it — `lax serve` and
-  `lax build` derive no web view at all.)
+- **Deploy the 2026-09-08 reflow pass.** In order, all of it uncommitted
+  to any remote today:
+  1. push the fork checkout's `lab` branch onto `lax-archive/reflowtex`'s
+     `lax` branch (8 commits over the pinned `61dc460`; noreply author —
+     GitHub rejects the gmail address, so Jan may have to push), then bump
+     `REFLOWTEX_REV` in `pins.ts`. `reflowtex/fetch.mjs` already asserts
+     the new schema surface (`fnref`, `footnote_ref`, `Paragraph.width`,
+     `Paragraph.footnote`), so a stale pin fails the fetch loudly.
+  2. merge the `lax-website-reflow` worktree's `reflow-lab` branch (viewer
+     + schema gate + the uncommitted sidenote work, below) into
+     lax-website `main`.
+  3. `npm run check` and `LAX_SMOKE_CASE=paper-web npm run
+     smoke:submission-validation`, then recut the bundle fixture
+     (`npm run paper-web:fixture`, `test/fixtures/paper-web/paper-web.tar`)
+     — the old one carries the pre-footnote schema.
+  4. re-pin and release the renderer for `lax serve` (the mechanism is
+     done: `https://laxarchive.org/_renderer/latest.json`, packaged by
+     `release.yml` on the `v*` tag; only the lax-website rev needs
+     moving). The picture converter's wheel is *not* part of this — only
+     the trusted container derivation uses it.
+  5. `npm run admin -- revalidate` the three paper records:
+     **lax-157538** (no `paper.web` at all today), **lax-48** (registered;
+     blank figures and missing icons from the pre-2026-09-03 Ghostscript
+     conversion — this is the admin verb's first production use), and
+     **lax-242665**.
+
+  The lax-side changes (`assets/tex/laxreflow.sty`,
+  `reflowtex/encode_web.py`, `reflowtex/fetch.mjs`, `paper/web*.ts`,
+  `paper/extract*.ts`, `config.ts`, their tests) and the lab harness
+  itself (`scripts/reflow-lab/`, still untracked) commit with step 1.
+- **Six web-compile classes still failing or shimmed** (round 3, 6 of 45
+  entries skipped on `web-compile`; the lualatex + `-shell-escape` +
+  injected-package combination breaks documents whose own pdflatex build
+  is fine):
+  - **acmart + unicode-math**: `\widehat\CC` (a `\mathcal` alias under
+    `\widehat`) aborts with `Missing { inserted` at
+    `\__um_group_begin:` — `decomposition-trees`,
+    `model-checking-interpretations`. A source-side limit as far as we
+    know; the paper keeps a PDF-only page. Worth one more look at whether
+    the injection order can avoid it.
+  - **AAAI `\boundary`**: `aaai24.sty` papers that
+    `\newcommand{\boundary}` collide with LuaTeX's `\boundary` primitive
+    (`preprocmso`). `luatex85` does not cover it; a shim would have to
+    `\let\boundary\undefined` before the class, which is a real decision
+    (the primitive is otherwise reachable).
+  - **remember-picture / overlay under externalization**: the sub-run
+    exporting one picture cannot see a node another picture defined
+    (`No shape named 'inText' is known`, `monadic-stability`).
+  - **lmcs shipout**: the class takes `\shipout` in a way that leaves
+    pgf's `\pgfexternal@originalshipout` undefined in the sub-run
+    (`struc-bound-exp`).
+  - **Externalization cost on long figure-rich papers**: externalization
+    re-runs the whole document once per picture, so `grid-wideness` (124
+    pages, 190 files) took 623 s and blew the then-10-minute limit. The
+    limit is now 30 min (`paperWebCompileTimeoutMs`); re-measure it.
+  - **`bbm` Metafont fonts**: `bbm` ships Metafont sources only, so
+    `bbm10`/`bbm7` are requested by the export and no Type1 outline
+    exists (`lax-web-pfbs.txt` lists them, `lax-fonts/` has no
+    `bbm*.pfb`) — `\mathbbm` glyphs stay metric boxes in lax-157538.
+- **The oracle residual for papers still under 0.98.** All 20 `web-oracle`
+  skips were decomposed (`diff --minimal` hunks; the hunk decomposition
+  *is* the Myers metric, and a Python re-implementation of `web-oracle.ts`
+  reproduces every job's similarity to 6 decimals). 27 481 divergence
+  tokens, and **not one of them is a real text loss** — no hunk anywhere
+  shows the view dropping a sentence the PDF sets. The classes:
+  token-boundary skew in math **33 %**, moved text (floats and captions)
+  **22 %**, math-font glyph asymmetry **21 %**, token-boundary skew in
+  words **10 %**, text inside included figures **6 %**.
+  - **Oracle-side, being implemented now** — measured to take **12 of 20**
+    over the floor, from 0 today: **(A)** merge-tolerant `compareTokens`
+    (a hunk whose two sides concatenate to the same characters is not a
+    divergence) — alone 10 of 20; **(B)** character-level `removeTokenRun`,
+    which also drives `relocatedUnmatched` to 0 everywhere; **(C)** fold
+    U+2206 to U+0394 in `oracleTokens` — one line, and `arxiv-0902-0732`
+    0.9715 → 0.9902. Not "drop single-character tokens": measured, it
+    *lowers* similarity on 14 of 18 jobs by shrinking the denominator.
+  - **Stream side, what is left after A+B+C** (8 papers): non-CM 8-bit
+    faces (Euler, Palatino) mis-decoded in `encode_web.py`'s
+    `decode_glyph` — 1 398 tokens, `daniel-thesis` alone; cmex/cmsy
+    lowercase slot letters, where the fix is to mirror pdf.js's
+    slot-letter fallback rather than delete evidence; a clipped
+    `\includegraphics` that attribute 902 never stamps, so two papers lose
+    their figures *and* their figure text (being fixed now); and floats,
+    which the walk emits out of page order — 6 050 tokens, 4 papers —
+    wanting either emission at the shipped position or an extension of
+    `relocated` to any content the serializer moved.
+- **Sidenotes**: the viewer and `manuscript-reflow.js` lift each footnote
+  segment into the margin rail where the page has one (the schema carries
+  `fnref` / `footnote_ref` / `Paragraph.footnote` and the block states
+  `data-latex-footnote-width`), with endnotes as the fallback. Working in
+  the `lax-website-reflow` worktree but **uncommitted** — commit it before
+  the merge above, or the merged viewer sets endnotes only.
+- **tcolorbox callout frames are not drawn.** `shield externalize` (armed
+  globally when the package loads) makes the boxes typeset inline, so
+  their *text* reaches the stream while the frame, a pgf literal, does
+  not. A callout therefore reads as plain body text. Carrying the frame
+  would mean giving the walk a box-decoration concept.
+- **Nothing in the reflow surface is a link.** `pdf_dest` / `pdf_annot`
+  whatsits are dropped by `strip_unsupported_nodes`, so `\ref`, `\cite`
+  and bibliography URLs render as dead text — often still in hyperref
+  blue, which advertises a link that is not there. (The pdf.js surface
+  renders no annotation layer either, so the regression is against the
+  downloadable PDF.)
+- **[Jan] The fixed-measure column at wide viewports** — a site CSS
+  decision, not a defect: the reflow band is ~576 px at an 1100 px
+  viewport and ~544 px at 700 px, so nearly half a wide window is empty.
+  The gutter is deliberate (margin notes, marked passages, sidenotes). Decide
+  whether the measure should grow with the viewport, and by how much.
 - **[Jan] Production round trips** closing both plans — a real paper (the
   flagship drafts in `~/git/lax-submissions`) through validate → publish →
   site page with both surfaces — recorded in `history/`; measure the TeX
@@ -197,32 +280,12 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   `jan3er/lax-paper-roundtrip-20260902` from the lax-61 stage-3 round trip
   (`history/paper-roundtrip-20260902.md`): `gh auth refresh -h github.com
   -s delete_repo`, then `gh repo delete … --yes`.
-- **Virtual fonts in the web view** (done 2026-09-03, kept as the record):
-  `\mathcal` in a lipics paper is `BOONDOX-r-cal`, a *virtual* font —
-  pdftex.map names no outline for it, so every calligraphic letter was a
-  red metric box (lax-65 throughout its statements). The export now
-  follows a nameless face to the font its program draws from (`vftovp`,
-  MAPFONT 0 → `zxxrw7z` → `zxxrw8a.pfb`) and exports that outline under
-  the virtual name; the host keeps only the slots the two share
-  (`sharedSlots`), naming them from the base's own vector — its map
-  `.enc`, else `8a.enc` where the outline says StandardEncoding, else the
-  outline's own `dup … put` lines — so a slot the virtual font borrows
-  elsewhere (BOONDOX takes its digits from cmr10) stays a metric box
-  instead of becoming the base's glyph for that code. A face whose
-  program or vector cannot be read loses its outline entirely. Still
-  open: a virtual font that *composes* (accents built from two glyphs)
-  keeps metric boxes for those slots, and BOONDOX bold/fraktur/
-  doublestruck are untested.
-- **Re-validate lax-48**, the only paper record derived before
-  2026-09-03 (checked 2026-09-04; lax-65 was re-validated that day and
-  lax-61 is deleted). Until that day the in-image picture conversion went
-  through Ghostscript, which rasterized every page carrying transparency
-  into a JPEG the sanitizer then dropped, and every plain
-  `\includegraphics` was dropped to a kern; both are fixed in the
-  derivation, not the site, so lax-48 keeps its blank figures and missing
-  icons. It is *registered*, so `/lax submit` refuses it: run
-  `npm run admin -- revalidate lax-48` (the admin `revalidate` verb landed
-  2026-09-04; this is its first production use — see the admin section).
+- **Virtual fonts that compose** keep metric boxes: the export follows a
+  nameless virtual face to the outline its program draws from and keeps
+  only the slots the two share (landed 2026-09-03 for `BOONDOX-r-cal`,
+  lipics `\mathcal`), but a slot built from two glyphs (an accent) has no
+  single source and stays a box. BOONDOX bold / fraktur / doublestruck
+  are untested.
 - **Cache the PyMuPDF wheel in the Validate job** (optional): `npm run
   reflowtex:fetch` now downloads 25 MB per paper-bearing run. The existing
   `actions/cache` pair covers `reflowtex/venv`, keyed on
@@ -235,9 +298,15 @@ in T1 Latin Modern so the map route runs in the pinned image. What remains:
   (`test/e2e/paper-neutrality.test.ts` measures pdflatex and lualatex):
   add `texlive-xetex` to the CI TeX set, or verify at the first
   xelatex-engine paper.
-- The serializer's `has_ink` gate fix (standalone figures vanished from
-  the web view; upstream has the same silent drop) is an upstreaming
-  candidate from `lax-archive/reflowtex` to `radek-p/reflowtex`.
+- **Upstreaming candidates** from `lax-archive/reflowtex` to
+  `radek-p/reflowtex` — all of them fixes to silent drops upstream shares,
+  none of them archive-specific: the `has_ink` gate (standalone figures
+  vanished from the view), the shipout walk's box/column/rule/footnote
+  branches and the `lineno` frame-vs-margin-decoration split, the
+  `\@startsection` skip restore at a page top, the Type1 glyph-name →
+  Unicode addressing (upstream sends every math relation to the PUA), the
+  ligature/small-cap `text` field, and the missing-character drop.
+  Marker capture and the `page` field on a picture are ours to keep.
 - Known limits, carried: pdf.js stays `pdfjs-dist` 5.6 (the last line
   that runs on Node 20.19; its optional `@napi-rs/canvas` native
   dependency is never loaded); the paper containers run under the Lean

@@ -10,9 +10,10 @@
 // through the shared size cap), `pics/*.pdf` plus the SVGs a second
 // in-image step converts them to (the encode host has no PDF converter at
 // all — the fork consumes a pre-converted `<src>.svg` as-is, sanitizer
-// still applied), and the font files the run used,
-// resolved in-image by kpsewhich from the serializer's font table and
-// consumed host-side through `encode_web.py --fonts` (fonts.py's
+// still applied), each vector picture's page text as a bounded `.txt`
+// beside its SVG (oracle data only, never rendered), and the font files the
+// run used, resolved in-image by kpsewhich from the serializer's font table
+// and consumed host-side through `encode_web.py --fonts` (fonts.py's
 // `local_dir` injection point). Nothing else. The encode child then runs on
 // the Validate job's host under the pdf.js precedent — credential-free,
 // untrusted input, bounded output, its own timeout — and everything after
@@ -61,6 +62,13 @@ export const WEB_EXPORT_FONTS_DIR = "lax-fonts";
 /** Extension of the marker the export leaves beside a raster picture it had
  * to downsample to the long-edge cap. */
 export const WEB_EXPORT_DOWNSAMPLED_SUFFIX = "downsampled";
+/** Extension of the text sidecar the export leaves beside a vector picture's
+ * SVG: the page's own text (tikz labels, a figure's lettering), which the PDF
+ * text layer carries and the node list does not. The encode child folds it
+ * into stream.json's text at the picture's position so the oracle can meet
+ * it, and nowhere else — the rendered SVG already carries the drawing.
+ * Bounded in the converter (`MAX_TEXT_BYTES`) and read as data. */
+export const WEB_EXPORT_TEXT_SUFFIX = "txt";
 /** Where the unpacked PyMuPDF wheel is mounted, read-only, in the export
  * container — `PYTHONPATH`, and the only thing in it. */
 export const WEB_PYMUPDF_PATH = "/opt/lax/pymupdf";
@@ -267,8 +275,12 @@ export function webExportScript(): string {
  * 247 KB and 205 KB).
  *
  * Two kinds of input, both bounded. A PDF (an externalized tikz picture, a
- * vector figure) becomes its single page's vector SVG — more than one page is
- * refused rather than silently cropped. A raster (`\\includegraphics` of a
+ * vector figure) becomes one page's vector SVG: the page the slot was
+ * assigned for (`\\includegraphics[page=N]` — one multi-page PDF holding all
+ * of a paper's figures, addressed by page, is a common way to ship them;
+ * the first page when the author named none, which is what graphicx shows
+ * too). A page the document does not have is refused, never substituted. A
+ * raster (`\\includegraphics` of a
  * PNG or a JPEG) has no vector form, so it is re-encoded through a Pixmap —
  * which turns untrusted bytes into pixels this process produced — downsampled
  * to the long-edge cap, and wrapped in an `<svg>` holding one `<image>` with a
@@ -279,7 +291,14 @@ export function webExportScript(): string {
  *
  * The `\\includegraphics` files are named by the *slot* the host assigned
  * (`assignIncludedPictureSlots`), never by their own path, and each one is
- * resolved inside the job copy or the image's TeX tree or not at all.
+ * resolved inside the job copy or the image's TeX tree or not at all; a
+ * slot's page comes from the same host-written list.
+ *
+ * A vector picture's page text goes beside its SVG as `<stem>.txt`
+ * (WEB_EXPORT_TEXT_SUFFIX), whitespace-collapsed and cut at a fixed 64 KiB
+ * — a picture is a figure, not a page of prose, and the oracle's tokens are
+ * all it feeds; a raster has no text layer and gets none. Written only
+ * after the SVG, so a sidecar never stands without its picture.
  */
 export function webConvertScript(limits: ValidationLimits): string {
   return `#!/usr/bin/env python3
@@ -289,9 +308,12 @@ import base64, glob, json, os, subprocess, sys
 
 WORK = "${PAPER_CONTAINER_PATHS.work}"
 MAX_SVG_BYTES = ${limits.paperWebPictureBytes}
+# The page text beside a vector picture's SVG: oracle data, a figure's worth.
+MAX_TEXT_BYTES = 64 * 1024
 RASTER_LONG_EDGE = ${limits.paperWebRasterLongEdge}
 PICTURE_LIST = os.path.join(WORK, "${WEB_EXPORT_PICTURE_LIST}")
 DOWNSAMPLED_SUFFIX = "${WEB_EXPORT_DOWNSAMPLED_SUFFIX}"
+TEXT_SUFFIX = "${WEB_EXPORT_TEXT_SUFFIX}"
 
 import pymupdf
 
@@ -352,14 +374,29 @@ def write_svg(out, svg):
     return True
 
 
-def vector_svg(source):
-    """One page of a PDF as pure vector SVG, text drawn as paths (no font
-    lookup on the reader's side, and none of dvisvgm's id collisions)."""
+def page_text(page):
+    """The page's text layer in reading order, whitespace collapsed, cut at
+    MAX_TEXT_BYTES on a character boundary. Data for the oracle, nothing
+    else: it is never rendered and never trusted."""
+    text = " ".join(page.get_text("text").split())
+    data = text.encode("utf-8")[:MAX_TEXT_BYTES]
+    return data.decode("utf-8", errors="ignore")
+
+
+def vector_svg(source, page):
+    """Page \`page\` (1-based) of a PDF as pure vector SVG, text drawn as
+    paths (no font lookup on the reader's side, and none of dvisvgm's id
+    collisions), and that page's text. Returns (svg, text). A page the
+    document does not have is refused rather than substituted: the slot was
+    assigned for exactly that page, and MuPDF would otherwise count a
+    negative index from the end."""
     document = pymupdf.open(source)
     try:
-        if document.page_count != 1:
-            raise RuntimeError("%d pages, expected exactly 1" % document.page_count)
-        return document[0].get_svg_image(text_as_path=True)
+        if page < 1 or page > document.page_count:
+            raise RuntimeError("page %d is out of range, the document has %d page(s)"
+                               % (page, document.page_count))
+        selected = document[page - 1]
+        return selected.get_svg_image(text_as_path=True), page_text(selected)
     finally:
         document.close()
 
@@ -390,24 +427,34 @@ def raster_svg(source, jpeg):
     return svg, downsampled
 
 
-def convert(source, out):
-    """Returns True when \`out\` now holds the picture. Never raises."""
+def convert(source, out, page=1):
+    """Returns True when \`out\` now holds the picture: page \`page\` of a PDF
+    (a raster has no pages and ignores it). Never raises."""
     extension = os.path.splitext(source)[1].lower()
+    stem = out[: -len(".svg")]
     try:
         if extension in (".png", ".jpg", ".jpeg"):
             svg, downsampled = raster_svg(source, extension != ".png")
             if not write_svg(out, svg):
                 return False
             if downsampled:
-                open(out[: -len(".svg")] + "." + DOWNSAMPLED_SUFFIX, "wb").close()
+                open(stem + "." + DOWNSAMPLED_SUFFIX, "wb").close()
             return True
-        return write_svg(out, vector_svg(source))
+        svg, text = vector_svg(source, page)
+        if not write_svg(out, svg):
+            return False
+        if text:
+            with open(stem + "." + TEXT_SUFFIX, "wb") as handle:
+                handle.write(text.encode("utf-8"))
+        return True
     except Exception as error:  # noqa: BLE001 — one bad picture is not fatal
-        note("not converted: %s (%s: %s)" % (source, type(error).__name__, error))
-        try:
-            os.unlink(out)
-        except OSError:
-            pass
+        where = source if page == 1 else "%s page %d" % (source, page)
+        note("not converted: %s (%s: %s)" % (where, type(error).__name__, error))
+        for stale in (out, stem + "." + TEXT_SUFFIX):
+            try:
+                os.unlink(stale)
+            except OSError:
+                pass
         return False
 
 
@@ -425,11 +472,16 @@ except (OSError, ValueError):
     listed = []
 for entry in listed:
     slot, name = entry["slot"], entry["file"]
+    # The page the slot stands for, as the host wrote it (1 when unpaged).
+    page = entry.get("page", 1)
+    if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+        note("not a page number: %r (%s)" % (page, name))
+        continue
     source = resolve(name)
     if source is None:
         note("not resolved inside the job copy or the TeX tree: %s" % name)
         continue
-    convert(source, os.path.join(WORK, slot + ".svg"))
+    convert(source, os.path.join(WORK, slot + ".svg"), page)
 `;
 }
 
@@ -637,13 +689,17 @@ export function normalizePictureBoxes(webSrc: string): number {
 // `-shell-escape` run's own output.json, pointing at a file that may sit
 // anywhere the run could read.
 //
-// So the name never travels. Each distinct one is validated by shape, assigned
-// a slot (`pics/lax-inc<N>`), and only the slot goes into the output.json the
-// encode reads and into the bundle; the file itself is named exactly once, in
-// the list the in-container converter resolves against the job copy and the
-// TeX tree. A name that fails validation, and a slot the converter did not
-// produce an SVG for, lose their `file` field — which is precisely the fork's
-// kern fallback, reported as `web-pictures-dropped`.
+// So the name never travels. Each distinct (file, page) pair is validated by
+// shape, assigned a slot (`pics/lax-inc<N>`), and only the slot goes into the
+// output.json the encode reads and into the bundle; the file itself is named
+// exactly once per page, in the list the in-container converter resolves
+// against the job copy and the TeX tree. The page is the serializer's
+// `page` field — `\includegraphics[page=N]` of one multi-page PDF holding a
+// paper's figures, addressed by page, is how whole books ship theirs — so the
+// same file at two pages is two slots and two conversions, and a slot means
+// one page of one file. A name that fails validation, and a slot the
+// converter did not produce an SVG for, lose their `file` field — which is
+// precisely the fork's kern fallback, reported as `web-pictures-dropped`.
 
 /** The stem every included picture's slot is named with. */
 export const WEB_INCLUDED_SLOT_PREFIX = "pics/lax-inc";
@@ -662,18 +718,36 @@ export const WEB_INCLUDED_FILE = new RegExp(
   "iu",
 );
 
-/** A picture the host gave a slot: the slot's stem inside the job copy, and
- * the file name the container is to resolve. */
+/** A picture the host gave a slot: the slot's stem inside the job copy, the
+ * file name the container is to resolve, and the page of it the slot stands
+ * for — 1 unless the author wrote `\includegraphics[page=N]` (a raster has no
+ * pages; the converter ignores it there). */
 export interface WebIncludedPicture {
   slot: string;
   file: string;
+  page: number;
 }
 
 export interface WebIncludedPictures {
   included: WebIncludedPicture[];
-  /** Distinct file values refused by shape or by the count cap; each one's
-   * picture keeps its width as blank space. */
+  /** Distinct pictures refused by shape, by page, or by the count cap, named
+   * as `includedPictureName` does; each one keeps its width as blank space. */
   refused: string[];
+}
+
+/** The name an included picture is reported by: the author's file, with the
+ * page spelled the way the author addressed it when it is not the first. */
+export function includedPictureName(picture: { file: string; page: number }): string {
+  return picture.page === 1 ? picture.file : `${picture.file}[page=${picture.page}]`;
+}
+
+/** The page a serialized picture node asks for: absent is the first, and
+ * anything but a positive integer is no page at all — the field is read out
+ * of a `-shell-escape` run's own output.json, as untrusted as the file. */
+function pictureNodePage(node: Record<string, unknown>): number | undefined {
+  const value = node.page;
+  if (value === undefined) return 1;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : undefined;
 }
 
 /** A tikz picture's own externalization stem, as the compile wrote it. */
@@ -687,7 +761,9 @@ function tikzStem(webSrc: string, file: string): boolean {
 /**
  * Give every plain `\includegraphics` in the serialized stream a slot,
  * rewriting `output.json` in place: a tikz stem is left alone, an acceptable
- * file name becomes its slot, anything else loses its `file` field. Runs after
+ * file name at an acceptable page becomes its slot, anything else loses its
+ * `file` field. The node's `page` leaves with either outcome: the slot stands
+ * for one page already, and nothing downstream reads the field. Runs after
  * the compile and before the export, and returns what the export must resolve.
  */
 export function assignIncludedPictureSlots(webSrc: string, limits: ValidationLimits): WebIncludedPictures {
@@ -697,30 +773,39 @@ export function assignIncludedPictureSlots(webSrc: string, limits: ValidationLim
     return { included: [], refused: [] };
   }
   const data = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
-  const slots = new Map<string, string>();
+  // Keyed by page and file: the same file at two pages is two slots.
+  const slots = new Map<string, WebIncludedPicture>();
   const refused = new Set<string>();
   let changed = false;
   walkPictureNodes(data, (node) => {
     const value = node.file;
     if (typeof value !== "string" || value === "") return;
     if (tikzStem(webSrc, value)) return;
-    let slot = slots.get(value);
-    if (slot === undefined) {
-      if (!WEB_INCLUDED_FILE.test(value) || value.length > 512 || slots.size >= limits.paperWebIncludedPictures) {
-        refused.add(value);
+    const page = pictureNodePage(node);
+    let picture = page === undefined ? undefined : slots.get(`${page}:${value}`);
+    if (picture === undefined) {
+      if (
+        page === undefined ||
+        !WEB_INCLUDED_FILE.test(value) ||
+        value.length > 512 ||
+        slots.size >= limits.paperWebIncludedPictures
+      ) {
+        refused.add(page === undefined ? value : includedPictureName({ file: value, page }));
         delete node.file;
+        delete node.page;
         changed = true;
         return;
       }
-      slot = `${WEB_INCLUDED_SLOT_PREFIX}${slots.size}`;
-      slots.set(value, slot);
+      picture = { slot: `${WEB_INCLUDED_SLOT_PREFIX}${slots.size}`, file: value, page };
+      slots.set(`${page}:${value}`, picture);
     }
-    node.file = slot;
+    node.file = picture.slot;
+    delete node.page;
     changed = true;
   });
   if (changed) writeIntoWebCopy(file, JSON.stringify(data));
   return {
-    included: [...slots].map(([name, slot]) => ({ slot, file: name })),
+    included: [...slots.values()],
     refused: [...refused].sort(),
   };
 }
@@ -728,7 +813,9 @@ export function assignIncludedPictureSlots(webSrc: string, limits: ValidationLim
 /**
  * The slots the export produced no SVG for, stripped from `output.json` so the
  * fork's kern fallback takes them instead of the encode dying on a picture it
- * cannot source. Returns their file names, for the report.
+ * cannot source. Returns their names (`includedPictureName`), for the report.
+ * Only the SVG counts as converted: a text sidecar alone, whoever left it,
+ * is not a picture.
  */
 export function dropUnconvertedPictures(
   webSrc: string,
@@ -738,7 +825,7 @@ export function dropUnconvertedPictures(
   const missing = new Map<string, string>();
   for (const picture of included) {
     if (fs.lstatSync(path.join(webSrc, `${picture.slot}.svg`), { throwIfNoEntry: false })?.isFile() !== true) {
-      missing.set(picture.slot, picture.file);
+      missing.set(picture.slot, includedPictureName(picture));
     }
   }
   if (missing.size === 0) return [];
@@ -753,13 +840,14 @@ export function dropUnconvertedPictures(
   return [...new Set(missing.values())].sort();
 }
 
-/** The raster pictures the export had to downsample, by the author's own file
- * name — the `.downsampled` markers the converter leaves. */
+/** The raster pictures the export had to downsample, by the author's own
+ * name (`includedPictureName`) — the `.downsampled` markers the converter
+ * leaves. */
 export function webDownsampledPictures(webSrc: string, included: readonly WebIncludedPicture[]): string[] {
   const names: string[] = [];
   for (const picture of included) {
     const marker = path.join(webSrc, `${picture.slot}.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`);
-    if (fs.lstatSync(marker, { throwIfNoEntry: false })?.isFile() === true) names.push(picture.file);
+    if (fs.lstatSync(marker, { throwIfNoEntry: false })?.isFile() === true) names.push(includedPictureName(picture));
   }
   return [...new Set(names)].sort();
 }
@@ -792,7 +880,8 @@ function walkPictureNodes(data: unknown, visit: (node: Record<string, unknown>) 
 }
 
 /** The export set's count + total-bytes bound, over everything the export
- * resolved (fonts, legacy outlines) and the converted pictures, plus the
+ * resolved (fonts, legacy outlines), the converted pictures and their text
+ * sidecars, plus the
  * loud check that every requested font *file* actually came out — a name
  * kpsewhich could not resolve would otherwise surface as a confusing
  * host-side crash (the Validate host has no TeX). Legacy outlines are not
@@ -823,7 +912,9 @@ export function webExportProblem(
   const picsDir = webPicturesDirectory(webSrc);
   const unconverted: string[] = [];
   for (const name of fs.readdirSync(picsDir).sort()) {
-    if (name.endsWith(".svg")) exported.push(path.join(picsDir, name));
+    // Converted pictures and their text sidecars leave the container; the
+    // PDFs the compile wrote do not. Only an SVG makes a picture converted.
+    if (name.endsWith(".svg") || name.endsWith(`.${WEB_EXPORT_TEXT_SUFFIX}`)) exported.push(path.join(picsDir, name));
     if (name.endsWith(".pdf") && !fs.existsSync(path.join(picsDir, `${name.slice(0, -4)}.svg`))) {
       unconverted.push(name);
     }
@@ -903,7 +994,7 @@ export function containerWebDeriver(
         ...webCompileEnvironment(PAPER_CONTAINER_PATHS.work, PAPER_CONTAINER_PATHS.tex, input.sourceDateEpoch),
         HOME: "/tmp",
       },
-      timeoutMs: input.limits.paperCompileTimeoutMs,
+      timeoutMs: input.limits.paperWebCompileTimeoutMs,
       maxOutputBytes: input.limits.maxOutputBytes,
     });
     const compileProblem = webCompileProblem(compile, webSrc, paper.manifest.main, input.limits);
@@ -944,6 +1035,7 @@ export function containerWebDeriver(
     for (const picture of pictures.included) {
       fs.rmSync(path.join(webSrc, `${picture.slot}.svg`), { force: true });
       fs.rmSync(path.join(webSrc, `${picture.slot}.${WEB_EXPORT_DOWNSAMPLED_SUFFIX}`), { force: true });
+      fs.rmSync(path.join(webSrc, `${picture.slot}.${WEB_EXPORT_TEXT_SUFFIX}`), { force: true });
     }
     writeIntoWebCopy(path.join(webSrc, WEB_EXPORT_FONT_LIST), fontNames.map((name) => `${name}\n`).join(""), 0o600);
     writeIntoWebCopy(path.join(webSrc, WEB_EXPORT_PFB_LIST), legacyNames.map((name) => `${name}\n`).join(""), 0o600);
