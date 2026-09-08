@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.PathTree
 
-axiom path_tree {V : Type*} [Fintype V] {G : SimpleGraph V} :
+axiom path_tree {V : Type*} {G : SimpleGraph V} :
   Lax68.Paths.IsPath G →
   Lax68.Trees.IsTree G
 

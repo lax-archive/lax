@@ -11,7 +11,7 @@ conclusion: Lax68.OuterplanarPlanar.outerplanar_planar
 An outerplane drawing is, after forgetting its boundary condition, a planar
 drawing.
 -/
-theorem outerplanar_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem outerplanar_planar {V : Type*} {G : SimpleGraph V} :
     Lax68.Outerplanar.IsOuterplanar G →
     Lax68.Planar.IsPlanar G := by
   rintro ⟨drawing⟩
@@ -23,7 +23,7 @@ conclusion: Lax68.MaximalOuterplanarOuterplanar.maximalOuterplanar_outerplanar
 ---
 Maximal outerplanarity includes outerplanarity.
 -/
-theorem maximalOuterplanar_outerplanar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem maximalOuterplanar_outerplanar {V : Type*} {G : SimpleGraph V} :
     Lax68.MaximalOuterplanar.IsMaximalOuterplanar G →
     Lax68.Outerplanar.IsOuterplanar G :=
   fun h => h.1
@@ -37,7 +37,7 @@ assumptions:
 ---
 Every maximal outerplanar graph is planar.
 -/
-theorem maximalOuterplanar_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem maximalOuterplanar_planar {V : Type*} {G : SimpleGraph V} :
     Lax68.MaximalOuterplanar.IsMaximalOuterplanar G →
     Lax68.Planar.IsPlanar G :=
   fun h =>
@@ -54,7 +54,7 @@ assumptions:
 Every triangle is outerplanar.
 -/
 theorem triangle_outerplanar
-    {V : Type*} [Fintype V] {G : SimpleGraph V} :
+    {V : Type*} {G : SimpleGraph V} :
     Lax68.Triangles.IsTriangle G →
     Lax68.Outerplanar.IsOuterplanar G :=
   fun h =>
@@ -71,7 +71,7 @@ assumptions:
 Every triangle is planar.
 -/
 theorem triangle_planar
-    {V : Type*} [Fintype V] {G : SimpleGraph V} :
+    {V : Type*} {G : SimpleGraph V} :
     Lax68.Triangles.IsTriangle G →
     Lax68.Planar.IsPlanar G :=
   fun h =>
@@ -87,7 +87,7 @@ assumptions:
 ---
 Every star is outerplanar.
 -/
-theorem star_outerplanar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem star_outerplanar {V : Type*} {G : SimpleGraph V} :
     Lax68.Stars.IsStar G →
     Lax68.Outerplanar.IsOuterplanar G :=
   fun h =>
@@ -103,7 +103,7 @@ assumptions:
 ---
 Every star is planar.
 -/
-theorem star_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem star_planar {V : Type*} {G : SimpleGraph V} :
     Lax68.Stars.IsStar G →
     Lax68.Planar.IsPlanar G :=
   fun h =>
@@ -116,7 +116,7 @@ conclusion: Lax68.LadderGrid.ladder_grid
 ---
 Every ladder is a two-row grid.
 -/
-theorem ladder_grid {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem ladder_grid {V : Type*} {G : SimpleGraph V} :
     Lax68.Ladders.IsLadder G →
     Lax68.GridsAndWalls.IsGrid G := by
   rintro ⟨n, hn, hiso⟩
@@ -131,7 +131,7 @@ assumptions:
 ---
 Every ladder is planar.
 -/
-theorem ladder_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem ladder_planar {V : Type*} {G : SimpleGraph V} :
     Lax68.Ladders.IsLadder G →
     Lax68.Planar.IsPlanar G :=
   fun h =>
@@ -145,7 +145,7 @@ conclusion: Lax68.HalinPlanar.halin_planar
 Every Halin graph is planar.
 -/
 theorem halin_planar
-    {V : Type*} [Fintype V] {G : SimpleGraph V} :
+    {V : Type*} {G : SimpleGraph V} :
     Lax68.HalinGraphs.IsHalin G →
     Lax68.Planar.IsPlanar G := by
   rintro ⟨construction⟩
@@ -161,7 +161,7 @@ assumptions:
 Every wheel is planar.
 -/
 theorem wheel_planar
-    {V : Type*} [Fintype V] {G : SimpleGraph V} :
+    {V : Type*} {G : SimpleGraph V} :
     Lax68.Wheels.IsWheel G →
     Lax68.Planar.IsPlanar G :=
   fun h =>
@@ -177,7 +177,7 @@ assumptions:
 ---
 Every tree is planar.
 -/
-theorem tree_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem tree_planar {V : Type*} {G : SimpleGraph V} :
     Lax68.Trees.IsTree G →
     Lax68.Planar.IsPlanar G :=
   fun h =>
@@ -193,7 +193,7 @@ assumptions:
 ---
 Every path is outerplanar.
 -/
-theorem path_outerplanar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem path_outerplanar {V : Type*} {G : SimpleGraph V} :
     Lax68.Paths.IsPath G →
     Lax68.Outerplanar.IsOuterplanar G :=
   fun h =>
@@ -209,7 +209,7 @@ assumptions:
 ---
 Every path is planar.
 -/
-theorem path_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+theorem path_planar {V : Type*} {G : SimpleGraph V} :
     Lax68.Paths.IsPath G →
     Lax68.Planar.IsPlanar G :=
   fun h =>
@@ -222,7 +222,7 @@ conclusion: Lax68.TriangulationPlanar.triangulationOf_planar
 ---
 Every triangulation of a planar graph is planar.
 -/
-theorem triangulationOf_planar {V : Type*} [Fintype V]
+theorem triangulationOf_planar {V : Type*}
     {G T : SimpleGraph V} :
     Lax68.Planar.IsPlanar G →
     Lax68.Triangulations.IsTriangulationOf G T →

@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.StarTree
 
-axiom star_tree {V : Type*} [Fintype V] {G : SimpleGraph V} :
+axiom star_tree {V : Type*} {G : SimpleGraph V} :
   Lax68.Stars.IsStar G →
   Lax68.Trees.IsTree G
 

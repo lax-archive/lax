@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.OuterplanarPlanar
 
-axiom outerplanar_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+axiom outerplanar_planar {V : Type*} {G : SimpleGraph V} :
   Lax68.Outerplanar.IsOuterplanar G →
   Lax68.Planar.IsPlanar G
 

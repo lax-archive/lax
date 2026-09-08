@@ -18,7 +18,7 @@ def HasPathShape {V : Type*} (G : SimpleGraph V) : Prop :=
     0 < n ∧
     Nonempty (G ≃g SimpleGraph.pathGraph n)
 
-def IsPath {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+def IsPath {V : Type*} (G : SimpleGraph V) : Prop :=
   HasPathShape G
 
 end Lax68.Paths

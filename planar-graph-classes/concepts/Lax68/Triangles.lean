@@ -1,4 +1,4 @@
-import Mathlib.Combinatorics.SimpleGraph.Basic
+import Mathlib.Combinatorics.SimpleGraph.Maps
 
 /-!
 ---
@@ -12,8 +12,7 @@ set_option autoImplicit false
 
 namespace Lax68.Triangles
 
-def IsTriangle {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
-  Fintype.card V = 3 ∧
-    G = SimpleGraph.completeGraph V
+def IsTriangle {V : Type*} (G : SimpleGraph V) : Prop :=
+  Nonempty (G ≃g SimpleGraph.completeGraph (Fin 3))
 
 end Lax68.Triangles

@@ -14,7 +14,7 @@ set_option autoImplicit false
 namespace Lax68.HalinPlanar
 
 axiom halin_planar
-    {V : Type*} [Fintype V] {G : SimpleGraph V} :
+    {V : Type*} {G : SimpleGraph V} :
   Lax68.HalinGraphs.IsHalin G →
   Lax68.Planar.IsPlanar G
 

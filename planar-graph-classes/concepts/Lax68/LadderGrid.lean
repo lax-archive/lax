@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.LadderGrid
 
-axiom ladder_grid {V : Type*} [Fintype V] {G : SimpleGraph V} :
+axiom ladder_grid {V : Type*} {G : SimpleGraph V} :
   Lax68.Ladders.IsLadder G →
   Lax68.GridsAndWalls.IsGrid G
 

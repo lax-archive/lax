@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.SeriesParallelPlanar
 
-axiom seriesParallel_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+axiom seriesParallel_planar {V : Type*} {G : SimpleGraph V} :
   Lax68.SeriesParallel.IsSeriesParallel G →
   Lax68.Planar.IsPlanar G
 

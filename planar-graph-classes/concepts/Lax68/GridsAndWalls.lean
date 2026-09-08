@@ -38,10 +38,10 @@ def HasWallShape {V : Type*} (G : SimpleGraph V) : Prop :=
       ∀ u v,
         G.Adj (e u) (e v) ↔ WallAdjacent u v
 
-def IsGrid {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+def IsGrid {V : Type*} (G : SimpleGraph V) : Prop :=
   HasGridShape G
 
-def IsWall {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+def IsWall {V : Type*} (G : SimpleGraph V) : Prop :=
   HasWallShape G
 
 end Lax68.GridsAndWalls

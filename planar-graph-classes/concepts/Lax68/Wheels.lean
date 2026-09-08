@@ -28,7 +28,7 @@ def IsCycleOn {V : Type*}
         ∀ i j,
           R.Adj (e i).1 (e j).1 ↔ CycleAdjacent i j
 
-def HasWheelShape {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+def HasWheelShape {V : Type*} (G : SimpleGraph V) : Prop :=
   ∃ hub : V,
     hub ∈ G.universalVerts ∧
     ∃ rim : SimpleGraph V,
@@ -38,7 +38,7 @@ def HasWheelShape {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
         v ≠ hub →
         (G.Adj u v ↔ rim.Adj u v)
 
-def IsWheel {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+def IsWheel {V : Type*} (G : SimpleGraph V) : Prop :=
   HasWheelShape G
 
 end Lax68.Wheels

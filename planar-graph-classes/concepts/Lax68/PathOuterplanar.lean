@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.PathOuterplanar
 
-axiom path_outerplanar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+axiom path_outerplanar {V : Type*} {G : SimpleGraph V} :
   Lax68.Paths.IsPath G →
   Lax68.Outerplanar.IsOuterplanar G
 

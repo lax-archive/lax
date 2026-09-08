@@ -19,7 +19,7 @@ def HasLadderShape {V : Type*} (G : SimpleGraph V) : Prop :=
     Nonempty
       (G ≃g (SimpleGraph.pathGraph n □ SimpleGraph.pathGraph 2))
 
-def IsLadder {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+def IsLadder {V : Type*} (G : SimpleGraph V) : Prop :=
   HasLadderShape G
 
 end Lax68.Ladders

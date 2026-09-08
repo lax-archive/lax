@@ -14,7 +14,7 @@ set_option autoImplicit false
 namespace Lax68.WheelPlanar
 
 axiom wheel_planar
-    {V : Type*} [Fintype V] {G : SimpleGraph V} :
+    {V : Type*} {G : SimpleGraph V} :
   Lax68.Wheels.IsWheel G →
   Lax68.Planar.IsPlanar G
 

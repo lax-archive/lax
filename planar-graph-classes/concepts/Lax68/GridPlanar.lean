@@ -13,7 +13,7 @@ set_option autoImplicit false
 
 namespace Lax68.GridPlanar
 
-axiom grid_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
+axiom grid_planar {V : Type*} {G : SimpleGraph V} :
   Lax68.GridsAndWalls.IsGrid G →
   Lax68.Planar.IsPlanar G
 

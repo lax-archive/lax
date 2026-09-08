@@ -14,7 +14,7 @@ set_option autoImplicit false
 namespace Lax68.TriangleOuterplanar
 
 axiom triangle_outerplanar
-    {V : Type*} [Fintype V] {G : SimpleGraph V} :
+    {V : Type*} {G : SimpleGraph V} :
   Lax68.Triangles.IsTriangle G →
   Lax68.Outerplanar.IsOuterplanar G
 

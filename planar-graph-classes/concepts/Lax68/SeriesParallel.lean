@@ -46,7 +46,7 @@ inductive TwoTerminal {V : Type*} : SimpleGraph V → V → V → Prop
           v = s ∨ v = t) :
       TwoTerminal (G ⊔ H) s t
 
-def IsSeriesParallel {V : Type*} [Fintype V] (G : SimpleGraph V) : Prop :=
+def IsSeriesParallel {V : Type*} (G : SimpleGraph V) : Prop :=
   ∃ s t,
     TwoTerminal G s t ∧
     G.support = Set.univ
