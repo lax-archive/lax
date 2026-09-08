@@ -218,13 +218,15 @@ theorem path_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
 
 /--
 ---
-conclusion: Lax68.TriangulationPlanar.triangulation_planar
+conclusion: Lax68.TriangulationPlanar.triangulationOf_planar
 ---
-Every triangulation is planar.
+Every triangulation of a planar graph is planar.
 -/
-theorem triangulation_planar {V : Type*} [Fintype V] {G : SimpleGraph V} :
-    Lax68.Triangulations.IsTriangulation G →
-    Lax68.Planar.IsPlanar G :=
-  fun h => h.2.1
+theorem triangulationOf_planar {V : Type*} [Fintype V]
+    {G T : SimpleGraph V} :
+    Lax68.Planar.IsPlanar G →
+    Lax68.Triangulations.IsTriangulationOf G T →
+    Lax68.Planar.IsPlanar T :=
+  fun _ h => h.2.2.1
 
 end Lax68Proofs

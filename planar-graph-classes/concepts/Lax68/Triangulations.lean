@@ -5,21 +5,23 @@ import Lax68.Planar
 title: Triangulations
 type: definition
 ---
-A finite triangulation is a planar graph on at least three vertices to which no
-edge can be added while preserving planarity; equivalently, every face of a
-plane embedding is bounded by a triangle.
+A triangulation of a finite graph G is a planar supergraph T on the same vertex
+set, with at least three vertices, to which no edge can be added while
+preserving planarity. For a plane embedding this is equivalent to every face
+of T being bounded by a triangle.
 -/
 
 set_option autoImplicit false
 
 namespace Lax68.Triangulations
 
-def IsTriangulation {V : Type*} [Fintype V]
-    (G : SimpleGraph V) : Prop :=
+def IsTriangulationOf {V : Type*} [Fintype V]
+    (G T : SimpleGraph V) : Prop :=
   3 ≤ Fintype.card V ∧
-    Planar.IsPlanar G ∧
+    G ≤ T ∧
+    Planar.IsPlanar T ∧
     ∀ H : SimpleGraph V,
-      G < H →
+      T < H →
       ¬ Planar.IsPlanar H
 
 end Lax68.Triangulations

@@ -1,7 +1,8 @@
-This submission collects clean Lean concepts for thirteen familiar finite
-planar graph classes: planar, outerplanar, maximal outerplanar, grids and walls,
+This submission collects clean Lean concepts for twelve familiar finite planar
+graph classes: planar, outerplanar, maximal outerplanar, grids and walls,
 triangles, stars, ladders, Halin graphs, wheels, series-parallel graphs, trees,
-paths, and triangulations.
+and paths, together with a relational concept for triangulations of planar
+graphs.
 
 The definitions follow the standard descriptions in Reinhard Diestel's
 *Graph Theory* (6th edition). A straight-line drawing is used as a compact
