@@ -1,0 +1,7 @@
+{
+  "main": "main.tex",
+  "engine": "pdflatex",
+  "class": "article",
+  "source": "scripts/reflow-lab/fixtures/smoke (the harness's own self-test)",
+  "title": "A Reflow Lab Smoke Test"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "lax-reflow-lab",
+  "private": true,
+  "type": "module",
+  "description": "Playwright for the reflow corpus harness (scripts/reflow-lab/lab.ts); installed separately so the main package stays browser-free.",
+  "dependencies": {
+    "playwright": "~1.58.0"
+  }
+}
