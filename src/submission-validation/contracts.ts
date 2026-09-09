@@ -84,6 +84,10 @@ export interface SubmissionManifest {
   title: string;
   authors: SubmissionAuthor[];
   bibEntries: string[];
+  /** Omit this submission from discovery surfaces while keeping its pages addressable. */
+  unlisted?: boolean;
+  /** Suppress authorship and source links on presentation surfaces. */
+  anonymous?: boolean;
   /** The registered submission this one replaces as its single successor. */
   supersedes?: string;
   /** The LaTeX document the archive compiles and shows beside the cards. */

@@ -30,6 +30,26 @@ verbs, the instructions' two-run first submit). Still owed before it ships:
 - `scripts/environments/admit.mjs`/`table.mjs` render only `leanThreads`
   and `memoryBytes`; a `compileLeanThreads` override is written by hand.
 
+## Submission presentation flags (core implemented 2026-09-09; Website pending)
+
+The `lax` validator and trusted artifact parser now accept and retain the
+optional manifest booleans `unlisted` and `anonymous`; see `spec-notes.md`.
+The remaining work belongs to `lax-website`:
+
+- Add both fields to the Website manifest type. Exclude `unlisted: true`
+  submissions from the landing-page submission list and all search/tag index
+  inputs, while continuing to generate directly addressable submission,
+  concept, proof, and paper pages.
+- For `anonymous: true`, suppress author names and identity links, generated
+  citations, and every source-repository link across submission, concept,
+  proof, paper-card, graph, and metadata surfaces. Cover every supported
+  repository provider, not only GitHub. Public database and source data stay
+  unchanged; this is presentation anonymity, not confidentiality.
+- Add Website fixtures and assertions for each flag independently and
+  together. Once deployed, update `assets/instructions.md`, advance the
+  renderer pin used by `lax serve`, and include the new fallback renderer in
+  the next CLI release.
+
 ## Audit leftovers (audit 2026-09-03, fixes landed 2026-09-04)
 
 The record is `history/audit-20260903.md`. All three fix-now findings and

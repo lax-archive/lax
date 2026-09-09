@@ -401,6 +401,31 @@ Spec touchpoint: the lifecycle section (registered-is-forever,
 delete-is-permanent), the authorization sentence (owners only), the
 open-issue rule for commands, and the control-plane command table.
 
+## Submission presentation flags (core implemented 2026-09-09; website pending)
+
+`manifest.yaml` accepts two optional top-level booleans. `unlisted: true`
+means that discovery surfaces omit the submission from the landing-page list
+and search results while its direct pages remain addressable. `anonymous: true`
+means that presentation surfaces suppress its author attribution and
+source-repository links. Both default to `false` when absent; an explicitly
+written `false` is retained in `build-output.json` like any other parsed
+manifest value.
+
+These names describe presentation policy rather than access control.
+`unlisted` deliberately avoids suggesting that the submission is private or
+unreachable. `anonymous` does not make the archive record confidential:
+`manifest.yaml`, `inputs.manifest`, the source location, owner records, and
+the source repository remain public. It also cannot remove identity disclosed
+by the title, abstract, bibliography, paper, or Lean source. The Website must
+hide links for every supported source provider, not only GitHub.
+
+Static validation and the independent trusted artifact parser both accept
+only YAML/JSON booleans and preserve the flags in `inputs.manifest`. No
+`specVersion` bump is needed: the fields are optional, existing manifests and
+records retain their meaning, and an older Website parser already ignores
+unknown manifest fields. The rendering work and rollout are recorded in
+`TODO.md`; until that lands, the flags are stored but have no visible effect.
+
 ## Hardening pass after the 0.1.35 audit (implemented, 2026-09-04)
 
 Five of the audit's fixes (`history/audit-20260903.md`) changed behaviour an

@@ -460,6 +460,8 @@ function parseManifest(
     "title",
     "authors",
     "bibEntries",
+    ...(value.unlisted === undefined ? [] : ["unlisted"]),
+    ...(value.anonymous === undefined ? [] : ["anonymous"]),
     ...(value.supersedes === undefined ? [] : ["supersedes"]),
     ...(value.paper === undefined ? [] : ["paper"]),
   ], "generated manifest");
@@ -473,6 +475,8 @@ function parseManifest(
   if (normalizeTitle(title) !== title) throw new ValidationError("generated manifest title is not normalized");
   const authors = boundedArray(object.authors, "generated manifest authors", 100)
     .map((entry, index) => parseAuthor(entry, index));
+  const unlisted = optionalManifestBoolean(object.unlisted, "unlisted");
+  const anonymous = optionalManifestBoolean(object.anonymous, "anonymous");
   let supersedes: string | undefined;
   if (object.supersedes !== undefined) {
     if (typeof object.supersedes !== "string") {
@@ -514,9 +518,19 @@ function parseManifest(
     title,
     authors,
     bibEntries: stringArray(object.bibEntries, "generated manifest bibEntries", 1_000, 16 * 1024, true),
+    ...(unlisted === undefined ? {} : { unlisted }),
+    ...(anonymous === undefined ? {} : { anonymous }),
     ...(supersedes === undefined ? {} : { supersedes }),
     ...(paper === undefined ? {} : { paper }),
   };
+}
+
+function optionalManifestBoolean(value: unknown, key: "unlisted" | "anonymous"): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") {
+    throw new ValidationError(`generated manifest ${key} must be a boolean`);
+  }
+  return value;
 }
 
 function parseAuthor(value: unknown, index: number): SubmissionAuthor {

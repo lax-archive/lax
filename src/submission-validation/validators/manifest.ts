@@ -28,7 +28,14 @@ const REQUIRED_MANIFEST_KEYS = new Set([
   "authors",
   "bibEntries",
 ]);
-const OPTIONAL_MANIFEST_KEYS = new Set(["supersedes", "paper", "issue", "initialOwners"]);
+const OPTIONAL_MANIFEST_KEYS = new Set([
+  "unlisted",
+  "anonymous",
+  "supersedes",
+  "paper",
+  "issue",
+  "initialOwners",
+]);
 const PAPER_KEYS = new Set(["folder", "main", "engine", "web"]);
 const AUTHOR_KEYS = new Set(["name", "orcid", "github"]);
 
@@ -201,6 +208,17 @@ export function validateManifest(
   if (mathlibVersion !== undefined && mathlibVersion !== runtime.mathlibCommit)
     findings.violate("manifest", `manifest.yaml: mathlibVersion must be ${runtime.mathlibCommit}`);
 
+  const optionalBoolean = (key: "unlisted" | "anonymous"): boolean | undefined => {
+    if (!(key in value)) return undefined;
+    if (typeof value[key] !== "boolean") {
+      findings.violate("manifest", `manifest.yaml: \`${key}\` must be true or false`);
+      return undefined;
+    }
+    return value[key];
+  };
+  const unlisted = optionalBoolean("unlisted");
+  const anonymous = optionalBoolean("anonymous");
+
   let supersedes: string | undefined;
   if ("supersedes" in value) {
     const rawSupersedes = stringField("supersedes", 64);
@@ -275,6 +293,8 @@ export function validateManifest(
     title: title!,
     authors,
     bibEntries,
+    ...(unlisted === undefined ? {} : { unlisted }),
+    ...(anonymous === undefined ? {} : { anonymous }),
     ...(supersedes === undefined ? {} : { supersedes }),
     ...(paper === undefined ? {} : { paper }),
   };

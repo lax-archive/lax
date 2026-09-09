@@ -112,6 +112,39 @@ describe("submission static validation retained from main", () => {
     }
   });
 
+  it("accepts optional presentation flags only as booleans", () => {
+    const findings = new FindingCollector("static");
+    const parsed = validateManifest(
+      manifest("lax-261") + "unlisted: true\nanonymous: false\n",
+      "lax-261",
+      RUNTIME,
+      findings,
+    );
+    expect(findings.violations).toEqual([]);
+    expect(parsed).toMatchObject({ unlisted: true, anonymous: false });
+
+    const absentFindings = new FindingCollector("static");
+    const absent = validateManifest(manifest("lax-261"), "lax-261", RUNTIME, absentFindings);
+    expect(absentFindings.violations).toEqual([]);
+    expect(absent).not.toHaveProperty("unlisted");
+    expect(absent).not.toHaveProperty("anonymous");
+
+    for (const key of ["unlisted", "anonymous"] as const) {
+      for (const value of ["yes", "null", "1"]) {
+        const invalid = new FindingCollector("static");
+        validateManifest(
+          manifest("lax-261") + `${key}: ${value}\n`,
+          "lax-261",
+          RUNTIME,
+          invalid,
+        );
+        expect(invalid.violations.map((finding) => finding.message)).toContain(
+          `manifest.yaml: \`${key}\` must be true or false`,
+        );
+      }
+    }
+  });
+
   it("gates the historical offline placeholder id on what the request is for", () => {
     // Released opt-in offline scaffolds used `id: lax-0`; a local build passes
     // its own id in, so the compatibility path remains usable until submit

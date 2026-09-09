@@ -53,6 +53,15 @@ builds on superseded work keeps building — its requires are rev-pinned — and
 rather than refusing anything. Details and accepted
 limitations: spec-notes.md, "Versioning: `supersedes` successor chains".
 
+**Presentation metadata.** A manifest may carry the optional top-level
+booleans `unlisted` and `anonymous`. `unlisted: true` asks discovery surfaces
+to omit the submission while leaving its direct pages addressable;
+`anonymous: true` asks presentation surfaces to suppress author attribution
+and source-repository links. Validation records both values under
+`inputs.manifest`; absent means `false`. These are presentation policies, not
+access controls: manifests, build outputs, and source locations remain in the
+public archive data. Website consumption is tracked separately in `TODO.md`.
+
 The Lean validation job has no App key, installation token, or Archive write
 credential. Artifacts are its only egress: `validation-report.json` alone,
 which the author's CLI downloads to print the findings, and beside it the

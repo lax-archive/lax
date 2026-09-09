@@ -42,6 +42,38 @@ describe("submission validation outputs", () => {
     expect(report.buildOutput).not.toHaveProperty("issue");
   });
 
+  it("preserves presentation flags through the trusted artifact schema", () => {
+    const report = successfulReport();
+    report.buildOutput!.inputs.manifest.unlisted = true;
+    report.buildOutput!.inputs.manifest.anonymous = false;
+
+    const parsed = parseSuccessfulValidationArtifacts(
+      report,
+      report.buildOutput,
+      report.request,
+      report.runtime,
+    );
+
+    expect(parsed.buildOutput.inputs.manifest).toMatchObject({
+      unlisted: true,
+      anonymous: false,
+    });
+  });
+
+  it("rejects non-boolean presentation flags at the trusted artifact boundary", () => {
+    for (const key of ["unlisted", "anonymous"] as const) {
+      const report = successfulReport();
+      Object.assign(report.buildOutput!.inputs.manifest, { [key]: "true" });
+
+      expect(() => parseSuccessfulValidationArtifacts(
+        report,
+        report.buildOutput,
+        report.request,
+        report.runtime,
+      )).toThrow(`generated manifest ${key} must be a boolean`);
+    }
+  });
+
   it("removes stale successful outputs before recording a failed validation", () => {
     const directory = temporaryDirectory();
     for (const filename of [
