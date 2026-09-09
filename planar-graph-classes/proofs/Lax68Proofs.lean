@@ -1,2 +1,5 @@
 import Lax68Proofs.Relationships
+import Lax68Proofs.TopologicalMinorToMinor
+import Lax68Proofs.ExcludedMinorsKuratowskiFree
+import Lax68Proofs.ObstructionBridge
 import Lax68Proofs.Wagner

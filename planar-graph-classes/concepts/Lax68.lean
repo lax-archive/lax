@@ -1,8 +1,11 @@
 import Lax68.StraightLineDrawings
 import Lax68.GraphMinors
 import Lax68.GraphTopologicalMinors
+import Lax68.TopologicalMinorIsMinor
 import Lax68.Planar
 import Lax68.KuratowskiPlanarity
+import Lax68.ExcludedMinorsKuratowskiFree
+import Lax68.KuratowskiFreeExcludedMinors
 import Lax68.WagnerObstructionBridge
 import Lax68.PlanarExcludedMinors
 import Lax68.Outerplanar
