@@ -1,5 +1,6 @@
 import Lax68.StraightLineDrawings
 import Lax68.Planar
+import Lax68.PlanarExcludedMinors
 import Lax68.Outerplanar
 import Lax68.MaximalOuterplanar
 import Lax68.GridsAndWalls
