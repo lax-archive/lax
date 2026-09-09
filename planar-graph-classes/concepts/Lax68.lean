@@ -5,6 +5,8 @@ import Lax68.TopologicalMinorIsMinor
 import Lax68.Planar
 import Lax68.KuratowskiPlanarity
 import Lax68.ExcludedMinorsKuratowskiFree
+import Lax68.K5MinorTopologicalObstruction
+import Lax68.K33MinorTopologicalObstruction
 import Lax68.KuratowskiFreeExcludedMinors
 import Lax68.WagnerObstructionBridge
 import Lax68.PlanarExcludedMinors
