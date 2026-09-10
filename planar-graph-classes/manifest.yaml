@@ -17,3 +17,7 @@ bibEntries:
         year = {2025},
         isbn = {978-3-662-70106-5}
       }
+paper:
+  folder: paper
+  main: main.tex
+  engine: pdflatex
