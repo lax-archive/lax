@@ -12,8 +12,10 @@ set_option autoImplicit false
 
 namespace Lax68.K33MinorTopologicalObstruction
 
+universe u
+
 axiom k33Minor_topologicalMinor
-    {V : Type*} {G : SimpleGraph V} :
+    {V : Type u} {G : SimpleGraph V} :
   Lax68.GraphMinors.IsMinor Lax68.GraphMinors.K33 G →
     Lax68.GraphTopologicalMinors.IsTopologicalMinor
       Lax68.GraphMinors.K33 G
