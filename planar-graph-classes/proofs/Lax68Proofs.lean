@@ -2,6 +2,9 @@ import Lax68Proofs.Relationships
 import Lax68Proofs.TopologicalMinorToMinor
 import Lax68Proofs.TreeThreeFan
 import Lax68Proofs.ConnectedThreeFan
+import Lax68Proofs.TreeFourTerminalDichotomy
+import Lax68Proofs.ConnectedFourTerminalDichotomy
+import Lax68Proofs.K5MinorTopologicalObstruction
 import Lax68Proofs.K33MinorTopologicalObstruction
 import Lax68Proofs.ExcludedMinorsKuratowskiFree
 import Lax68Proofs.KuratowskiFreeExcludedMinors

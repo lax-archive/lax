@@ -5,6 +5,9 @@ import Lax68.TopologicalMinorIsMinor
 import Lax68.ThreeFans
 import Lax68.TreeThreeFan
 import Lax68.ConnectedThreeFan
+import Lax68.FourTerminalFans
+import Lax68.TreeFourTerminalDichotomy
+import Lax68.ConnectedFourTerminalDichotomy
 import Lax68.Planar
 import Lax68.KuratowskiPlanarity
 import Lax68.ExcludedMinorsKuratowskiFree
