@@ -971,10 +971,13 @@ form a subdivision of K₅.  Otherwise a split connector separates one branch
 set into two pieces; together with the other four branch sets these pieces
 form a K₃,₃ minor, whose subdivision is supplied by the K₃,₃ reduction.
 -/
-theorem k5Minor_topologicalObstruction :
-    IsMinor K5 G →
-      (IsTopologicalMinor K5 G ∨
-       IsTopologicalMinor K33 G) := by
+theorem k5Minor_topologicalObstruction
+    {V' : Type*} {G' : SimpleGraph V'} :
+  Lax68.GraphMinors.IsMinor Lax68.GraphMinors.K5 G' →
+    (Lax68.GraphTopologicalMinors.IsTopologicalMinor
+        Lax68.GraphMinors.K5 G' ∨
+      Lax68.GraphTopologicalMinors.IsTopologicalMinor
+        Lax68.GraphMinors.K33 G') := by
   rintro ⟨M⟩
   classical
   by_cases hAll : ∀ i, Nonempty (BranchFour M i)
