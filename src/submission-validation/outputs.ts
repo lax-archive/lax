@@ -14,6 +14,7 @@ export const PAPER_FILENAME = "paper.pdf";
  * `paper.web` (paper-web-plan.md, "Storage"). */
 export const PAPER_WEB_FILENAME = "paper-web.tar";
 export const VALIDATION_PROFILE_FILENAME = "validation-profile.json";
+export const METADATA_RESUBMISSION_FILENAME = "metadata-resubmission.json";
 
 /** What the pipeline hands back beyond the report: files still inside the
  * job directory that must leave it before it is removed. */

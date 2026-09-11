@@ -39,7 +39,7 @@ describe("the rehearsal workflow patch", () => {
     // would fail the run, and a surviving key reference would be a live
     // production credential name in a disposable public repository.
     expect(source).toContain("actions/create-github-app-token");
-    expect(source.match(/actions\/create-github-app-token/gu)).toHaveLength(4);
+    expect(source.match(/actions\/create-github-app-token/gu)).toHaveLength(6);
     // The header prose names the removed action; the workflow body must not.
     const body = patched.slice(patched.indexOf("name: submission control plane"));
     expect(body).not.toContain("actions/create-github-app-token");
@@ -54,7 +54,7 @@ describe("the rehearsal workflow patch", () => {
   });
 
   it("switches every consuming env value to the scratch token", () => {
-    // One env value per removed mint step — the merged publishing jobs read
+    // One env value per removed mint step — the three publishing jobs read
     // two each — and every one of them still sits behind the protected
     // environment: the token placement mirrors the production posture.
     const consumers = Object.entries(parsed.jobs).flatMap(([job, definition]) =>
@@ -74,6 +74,18 @@ describe("the rehearsal workflow patch", () => {
       [
         "publish-submit",
         "Promote capture, publish trusted submit, and dispatch Website",
+        "LAX_WEBSITE_TOKEN",
+        "lax-database-publish",
+      ],
+      [
+        "publish-metadata",
+        "Publish presentation metadata and dispatch Website",
+        "LAX_DATABASE_TOKEN",
+        "lax-database-publish",
+      ],
+      [
+        "publish-metadata",
+        "Publish presentation metadata and dispatch Website",
         "LAX_WEBSITE_TOKEN",
         "lax-database-publish",
       ],
@@ -130,6 +142,6 @@ describe("the rehearsal workflow patch", () => {
     } catch (error) {
       message = `${(error as { stderr?: string }).stderr ?? ""}${(error as Error).message}`;
     }
-    expect(message).toMatch(/drifted: expected 4 .* steps, found 3/u);
+    expect(message).toMatch(/drifted: expected 6 .* steps, found 5/u);
   });
 });

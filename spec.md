@@ -820,8 +820,24 @@ set.
   as owners. The CLI records the issue in the manifest and stops: the author
   commits and pushes the binding, and submits again.
 - A successful submit puts the submission in the draft state and replaces its
-  source triple and validated content. Trusted validation always rebuilds the
-  immutable commit; it never trusts the author's local ``build-output.json``.
+  source triple and validated content. Trusted validation rebuilds the
+  immutable commit and never trusts the author's local ``build-output.json``,
+  except for the presentation-only resubmission below.
+
+- A draft may reuse its previously validated build artifacts when the control
+  plane proves that the complete Git tree changed only at the submission's
+  ``manifest.yaml`` or ``abstract.md`` and that the only semantic changes are
+  ``title``, ``authors``, or the abstract. Both metadata files must be regular
+  blobs in both commits; the repository and folder must be unchanged; the old
+  files must exactly reproduce the archived inputs; both manifests must be
+  valid and equal after removing ``title`` and ``authors``; and every manifest
+  byte outside those two YAML value nodes must be identical. The changed-path
+  set must be nonempty. Any extra path, mode or object change, any other byte or
+  field change, or any failure or ambiguity while fetching, parsing, or
+  comparing takes the ordinary full-validation path. On a proven match, the
+  publisher reuses the content-addressed capture, updates its source-commit
+  provenance to the new immutable commit, and replaces only ``record.json`` and
+  ``build-output.json``.
 
 **Register.** ``lax register`` posts ``/lax register`` and freezes an init or
 draft record without rebuilding it. Every Archive dependency recorded in its

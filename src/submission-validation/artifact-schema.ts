@@ -262,6 +262,7 @@ function parseBuildOutputPayload(
   value: unknown,
   request: ValidationRequest,
   runtime: ValidationRuntimeIdentity,
+  published = false,
 ): BuildOutputPayload {
   if (!isObject(value)) throw new ValidationError("generated build output must be an object");
   const object = exactObject(value, [
@@ -280,7 +281,9 @@ function parseBuildOutputPayload(
   }
   // The validate job records the PDF's digest and size; only the publisher
   // adds the registry address, after pushing the bytes (stage 3).
-  const paper = object.paper === undefined ? undefined : parsePaperOutput(object.paper, manifest.paper!, false);
+  const paper = object.paper === undefined
+    ? undefined
+    : parsePaperOutput(object.paper, manifest.paper!, published);
   const abstract = text(inputs.abstract, "generated abstract", 1024 * 1024, true);
   if (abstract.trim() === "") throw new ValidationError("generated abstract must not be empty");
   const concepts = boundedArray(object.concepts, "generated concepts", MAX_ENTRIES)
@@ -295,9 +298,33 @@ function parseBuildOutputPayload(
     requiredByProofs: stringArray(object.requiredByProofs, "requiredByProofs", MAX_ENTRIES, 512),
     concepts,
     proofs,
-    capture: parseCaptureManifest(object.capture, false),
+    capture: parseCaptureManifest(object.capture, published),
     ...(paper === undefined ? {} : { paper }),
   };
+}
+
+/**
+ * Parse the payload already stored in lax-database. Unlike a validation
+ * artifact, its capture and optional paper layers must carry their immutable
+ * registry addresses. The provenance checks bind the reusable compiled
+ * artifacts to the record source and the admitted runtime before a
+ * metadata-only resubmission may carry them forward.
+ */
+export function parsePublishedBuildOutputPayload(
+  value: unknown,
+  request: ValidationRequest,
+  runtime: ValidationRuntimeIdentity,
+): BuildOutputPayload & { capture: PublishedCapture } {
+  const payload = parseBuildOutputPayload(value, request, runtime, true);
+  const capture = payload.capture as PublishedCapture;
+  if (
+    capture.sourceCommit !== request.source.commit ||
+    capture.leanToolchain !== runtime.leanToolchain ||
+    capture.mathlibCommit !== runtime.mathlibCommit
+  ) {
+    throw new ValidationError("published capture provenance does not match the recorded source and runtime");
+  }
+  return { ...payload, capture };
 }
 
 /**

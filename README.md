@@ -21,7 +21,7 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 | `/lax owners <id> <JSON>` | Replaces the complete owner list after numeric-account authorization and GitHub identity resolution. |
 | `/lax delete <id>` | Replaces an init/draft record with a permanent three-file tombstone. |
 | `/lax register <id>` | Makes an init/draft record immutable. |
-| `/lax submit <id> <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. |
+| `/lax submit <id> <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. A presentation-only resubmission may reuse the prior capture under the strict comparison described below. |
 | `/lax admin revalidate <id>` | Maintainers only (`ADMIN_GITHUB_IDS`): reruns the whole validation against the record's *recorded* source — any state, closed issue or not — and republishes its build output and captures without changing its state. The way a registered record picks up a pipeline fix. |
 | `/lax admin delete <id>`, `reset-draft <id>`, `owners <id> <JSON>` | Maintainers only: tombstone in any state (the takedown power), return a registered record to draft (refused while a registered successor claims it), or replace the owner list outright. Every maintainer action is a public comment on the submission's issue and an attributed `admin …` commit. |
 
@@ -67,13 +67,30 @@ The Lean validation job has no App key, installation token, or Archive write
 credential. Artifacts are its only egress: `validation-report.json` alone,
 which the author's CLI downloads to print the findings, and beside it the
 publication artifact with `validation-report.json`,
-`generated-build-output.json`, and `capture.tar`. Inside the submission-scoped
+`generated-build-output.json`, and `capture.tar`. Before starting that pipeline,
+the job compares the complete previous and proposed Git trees without checking
+out or executing submission code. It takes the metadata-only path only when the
+nonempty set of changed paths is confined to the submission's `manifest.yaml`
+and `abstract.md`, every byte of the manifest outside the YAML value nodes for
+`title` and `authors` is identical, both manifests are valid and otherwise
+equal, and the previous tree exactly reproduces the archived inputs. Any other
+change, malformed input, fetch failure, parse failure, missing evidence, or
+inconclusive comparison runs the full validation pipeline. An accepted
+metadata-only comparison is handed off as a separate bounded artifact and
+reuses the existing digest-addressed capture; the publisher changes only the
+source provenance and the title, authors, or abstract in `record.json` and
+`build-output.json`.
+
+Inside either submission-scoped
 publication job, a credential-free preflight parses the exact schemas, verifies
-the capture digest, and re-reads authorization, lifecycle state, issue
-binding, stale-write inputs, and dependency captures. Only then may the
-trusted job mint the database and Website tokens, push the digest-addressed
-capture to `ghcr.io/<owner>/lax-captures`, construct the
-authoritative files, and commit exactly `record.json` and `build-output.json`.
+the applicable evidence and re-reads authorization, lifecycle state, issue
+binding, and stale-write inputs; a full submit also rechecks dependency
+captures. Only then may the
+trusted job mint the database and Website tokens. A full validation promotes
+its digest-addressed capture to `ghcr.io/<owner>/lax-captures`; a metadata-only
+submission has no registry write permission and reuses the already-published
+blob. The publisher constructs the
+authoritative files and commits exactly `record.json` and `build-output.json`.
 It preserves `owner-list.json`, synchronizes the issue title after the commit,
 and dispatches the Website rebuild itself — the job that owns the commit is
 the job that requests the rebuild. Publishers for different submissions
@@ -128,12 +145,14 @@ pulled on demand only for paper-bearing submissions, with none of the Lean
 mounts — and the paper's derived web view is produced by the ReflowTeX fork
 pinned there too (`REFLOWTEX_URL`/`REFLOWTEX_REV` — the `lax` branch of
 `lax-archive/reflowtex`; `npm run reflowtex:fetch` obtains it and installs
-the hash-pinned encode environment). The success path is three jobs — `route`,
-`Validate`, `publish-submit` — with `report-validation-failure` and
+the hash-pinned encode environment). A submit's success path is `route`,
+`Validate`, and then exactly one of `publish-submit` or `publish-metadata`,
+with `report-validation-failure` and
 `report-workflow-failure` covering the failure cases; publication is gated on
-the validate job's own result, since it exits non-zero unless the report is
-ok. Validation is one read-only `Validate` job: source fetching, static
-validation, and dependency resolution run first as a gate, so a manifest typo
+the validate job's own result and its fixed metadata-only decision. Validation
+is one read-only `Validate` job: the complete-tree metadata comparison runs
+first, and any result other than a proven match continues with source fetching,
+static validation, and dependency resolution as a gate, so a manifest typo
 fails in seconds instead of after a multi-GB cache restore, and Compile,
 Replay, and Inspect then run sequentially through one container runner, each
 phase in a fresh credential-free container. The toolchain cache is saved

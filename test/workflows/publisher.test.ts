@@ -244,6 +244,37 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.clearedProgress).toEqual([]);
   });
 
+  it("states explicitly when a submit reused previously validated code artifacts", async () => {
+    const current = loaded();
+    const harness = publisherHarness(current);
+    const publication = request({
+      action: "submit",
+      commentId: 80,
+      command: {
+        action: "submit",
+        repository: "https://github.com/alice/repo",
+        commit: "a".repeat(40),
+        folder: ".",
+      },
+      preconditions: current.preconditions,
+    });
+
+    await dispatchWebsiteAndReport(
+      harness.control,
+      harness.website,
+      publication,
+      issue.repositoryId,
+      "c".repeat(40),
+      run,
+      "",
+      "metadata",
+    );
+
+    expect(harness.comments[0]).toContain("title, authors, or abstract");
+    expect(harness.comments[0]).toContain("previously validated code artifacts were reused");
+    expect(harness.comments[0]).not.toContain("validated immutable source");
+  });
+
   it("update mode omits owner-list.json for delete and registration", async () => {
     const current = loaded();
     const deletion = publisherHarness(current);

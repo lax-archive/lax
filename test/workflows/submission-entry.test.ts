@@ -7,9 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fileDigests, initialFiles } from "../../src/shared/archive-schema.js";
+import { fileDigests, initialFiles, jsonFile } from "../../src/shared/archive-schema.js";
 import type { PublishRequest } from "../../src/shared/types.js";
 import { admittedEnvironmentList } from "../../src/submission-validation/environments.js";
+import type { ParsedMetadataResubmissionArtifact } from "../../src/submission-validation/metadata-resubmission.js";
 import {
   initializationMarker,
   parseWorkflowComment,
@@ -17,6 +18,8 @@ import {
   workflowRunMarker,
 } from "../../src/shared/workflow-comments.js";
 import {
+  classifyMetadata,
+  prepareMetadata,
   prepareSubmit,
   publish,
   reportFailure,
@@ -561,6 +564,50 @@ describe("prepare-submit entry point", () => {
   });
 });
 
+describe("metadata-only entry points", () => {
+  it("turns every classifier exception into the full-validation path and removes stale evidence", async () => {
+    const directory = workDirectory();
+    const artifactPath = path.join(directory, "metadata-resubmission.json");
+    const outputFile = path.join(directory, "github-output");
+    fs.writeFileSync(artifactPath, "stale positive evidence\n");
+    stubWorkflowEnv({
+      GITHUB_OUTPUT: outputFile,
+      PUBLISH_REQUEST: encode({ definitely: "not a publication request" }),
+      METADATA_RESUBMISSION_PATH: artifactPath,
+    });
+
+    await expect(classifyMetadata()).resolves.toBeUndefined();
+
+    expect(fs.existsSync(artifactPath)).toBe(false);
+    expect(fs.readFileSync(outputFile, "utf8")).toMatch(/metadata_only<<[^\n]+\nfalse\n/u);
+  });
+
+  it("revalidates metadata evidence and current Archive state without using a publisher token", async () => {
+    const fixture = metadataPreflightFixture();
+    const directory = workDirectory();
+    const artifactPath = path.join(directory, "metadata-resubmission.json");
+    const outputFile = path.join(directory, "github-output");
+    fs.writeFileSync(artifactPath, JSON.stringify(fixture.artifact));
+    const canary = "database_canary_token_that_must_never_be_read";
+    stubWorkflowEnv({
+      GITHUB_OUTPUT: outputFile,
+      PUBLISH_REQUEST: encode(fixture.request),
+      METADATA_RESUBMISSION_PATH: artifactPath,
+      LAX_DATABASE_TOKEN: canary,
+    });
+    const requests = installIssueFetch({ comments: [], reactions: [] }, fixture.texts);
+
+    await prepareMetadata();
+
+    expect(fs.readFileSync(outputFile, "utf8")).toMatch(/should_publish<<[^\n]+\ntrue\n/u);
+    expect(requests.length).toBeGreaterThan(0);
+    for (const request of requests) {
+      expect(request.authorization).toBe("Bearer workflow-token");
+      expect(`${request.url} ${request.body}`).not.toContain(canary);
+    }
+  });
+});
+
 describe("publish entry point", () => {
   it("publishes and dispatches the rebuild in one process, with the env-provided tokens", async () => {
     // The Website dispatch is the tail of the same handler: the commit never
@@ -669,6 +716,52 @@ function registerRequest(preconditions: PublishRequest["preconditions"]): Publis
     command: { action: "register" },
     preconditions,
   };
+}
+
+function metadataPreflightFixture(): {
+  texts: Record<string, string>;
+  request: PublishRequest;
+  artifact: ParsedMetadataResubmissionArtifact;
+} {
+  const texts = initialFiles("lax-42", { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z");
+  const previousSource = TEST_SOURCE;
+  const source = { ...previousSource, commit: "2".repeat(40) };
+  const payload = successfulArtifacts().buildOutput;
+  texts["record.json"] = jsonFile({
+    specVersion: "1",
+    id: "lax-42",
+    state: "draft",
+    createdAt: "2026-07-30T10:00:00Z",
+    source: previousSource,
+  });
+  texts["build-output.json"] = jsonFile({
+    specVersion: "1",
+    id: "lax-42",
+    issue: { repositoryId, number: issueNumber },
+    ...payload,
+    capture: {
+      ...payload.capture,
+      registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${payload.capture.digest}`,
+    },
+  });
+  const preconditions = fileDigests(texts);
+  const request: PublishRequest = {
+    ...submitRequest(preconditions),
+    command: { action: "submit", ...source },
+  };
+  const artifact: ParsedMetadataResubmissionArtifact = {
+    metadataVersion: 1,
+    id: "lax-42",
+    previousSource,
+    source,
+    previousBuildOutput: preconditions.buildOutput,
+    fields: ["title"],
+    inputs: {
+      manifest: { ...payload.inputs.manifest, title: "A better title" },
+      abstract: payload.inputs.abstract,
+    },
+  };
+  return { texts, request, artifact };
 }
 
 /**

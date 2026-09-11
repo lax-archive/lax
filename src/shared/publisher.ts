@@ -353,6 +353,7 @@ export async function dispatchWebsiteAndReport(
   untrustedCommit: string,
   run: WorkflowRunRef,
   titleSyncError = "",
+  submitKind: "validated" | "metadata" = "validated",
 ): Promise<void> {
   const request = parsePublishRequest(untrustedRequest, expectedRepositoryId);
   const commit = validateCommit(untrustedCommit);
@@ -374,7 +375,7 @@ export async function dispatchWebsiteAndReport(
       await control.postIssueComment(
         request.issue.number,
         appendWorkflowRun(
-          successComment(request, commit, dispatched, dispatchError, titleSyncError),
+          successComment(request, commit, dispatched, dispatchError, titleSyncError, submitKind),
           run,
           // lax-database did change, so this is not a refusal — but a missing
           // Website rebuild or issue title is not the command the author asked
@@ -711,6 +712,7 @@ function successComment(
   dispatched: boolean,
   dispatchError: string,
   titleSyncError: string,
+  submitKind: "validated" | "metadata",
 ): string {
   const byMaintainer = isAdminCommand(request.command) ? " by maintainer action" : "";
   const actionText =
@@ -721,7 +723,9 @@ function successComment(
         : request.action === "delete"
           ? `Deleted **${request.id}**${byMaintainer}; the id is permanently retired.`
           : request.action === "submit"
-            ? `Updated **${request.id}** from its validated immutable source.`
+            ? submitKind === "metadata"
+              ? `Updated the title, authors, or abstract of **${request.id}**; its previously validated code artifacts were reused.`
+              : `Updated **${request.id}** from its validated immutable source.`
             : request.action === "revalidate"
               ? `Revalidated **${request.id}** from its recorded source${byMaintainer}; ` +
                 "its build output is republished and its state is unchanged."

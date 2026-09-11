@@ -28,7 +28,7 @@ import YAML from "yaml";
 
 const MINT_ACTION = "actions/create-github-app-token";
 const SECRET_EXPRESSION = "${{ secrets.LAX_SCRATCH_TOKEN }}";
-const MINT_STEPS = 4;
+const MINT_STEPS = 6;
 const ENVIRONMENTS = ["lax-database-publish"];
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -74,7 +74,7 @@ export function patchWorkflow(source, owner, prefix) {
 
   let text = lines.join("\n");
   let consumers = 0;
-  // Both publishing jobs use the same two step ids; each consumer sits in the
+  // All three publishing jobs use the same two step ids; each consumer sits in the
   // job whose mint step it named, so the textual replacement stays exact.
   for (const id of new Set(ids)) {
     const expression = `\${{ steps.${id}.outputs.token }}`;
@@ -199,7 +199,7 @@ function verify(text, body, repositories, mintCount) {
     "the env: block did not survive parsing",
   );
   const jobs = parsed.jobs ?? {};
-  // One env value per removed mint step; a merged job reads two of them.
+  // One env value per removed mint step; each publishing job reads two.
   const consumers = Object.values(jobs).flatMap((job) =>
     (job.steps ?? []).flatMap((step) =>
       Object.values(step.env ?? {}).filter((value) => value === SECRET_EXPRESSION),

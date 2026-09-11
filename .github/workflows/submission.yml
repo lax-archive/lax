@@ -123,6 +123,8 @@ jobs:
     name: Validate
     needs: route
     if: needs.route.outputs.operation == 'validate'
+    outputs:
+      metadata_only: ${{ steps.metadata.outputs.metadata_only }}
     runs-on: ubuntu-latest
     # Every phase has its own cap (config.ts) and the pipeline never waits
     # on anything unbounded; this is the backstop for a hung runner, well
@@ -142,6 +144,20 @@ jobs:
       - uses: ./.github/actions/setup-lax
         with:
           restore: "true"
+      # Compare the complete old and new Git trees before touching the
+      # toolchain. The fast path is deliberately fail-closed:
+      # only an exact, schema-checked title/authors/abstract artifact can make
+      # the expensive steps below skip. A comparison error is not permission
+      # to reuse anything: the missing/false output takes the full path.
+      - name: Compare against the previously validated source
+        id: metadata
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
+          METADATA_RESUBMISSION_PATH: ${{ github.workspace }}/.build/submission-validation/metadata-resubmission.json
+        run: node dist/workflows/submission.js classify-metadata
       # Fetch, static validation, and dependency resolution only — seconds,
       # and no toolchain needed. A manifest typo or an unresolvable dependency
       # fails the job here instead of after a multi-GB cache restore and a
@@ -157,6 +173,7 @@ jobs:
       # `run:` script (trust rule 2).
       - name: Static gate
         id: gate
+        if: steps.metadata.outputs.metadata_only != 'true'
         env:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
@@ -171,6 +188,7 @@ jobs:
       # read-only job restores it and can still rebuild locally on a miss.
       - name: Restore the reflowtex encode venv
         id: reflowtex-venv-cache
+        if: steps.metadata.outputs.metadata_only != 'true'
         continue-on-error: true
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -178,6 +196,7 @@ jobs:
           key: lax-reflowtex-venv-v1-${{ runner.os }}-${{ hashFiles('reflowtex/requirements.lock') }}
       - name: Fetch the pinned ReflowTeX fork
         id: reflowtex-fetch
+        if: steps.metadata.outputs.metadata_only != 'true'
         continue-on-error: true
         run: npm run reflowtex:fetch
       # One store per environment, keyed by the gate's output: the runner OS,
@@ -189,6 +208,7 @@ jobs:
       # would restore gigabytes of dead weight next to the fresh build.
       - name: Restore toolchain and warm mathlib workspace
         id: lean-cache
+        if: steps.metadata.outputs.metadata_only != 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -201,6 +221,7 @@ jobs:
       # there; an id the table does not admit fails the step naming the
       # admitted ones.
       - name: Provision the validation host
+        if: steps.metadata.outputs.metadata_only != 'true'
         env:
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
           LAX_ENVIRONMENT: ${{ steps.gate.outputs.environment }}
@@ -211,6 +232,7 @@ jobs:
       # own fixtures run. A cache miss here still provisions the runner for the
       # current validation, but does not emit a doomed cache-save annotation.
       - name: Validate
+        if: steps.metadata.outputs.metadata_only != 'true'
         env:
           VALIDATION_REQUEST: ${{ needs.route.outputs.validation_request }}
           LAX_VALIDATION_OUTPUT: ${{ github.workspace }}/.build/submission-validation
@@ -222,7 +244,7 @@ jobs:
       # finding. Same bytes, no second source of truth — the publisher still
       # revalidates the full artifact below.
       - name: Preserve the report for the CLI and the failure reporter
-        if: always()
+        if: always() && steps.metadata.outputs.metadata_only != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: submission-validation-report-${{ github.event.issue.number }}
@@ -233,7 +255,7 @@ jobs:
       # paper-web.tar exactly when the build output records `paper.web`: the
       # publisher hashes each against the digest the build output records.
       - name: Preserve the report, generated build output, capture, paper, and profile
-        if: always()
+        if: always() && steps.metadata.outputs.metadata_only != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: submission-validation-${{ github.event.issue.number }}
@@ -245,6 +267,14 @@ jobs:
             .build/submission-validation/paper.pdf
             .build/submission-validation/paper-web.tar
           if-no-files-found: warn
+          retention-days: 90
+      - name: Preserve the metadata-only comparison
+        if: steps.metadata.outputs.metadata_only == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: submission-metadata-${{ github.event.issue.number }}
+          path: .build/submission-validation/metadata-resubmission.json
+          if-no-files-found: error
           retention-days: 90
 
   # The first step holds only the lax workflow token. It parses and hashes the
@@ -266,7 +296,8 @@ jobs:
     if: >-
       ${{
         needs.route.outputs.operation == 'validate' &&
-        needs.validate.result == 'success'
+        needs.validate.result == 'success' &&
+        needs.validate.outputs.metadata_only != 'true'
       }}
     runs-on: ubuntu-latest
     # A backstop while App tokens are held, sized over the summed ceilings of
@@ -345,6 +376,73 @@ jobs:
           VALIDATION_PAPER_PATH: ${{ github.workspace }}/.build/submission-validation/paper.pdf
           VALIDATION_PAPER_WEB_PATH: ${{ github.workspace }}/.build/submission-validation/paper-web.tar
         run: node dist/workflows/submission.js publish-submit
+
+  # A positive comparison artifact takes this shorter publisher. It never
+  # receives packages:write because it reuses the digest-addressed capture;
+  # before either App token is minted it parses the artifact, re-reads the
+  # current Archive files, and reconstructs the complete published payload.
+  publish-metadata:
+    needs: [route, validate]
+    if: >-
+      ${{
+        needs.route.outputs.operation == 'validate' &&
+        needs.validate.result == 'success' &&
+        needs.validate.outputs.metadata_only == 'true'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: lax-database-publish
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-lax
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: submission-metadata-${{ github.event.issue.number }}
+          path: .build/submission-validation
+      - name: Parse metadata evidence and revalidate current state without Archive credentials
+        id: prepare-metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
+          METADATA_RESUBMISSION_PATH: ${{ github.workspace }}/.build/submission-validation/metadata-resubmission.json
+        run: node dist/workflows/submission.js prepare-metadata
+      - name: Mint lax-database token
+        if: steps.prepare-metadata.outputs.should_publish == 'true'
+        id: database-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.LAX_DATABASE_APP_ID }}
+          private-key: ${{ secrets.LAX_DATABASE_APP_PRIVATE_KEY }}
+          owner: lax-archive
+          repositories: lax-database
+          permission-administration: read
+          permission-contents: write
+      - name: Mint lax-website dispatch token
+        if: steps.prepare-metadata.outputs.should_publish == 'true'
+        id: website-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.LAX_WEBSITE_APP_ID }}
+          private-key: ${{ secrets.LAX_WEBSITE_APP_PRIVATE_KEY }}
+          owner: lax-archive
+          repositories: lax-website
+          permission-contents: write
+      - name: Publish presentation metadata and dispatch Website
+        if: steps.prepare-metadata.outputs.should_publish == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAX_DATABASE_TOKEN: ${{ steps.database-token.outputs.token }}
+          LAX_WEBSITE_TOKEN: ${{ steps.website-token.outputs.token }}
+          LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
+          PUBLISH_REQUEST: ${{ needs.route.outputs.publish_request }}
+          METADATA_RESUBMISSION_PATH: ${{ github.workspace }}/.build/submission-validation/metadata-resubmission.json
+        run: node dist/workflows/submission.js publish-metadata
 
   # Keep the shorter publish branch after the validation branch in declaration
   # order so GitHub's automatic DAG layout prefers it as the lower row.
@@ -462,6 +560,7 @@ jobs:
       - route
       - publish
       - publish-submit
+      - publish-metadata
       - report-validation-failure
     if: >-
       ${{
@@ -470,6 +569,7 @@ jobs:
          contains(fromJSON('["failure","cancelled"]'), needs.route.result) ||
          contains(fromJSON('["failure","cancelled"]'), needs.publish.result) ||
          contains(fromJSON('["failure","cancelled"]'), needs.publish-submit.result) ||
+         contains(fromJSON('["failure","cancelled"]'), needs.publish-metadata.result) ||
          contains(fromJSON('["failure","cancelled"]'), needs.report-validation-failure.result))
       }}
     runs-on: ubuntu-latest
@@ -487,8 +587,8 @@ jobs:
           LAX_REPOSITORY_ID: ${{ vars.LAX_REPOSITORY_ID }}
           ACTION: ${{ needs.route.outputs.action }}
           OPERATION: ${{ needs.route.outputs.operation }}
-          # Only these two jobs can create a lax-database commit, and a job
+          # Only these three jobs can create a lax-database commit, and a job
           # that died mid-publication — failed or cancelled — cannot report
           # whether it did, so the wording has to stay open about it.
-          PUBLICATION_FAILED: ${{ contains(fromJSON('["failure","cancelled"]'), needs.publish.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish-submit.result) }}
+          PUBLICATION_FAILED: ${{ contains(fromJSON('["failure","cancelled"]'), needs.publish.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish-submit.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish-metadata.result) }}
         run: node dist/workflows/submission.js report-failure

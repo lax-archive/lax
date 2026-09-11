@@ -51,6 +51,16 @@ describe("GitHub Actions workflow progress", () => {
         { name: "publish-submit", status: "in_progress", conclusion: null },
       ]),
     ).toEqual({ row: "publish" });
+    expect(
+      workflowStage({ status: "in_progress", conclusion: null }, [
+        {
+          name: "publish-metadata",
+          status: "in_progress",
+          conclusion: null,
+          steps: [{ name: "Parse metadata evidence", status: "in_progress", conclusion: null }],
+        },
+      ]),
+    ).toEqual({ row: "publish", detail: "re-checking the metadata update" });
     // publishing is several things, and which one it is on is the answer to
     // "what does `Writing the public record` mean"
     expect(

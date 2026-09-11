@@ -8,6 +8,7 @@ import { CONTROL_REPOSITORY } from "../shared/constants.js";
 import { safeInline } from "../shared/comment-format.js";
 import { ControlPlane } from "../shared/control-plane.js";
 import { GitHubClient, repositoryPath } from "../shared/github.js";
+import { MetadataPublisher } from "../shared/metadata-publisher.js";
 import {
   dispatchWebsiteAndReport,
   parsePublishRequest,
@@ -26,6 +27,11 @@ import {
   environment as environmentById,
 } from "../submission-validation/environments.js";
 import { appendWorkflowOutput } from "../submission-validation/outputs.js";
+import {
+  classifyMetadataResubmission,
+  parseMetadataResubmissionArtifact,
+  type ParsedMetadataResubmissionArtifact,
+} from "../submission-validation/metadata-resubmission.js";
 import type {
   ValidationFinding,
   ValidationReport,
@@ -50,12 +56,16 @@ if (isMainModule) {
   try {
     if (mode === "route") await route();
     else if (mode === "publish") await publish();
+    else if (mode === "classify-metadata") await classifyMetadata();
+    else if (mode === "prepare-metadata") await prepareMetadata();
+    else if (mode === "publish-metadata") await publishMetadata();
     else if (mode === "prepare-submit") await prepareSubmit();
     else if (mode === "publish-submit") await publishSubmit();
     else if (mode === "report-validation") await reportValidation();
     else if (mode === "report-failure") await reportFailure();
     else throw new Error(
-      "usage: submission.js route|publish|prepare-submit|publish-submit|report-validation|report-failure",
+      "usage: submission.js route|publish|classify-metadata|prepare-metadata|publish-metadata|" +
+        "prepare-submit|publish-submit|report-validation|report-failure",
     );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -265,6 +275,7 @@ async function dispatchWebsite(
   authoritativeRepositoryId: number,
   archiveCommit: string,
   titleSyncError = "",
+  submitKind: "validated" | "metadata" = "validated",
 ): Promise<void> {
   await dispatchWebsiteAndReport(
     control,
@@ -274,6 +285,7 @@ async function dispatchWebsite(
     archiveCommit,
     workflowRun(),
     titleSyncError,
+    submitKind,
   );
 }
 
@@ -283,6 +295,104 @@ async function clearCommandProgress(control: ControlPlane, commentId: number): P
   } catch (error) {
     console.error(`could not clear command progress reaction: ${(error as Error).message}`);
   }
+}
+
+/**
+ * Cheap first step of Validate. Failure means "not proven metadata-only", not
+ * rejection: the workflow deliberately continues into the full pipeline.
+ */
+export async function classifyMetadata(): Promise<void> {
+  const artifactPath = requiredEnv("METADATA_RESUBMISSION_PATH");
+  fs.rmSync(artifactPath, { force: true });
+  try {
+    const authoritativeRepositoryId = repositoryId();
+    const request = readPublishRequest(authoritativeRepositoryId);
+    const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
+    const archive = new ArchiveRepository(client);
+    const artifact = await classifyMetadataResubmission(
+      request,
+      await archive.load(request.id),
+    );
+    if (artifact === undefined) {
+      writeOutput("metadata_only", "false");
+      return;
+    }
+    fs.mkdirSync(new URL(".", pathToFileURL(artifactPath)), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+    writeOutput("metadata_only", "true");
+  } catch (error) {
+    console.warn(
+      "metadata-only comparison was inconclusive; running full validation: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+    writeOutput("metadata_only", "false");
+  }
+}
+
+/** Credential-free recheck before either publisher token is minted. */
+export async function prepareMetadata(): Promise<void> {
+  const authoritativeRepositoryId = repositoryId();
+  const request = readPublishRequest(authoritativeRepositoryId);
+  const client = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
+  const control = new ControlPlane(client, new ArchiveRepository(client), authoritativeRepositoryId);
+  try {
+    const artifact = readMetadataArtifact(request);
+    const publisher = new MetadataPublisher(
+      control,
+      new ArchiveRepository(client),
+      authoritativeRepositoryId,
+    );
+    const result = await publisher.preflight(request, artifact);
+    writeOutput("should_publish", result.kind === "ready" ? "true" : "false");
+  } catch (error) {
+    await postPublicationFailure(control, request, error);
+    throw error;
+  }
+}
+
+export async function publishMetadata(): Promise<void> {
+  const authoritativeRepositoryId = repositoryId();
+  const request = readPublishRequest(authoritativeRepositoryId);
+  const controlClient = new GitHubClient(requiredEnv("GITHUB_TOKEN"));
+  const control = new ControlPlane(
+    controlClient,
+    new ArchiveRepository(controlClient),
+    authoritativeRepositoryId,
+  );
+  let archiveCommit: string | undefined;
+  let titleSyncError = "";
+  try {
+    const artifact = readMetadataArtifact(request);
+    const publisher = new MetadataPublisher(
+      control,
+      new ArchiveRepository(new GitHubClient(requiredEnv("LAX_DATABASE_TOKEN"))),
+      authoritativeRepositoryId,
+    );
+    const result = await publisher.publish(request, artifact, workflowRun());
+    if (result.kind === "no-op") return;
+    archiveCommit = result.archiveCommit;
+    try {
+      await controlClient.request(
+        "PATCH",
+        `${repositoryPath(CONTROL_REPOSITORY)}/issues/${request.issue.number}`,
+        { title: result.acceptedTitle },
+      );
+    } catch (error) {
+      const message = safeInline((error as Error).message, 300);
+      titleSyncError = message || "unknown title synchronization failure";
+    }
+  } catch (error) {
+    await postPublicationFailure(control, request, error, archiveCommit);
+    throw error;
+  }
+  await dispatchWebsite(
+    control,
+    request,
+    authoritativeRepositoryId,
+    archiveCommit,
+    titleSyncError,
+    "metadata",
+  );
 }
 
 /**
@@ -635,6 +745,13 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
     throw new ValidationError("validation paper web bundle digest does not match its build output");
   }
   return artifacts;
+}
+
+function readMetadataArtifact(request: PublishRequest): ParsedMetadataResubmissionArtifact {
+  return parseMetadataResubmissionArtifact(
+    readBoundedJson(requiredEnv("METADATA_RESUBMISSION_PATH"), "metadata resubmission artifact"),
+    request,
+  );
 }
 
 /** The environment id a report claims, read before the report is parsed:

@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   checkoutRemoteCommit,
   fetchGitCheckout,
+  fetchRemoteCommits,
   type GitRunner,
 } from "../../src/submission-validation/source/fetch.js";
 import { cleanupTemporary, temporary } from "../support/submission-validation.js";
@@ -109,6 +110,21 @@ function commitAt(index: number): string {
 }
 
 describe("source fetch fallback", () => {
+  it("fetches two exact commit trees into one object store without checking either out", async () => {
+    const { destination, git, calls } = workspace();
+    const targets = [commitAt(30), commitAt(5)];
+
+    await fetchRemoteCommits(git, origin, targets);
+
+    for (const target of targets) {
+      expect(fixtureGit(destination, isolatedEnv(path.join(path.dirname(destination), "home")), [
+        "rev-parse",
+        `${target}^{commit}`,
+      ])).toBe(target);
+    }
+    expect(calls.some((args) => args.includes("checkout"))).toBe(false);
+  });
+
   it("finds a commit buried behind the branch tip through bounded deepening", async () => {
     const { destination, git, calls } = workspace();
     const target = commitAt(30); // 30 commits behind the tip of main

@@ -55,7 +55,7 @@ There is no checked-in fork of `submission.yml`. `setup.sh` calls
   `LAX_CAPTURES_REPOSITORY` at the scratch repositories;
 - **(b)** every `actions/create-github-app-token` mint step deleted, and each
   consuming token env switched to `${{ secrets.LAX_SCRATCH_TOKEN }}` (the
-  merged publishing jobs read two of them each);
+  three publishing jobs read two of them each);
 - **(c)** `ci.yml` and `release.yml` dropped from the pushed tree.
 
 Everything else is byte-identical, and the generated file carries a header

@@ -130,6 +130,7 @@ const JOB_ROWS = new Map<string, WorkflowStage["row"]>([
   ["route", "queued"],
   ["validate", "validate"],
   ["publish-submit", "publish"],
+  ["publish-metadata", "publish"],
   ["publish", "publish"],
   ["report-validation-failure", "reporting"],
   ["report-workflow-failure", "reporting"],
@@ -144,6 +145,7 @@ const JOB_ROWS = new Map<string, WorkflowStage["row"]>([
  * a renamed step should cost a missing detail, never a wrong one.
  */
 const VALIDATE_STEPS: Array<[string, string]> = [
+  ["compare", "checking what changed"],
   ["static gate", "checking the layout"],
   ["restore", "preparing a clean machine"],
   ["provision", "preparing a clean machine"],
@@ -158,9 +160,11 @@ const VALIDATE_STEPS: Array<[string, string]> = [
  * needs, and only then commits the record and asks the site to rebuild.
  */
 const PUBLISH_STEPS: Array<[string, string]> = [
+  ["parse metadata", "re-checking the metadata update"],
   ["parse", "re-checking the result"],
   ["mint", "getting write access"],
   ["promote", "committing and rebuilding the site"],
+  ["publish presentation", "committing and rebuilding the site"],
   ["revalidate", "committing and rebuilding the site"],
 ];
 

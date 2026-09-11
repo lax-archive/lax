@@ -17,6 +17,7 @@ import YAML from "yaml";
 import {
   CAPTURE_FILENAME,
   GENERATED_BUILD_OUTPUT_FILENAME,
+  METADATA_RESUBMISSION_FILENAME,
   PAPER_FILENAME,
   PAPER_WEB_FILENAME,
   VALIDATION_PROFILE_FILENAME,
@@ -184,10 +185,11 @@ describe("submission workflow wiring", () => {
   it("collapses validation into exactly one job", () => {
     // The single-job pipeline is the reviewed architecture; a new job name
     // appearing here must be a conscious decision, not drift. The success path
-    // is four hops: precheck → route → validate → publish-submit.
+    // is four hops: precheck → route → validate → one of the two submit publishers.
     expect(Object.keys(jobs).sort()).toEqual([
       "precheck",
       "publish",
+      "publish-metadata",
       "publish-submit",
       "report-validation-failure",
       "report-workflow-failure",
@@ -197,6 +199,9 @@ describe("submission workflow wiring", () => {
     const validate = requireJob(jobs, "validate");
     expect(validate.needs).toBe("route");
     expect(validate.if).toBe("needs.route.outputs.operation == 'validate'");
+    expect(validate.outputs).toEqual({
+      metadata_only: "${{ steps.metadata.outputs.metadata_only }}",
+    });
     // The three-stage machinery must not resurface: no stage entry points,
     // no tarball handoffs, no per-job stitching, no registry login.
     expect(workflow).not.toMatch(/run\.js (compile|replay|inspect|cleanup)/u);
@@ -399,6 +404,39 @@ describe("submission workflow wiring", () => {
     }
   });
 
+  it("runs the metadata classifier before the pipeline and falls back on every inconclusive result", () => {
+    const validate = requireJob(jobs, "validate");
+    const comparison = validate.steps.find(
+      (step) => step.run === "node dist/workflows/submission.js classify-metadata",
+    );
+    expect(comparison).toMatchObject({
+      id: "metadata",
+      "continue-on-error": true,
+      env: {
+        GITHUB_TOKEN: "${{ github.token }}",
+        PUBLISH_REQUEST: "${{ needs.route.outputs.publish_request }}",
+      },
+    });
+    expect(JSON.stringify(comparison)).not.toContain("secrets.");
+    const guardedNames = [
+      "Static gate",
+      "Restore the reflowtex encode venv",
+      "Fetch the pinned ReflowTeX fork",
+      "Restore toolchain and warm mathlib workspace",
+      "Provision the validation host",
+      "Validate",
+    ];
+    for (const name of guardedNames) {
+      expect(validate.steps.find((step) => step.name === name)?.if, name)
+        .toContain("steps.metadata.outputs.metadata_only != 'true'");
+    }
+    // A missing output compares unequal to true. Together with
+    // continue-on-error this makes a crashed comparison take the full path.
+    expect(validate.outputs).toEqual({
+      metadata_only: "${{ steps.metadata.outputs.metadata_only }}",
+    });
+  });
+
   it("provisions the environment the static gate selected, passed as data", () => {
     // history/environments-plan.md stage 2. The gate is the one step that knows which
     // archive environment the manifest named, and it says so through two step
@@ -436,9 +474,11 @@ describe("submission workflow wiring", () => {
         expect(step.run, `${name}: ${step.name ?? step.run}`).not.toContain("${{");
       }
     }
-    // The gate's outputs are consumed only by the validate job's own steps:
-    // the environment id never becomes a job output for a privileged job.
-    expect(requireJob(jobs, "validate").outputs).toBeUndefined();
+    // The environment id remains private to this job. Its sole job output is
+    // the classifier's fixed boolean, used to choose a publisher.
+    expect(requireJob(jobs, "validate").outputs).toEqual({
+      metadata_only: "${{ steps.metadata.outputs.metadata_only }}",
+    });
     expect(workflow.match(/steps\.gate\.outputs\.environment/gu)).toHaveLength(1);
     expect(workflow.match(/steps\.gate\.outputs\.cache_key/gu)).toHaveLength(1);
   });
@@ -470,7 +510,7 @@ describe("submission workflow wiring", () => {
   // -------------------------------------------------------------------------
   // Artifact handoff: one upload, names aligned with the TS output module.
   // -------------------------------------------------------------------------
-  it("hands the validation output to trusted jobs through two aligned artifacts", () => {
+  it("hands validation or metadata evidence to trusted jobs through aligned artifacts", () => {
     // The artifacts are the only channel out of the untrusted validate job.
     // The full one is the publisher's evidence: its file names must match
     // outputs.ts exactly or the re-validation reads nothing. The report-only
@@ -479,11 +519,15 @@ describe("submission workflow wiring", () => {
     const uploads = requireJob(jobs, "validate").steps.filter((step) =>
       step.uses?.startsWith("actions/upload-artifact"),
     );
-    expect(uploads).toHaveLength(2);
-    expect(workflow.match(/upload-artifact/gu)).toHaveLength(2);
-    const [report, full] = uploads as [WorkflowJob["steps"][number], WorkflowJob["steps"][number]];
-    for (const upload of uploads) {
-      expect(upload.if).toBe("always()");
+    expect(uploads).toHaveLength(3);
+    expect(workflow.match(/upload-artifact/gu)).toHaveLength(3);
+    const [report, full, metadata] = uploads as [
+      WorkflowJob["steps"][number],
+      WorkflowJob["steps"][number],
+      WorkflowJob["steps"][number],
+    ];
+    for (const upload of [report, full]) {
+      expect(upload.if).toBe("always() && steps.metadata.outputs.metadata_only != 'true'");
       // The artifacts are the only diagnosable record of a failed run, so they
       // keep the maximum retention.
       expect(upload.with?.["retention-days"]).toBe(90);
@@ -502,10 +546,18 @@ describe("submission workflow wiring", () => {
     ]) {
       expect(full.with?.path).toContain(`.build/submission-validation/${filename}`);
     }
+    expect(metadata.if).toBe("steps.metadata.outputs.metadata_only == 'true'");
+    expect(metadata.with).toMatchObject({
+      name: "submission-metadata-${{ github.event.issue.number }}",
+      path: `.build/submission-validation/${METADATA_RESUBMISSION_FILENAME}`,
+      "if-no-files-found": "error",
+      "retention-days": 90,
+    });
     // Each download names the artifact holding what that job reads.
     const downloads = {
       "report-validation-failure": "submission-validation-report-${{ github.event.issue.number }}",
       "publish-submit": "submission-validation-${{ github.event.issue.number }}",
+      "publish-metadata": "submission-metadata-${{ github.event.issue.number }}",
     };
     for (const [name, artifact] of Object.entries(downloads)) {
       const steps = requireJob(jobs, name).steps;
@@ -544,6 +596,10 @@ describe("submission workflow wiring", () => {
     expect(submit.needs).toEqual(["route", "validate"]);
     expect(submit.if).toContain("needs.route.outputs.operation == 'validate'");
     expect(submit.if).toContain("needs.validate.result == 'success'");
+    expect(submit.if).toContain("needs.validate.outputs.metadata_only != 'true'");
+    const metadata = requireJob(jobs, "publish-metadata");
+    expect(metadata.needs).toEqual(["route", "validate"]);
+    expect(metadata.if).toContain("needs.validate.outputs.metadata_only == 'true'");
     expect(workflow).not.toContain("should_publish=");
     expect(workflow).not.toContain("validation-result");
 
@@ -593,6 +649,25 @@ describe("submission workflow wiring", () => {
       packages: "write",
     });
     expect(requireJob(jobs, "publish").permissions).toEqual({ contents: "read", issues: "write" });
+    expect(requireJob(jobs, "publish-metadata").permissions).toEqual({ contents: "read", issues: "write" });
+  });
+
+  it("rechecks metadata evidence before minting and never receives registry write access", () => {
+    const job = requireJob(jobs, "publish-metadata");
+    const prepare = job.steps.findIndex((step) => step.run === "node dist/workflows/submission.js prepare-metadata");
+    const database = job.steps.findIndex((step) => step.name === "Mint lax-database token");
+    const website = job.steps.findIndex((step) => step.name === "Mint lax-website dispatch token");
+    const publish = job.steps.findIndex((step) => step.run === "node dist/workflows/submission.js publish-metadata");
+    expect(prepare).toBeGreaterThan(0);
+    expect(prepare).toBeLessThan(database);
+    expect(database).toBeLessThan(website);
+    expect(website).toBeLessThan(publish);
+    expect(job.steps[prepare]?.name).toContain("without Archive credentials");
+    expect(job.permissions).toEqual({ contents: "read", issues: "write" });
+    expect(JSON.stringify(job.permissions)).not.toContain("packages");
+    for (const index of [database, website, publish]) {
+      expect(job.steps[index]?.if).toBe("steps.prepare-metadata.outputs.should_publish == 'true'");
+    }
   });
 
   it("keeps both publisher keys in the publishing jobs and out of every other one", () => {
@@ -601,7 +676,7 @@ describe("submission workflow wiring", () => {
     // process, so no archive_commit ever crosses a job boundary. The invariant
     // that survives is trust rule 1 — no job holding an App key checks out or
     // executes submission code.
-    for (const name of ["publish", "publish-submit"]) {
+    for (const name of ["publish", "publish-submit", "publish-metadata"]) {
       const job = requireJob(jobs, name);
       const steps = job.steps.filter((step) =>
         step.uses?.startsWith("actions/create-github-app-token"),
@@ -624,7 +699,7 @@ describe("submission workflow wiring", () => {
     expect(workflow).not.toContain("title_sync_error");
     // No unprivileged job may reference either key.
     for (const [name, job] of Object.entries(jobs)) {
-      if (name === "publish" || name === "publish-submit") continue;
+      if (name === "publish" || name === "publish-submit" || name === "publish-metadata") continue;
       expect(JSON.stringify(job), name).not.toContain("secrets.");
     }
     // The one-key-per-workflow-secret rule: no legacy combined App secrets.
@@ -640,7 +715,7 @@ describe("submission workflow wiring", () => {
     // silently widening the validate VM's reach), and it never falls back
     // to a bare `npm ci`/`npm run build` of its own either — the action is
     // the one build path.
-    for (const name of ["publish", "publish-submit"]) {
+    for (const name of ["publish", "publish-submit", "publish-metadata"]) {
       const job = requireJob(jobs, name);
       const setup = job.steps.find((step) => step.uses === "./.github/actions/setup-lax");
       expect(setup?.with?.restore, name).not.toBe("true");
@@ -680,6 +755,7 @@ describe("submission workflow wiring", () => {
       "route",
       "publish",
       "publish-submit",
+      "publish-metadata",
       "report-validation-failure",
     ]);
     expect(fallback.if).toContain("always()");
@@ -696,7 +772,7 @@ describe("submission workflow wiring", () => {
     expect(fallback.permissions).toEqual({ contents: "read", issues: "write" });
     const report = fallback.steps.at(-1);
     expect(report?.run).toBe("node dist/workflows/submission.js report-failure");
-    // Only the two publishing jobs can leave a lax-database commit behind, and
+    // Only the three publishing jobs can leave a lax-database commit behind, and
     // the commit itself is no longer a job output for the reporter to read.
     expect(Object.keys(report?.env ?? {}).sort()).toEqual([
       "ACTION",
@@ -707,7 +783,7 @@ describe("submission workflow wiring", () => {
     ]);
     // A cancelled publisher cannot say whether it committed any more than a
     // failed one can, so the open wording covers both results.
-    for (const publisher of ["publish", "publish-submit"]) {
+    for (const publisher of ["publish", "publish-submit", "publish-metadata"]) {
       expect(report?.env?.PUBLICATION_FAILED).toContain(
         `contains(fromJSON('["failure","cancelled"]'), needs.${publisher}.result)`,
       );
@@ -723,7 +799,8 @@ describe("submission workflow wiring", () => {
     // validation row on top and the failure reporters last so run pages stay
     // readable.
     expect(workflow.indexOf("  validate:")).toBeLessThan(workflow.indexOf("  publish-submit:"));
-    expect(workflow.indexOf("  publish-submit:")).toBeLessThan(workflow.indexOf("  publish:"));
+    expect(workflow.indexOf("  publish-submit:")).toBeLessThan(workflow.indexOf("  publish-metadata:"));
+    expect(workflow.indexOf("  publish-metadata:")).toBeLessThan(workflow.indexOf("  publish:"));
     expect(workflow.indexOf("  publish:")).toBeLessThan(
       workflow.indexOf("  report-validation-failure:"),
     );

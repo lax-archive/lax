@@ -69,6 +69,59 @@ export async function fetchGitCheckout(
 }
 
 /**
+ * Fetch several exact commits into one object store without checking out any
+ * of their files. Metadata-only resubmission classification uses this form:
+ * it needs the two immutable Git trees, but no authored bytes should become a
+ * working tree (and certainly none should execute) merely to decide whether a
+ * full validation is necessary.
+ */
+export async function fetchGitCommits(
+  repository: string,
+  commits: readonly string[],
+  destination: string,
+  timeoutMs: number,
+): Promise<void> {
+  validateRepositoryUrl(repository);
+  if (commits.length === 0) throw new Error("at least one commit must be fetched");
+  for (const commit of commits) validateCommit(commit);
+  if (!path.isAbsolute(destination) || destination === "/") {
+    throw new Error("destination must be a specific absolute path");
+  }
+  fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
+  const home = path.join(destination, "..", ".lax-fetch-home");
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  const env = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: home,
+    GIT_ALLOW_PROTOCOL: "https",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+  const deadline = Date.now() + timeoutMs;
+  const git: GitRunner = (args) =>
+    runGit(args, destination, env, Math.max(1, deadline - Date.now()));
+  await fetchRemoteCommits(git, repository, commits);
+}
+
+/** The exact-object fetch sequence, parameterized for local Git tests. */
+export async function fetchRemoteCommits(
+  git: GitRunner,
+  repository: string,
+  commits: readonly string[],
+  maxDepth = MAX_FALLBACK_DEPTH,
+): Promise<void> {
+  if (commits.length === 0) throw new Error("at least one commit must be fetched");
+  await initializeRemote(git, repository);
+  for (const commit of [...new Set(commits)]) {
+    await fetchRemoteCommit(git, commit, maxDepth);
+    const resolved = await git(["rev-parse", `${commit}^{commit}`]);
+    if (resolved.code !== 0 || resolved.output.trim() !== commit) {
+      throw new Error("fetch did not resolve to the requested immutable commit");
+    }
+  }
+}
+
+/**
  * The git sequence behind {@link fetchGitCheckout}, parameterized over the
  * runner so tests can drive it with real git against local fixture remotes:
  * try the cheap unadvertised-SHA fetch first; when the host refuses it, fetch
@@ -83,6 +136,18 @@ export async function checkoutRemoteCommit(
   commit: string,
   maxDepth = MAX_FALLBACK_DEPTH,
 ): Promise<void> {
+  await initializeRemote(git, repository);
+  await fetchRemoteCommit(git, commit, maxDepth);
+  if ((await git(["-c", "advice.detachedHead=false", "checkout", "--quiet", commit])).code !== 0) {
+    throw new Error("requested commit is not present in the fetched repository");
+  }
+  const resolved = await git(["rev-parse", "HEAD"]);
+  if (resolved.code !== 0 || resolved.output.trim() !== commit) {
+    throw new Error("checkout did not resolve to the requested immutable commit");
+  }
+}
+
+async function initializeRemote(git: GitRunner, repository: string): Promise<void> {
   const initialized = await git(["init", "--quiet"]);
   if (initialized.code !== 0) {
     throw new Error(withGitOutput("could not initialize the fetch workspace", initialized));
@@ -91,6 +156,13 @@ export async function checkoutRemoteCommit(
   if (configured.code !== 0) {
     throw new Error(withGitOutput("could not configure the fetch remote", configured));
   }
+}
+
+async function fetchRemoteCommit(
+  git: GitRunner,
+  commit: string,
+  maxDepth = MAX_FALLBACK_DEPTH,
+): Promise<void> {
   const direct = await git(["fetch", "--quiet", "--depth", "1", "origin", commit]);
   if (direct.code !== 0) {
     // The host refused the unadvertised-SHA fetch. Fetch the branch tips,
@@ -109,13 +181,6 @@ export async function checkoutRemoteCommit(
     if (deepenFailure !== undefined) {
       throw new Error(withGitOutput("repository history could not be fetched", deepenFailure));
     }
-  }
-  if ((await git(["-c", "advice.detachedHead=false", "checkout", "--quiet", commit])).code !== 0) {
-    throw new Error("requested commit is not present in the fetched repository");
-  }
-  const resolved = await git(["rev-parse", "HEAD"]);
-  if (resolved.code !== 0 || resolved.output.trim() !== commit) {
-    throw new Error("checkout did not resolve to the requested immutable commit");
   }
 }
 
