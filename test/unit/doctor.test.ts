@@ -276,6 +276,83 @@ describe("lax doctor", () => {
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
   });
 
+  it("checks every filesystem Lax uses and deduplicates shared ones", async () => {
+    provision();
+    seedPageBuilder();
+    const root = seedSubmission();
+    recordSubmission(root);
+    process.env.LAX_GITHUB_APP_USER_TOKEN = "ghu_test";
+    vi.stubGlobal("fetch", (url: string) =>
+      Promise.resolve(
+        new Response(JSON.stringify(String(url).endsWith("/user") ? { login: "jan3er" } : []), {
+          status: 200,
+        }),
+      ),
+    );
+
+    // Model four distinct volumes even though the test machine probably has
+    // one: completed persistent stores are allowed to be low, while scratch
+    // and every in-place submission build still need the ordinary headroom.
+    const volumes = new Map<string, { dev: number; free: number }>([
+      [fs.realpathSync(home), { dev: 1, free: 5 }],
+      [fs.realpathSync(path.join(home, "elan")), { dev: 2, free: 4 }],
+      [fs.realpathSync(os.tmpdir()), { dev: 3, free: 20 }],
+      [fs.realpathSync(root), { dev: 4, free: 20 }],
+    ]);
+    vi.spyOn(fs.promises, "stat").mockImplementation(async (target) => {
+      const volume = volumes.get(String(target));
+      if (volume === undefined) throw new Error(`unexpected disk probe ${String(target)}`);
+      return { dev: volume.dev } as fs.Stats;
+    });
+    const statfs = vi.spyOn(fs.promises, "statfs").mockImplementation(async (target) => {
+      const volume = volumes.get(String(target));
+      if (volume === undefined) throw new Error(`unexpected capacity probe ${String(target)}`);
+      return { bavail: volume.free, bsize: 2 ** 30 } as fs.StatsFs;
+    });
+    const { log } = quiet();
+
+    await doctor({ dry: true });
+
+    const lines = printed(log);
+    expect(row(lines, "Disk")).toContain("✓ Disk                5 GB free · Lax data");
+    expect(lines).toContain("                        4 GB free · Lean");
+    expect(lines).toContain("                        20 GB free · temporary builds");
+    expect(lines).toContain("                        20 GB free · 1 submission");
+    expect(statfs).toHaveBeenCalledTimes(4);
+
+    // Moving scratch onto the submission's device must merge the two roles
+    // and read that filesystem's capacity only once.
+    volumes.set(fs.realpathSync(os.tmpdir()), { dev: 4, free: 20 });
+    statfs.mockClear();
+    log.mockClear();
+    await doctor({ dry: true });
+    const merged = printed(log);
+    expect(merged).toContain("                        20 GB free · temporary builds, 1 submission");
+    expect(statfs).toHaveBeenCalledTimes(3);
+  });
+
+  it("warns when any build filesystem is short of space", async () => {
+    provision();
+    seedPageBuilder();
+    const root = seedSubmission();
+    recordSubmission(root);
+    const submission = fs.realpathSync(root);
+    vi.spyOn(fs.promises, "stat").mockImplementation(async (target) =>
+      ({ dev: String(target) === submission ? 2 : 1 }) as fs.Stats,
+    );
+    vi.spyOn(fs.promises, "statfs").mockImplementation(async (target) =>
+      ({ bavail: String(target) === submission ? 8 : 20, bsize: 2 ** 30 }) as fs.StatsFs,
+    );
+    const { log } = quiet();
+
+    await doctor({ dry: true });
+
+    const lines = printed(log);
+    expect(row(lines, "Disk")).toContain("! Disk                8 GB free · 1 submission");
+    expect(lines).toContain("                        20 GB free · Lax data, Lean, temporary builds");
+    expect(lines.some((line) => line.includes("roughly 10 GB free"))).toBe(true);
+  });
+
   it("collapses a healthy lax install into one row", async () => {
     // platform, node, npm and the page renderer are one question from the
     // author's side — is the install healthy — so while they all pass they cost
@@ -529,6 +606,11 @@ describe("lax doctor", () => {
         }),
       ),
     );
+    // Readiness is the subject of the test, not the CI host's current disk.
+    vi.spyOn(fs.promises, "statfs").mockResolvedValue({
+      bavail: 20,
+      bsize: 2 ** 30,
+    } as fs.StatsFs);
     const { log } = quiet();
 
     const code = await doctor({ dry: true });
@@ -577,6 +659,12 @@ describe("lax doctor", () => {
         `printf '{"packages":[]}\\n' > lake-manifest.json\n`,
       { mode: 0o755 },
     );
+    const actualStatfs = fs.promises.statfs.bind(fs.promises);
+    const readyWhenDiskWasChecked: boolean[] = [];
+    vi.spyOn(fs.promises, "statfs").mockImplementation(async (target) => {
+      readyWhenDiskWasChecked.push(warmReady(warmDir(epoch())));
+      return actualStatfs(target);
+    });
     const { log } = quiet();
 
     await doctor();
@@ -587,6 +675,7 @@ describe("lax doctor", () => {
     expect(fs.readFileSync(lakeLog, "utf8")).toContain("build");
     expect(row(printed(log), "Mathlib")).toContain("✓ Mathlib");
     expect(row(printed(log), "Mathlib")).toContain("built just now");
+    expect(readyWhenDiskWasChecked).toEqual([true]);
     // and the store is left in the state every consumer relies on: complete,
     // marked, and sealed against writes
     expect(warmReady(warmDir(epoch()))).toBe(true);

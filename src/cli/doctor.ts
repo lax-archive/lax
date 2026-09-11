@@ -366,6 +366,50 @@ export async function doctor(opts: { dry?: boolean; env?: string } = {}): Promis
   // is waiting for rather than spinning as if it were working.
   steps.waiting("mathlib", "waiting for Lean");
 
+  const lean = (async () => {
+    // The row's own detail while it provisions something, with its clock
+    // restarted so the time on it measures that install rather than the
+    // probes in front of it.
+    const working = (text: string): void => {
+      steps.begin("lean");
+      steps.detail("lean", text);
+    };
+    const elan = await elanCheck(dry, working);
+    const lake = await lakeCheck(environment, dry, working);
+    // Only now does this read a settled state: while the toolchain was
+    // installing it would have reported the half-built directory elan is in
+    // the middle of creating.
+    const toolchain = toolchainCheck(environment);
+    // Every link runs — each one is what proves the link above it worked —
+    // but the report stops at the first that broke: with no elan, "no elan
+    // to provide it" and "the toolchain is not installed yet" are the same
+    // sentence a second and a third time.
+    const chain = [elan, lake, toolchain];
+    const broken = chain.find((check) => check.status !== "ok");
+    settleGroup(
+      steps,
+      "lean",
+      [factOf(lake), factOf(elan)],
+      record(...(broken === undefined ? chain : [broken])),
+    );
+    // Last, and behind the toolchain that builds it: the store is the one
+    // check that can run for tens of minutes.
+    steps.begin("mathlib");
+    settle("mathlib", await warmStoreCheck(environment, steps, dry));
+    // Last, because "which environments are installed" is only true once
+    // the store this run may have just built is on disk.
+    settle("environments", environmentsCheck());
+  })();
+
+  const archive = (async () => {
+    settle(
+      "archive",
+      await databaseCheck(dry, (text) => {
+        steps.detail("archive", text);
+      }),
+    );
+  })();
+
   try {
     await Promise.all([
       (async () => {
@@ -388,53 +432,18 @@ export async function doctor(opts: { dry?: boolean; env?: string } = {}): Promis
       (async () => {
         settle("latex", await latexCheck(submissions.some((submission) => declaresPaper(submission.root))));
       })(),
-      (async () => {
-        // The row's own detail while it provisions something, with its clock
-        // restarted so the time on it measures that install rather than the
-        // probes in front of it.
-        const working = (text: string): void => {
-          steps.begin("lean");
-          steps.detail("lean", text);
-        };
-        const elan = await elanCheck(dry, working);
-        const lake = await lakeCheck(environment, dry, working);
-        // Only now does this read a settled state: while the toolchain was
-        // installing it would have reported the half-built directory elan is in
-        // the middle of creating.
-        const toolchain = toolchainCheck(environment);
-        // Every link runs — each one is what proves the link above it worked —
-        // but the report stops at the first that broke: with no elan, "no elan
-        // to provide it" and "the toolchain is not installed yet" are the same
-        // sentence a second and a third time.
-        const chain = [elan, lake, toolchain];
-        const broken = chain.find((check) => check.status !== "ok");
-        settleGroup(
-          steps,
-          "lean",
-          [factOf(lake), factOf(elan)],
-          record(...(broken === undefined ? chain : [broken])),
-        );
-        // Last, and behind the toolchain that builds it: the store is the one
-        // check that can run for tens of minutes.
-        steps.begin("mathlib");
-        settle("mathlib", await warmStoreCheck(environment, steps, dry));
-        // Last, because "which environments are installed" is only true once
-        // the store this run may have just built is on disk.
-        settle("environments", environmentsCheck());
-      })(),
+      lean,
       (async () => {
         settle("account", await githubCheck(dry));
       })(),
+      archive,
       (async () => {
-        settle(
-          "archive",
-          await databaseCheck(dry, (text) => {
-            steps.detail("archive", text);
-          }),
-        );
-      })(),
-      (async () => {
-        settle("disk", await diskCheck());
+        // Provisioning can consume almost all of the headroom this row is
+        // meant to report. Sample after the two checks that write the Lax and
+        // Lean stores so the final row describes the machine doctor leaves
+        // behind, not the one it started with.
+        await Promise.all([lean, archive]);
+        settle("disk", await diskCheck(environment, submissions));
       })(),
       (async () => {
         await pooled(submissions, 4, async (submission) => {
@@ -631,24 +640,148 @@ async function pooled<T, R>(
   return results;
 }
 
-/** Filesystem capacity is best-effort: an unreadable mount reports nothing. */
-async function diskCheck(): Promise<Check | undefined> {
-  try {
-    const target = fs.existsSync(laxHome()) ? laxHome() : os.homedir();
-    const stats = await fs.promises.statfs(target);
-    const free = (stats.bavail * stats.bsize) / 2 ** 30;
-    return {
-      label: "Disk",
-      status: free < 10 ? "warn" : "ok",
-      detail: `${free.toFixed(0)} GB free`,
-      ...(free < 10
-        ? { fix: ["the validation runtime and Lean build need roughly 10 GB free"] }
-        : {}),
-      internal: `${free.toFixed(1)} GB free at ${target}`,
-    };
-  } catch {
-    return undefined;
+type DiskRole = "lax" | "lean" | "temporary" | "submission";
+
+interface DiskTarget {
+  path: string;
+  role: DiskRole;
+  needsHeadroom: boolean;
+}
+
+interface CheckedFilesystem {
+  free: number;
+  targets: DiskTarget[];
+  probe: string;
+}
+
+/**
+ * The filesystems Lax will actually write, not every mount on the machine.
+ * Enumerating all mounts would inspect irrelevant removable/network volumes
+ * (and can block on an unhealthy network mount); stat/statfs on these paths is
+ * sufficient and reads neither directory entries nor file contents.
+ *
+ * A path need not exist on a first run. Walking to its nearest existing parent
+ * both identifies the filesystem that will receive it and fixes the old
+ * LAX_HOME-on-another-volume case, where doctor used to stat the user's home
+ * merely because the configured LAX_HOME had not been created yet.
+ */
+async function diskCheck(
+  environment: ArchiveEnvironment,
+  submissions: readonly { root: string }[],
+): Promise<Check | undefined> {
+  const targets: DiskTarget[] = [
+    {
+      path: laxHome(),
+      role: "lax",
+      // A ready store has already paid its large persistent-disk cost. This
+      // volume still appears in the report, but does not demand another 10 GB
+      // when temporary builds and submissions live elsewhere.
+      needsHeadroom: !warmReady(warmDir(environment)),
+    },
+    {
+      path: elanHome(),
+      role: "lean",
+      needsHeadroom: !fs.existsSync(path.join(toolchainBinDir(environment), "lean")),
+    },
+    { path: os.tmpdir(), role: "temporary", needsHeadroom: true },
+    ...submissions.map(({ root }) => ({
+      path: root,
+      role: "submission" as const,
+      needsHeadroom: true,
+    })),
+  ];
+
+  const probes = (
+    await Promise.all(
+      targets.map(async (target) => {
+        try {
+          const probe = await existingAncestor(target.path);
+          const stat = await fs.promises.stat(probe);
+          return { target, probe, device: stat.dev };
+        } catch {
+          return undefined;
+        }
+      }),
+    )
+  ).filter((probe): probe is NonNullable<typeof probe> => probe !== undefined);
+
+  const byDevice = new Map<number, CheckedFilesystem>();
+  for (const { target, probe, device } of probes) {
+    const existing = byDevice.get(device);
+    if (existing !== undefined) {
+      existing.targets.push(target);
+      continue;
+    }
+    try {
+      const stats = await fs.promises.statfs(probe);
+      byDevice.set(device, {
+        free: (stats.bavail * stats.bsize) / 2 ** 30,
+        targets: [target],
+        probe,
+      });
+    } catch {
+      // Capacity is best-effort: omit an unreadable filesystem without
+      // suppressing the useful answers from the other filesystems.
+    }
   }
+
+  const filesystems = [...byDevice.values()];
+  if (filesystems.length === 0) return undefined;
+  const short = (filesystem: CheckedFilesystem): string => {
+    const suffix = filesystems.length === 1 ? "" : ` · ${diskRoles(filesystem.targets)}`;
+    return `${filesystem.free.toFixed(0)} GB free${suffix}`;
+  };
+  const low = filesystems.filter(
+    (filesystem) =>
+      filesystem.free < 10 && filesystem.targets.some((target) => target.needsHeadroom),
+  );
+  // Put a filesystem needing attention on the row itself; the others follow
+  // beneath it. Stable target order otherwise keeps the common one-disk report
+  // byte-for-byte unchanged.
+  const first = low[0] ?? filesystems[0]!;
+  const rest = filesystems.filter((filesystem) => filesystem !== first);
+  return {
+    label: "Disk",
+    status: low.length > 0 ? "warn" : "ok",
+    detail: short(first),
+    more: rest.map(short),
+    ...(low.length > 0
+      ? { fix: ["the validation runtime and Lean build need roughly 10 GB free"] }
+      : {}),
+    internal: filesystems
+      .map(
+        (filesystem) =>
+          `${filesystem.free.toFixed(1)} GB free at ${filesystem.probe} (${diskRoles(filesystem.targets)})`,
+      )
+      .join("; "),
+  };
+}
+
+async function existingAncestor(target: string): Promise<string> {
+  let current = path.resolve(target);
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return fs.promises.realpath(current);
+}
+
+function diskRoles(targets: readonly DiskTarget[]): string {
+  const roles = new Set(targets.map((target) => target.role));
+  const submissionCount = targets.filter((target) => target.role === "submission").length;
+  return [
+    roles.has("lax") ? "Lax data" : undefined,
+    roles.has("lean") ? "Lean" : undefined,
+    roles.has("temporary") ? "temporary builds" : undefined,
+    submissionCount === 1
+      ? "1 submission"
+      : submissionCount > 1
+        ? `${submissionCount} submissions`
+        : undefined,
+  ]
+    .filter((role): role is string => role !== undefined)
+    .join(", ");
 }
 
 async function githubCheck(dry: boolean): Promise<Check> {
