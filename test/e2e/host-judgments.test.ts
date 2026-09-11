@@ -568,6 +568,12 @@ this is prose, not frontmatter
 -/
 theorem helperWithRule : 1 = 1 := rfl
 
+/-- used by the annotated theorem through another helper -/
+theorem middleHelper : 1 = 1 := helperWithRule
+
+/-- deliberately dead helper -/
+theorem unusedHelper : True := True.intro
+
 end Lax6Proofs
 `,
       "proofs/Lax6Proofs/Deep/A.lean": `import Lax6Proofs.Helper
@@ -581,7 +587,7 @@ assumptions:
 ---
 proof in a nested module, reusing another proof, empty assumptions list
 -/
-theorem viaHelper : 1 = 1 := helperWithRule
+theorem viaHelper : 1 = 1 := middleHelper
 
 end Lax6Proofs.Deep
 `,
@@ -609,6 +615,15 @@ end Lax6Proofs.Deep
       "docstring of Lax6Proofs.helperWithRule contains a `---` line but was not recognized as " +
         "frontmatter (the lines above it do not parse as `key: value`)",
     );
+    expect(report.warnings.filter((warning) => warning.rule === "unused-lemma")).toEqual([
+      {
+        phase: "inspect",
+        rule: "unused-lemma",
+        message:
+          "helper lemma Lax6Proofs.unusedHelper is not used, directly or transitively, by any proof " +
+          "theorem in this submission; keep it only if this is intentional",
+      },
+    ]);
   });
 });
 

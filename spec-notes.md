@@ -6,6 +6,21 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## Unused helper lemmas are visible (implemented, 2026-09-11)
+
+Inspection now reports the direct package-local constant references of every
+declaration. The validator walks that graph from the submission's annotated
+proof theorems and emits one non-blocking `unused-lemma` warning for each
+user-level theorem-kind helper that no such theorem uses, directly or
+transitively. Lean's `lemma` and unannotated `theorem` syntax intentionally
+receive the same treatment because both have theorem kind in the kernel.
+Generated and internal declarations are not author-facing lemmas and are
+excluded. The warning asks the author to keep the declaration only when doing
+so is intentional.
+
+Spec touchpoints: the inspector report gains package-local declaration edges;
+the Proofs section's ignored helpers gain a warning-only liveness check.
+
 ## The web view after the corpus pass: footnotes, paged figures, compile shims (implemented, 2026-09-08)
 
 A day of running the derived web view over 44 real papers

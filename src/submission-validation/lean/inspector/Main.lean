@@ -292,6 +292,23 @@ def axiomsOfCached (env : Environment) (state : AxiomCacheState) (n : Name) :
   let (_, state) := (collectAxiomsCached n).run env |>.run state
   (state.seen.find? n).getD #[] |> fun axs => (axs, state)
 
+/-- Constants mentioned directly by a declaration's type or value. The
+validator uses the package-local part of this graph to decide which helper
+lemmas are reachable from an authored proof theorem. -/
+def insertUsedConstants (used : NameSet) (e : Expr) : NameSet :=
+  e.getUsedConstants.foldl (init := used) fun acc name => acc.insert name
+
+def usedConstantsOf : ConstantInfo → NameSet
+  | .axiomInfo v => insertUsedConstants {} v.type
+  | .defnInfo v => insertUsedConstants (insertUsedConstants {} v.type) v.value
+  | .thmInfo v => insertUsedConstants (insertUsedConstants {} v.type) v.value
+  | .opaqueInfo v => insertUsedConstants (insertUsedConstants {} v.type) v.value
+  | .quotInfo _ => {}
+  | .ctorInfo v => insertUsedConstants {} v.type
+  | .recInfo v => insertUsedConstants {} v.type
+  | .inductInfo v =>
+      v.ctors.foldl (init := insertUsedConstants {} v.type) fun used ctor => used.insert ctor
+
 /-- Pretty-print with core notation only: delaborators are imported code, and
 we never run imported code. -/
 def ppType (env : Environment) (e : Expr) : IO String := do
@@ -474,6 +491,15 @@ unsafe def main (args : List String) : IO UInt32 := do
   for i in [0:allNames.size] do
     idxMap := idxMap.insert allNames[i]! i
 
+  -- Only package-local references are useful to the unused-helper check.
+  -- Filtering here prevents ubiquitous Mathlib dependencies from inflating
+  -- the untrusted JSON report.
+  let mut packageNames : NameSet := {}
+  for m in modNames do
+    if let some idx := idxMap[m]? then
+      for declName in datas[idx]!.constNames do
+        packageNames := packageNames.insert declName
+
   -- reachability over the module import graph, cached per start module
   let mut reachCache : Std.HashMap Nat (Array Bool) := {}
   let reach (cache : Std.HashMap Nat (Array Bool)) (idxMap : Std.HashMap Name Nat)
@@ -518,13 +544,17 @@ unsafe def main (args : List String) : IO UInt32 := do
           return 2
       let (axioms, axiomCache') := axiomsOfCached env axiomCache declName
       axiomCache := axiomCache'
+      let usedConstants := (usedConstantsOf ci).toArray
+        |>.filter packageNames.contains
+        |>.qsort Name.lt
       let doc? ← findDocString? env declName
       let parsed? := doc?.map parseDoc
       let mut fields : List (String × Json) :=
         [("name", Json.str declName.toString),
          ("kind", Json.str (kindOf ci)),
          ("module", Json.str m.toString),
-         ("axioms", Json.arr (axioms.map fun a => Json.str a.toString))]
+         ("axioms", Json.arr (axioms.map fun a => Json.str a.toString)),
+         ("usedConstants", Json.arr (usedConstants.map fun n => Json.str n.toString))]
       if let some u := userLevelName? env matchers declName then
         fields := fields ++ [("userName", Json.str u.toString)]
       if let some ranges := declarationRanges.find? declName then

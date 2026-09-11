@@ -378,6 +378,10 @@ export interface InspectorDeclaration {
   kind: string;
   module: string;
   axioms: string[];
+  /** Direct references to declarations from the package being inspected.
+   * Inspect reports only package-local edges: those are sufficient for the
+   * helper-lemma reachability check and keep the untrusted report bounded. */
+  usedConstants: string[];
   userName?: string;
   doc?: ParsedDoc;
   conclusionFacts?: ConclusionFacts;

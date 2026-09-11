@@ -79,6 +79,7 @@ function reports(): {
         kind: "axiom",
         module: "Lax1.Claim",
         axioms: ["Lax1.Claim.statement"],
+        usedConstants: [],
         signature: "True",
         startLine: 10,
         endLine: 11,
@@ -103,6 +104,7 @@ function reports(): {
         kind: "theorem",
         module: "Lax1Proofs.Basic",
         axioms: [],
+        usedConstants: [],
         doc: document(
           [["conclusion", "Lax1.Claim.statement"]],
           "Proof description.\n\n# Strategy\n\nBy construction.",
@@ -188,6 +190,7 @@ describe("inspection judgments retained from main", () => {
       kind: "axiom",
       module: "Lax1.Claim",
       axioms: ["Lax1.Claim.second"],
+      usedConstants: [],
       signature: "True",
       doc: { hasFrontmatter: false, scalars: [], lists: [], description: "The second statement." },
     });
@@ -282,6 +285,13 @@ describe("inspection judgments retained from main", () => {
           "docstring of Lax1Proofs.proof contains a `---` line but was not recognized as " +
           "frontmatter (the lines above it do not parse as `key: value`)",
       },
+      {
+        phase: "inspect",
+        rule: "unused-lemma",
+        message:
+          "helper lemma Lax1Proofs.proof is not used, directly or transitively, by any proof " +
+          "theorem in this submission; keep it only if this is intentional",
+      },
     ]);
     expect(judged.result.proofs).toEqual([]);
 
@@ -299,8 +309,74 @@ describe("inspection judgments retained from main", () => {
       helper.proofInventory,
       EMPTY_RESOLUTION,
     );
-    expect(helperJudgment.findings.warnings).toEqual([]);
+    expect(helperJudgment.findings.warnings).toEqual([
+      {
+        phase: "inspect",
+        rule: "unused-lemma",
+        message:
+          "helper lemma Lax1Proofs.proof is not used, directly or transitively, by any proof " +
+          "theorem in this submission; keep it only if this is intentional",
+      },
+    ]);
     expect(helperJudgment.result.proofs).toEqual([]);
+  });
+
+  it("warns only for user-level helper lemmas unused by proof theorems", () => {
+    const fixture = reports();
+    fixture.proofs.declarations[0]!.usedConstants = ["Lax1Proofs.middle"];
+    fixture.proofs.declarations.push(
+      {
+        name: "Lax1Proofs.middle",
+        userName: "Lax1Proofs.middle",
+        kind: "theorem",
+        module: "Lax1Proofs.Basic",
+        axioms: [],
+        usedConstants: ["Lax1Proofs.leaf"],
+      },
+      {
+        name: "Lax1Proofs.leaf",
+        userName: "Lax1Proofs.leaf",
+        kind: "theorem",
+        module: "Lax1Proofs.Basic",
+        axioms: [],
+        usedConstants: [],
+      },
+      {
+        name: "Lax1Proofs.unused",
+        userName: "Lax1Proofs.unused",
+        kind: "theorem",
+        module: "Lax1Proofs.Basic",
+        axioms: [],
+        usedConstants: [],
+      },
+      {
+        name: "Lax1Proofs.proof._generated",
+        kind: "theorem",
+        module: "Lax1Proofs.Basic",
+        axioms: [],
+        usedConstants: [],
+      },
+    );
+    fixture.proofs.modules[1]!.declCount = fixture.proofs.declarations.length;
+
+    const judged = judgeInspection(
+      fixture.concepts,
+      fixture.proofs,
+      fixture.conceptInventory,
+      fixture.proofInventory,
+      EMPTY_RESOLUTION,
+    );
+
+    expect(judged.findings.violations).toEqual([]);
+    expect(judged.findings.warnings).toEqual([
+      {
+        phase: "inspect",
+        rule: "unused-lemma",
+        message:
+          "helper lemma Lax1Proofs.unused is not used, directly or transitively, by any proof " +
+          "theorem in this submission; keep it only if this is intentional",
+      },
+    ]);
   });
 
   it("collects independent root, import, annotation, namespace, axiom, and proof failures", () => {
@@ -322,6 +398,7 @@ describe("inspection judgments retained from main", () => {
       kind: "axiom",
       module: "Lax1.Claim",
       axioms: ["Lax1.Claim.second"],
+      usedConstants: [],
       signature: "True",
     });
     const proof = fixture.proofs.declarations[0]!;

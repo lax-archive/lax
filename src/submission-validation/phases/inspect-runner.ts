@@ -109,7 +109,7 @@ function parseModule(value: unknown, index: number): InspectorModule {
 function parseDeclaration(value: unknown, index: number): InspectorDeclaration {
   const item = record(value, `inspector declaration ${index}`);
   const allowed = [
-    "name", "kind", "module", "axioms", "userName", "doc", "conclusionFacts",
+    "name", "kind", "module", "axioms", "usedConstants", "userName", "doc", "conclusionFacts",
     "signature", "startLine", "endLine",
   ];
   for (const key of Object.keys(item))
@@ -119,6 +119,7 @@ function parseDeclaration(value: unknown, index: number): InspectorDeclaration {
     kind: text(item.kind, "declaration kind"),
     module: text(item.module, "declaration module"),
     axioms: stringArray(item.axioms, "declaration axioms"),
+    usedConstants: stringArray(item.usedConstants, "declaration used constants"),
   };
   if (item.userName !== undefined) declaration.userName = text(item.userName, "declaration userName");
   if (item.doc !== undefined) declaration.doc = parseDoc(item.doc, index);

@@ -176,9 +176,54 @@ export function judgeInspection(
       ...(body.sections === undefined ? {} : { sections: body.sections }),
     });
   }
+  if (scope !== "concepts") warnAboutUnusedLemmas(proofDeclarations, proofs, findings);
   concepts.sort((a, b) => a.id.localeCompare(b.id));
   proofs.sort((a, b) => a.id.localeCompare(b.id));
   return { result: { concepts, proofs }, findings };
+}
+
+/**
+ * A proof-package theorem without proof frontmatter is a helper lemma. Keep it
+ * quiet when an annotated proof theorem uses it, directly or through other
+ * helpers; otherwise make the ignored declaration visible without rejecting
+ * the submission. Generated/internal theorem declarations have no userName
+ * and are deliberately excluded from the author-facing warning.
+ */
+function warnAboutUnusedLemmas(
+  declarations: InspectorDeclaration[],
+  proofs: ProofEntry[],
+  findings: FindingCollector,
+): void {
+  const byName = new Map(declarations.map((declaration) => [declaration.name, declaration]));
+  const proofNames = new Set(proofs.map((proof) => proof.id));
+  const reachable = new Set<string>();
+  const pending = declarations
+    .filter((declaration) => declaration.kind === "theorem" && proofNames.has(declaration.name))
+    .map((declaration) => declaration.name);
+
+  while (pending.length > 0) {
+    const name = pending.pop()!;
+    if (reachable.has(name)) continue;
+    reachable.add(name);
+    for (const used of byName.get(name)?.usedConstants ?? []) {
+      if (byName.has(used) && !reachable.has(used)) pending.push(used);
+    }
+  }
+
+  const unused = declarations
+    .filter((declaration) =>
+      declaration.kind === "theorem" &&
+      declaration.userName !== undefined &&
+      !declaration.doc?.hasFrontmatter &&
+      !reachable.has(declaration.name))
+    .sort((a, b) => a.userName!.localeCompare(b.userName!));
+  for (const declaration of unused) {
+    findings.warn(
+      "unused-lemma",
+      `helper lemma ${declaration.userName} is not used, directly or transitively, by any proof ` +
+        "theorem in this submission; keep it only if this is intentional",
+    );
+  }
 }
 
 function checkReportShape(report: InspectorReport, label: string, findings: FindingCollector): void {

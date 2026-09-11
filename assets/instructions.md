@@ -28,7 +28,10 @@ result with Lax. On a high level, this proceeds as follows.
 - Lastly, write the proofs. This might take many sessions, so a good plan and
   subagent workflow is valuable here. Do not underestimate your capabilities.
   The library shows the impressive formalization results you have pulled off in
-  the past, so you can also pull off this one.
+  the past, so you can also pull off this one. Keep helper lemmas purposeful:
+  `lax build` warns when a theorem-kind helper is not used, directly or
+  transitively, by any annotated proof theorem in the submission. The build is
+  still valid, but remove the helper unless retaining it is intentional.
 
 # Additional Info
 
