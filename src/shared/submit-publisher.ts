@@ -19,6 +19,11 @@ import type {
 } from "../submission-validation/contracts.js";
 import type { SuccessfulValidationArtifacts } from "../submission-validation/artifact-schema.js";
 import { parsePublishedCapture } from "../submission-validation/artifact-schema.js";
+import {
+  environment as environmentById,
+  environmentAcceptsRecord,
+  epoch,
+} from "../submission-validation/environments.js";
 import type { WorkflowRunRef } from "./workflow-comments.js";
 
 export type SubmitPublishResult =
@@ -163,6 +168,21 @@ export class SubmitPublisher {
       relevantPreconditions: ["record", "buildOutput"],
       admins: this.admins,
     });
+    // The validate artifact is untrusted input to this job. Repeat the
+    // environment-closure gate against the freshly loaded record before any
+    // registry or database credential is used, just as we repeat its source,
+    // lifecycle, ownership, and dependency gates below.
+    const environmentId = artifacts.buildOutput.inputs.manifest.leanVersion;
+    const selectedEnvironment = environmentById(environmentId);
+    if (selectedEnvironment === undefined) {
+      problems.push(`validated environment ${environmentId} is not supported by this release`);
+    } else if (!environmentAcceptsRecord(selectedEnvironment, current.files.record.createdAt)) {
+      problems.push(
+        `environment ${selectedEnvironment.id} is closed to new submissions; ` +
+          `only Archive records created before ${selectedEnvironment.closedAt} remain supported, ` +
+          `so new work must use ${epoch().id}`,
+      );
+    }
     const revalidation = request.action === "revalidate";
     const commandSource = commandSourceOf(request);
     if (revalidation) {

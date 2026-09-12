@@ -13,6 +13,7 @@ import path from "node:path";
 import { SUBMISSION_ID_PATTERN } from "../shared/constants.js";
 import { isObject } from "../shared/validation.js";
 import {
+  activeEnvironmentList,
   admittedEnvironmentList,
   environment as environmentById,
   environments,
@@ -33,10 +34,31 @@ import * as ui from "./ui.js";
 export function requestedEnvironment(id: string | undefined): ArchiveEnvironment {
   if (id === undefined) return epoch();
   const entry = environmentById(id);
+  if (entry?.closedAt !== undefined) {
+    throw new Error(
+      `${id} is closed to new submissions. ` +
+        `Existing Archive records created before ${entry.closedAt} remain supported; ` +
+        `use ${epoch().id} for new work.`,
+    );
+  }
   if (entry !== undefined) return entry;
   throw new Error(
     `${id} is not an archive environment. ` +
-      `Admitted: ${admittedEnvironmentList()}. ` +
+      `Available for new submissions: ${activeEnvironmentList()}. ` +
+      "Update lax if the environment is newer than this CLI.",
+  );
+}
+
+/** Resolve an environment for maintenance of existing work. Unlike
+ * `requestedEnvironment`, this admits closed rows: `lax doctor --env` must be
+ * able to provision the pins an old submission still records. */
+export function supportedEnvironment(id: string | undefined): ArchiveEnvironment {
+  if (id === undefined) return epoch();
+  const entry = environmentById(id);
+  if (entry !== undefined) return entry;
+  throw new Error(
+    `${id} is not an archive environment. ` +
+      `Supported: ${admittedEnvironmentList()}. ` +
       "Update lax if the environment is newer than this CLI.",
   );
 }
@@ -88,12 +110,12 @@ export function registeredByEnvironment(): Map<string, number> | undefined {
  * The block an author sees before a submission is created outside the epoch,
  * and the typed confirmation under it.
  *
- * Straying is allowed and nudged, never refused: what the author has to
- * understand is the one consequence they cannot undo later, which is that the
- * work joins a different island. So the block is the two populations and that
- * sentence, and the acknowledgement is the id typed out — the same shape `lax
- * delete` and `lax register` use for the other two decisions that cannot be
- * taken back.
+ * Straying to another active environment is allowed and nudged: what the
+ * author has to understand is the one consequence they cannot undo later,
+ * which is that the work joins a different island. So the block is the two
+ * populations and that sentence, and the acknowledgement is the id typed out
+ * — the same shape `lax delete` and `lax register` use for the other two
+ * decisions that cannot be taken back.
  */
 export async function confirmEnvironment(
   entry: ArchiveEnvironment,

@@ -9,7 +9,11 @@ import { recordSubmission } from "../../src/cli/registry.js";
 import * as ui from "../../src/cli/ui.js";
 import { REQUIRED_RENDERER_PATHS } from "../../src/cli/website-renderer.js";
 import { ELAN_COMMIT } from "../../src/submission-validation/pins.js";
-import { environments, epoch } from "../../src/submission-validation/environments.js";
+import {
+  activeEnvironments,
+  environments,
+  epoch,
+} from "../../src/submission-validation/environments.js";
 import {
   markWarmReady,
   warmDir,
@@ -193,7 +197,9 @@ function seedSubmission(): string {
     fs.writeFileSync(path.join(pkg, "lean-toolchain"), `${LEAN_TOOLCHAIN}\n`);
     writeOverrides(pkg, []);
   }
-  return root;
+  // `/var` is a symlink to `/private/var` on macOS; the registry stores the
+  // canonical path, so keep fixture expectations on that same spelling.
+  return fs.realpathSync(root);
 }
 
 /** The submission folder as git would hold it: everything committed, so
@@ -611,7 +617,7 @@ describe("lax doctor", () => {
     expect(fs.existsSync(warmDir(epoch()))).toBe(false);
   });
 
-  it("names every admitted environment, the epoch first, and which are installed", async () => {
+  it("names every active environment, the epoch first, and hides closed rows", async () => {
     // The row exists once the table admits more than one environment (while
     // it admitted one, the Lean and Mathlib rows *were* that environment and
     // the row was collapsed away; the table only grows, so that shape is
@@ -626,8 +632,22 @@ describe("lax doctor", () => {
 
     const line = row(printed(log), "Environments");
     expect(line).toMatch(new RegExp(`^  ✓ Environments        ${epoch().id} \\(epoch, installed\\)`, "u"));
-    for (const entry of environments()) expect(line).toContain(entry.id);
+    for (const entry of activeEnvironments()) expect(line).toContain(entry.id);
     expect(line).toContain("v4.99.0 (not installed)");
+    expect(line).not.toContain("v4.30.0");
+  });
+
+  it("can explicitly check a closed environment for an existing submission", async () => {
+    const legacy = environments().find((entry) => entry.closedAt !== undefined)!;
+    const { log } = quiet();
+
+    const code = await doctor({ dry: true, env: legacy.id });
+
+    const lines = printed(log);
+    expect(lines[0]).toBe(`  Checking your setup for ${legacy.id}`);
+    expect(row(lines, "Environments")).toContain(`${legacy.id} (existing submissions only`);
+    expect(row(lines, "Environments")).toContain(`${epoch().id} (epoch`);
+    expect(code).toBe(1);
   });
 
   it("--env checks and provisions the environment it names, not the epoch", async () => {

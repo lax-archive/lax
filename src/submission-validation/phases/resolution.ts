@@ -8,7 +8,12 @@ import type {
 } from "../contracts.js";
 import { submissionIdForPackage } from "../contracts.js";
 import { CHAIN_WORKFLOW_HINT } from "../chain-workflow.js";
-import { environmentOfPins } from "../environments.js";
+import {
+  environment as environmentById,
+  environmentAcceptsRecord,
+  environmentOfPins,
+  epoch,
+} from "../environments.js";
 import { FindingCollector } from "../findings.js";
 import type { ArchiveSnapshot } from "../archive/snapshot.js";
 
@@ -32,6 +37,24 @@ export function runResolution(
   const proofs: ResolvedDependency[] = [];
   const byPackage = new Map<string, ResolvedDependency>();
   const resolving = new Set<string>();
+  // A closed row remains a real runtime so an older record can always be
+  // rebuilt. What it no longer accepts is a newly created record. The
+  // immutable record timestamp — not submit time — preserves every draft and
+  // init stub which already existed when the row closed.
+  const selected = environmentById(runtime.environment);
+  const current = archive.get(request.id);
+  if (
+    selected?.closedAt !== undefined &&
+    (current === undefined || !environmentAcceptsRecord(selected, current.createdAt))
+  ) {
+    findings.violate(
+      "environment-closed",
+      `environment ${selected.id} is closed to new submissions. ` +
+        `Only Archive records created before ${selected.closedAt} remain supported; ` +
+        `use ${epoch().id} for new work. If this is an existing record missing ` +
+        "from a local Archive copy, run `lax sync` and retry",
+    );
+  }
   // Who asked for each package, for the superseded-dependency warning: a
   // direct require names itself, a transitive one names the package whose
   // closure pulled it in. Recorded on every call, before the memoised

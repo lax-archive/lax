@@ -13,10 +13,12 @@ import type { PublishRequest } from "../../src/shared/types.js";
 import { SubmitPublisher, type SubmitCaptureStore } from "../../src/shared/submit-publisher.js";
 import { parsePaperOutput, type SuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
 import type { PublishedCapture, ResolvedDependency } from "../../src/submission-validation/contracts.js";
+import { environment as environmentById } from "../../src/submission-validation/environments.js";
 import {
   successfulArtifacts,
   TEST_CAPTURE,
   TEST_SOURCE,
+  testRuntimeFor,
 } from "../support/validation-artifacts.js";
 
 const repositoryId = 123456789;
@@ -59,6 +61,24 @@ function webArtifacts(): SuccessfulValidationArtifacts {
 }
 
 describe("trusted submit publisher", () => {
+  it("accepts v4.30 only for records which existed before that environment closed", async () => {
+    const legacy = environmentById("v4.30.0")!;
+    const artifacts = successfulArtifacts("lax-42", testRuntimeFor(legacy));
+    const existing = loaded(initialFiles("lax-42", issue, alice, "2026-09-10T23:59:59Z"));
+    const accepted = submitHarness(new Map([["lax-42", existing]]));
+
+    await expect(accepted.publisher.preflight(request(existing), artifacts)).resolves.toMatchObject({
+      kind: "ready",
+    });
+
+    const newer = loaded(initialFiles("lax-42", issue, alice, `${legacy.closedAt}T00:00:00Z`));
+    const refused = submitHarness(new Map([["lax-42", newer]]));
+    await expect(refused.publisher.preflight(request(newer), artifacts)).rejects.toThrow(
+      `environment ${legacy.id} is closed to new submissions`,
+    );
+    expect(refused.captureStore.promote).not.toHaveBeenCalled();
+  });
+
   it("promotes the capture and commits exactly record.json and build-output.json", async () => {
     const current = loaded();
     const harness = submitHarness(new Map([["lax-42", current]]));

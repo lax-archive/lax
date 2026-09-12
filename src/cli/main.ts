@@ -72,7 +72,7 @@ program
   .command("init")
   .argument("[folder]", "target folder", ".")
   .option("--title <title>", "submission title (defaults to the folder name)")
-  .option("--env <id>", "archive environment to work in (default: the epoch)")
+  .option("--env <id>", "active archive environment to work in (default: v4.33.0)")
   .option("--yes", "skip the confirmation a non-epoch --env asks for")
   .description("generate a local six-digit id and scaffold without signing in")
   .action(
@@ -236,7 +236,7 @@ program
 program
   .command("doctor")
   .option("--dry", "report only: install nothing, refresh nothing, write nothing")
-  .option("--env <id>", "check and provision this archive environment (default: the epoch)")
+  .option("--env <id>", "check a supported environment (default: v4.33.0; v4.30.0 for existing work)")
   .description("check your setup, with fixes")
   .action(
     run((options: { dry?: boolean; env?: string }) =>
@@ -248,7 +248,7 @@ program
   .command("port")
   .argument("<submission>", "lax-N submission id")
   .argument("[folder]", "target folder (defaults to ./port-lax-N)")
-  .option("--env <id>", "archive environment to port into (default: the epoch)")
+  .option("--env <id>", "active archive environment to port into (default: v4.33.0)")
   .description("scaffold a new submission that supersedes lax-N in another environment")
   .action(
     run((submission: string, folder: string | undefined, options: { env?: string }) => {

@@ -60,15 +60,16 @@ inferring intent from the current code.
   after the round trips.
 - **history/environments-plan.md** — several Lean/mathlib versions: a
   yearly *epoch* as the default, monthly mathlib `vX.Y.0` release tags as
-  admitted environments authors may stray to after a typed confirmation,
+  admitted environments, closed rows retained for existing records only,
   one inspector build per environment, a scheduled admission workflow,
   and a flat database with a website-emitted index. Planned, spiked,
   implemented through all six stages, first admission (`v4.33.0`) and
   first off-epoch round trip all on 2026-09-04; retired to `history/`
   with `history/environments-roundtrip-20260904.md`, which holds the
-  measurements and the cache-save finding. The admission checklist stays
-  in the plan; `spike/environments/REPORT.md` holds the stage-0 verdict;
-  the open items are in TODO.md.
+  measurements, the cache-save finding, the 2026-09-13 epoch rollout, and
+  the v4.30 closure. The admission checklist stays in the plan;
+  `spike/environments/REPORT.md` holds the stage-0 verdict; the open items
+  are in TODO.md.
 - **admin-plan.md** — maintainer-only operations. The issue-scoped verbs
   (`/lax admin revalidate|delete|reset-draft|owners`, allowlisted by
   numeric id in `ADMIN_GITHUB_IDS`, gates repeated credential-free in the

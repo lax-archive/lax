@@ -179,6 +179,26 @@ try {
       },
       archiveSha: "0".repeat(40),
     };
+    // The matrix also guards closed environments because existing records
+    // remain rebuildable there. Give the fixture the old creation timestamp
+    // that distinguishes that supported case from a new submission trying to
+    // enter a closed row.
+    const recordRoot = path.join(archiveRoot, fixture.id);
+    fs.mkdirSync(recordRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(recordRoot, "record.json"),
+      JSON.stringify({
+        specVersion: "1",
+        id: fixture.id,
+        state: "draft",
+        createdAt: "2026-01-01T00:00:00Z",
+        source: request.source,
+      }),
+    );
+    fs.writeFileSync(
+      path.join(recordRoot, "build-output.json"),
+      JSON.stringify({ specVersion: "1", id: fixture.id }),
+    );
     const profiler = new Profiler();
     const options: ValidationOptions = {
       local: {

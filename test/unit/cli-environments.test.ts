@@ -14,7 +14,8 @@ import { initializeSubmission } from "../../src/cli/commands.js";
 import { registeredByEnvironment } from "../../src/cli/environments.js";
 import * as ui from "../../src/cli/ui.js";
 import {
-  admittedEnvironmentList,
+  activeEnvironmentList,
+  environment,
   epoch,
 } from "../../src/submission-validation/environments.js";
 import { markWarmReady, warmDir } from "../../src/submission-validation/host/warmstore.js";
@@ -235,8 +236,18 @@ describe("lax init --env", () => {
 
   it("refuses an id the table does not admit, with the list and the reason", async () => {
     await expect(initializeSubmission(target(), { env: "v9.9.9" })).rejects.toThrow(
-      `v9.9.9 is not an archive environment. Admitted: ${admittedEnvironmentList()}. ` +
+      `v9.9.9 is not an archive environment. Available for new submissions: ${activeEnvironmentList()}. ` +
         `Update lax if the environment is newer than this CLI.`,
+    );
+    expect(fs.existsSync(target())).toBe(false);
+  });
+
+  it("refuses the closed v4.30 environment before writing a new scaffold", async () => {
+    const legacy = environment("v4.30.0")!;
+    await expect(initializeSubmission(target(), { env: legacy.id, yes: true })).rejects.toThrow(
+      `${legacy.id} is closed to new submissions. ` +
+        `Existing Archive records created before ${legacy.closedAt} remain supported; ` +
+        `use ${epoch().id} for new work.`,
     );
     expect(fs.existsSync(target())).toBe(false);
   });

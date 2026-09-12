@@ -201,6 +201,15 @@ describe("lax port", () => {
     );
   });
 
+  it("refuses to create a successor in the closed v4.30 environment", async () => {
+    publish("lax-100008");
+
+    await expect(
+      portSubmission("lax-100008", path.join(home, "nope"), { env: "v4.30.0" }),
+    ).rejects.toThrow(/v4\.30\.0 is closed to new submissions/u);
+    expect(fs.existsSync(path.join(home, "nope"))).toBe(false);
+  });
+
   it("says to sync when this machine has no copy of the archive", async () => {
     removeTree(path.join(home, "lax-database"));
 

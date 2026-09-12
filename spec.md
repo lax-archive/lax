@@ -60,20 +60,24 @@ the build.
 
 ## Archive Environments
 
-The archive admits the following **archive environments**. Each is an
-immutable Lean toolchain and mathlib revision pair. The **epoch** is the
-environment recommended for new submissions and used by ``lax init`` by
-default; changing it does not invalidate submissions in an older environment.
+The archive accepts new submissions in the following **archive environment**,
+an immutable Lean toolchain and mathlib revision pair. It is also the
+**epoch**, the environment used by ``lax init``.
 
 | id | Lean toolchain | mathlib revision | status |
 | --- | --- | --- | --- |
-| ``v4.33.0`` | ``leanprover/lean4:v4.33.0`` | ``db584cd6d46c92f209a44c0f1c829460d327499d`` | epoch |
-| ``v4.30.0`` | ``leanprover/lean4:v4.30.0`` | ``c5ea00351c28e24afc9f0f84379aa41082b1188f`` | admitted |
+| ``v4.33.0`` | ``leanprover/lean4:v4.33.0`` | ``db584cd6d46c92f209a44c0f1c829460d327499d`` | active epoch |
+
+The former ``v4.30.0`` environment is closed to new Archive records. Its
+toolchain and mathlib pin (``c5ea00351c28e24afc9f0f84379aa41082b1188f``)
+remain supported only for records created before 2026-09-12, including init
+records which had not yet selected an environment on that date. Closing an
+environment never invalidates those existing submissions.
 
 A submission selects exactly one environment through ``leanVersion`` and
 ``mathlibVersion``. Only submissions in the same environment may depend on one
-another. Porting work to the epoch therefore creates a successor submission;
-it never rewrites the original record.
+another. Porting existing v4.30.0 work to v4.33.0 therefore creates a successor
+submission; it never rewrites the original record.
 
 The following settings are fixed archive-wide:
 
@@ -166,11 +170,12 @@ following rules.
   or more structurally complete BibTeX entries, as in a ``.bib`` file.
 
 Additional Rules:
-- ``specVersion`` must match the archive-wide value. ``leanVersion`` names an
-  admitted archive environment and ``mathlibVersion`` must equal that
-  environment's mathlib revision. The full Lean toolchain name appears only
-  in the ``lean-toolchain`` files and must equal the selected environment's
-  toolchain.
+- ``specVersion`` must match the archive-wide value. For new Archive records,
+  ``leanVersion`` must name the active archive environment; a record predating
+  an environment's closure may retain that closed environment.
+  ``mathlibVersion`` must equal the selected environment's mathlib revision.
+  The full Lean toolchain name appears only in the ``lean-toolchain`` files
+  and must equal the selected environment's toolchain.
 - All scalar manifest fields are YAML strings, not numbers or other scalar
   types.
 - No keys beyond the ones listed here are allowed.

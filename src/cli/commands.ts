@@ -93,7 +93,7 @@ async function client(): Promise<GitHubClient> {
 
 export interface InitOptions {
   title?: string;
-  /** The archive environment to scaffold in; the epoch when absent. */
+  /** The active archive environment to scaffold in; v4.33.0 when absent. */
   env?: string;
   /** Skip the typed confirmation an off-epoch `--env` needs. */
   yes?: boolean;

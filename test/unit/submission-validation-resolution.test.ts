@@ -8,7 +8,9 @@ import type {
   PublishedCapture,
   StaticResult,
 } from "../../src/submission-validation/contracts.js";
+import { environment as environmentById } from "../../src/submission-validation/environments.js";
 import { runResolution } from "../../src/submission-validation/phases/resolution.js";
+import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
 import { containedDirectory } from "../../src/submission-validation/source/fetch.js";
 import {
   cleanupTemporary,
@@ -42,6 +44,7 @@ function writeArchiveRecord(
   id: string,
   options: {
     state?: ArchiveSourceRecord["state"];
+    createdAt?: string;
     folder?: string;
     concepts?: string[];
     proofs?: string[];
@@ -64,6 +67,7 @@ function writeArchiveRecord(
       specVersion: "1",
       id,
       state,
+      createdAt: options.createdAt ?? "2026-01-01T00:00:00Z",
       ...((state === "draft" || state === "registered")
         ? { source: { repository: REPOSITORY, commit: COMMIT, folder: options.folder ?? "." } }
         : {}),
@@ -115,6 +119,43 @@ function withConceptRequires(
 function resolve(staticCheck: StaticResult, archive: ArchiveSnapshot) {
   return runResolution(request("lax-9"), staticCheck, archive, RUNTIME);
 }
+
+describe("closed archive environments", () => {
+  const legacy = environmentById("v4.30.0")!;
+  const legacyRuntime = hostValidationRuntime(legacy);
+  const resolveLegacy = (archive: ArchiveSnapshot) =>
+    runResolution(request("lax-9"), staticResult("lax-9"), archive, legacyRuntime);
+
+  it("keeps every Archive record which existed before closure buildable", () => {
+    const root = temporary("lax-resolution-legacy-");
+    writeArchiveRecord(root, "lax-9", {
+      state: "init",
+      createdAt: "2026-09-10T23:59:59Z",
+    });
+
+    expect(resolveLegacy(new ArchiveSnapshot(root, "a".repeat(40))).findings.violations).toEqual([]);
+  });
+
+  it("refuses both a newer record and local work with no pre-closure record", () => {
+    const recent = temporary("lax-resolution-closed-");
+    writeArchiveRecord(recent, "lax-9", {
+      state: "init",
+      createdAt: `${legacy.closedAt}T00:00:00Z`,
+    });
+    const empty = temporary("lax-resolution-new-");
+
+    for (const archive of [
+      new ArchiveSnapshot(recent, "a".repeat(40)),
+      new ArchiveSnapshot(empty, "a".repeat(40)),
+    ]) {
+      const violations = resolveLegacy(archive).findings.violations;
+      expect(violations.map((finding) => finding.rule)).toContain("environment-closed");
+      expect(violations.map((finding) => finding.message).join("\n")).toContain(
+        `Only Archive records created before ${legacy.closedAt} remain supported`,
+      );
+    }
+  });
+});
 
 describe("Archive dependency resolution retained from main", () => {
   it("resolves by package name and verifies the complete source triple", () => {

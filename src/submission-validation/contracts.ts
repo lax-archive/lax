@@ -249,6 +249,9 @@ export interface StaticResult {
 export interface ArchiveSourceRecord {
   id: string;
   state: "init" | "draft" | "registered" | "deleted";
+  /** Immutable Archive creation time; environment closure is keyed to this,
+   * so an existing init stub does not lose its environment while unfinished. */
+  createdAt: string;
   source?: SourceLocation;
   buildOutput?: Record<string, unknown>;
   /** Numeric owner ids; empty when the copy carries no readable owner list. */
