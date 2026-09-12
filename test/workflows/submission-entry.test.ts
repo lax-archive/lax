@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileDigests, initialFiles } from "../../src/shared/archive-schema.js";
 import type { PublishRequest } from "../../src/shared/types.js";
+import { admittedEnvironmentList } from "../../src/submission-validation/environments.js";
 import {
   initializationMarker,
   parseWorkflowComment,
@@ -394,7 +395,8 @@ describe("prepare-submit entry point", () => {
     const requests = installIssueFetch(state, texts);
 
     await expect(prepareSubmit()).rejects.toThrow(
-      /validation report names environment v4\.99\.0, which is not admitted; the admitted environments are v4\.30\.0 \(epoch\)/u,
+      `validation report names environment v4.99.0, which is not admitted; ` +
+        `the admitted environments are ${admittedEnvironmentList()}`,
     );
     expect(fs.existsSync(outputFile)).toBe(false);
     // No database state was read for it: the lookup precedes the preflight.

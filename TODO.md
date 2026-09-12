@@ -350,7 +350,7 @@ is `history/environments-roundtrip-20260904.md`. What stays open:
   request was opened by hand because it was off; the next scheduled run
   (Tuesdays 04:41 UTC) is the first to exercise `gh pr create` from the
   admit job — check that it lands.
-- **Nothing saves an off-epoch host cache, so every off-epoch submission
+- **Only the epoch's host cache is saved, so every off-epoch submission
   provisions cold.** Every `submission.yml` run since 2026-08-07 carries
   `Cache reservation failed: cache write denied: token has no writable
   scopes` on its save steps (route's `dist` cache, validate's lean host
@@ -358,8 +358,8 @@ is `history/environments-roundtrip-20260904.md`. What stays open:
   token the cache service refuses to write with. It was invisible because
   `ci.yml` saves the epoch's host cache on every push to `main` and
   validate restores it; the cache API shows the epoch's `v2` entry alone
-  (3.28 GB, saved from `refs/heads/main`). v4.33.0 provisions cold on
-  every run (~2 min today: warm workspace 102.9 s, peak 7.43 GiB). Fix
+  (3.28 GB, saved from `refs/heads/main`). After the 2026-09-12 epoch
+  bump this is v4.33.0; old v4.30.0 submissions may provision cold. Fix
   in `ci.yml`, whose saves work — provision and save every admitted
   environment, e.g. in `inspector-matrix`, which already runs per
   environment on table changes and weekly — after weighing the 10 GB
@@ -379,9 +379,11 @@ is `history/environments-roundtrip-20260904.md`. What stays open:
   `leanThreads: 1` once an import no longer fits twice). A
   workflow-definition test pins it. Nothing to do unless an environment's
   real import outgrows the defaults.
-- **Epoch bump**: the runbook in the plan ("Islands, porting, and the
-  epoch bump") has not run yet; first due when the 2027 epoch is chosen.
-  Re-measure `DEFAULT_LIMITS` on the new epoch's mathlib then.
+- **Finish the v4.33.0 epoch rollout**: merge and deploy the coordinated
+  Website epoch, merge and release the CLI with that renderer pinned, and
+  re-measure `DEFAULT_LIMITS` on v4.33.0's full mathlib. The next yearly
+  choice reuses the runbook in the plan ("Islands, porting, and the epoch
+  bump").
 
 ## Admin tool (admin-plan.md — issue-scoped verbs and the driver landed 2026-09-04)
 

@@ -51,7 +51,9 @@ describe("the host cache key", () => {
     expect(key).toBe(
       `${HOST_CACHE_SALT}-Linux-${epoch().id}-${epoch().mathlibCommit.slice(0, 12)}-${inspectorSourceHash(epoch())}`,
     );
-    expect(key).toMatch(/^lax-validation-host-v2-Linux-v4\.30\.0-[0-9a-f]{12}-[0-9a-f]{16}$/u);
+    expect(key).toMatch(
+      /^lax-validation-host-v2-Linux-v4\.[0-9]+\.[0-9]+-[0-9a-f]{12}-[0-9a-f]{16}$/u,
+    );
     // Deterministic: the same row always names the same store.
     expect(validationHostCacheKey(epoch(), "Linux")).toBe(key);
     // The OS is a token, never a path or an expression.
@@ -144,7 +146,7 @@ describe("setup-vm arguments", () => {
     }
     expect(failure?.status).toBe(1);
     expect(failure?.stderr).toContain(
-      `lax setup: environment "v9.9.9" is not admitted; the admitted environments are v4.30.0 (epoch)`,
+      `lax setup: environment "v9.9.9" is not admitted; the admitted environments are ${admittedEnvironmentList()}`,
     );
   });
 

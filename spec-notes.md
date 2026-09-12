@@ -6,6 +6,28 @@ from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22 and removed here.)
 
+## Lean and mathlib v4.33.0 are the archive epoch (implemented, 2026-09-12)
+
+The admitted `v4.33.0` environment is now the archive's epoch: `lax init`,
+`lax port`, the default doctor/provisioning path, CI's warm-store cache, and
+CLI releases all select Lean `v4.33.0` with mathlib
+`db584cd6d46c92f209a44c0f1c829460d327499d`. Author-facing environment
+lists put the epoch first even though the append-only environment table stays
+oldest-first.
+
+This is a soft epoch bump. No database record is rewritten or invalidated;
+`v4.30.0` remains admitted, and its submissions continue to cite one another.
+The Website's independently pinned epoch moves in the coordinated renderer
+release, so those records acquire the existing off-epoch notice while new work
+gets the `epoch` label. Moving a dependency chain remains an explicit,
+bottom-up series of successor submissions made with `lax port`.
+
+Spec touchpoints: Archive Environment becomes a recommendation over the
+admitted table rather than the single `v4.30.0` pin printed in the current
+normative text; CLI scaffolding/provisioning defaults; Website environment
+labels and ordering. The old normative text is left for Jan's manual
+reconciliation, per this repository's document policy.
+
 ## Unused helper lemmas are visible (implemented, 2026-09-11)
 
 Inspection now reports the direct package-local constant references of every

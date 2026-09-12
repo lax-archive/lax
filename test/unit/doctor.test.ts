@@ -20,7 +20,7 @@ import { removeTree } from "../support/tmp.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** The epoch as doctor's rows name it: `v4.30.0`, not the full toolchain id. */
+/** The epoch as doctor's rows name it: the short id, not the full toolchain id. */
 const TOOLCHAIN_VERSION = epoch().id;
 const LEAN_TOOLCHAIN = epoch().leanToolchain;
 const MATHLIB_REV = epoch().mathlibCommit;
@@ -100,7 +100,7 @@ function fakeElanScript(opts: { log?: string; delay?: string } = {}): string {
     (opts.delay === undefined ? "" : `sleep ${opts.delay}\n`) +
     `mkdir -p ${quote(installed)}\n` +
     `touch ${quote(path.join(installed, "lean"))}\n` +
-    `printf '#!/bin/sh\\necho "Lake version 5.0.0 (Lean version 4.30.0)"\\n' > ${quote(path.join(installed, "lake"))}\n` +
+    `printf '#!/bin/sh\\necho "Lake version 5.0.0 (Lean version ${TOOLCHAIN_VERSION.slice(1)})"\\n' > ${quote(path.join(installed, "lake"))}\n` +
     `chmod +x ${quote(path.join(installed, "lake"))}\n`
   );
 }
@@ -123,7 +123,7 @@ function provision(): void {
   fs.writeFileSync(path.join(installed, "lean"), "");
   fs.writeFileSync(
     path.join(installed, "lake"),
-    `#!/bin/sh\necho "Lake version 5.0.0 (Lean version 4.30.0)"\n`,
+    `#!/bin/sh\necho "Lake version 5.0.0 (Lean version ${TOOLCHAIN_VERSION.slice(1)})"\n`,
     { mode: 0o755 },
   );
   fs.mkdirSync(path.join(home, "lax-database", ".git"), { recursive: true });
@@ -350,7 +350,9 @@ describe("lax doctor", () => {
     ]);
     // One row for the three checks behind it, each version parsed out of its
     // own `--version` banner.
-    expect(row(printed(log), "Lean")).toContain("v4.30.0 · lake 5.0.0 · elan 4.0.0");
+    expect(row(printed(log), "Lean")).toContain(
+      `${TOOLCHAIN_VERSION} · lake 5.0.0 · elan 4.0.0`,
+    );
   });
 
   it("installs elan itself when the machine has none, then the toolchain under it", async () => {
@@ -380,7 +382,7 @@ describe("lax doctor", () => {
     expect(fs.existsSync(elanBin)).toBe(true);
     // and the chain continues: the elan it just installed installs the pin
     expect(row(printed(log), "Lean")).toBe(
-      "  ✓ Lean                v4.30.0 · lake 5.0.0 · elan 4.0.0",
+      `  ✓ Lean                ${TOOLCHAIN_VERSION} · lake 5.0.0 · elan 4.0.0`,
     );
   });
 
@@ -419,7 +421,9 @@ describe("lax doctor", () => {
     await doctor({ dry: true });
 
     const lines = printed(log);
-    expect(row(lines, "Lean")).toContain("v4.30.0 · lake 5.0.0 · elan 4.0.0");
+    expect(row(lines, "Lean")).toContain(
+      `${TOOLCHAIN_VERSION} · lake 5.0.0 · elan 4.0.0`,
+    );
     expect(row(lines, "Archive")).toContain("not refreshed");
     // The clone's path is the author's business only when something is wrong
     // with it, and nothing is.
@@ -572,7 +576,7 @@ describe("lax doctor", () => {
     fs.writeFileSync(
       path.join(installed, "lake"),
       `#!/bin/sh\necho "$@" >> ${JSON.stringify(lakeLog)}\n` +
-        `case "$1" in --version) echo "Lake version 5.0.0 (Lean version 4.30.0)"; exit 0 ;; esac\n` +
+        `case "$1" in --version) echo "Lake version 5.0.0 (Lean version ${TOOLCHAIN_VERSION.slice(1)})"; exit 0 ;; esac\n` +
         `mkdir -p .lake/packages/mathlib\n` +
         `printf '{"packages":[]}\\n' > lake-manifest.json\n`,
       { mode: 0o755 },

@@ -10,8 +10,10 @@ import { validateLakefile } from "../../src/submission-validation/validators/lak
 import { isAcceptedLicense } from "../../src/submission-validation/validators/license.js";
 import { validateManifest } from "../../src/submission-validation/validators/manifest.js";
 import {
+  admittedEnvironmentList,
   environment,
   environments,
+  environmentsEpochFirst,
   epoch,
   EPOCH,
 } from "../../src/submission-validation/environments.js";
@@ -954,9 +956,15 @@ describe("archive environment selection", () => {
     // the admission workflow runs the suite with a candidate injected, so the
     // baseline is the compiled table with the seam cleared, not the ambient one
     withoutTestEnvironments(() => {
+      expect(EPOCH).toBe("v4.33.0");
       expect(epoch().id).toBe(EPOCH);
       const compiled = environments().map((entry) => entry.id);
       expect(compiled).toContain(EPOCH);
+      expect(environmentsEpochFirst().map((entry) => entry.id)).toEqual([
+        "v4.33.0",
+        "v4.30.0",
+      ]);
+      expect(admittedEnvironmentList()).toBe("v4.33.0 (epoch), v4.30.0");
       withTestEnvironments([{ id: "v4.31.0" }], () => {
         expect(environments().map((entry) => entry.id)).toEqual([...compiled, "v4.31.0"]);
         // an injected entry borrows the installed toolchain, so one Lean

@@ -13,7 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeSubmission } from "../../src/cli/commands.js";
 import { registeredByEnvironment } from "../../src/cli/environments.js";
 import * as ui from "../../src/cli/ui.js";
-import { epoch } from "../../src/submission-validation/environments.js";
+import {
+  admittedEnvironmentList,
+  epoch,
+} from "../../src/submission-validation/environments.js";
 import { markWarmReady, warmDir } from "../../src/submission-validation/host/warmstore.js";
 import { mathlibUrl } from "../../src/submission-validation/pins.js";
 import { withTestEnvironmentsAsync } from "../support/environments.js";
@@ -232,7 +235,8 @@ describe("lax init --env", () => {
 
   it("refuses an id the table does not admit, with the list and the reason", async () => {
     await expect(initializeSubmission(target(), { env: "v9.9.9" })).rejects.toThrow(
-      /v9\.9\.9 is not an archive environment\. Admitted: v4\.30\.0 \(epoch\).*Update lax if the environment is newer than this CLI\./su,
+      `v9.9.9 is not an archive environment. Admitted: ${admittedEnvironmentList()}. ` +
+        `Update lax if the environment is newer than this CLI.`,
     );
     expect(fs.existsSync(target())).toBe(false);
   });

@@ -65,7 +65,7 @@ describe("validation runtime boundaries retained from main", () => {
     expect(configuredRuntime(epoch(), RUNTIME.image)).toMatchObject({
       image: RUNTIME.image,
       imageDigest: RUNTIME.imageDigest,
-      leanToolchain: RUNTIME.leanToolchain,
+      leanToolchain: epoch().leanToolchain,
     });
     expect(() => configuredRuntime(epoch(), "ghcr.io/lax-archive/validation:latest")).toThrow(
       "immutable @sha256 digest",
