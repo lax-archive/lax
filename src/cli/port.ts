@@ -35,7 +35,7 @@ import { generateSubmissionId } from "./submission-id.js";
 import * as ui from "./ui.js";
 
 export interface PortOptions {
-  /** Target environment id; the epoch when absent. */
+  /** Active target environment id; v4.33.0 when absent. */
   env?: string;
 }
 

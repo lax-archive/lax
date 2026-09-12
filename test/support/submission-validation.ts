@@ -13,14 +13,14 @@ export const REPOSITORY = "https://github.com/alice/monorepo";
 export const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
 export const RUNTIME: ValidationRuntimeIdentity = {
-  environment: "v4.30.0",
+  environment: "v4.33.0",
   image: `node:22-bookworm-slim@sha256:${"1".repeat(64)}`,
   imageDigest: "1".repeat(64),
   layoutVersion: 1,
-  leanToolchain: "leanprover/lean4:v4.30.0",
-  leanVersion: "v4.30.0",
+  leanToolchain: "leanprover/lean4:v4.33.0",
+  leanVersion: "v4.33.0",
   mathlibRepository: "https://github.com/leanprover-community/mathlib4",
-  mathlibCommit: "c5ea00351c28e24afc9f0f84379aa41082b1188f",
+  mathlibCommit: "db584cd6d46c92f209a44c0f1c829460d327499d",
 };
 
 const temporaryDirectories: string[] = [];

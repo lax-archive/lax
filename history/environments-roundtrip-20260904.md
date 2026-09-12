@@ -179,8 +179,33 @@ to inherit `DEFAULT_LIMITS.leanThreads = 2`.
   smoke measured about 2 min for the same cold `lake exe cache get`.
   Locally, `lax doctor --env v4.33.0` needed 7.5 GB of disk.
 
+## Epoch rollout and v4.30 closure (2026-09-13)
+
+The follow-up rollout made v4.33.0 the epoch in both `lax` and
+`lax-website`, released the CLI as 0.1.42, and changed CI to provision and
+save an exact-key host cache for every table row. Both v4.30.0 and v4.33.0
+then had ~3.29 GB caches, so ordinary validation could restore either without
+giving its untrusted job cache-write authority. The full-Mathlib measurement
+above was the last safety gate before the epoch moved.
+
+The next release, 0.1.43, used the table's previously unused `closedAt` lever
+to make v4.33.0 the sole environment for new work. Before choosing the UTC
+cutoff (`2026-09-12T00:00:00Z`), the production database at
+`b1fca499b62be57f5d63df5a77fd72276e0e9fe3` was scanned: all 46 content-bearing
+v4.30.0 records and all seven init records were created by 2026-09-10. The
+eligibility rule therefore follows immutable `record.json.createdAt`: all of
+those records keep v4.30.0, including an init record which submits content
+later, while no subsequently created record can select it.
+
+The CLI refuses v4.30.0 as an `init` or `port` target before creating a folder
+and hides it from the normal active-environment list. It remains explicitly
+provisionable with `lax doctor --env v4.30.0`. Resolution enforces the cutoff
+against the pinned Archive snapshot, and the trusted publisher repeats it
+against the fresh record before credentials are used. The inspector matrix,
+host setup, local builds, revalidation, capture lookup, website rendering, and
+the immutable pins remain in place for those existing submissions.
+
 ## What stays open
 
 In TODO.md, archive environments: the organization setting that lets the
-admission job open its pull request (Jan), the cache-save finding above,
-and the epoch-bump runbook's first real use, due in 2027.
+admission job open its pull request (Jan).

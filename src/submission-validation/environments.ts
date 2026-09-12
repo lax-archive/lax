@@ -40,7 +40,8 @@ export interface ArchiveEnvironment {
    * compileLeanThreads — the admission script writes the first two; the
    * compile count is lowered by hand when a `lake build` outgrows the cap). */
   limits?: Partial<Pick<ValidationLimits, "leanThreads" | "compileLeanThreads" | "memoryBytes">>;
-  /** Lever, unused so far: after this date new drafts are refused here. */
+  /** UTC date on which newly created Archive records stop being accepted.
+   * Older records, including init stubs which submit later, remain valid. */
   closedAt?: string;
 }
 
@@ -65,6 +66,10 @@ const TABLE: readonly ArchiveEnvironment[] = [
     // the go-live pin (history/go-live.md), not an admission run
     admittedAt: "2026-08-06",
     inspector: "inspector",
+    // Every production record present at closure predates 2026-09-12. Keep
+    // these pins for those records, but do not let a new record join this
+    // environment after v4.33.0 became the epoch.
+    closedAt: "2026-09-12",
   },
   {
     id: "v4.33.0",
@@ -95,6 +100,12 @@ export function environments(): readonly ArchiveEnvironment[] {
   return [...table, ...testEnvironments(table)];
 }
 
+/** Environments available to newly created Archive records. Closed rows stay
+ * in `environments()` because existing records must remain reproducible. */
+export function activeEnvironments(): readonly ArchiveEnvironment[] {
+  return environments().filter((entry) => entry.closedAt === undefined);
+}
+
 /** The entry an id names, or undefined. The id is untrusted input everywhere
  * it is called from, and this is the only thing that is ever done with it. */
 export function environment(id: string): ArchiveEnvironment | undefined {
@@ -106,6 +117,7 @@ export function environment(id: string): ArchiveEnvironment | undefined {
 export function epoch(): ArchiveEnvironment {
   const entry = environments().find((candidate) => candidate.id === EPOCH);
   if (entry === undefined) throw new Error(`the epoch ${EPOCH} is not in the environment table`);
+  if (entry.closedAt !== undefined) throw new Error(`the epoch ${EPOCH} is closed to new submissions`);
   return entry;
 }
 
@@ -119,11 +131,44 @@ export function environmentsEpochFirst(): readonly ArchiveEnvironment[] {
   return [admitted[index]!, ...admitted.slice(0, index), ...admitted.slice(index + 1)];
 }
 
+/** Active environments in author-facing order. This is the set `lax init`
+ * and `lax port` may target; it is deliberately smaller than the set the
+ * validator and host provisioner know how to reproduce. */
+export function activeEnvironmentsEpochFirst(): readonly ArchiveEnvironment[] {
+  const active = activeEnvironments();
+  const index = active.findIndex((entry) => entry.id === EPOCH);
+  if (index <= 0) return active;
+  return [active[index]!, ...active.slice(0, index), ...active.slice(index + 1)];
+}
+
 /** The admitted ids for an author-facing message, epoch first and marked. */
 export function admittedEnvironmentList(): string {
   return environmentsEpochFirst()
+    .map((entry) => {
+      const status = [
+        ...(entry.id === EPOCH ? ["epoch"] : []),
+        ...(entry.closedAt === undefined ? [] : ["closed"]),
+      ];
+      return status.length === 0 ? entry.id : `${entry.id} (${status.join(", ")})`;
+    })
+    .join(", ");
+}
+
+/** The ids new submissions may select, with the epoch marked. */
+export function activeEnvironmentList(): string {
+  return activeEnvironmentsEpochFirst()
     .map((entry) => (entry.id === EPOCH ? `${entry.id} (epoch)` : entry.id))
     .join(", ");
+}
+
+/** Whether a table row accepts a record with this already-schema-validated
+ * UTC creation timestamp. A closure starts at 00:00 UTC on `closedAt`; this
+ * makes the rule stable for an init stub no matter when its first build lands. */
+export function environmentAcceptsRecord(
+  entry: ArchiveEnvironment,
+  recordCreatedAt: string,
+): boolean {
+  return entry.closedAt === undefined || recordCreatedAt < `${entry.closedAt}T00:00:00Z`;
 }
 
 /**

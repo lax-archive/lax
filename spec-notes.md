@@ -354,6 +354,26 @@ the CLI section: `lax init` gains `--env` and `--yes`, `lax doctor` gains
 sentence: a port across environments is an ordinary successor and needs no
 rule of its own.
 
+**2026-09-13 (v4.30 closure).** v4.33.0 is now the sole active environment,
+not merely the epoch. The v4.30.0 row carries `closedAt: "2026-09-12"` (the
+UTC date on which the rollout began) and remains in the table only to reproduce
+Archive records created before that cutoff. Eligibility follows the immutable
+`record.json.createdAt`, so the seven production init records which existed at
+closure may still make their first submission in v4.30.0; later records may
+not. The production snapshot was checked before choosing the cutoff: its 46
+v4.30.0 content-bearing records and all seven init records predate it.
+
+`lax init --env v4.30.0` and `lax port ... --env v4.30.0` now fail before
+writing. Ordinary `lax doctor` presents only active environments, while `lax
+doctor --env v4.30.0`, local builds, server validation, maintainer
+revalidation, capture resolution, and the weekly inspector matrix retain the
+old pins. The validation Resolution phase checks a submission against the
+pinned Archive snapshot; the trusted submit publisher repeats the closure
+gate against the fresh record before credentials are used. This is what makes
+`closedAt` a boundary rather than a CLI convention. `spec.md` and `lax.md`
+were reconciled in the same change: their active table now contains v4.33.0
+alone and documents v4.30.0 as compatibility for pre-cutoff records.
+
 ## Maintainer commands: `/lax admin` (implemented, 2026-09-04)
 
 spec.md's lifecycle says registered and deleted records are immutable and

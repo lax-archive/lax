@@ -27,14 +27,14 @@ import { LAX_GENERATED_FILES } from "../submission-validation/generated-files.js
 // the environment its manifest selects, so an off-epoch folder is never
 // reported as mispinned.
 import {
-  environmentsEpochFirst,
+  activeEnvironmentsEpochFirst,
   epoch,
   type ArchiveEnvironment,
 } from "../submission-validation/environments.js";
 import { leanFacts } from "../submission-validation/lean-facts.js";
 import { credentialsFile, githubAppUserToken, laxHome, readGitHubAppCredentials } from "./auth.js";
 import { databaseDirectory, updateDatabaseQuietly } from "./database.js";
-import { diskCostLines, environmentInstalled, requestedEnvironment } from "./environments.js";
+import { diskCostLines, environmentInstalled, supportedEnvironment } from "./environments.js";
 import { declaresPaper, submissionEnvironment, submissionIdFromFolder } from "./manifest.js";
 import { registeredSubmissions } from "./registry.js";
 import * as ui from "./ui.js";
@@ -299,9 +299,9 @@ function shortElan(raw: string): string {
 export async function doctor(opts: { dry?: boolean; env?: string } = {}): Promise<number> {
   const dry = opts.dry === true;
   // Which environment this report is about. The epoch is the machine's
-  // default and the only one most authors ever provision; `--env` is how the
-  // second one gets installed before the submission that needs it exists.
-  const environment = requestedEnvironment(opts.env);
+  // default and the only one new work provisions; `--env` also keeps an
+  // existing submission's closed environment maintainable.
+  const environment = supportedEnvironment(opts.env);
   /** Every check the verdict counts and `--verbose` reports the internals of. */
   const found: Check[] = [];
   const record = (...checks: readonly Check[]): readonly Check[] => {
@@ -420,7 +420,7 @@ export async function doctor(opts: { dry?: boolean; env?: string } = {}): Promis
         settle("mathlib", await warmStoreCheck(environment, steps, dry));
         // Last, because "which environments are installed" is only true once
         // the store this run may have just built is on disk.
-        settle("environments", environmentsCheck());
+        settle("environments", environmentsCheck(environment));
       })(),
       (async () => {
         settle("account", await githubCheck(dry));
@@ -824,23 +824,28 @@ function toolchainCheck(environment: ArchiveEnvironment): Check {
 }
 
 /**
- * The archive environments this CLI admits, and which of them this machine can
- * build in.
+ * The active archive environments, and which of them this machine can build
+ * in. A closed environment appears only when `--env` explicitly selected it,
+ * so ordinary setup presents v4.33.0 alone while legacy work remains
+ * provisionable.
  *
- * Hidden while the table admits one: the Lean and Mathlib rows above *are*
- * that environment, and a row repeating their contents under a third name is
- * exactly the duplication a collapsed report exists to avoid. From the second
- * entry on it is the only place the epoch is named as the epoch, and the only
- * answer to "what would `--env` accept". Never a problem: an admitted
- * environment nobody on this machine works in is not a gap, it is the normal
- * state of every environment but one.
+ * Hidden while the active set has one entry: the Lean and Mathlib rows above
+ * *are* that environment, and a row repeating their contents under a third
+ * name is exactly the duplication a collapsed report exists to avoid. From
+ * the second entry on it is the only place the epoch is named as the epoch.
+ * Never a problem: an active environment nobody on this machine works in is
+ * not a gap, it is the normal state of every environment but one.
  */
-function environmentsCheck(): Check | undefined {
-  const admitted = environmentsEpochFirst();
+function environmentsCheck(selected: ArchiveEnvironment): Check | undefined {
+  const active = activeEnvironmentsEpochFirst();
+  const admitted = selected.closedAt === undefined
+    ? active
+    : [selected, ...active.filter((entry) => entry.id !== selected.id)];
   if (admitted.length < 2) return undefined;
   const described = admitted.map((entry) => {
     const marks = [
       ...(entry.id === epoch().id ? ["epoch"] : []),
+      ...(entry.closedAt === undefined ? [] : ["existing submissions only"]),
       ...(environmentInstalled(entry) ? ["installed"] : ["not installed"]),
     ];
     return `${entry.id} (${marks.join(", ")})`;

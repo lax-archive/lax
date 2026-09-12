@@ -1,7 +1,7 @@
 import { parse } from "yaml";
 import type { PaperManifest, SubmissionManifest } from "../contracts.js";
 import {
-  admittedEnvironmentList,
+  activeEnvironmentList,
   environment,
   epoch,
   resolveRuntime,
@@ -183,7 +183,7 @@ export function validateManifest(
       findings.violate(
         "manifest",
         `manifest.yaml: leanVersion ${leanVersion} is not an archive environment. ` +
-          `Admitted: ${admittedEnvironmentList()}. ` +
+          `Available for new submissions: ${activeEnvironmentList()}. ` +
           "Update lax if the environment is newer than this CLI.",
       );
     } else {

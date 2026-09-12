@@ -25,18 +25,19 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 | `/lax admin revalidate <id>` | Maintainers only (`ADMIN_GITHUB_IDS`): reruns the whole validation against the record's *recorded* source — any state, closed issue or not — and republishes its build output and captures without changing its state. The way a registered record picks up a pipeline fix. |
 | `/lax admin delete <id>`, `reset-draft <id>`, `owners <id> <JSON>` | Maintainers only: tombstone in any state (the takedown power), return a registered record to draft (refused while a registered successor claims it), or replace the owner list outright. Every maintainer action is a public comment on the submission's issue and an attributed `admin …` commit. |
 
-**Environments.** A submission is built in one **archive environment** — a
-Lean toolchain plus the mathlib commit it builds, named by the Lean version
-(`v4.33.0`) — and one of them is the **epoch**, the environment the archive
-recommends this year and the one `lax init` scaffolds against. Only submissions
-in the same environment can cite one another, so an author who needs a newer
-mathlib passes `lax init --env <id>` and confirms by typing the id (`--yes`
-non-interactively); `lax doctor` lists the admitted environments and which are
-installed on the machine, and `lax doctor --env <id>` provisions one ahead of
-time. Old environments stay valid forever: moving work forward is a new
-submission that supersedes the old one, which `lax port lax-N [folder] --env
-<id>` scaffolds. Design: history/environments-plan.md; the first off-epoch
-round trip: history/environments-roundtrip-20260904.md.
+**Environments.** New work is built in the active **archive environment**
+`v4.33.0`: Lean `leanprover/lean4:v4.33.0` plus mathlib commit
+`db584cd6d46c92f209a44c0f1c829460d327499d`. It is the **epoch** and the
+environment `lax init` scaffolds. The former v4.30.0 environment is closed to
+new Archive records; its immutable pins remain supported only for records
+created before 2026-09-12, including init records which already existed but had
+not submitted content. `lax build`, submit validation, revalidation, the
+inspector matrix, and `lax doctor --env v4.30.0` continue to support those
+records. Only submissions in the same environment can cite one another, so
+moving v4.30.0 work forward is a new v4.33.0 submission that supersedes it;
+`lax port lax-N [folder]` scaffolds that successor. Design:
+history/environments-plan.md; the first off-epoch round trip and later epoch
+rollout: history/environments-roundtrip-20260904.md.
 
 **Versioning.** A new version of a registered submission is an ordinary new
 submission whose `manifest.yaml` carries the optional `supersedes: lax-N`
@@ -198,7 +199,7 @@ The CLI creates a control issue when a local submission is first submitted and
 posts exact command comments thereafter; it never writes the database directly:
 
 ```sh
-lax init submission            # --title "…" (default: the folder name); --env <id> to work outside the epoch
+lax init submission            # --title "…" (default: the folder name); uses v4.33.0
 lax build submission
 lax serve submission
 lax generate-prooftree lax-N
@@ -207,7 +208,7 @@ lax submit submission
 lax owners submission --new-list alice bob
 lax register submission
 lax delete submission
-lax port lax-N submission-v2  # --env <id>; default the epoch
+lax port lax-N submission-v2  # creates a v4.33.0 successor
 lax sync
 lax <command> -v               # every command takes -v/--verbose and --no-color
 ```
@@ -366,7 +367,7 @@ implemented; the rehearsal, renderer release, and production round trips
 are pending — see TODO.md).
 
 `lax port lax-N [folder]` scaffolds the successor that moves a submission into
-another archive environment (`--env <id>`, default the epoch). It clones the
+the active archive environment (v4.33.0). It clones the
 record's published source triple at its commit, gives the folder a fresh
 six-digit id (package names derive from the id, and both versions must coexist
 in one dependency graph), rewrites both `lean-toolchain` files, both lakefiles'
@@ -401,12 +402,12 @@ toolchain, running every check concurrently and spinning on a line per check
 until it answers; it also provisions what it can, installing elan and
 the pinned Lean toolchain when they are missing and bringing the local
 `lax-database` checkout up to date rather than only reporting that they are
-stale. An `Environments` row names every admitted environment, marks the epoch,
-and says which are installed here; it stays hidden while the table admits one,
-because the `Lean` and `Mathlib` rows above it are that environment. `lax
-doctor --env <id>` points the whole Lean chain at another environment and
-provisions it, stating the disk it costs (roughly 10 GB) before the download
-starts when it is the machine's second. On a bare machine `npm i -g lax-archive && lax doctor` is therefore the
+stale. An `Environments` row names active environments, marks the epoch, and
+says which are installed here; it stays hidden while v4.33.0 is the only active
+one because the `Lean` and `Mathlib` rows above it already describe that
+environment. `lax doctor --env v4.30.0` is retained solely to provision an
+existing legacy submission. Provisioning a second environment states its disk
+cost (roughly 10 GB) before the download starts. On a bare machine `npm i -g lax-archive && lax doctor` is therefore the
 whole setup: elan (the pinned bootstrap installer, into `~/.elan`, without
 touching your shell profile), the pinned toolchain under it, the warm mathlib
 workspace under `~/.lax/warm`, and the database clone. The store is the one

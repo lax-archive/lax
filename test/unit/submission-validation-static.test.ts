@@ -10,6 +10,8 @@ import { validateLakefile } from "../../src/submission-validation/validators/lak
 import { isAcceptedLicense } from "../../src/submission-validation/validators/license.js";
 import { validateManifest } from "../../src/submission-validation/validators/manifest.js";
 import {
+  activeEnvironmentList,
+  activeEnvironmentsEpochFirst,
   admittedEnvironmentList,
   environment,
   environments,
@@ -891,8 +893,10 @@ describe("archive environment selection", () => {
     );
     const messages = findings.violations.map((finding) => finding.message).join("\n");
     expect(messages).toContain("leanVersion v4.99.0 is not an archive environment");
-    // the admitted list, with the epoch marked, and the CLI-skew sentence
+    // the active list, with the epoch marked, and the CLI-skew sentence
+    expect(messages).toContain("Available for new submissions:");
     expect(messages).toContain(`${EPOCH} (epoch)`);
+    expect(messages).not.toContain("v4.30.0 (closed)");
     expect(messages).toContain("Update lax");
   });
 
@@ -964,7 +968,9 @@ describe("archive environment selection", () => {
         "v4.33.0",
         "v4.30.0",
       ]);
-      expect(admittedEnvironmentList()).toBe("v4.33.0 (epoch), v4.30.0");
+      expect(admittedEnvironmentList()).toBe("v4.33.0 (epoch), v4.30.0 (closed)");
+      expect(activeEnvironmentsEpochFirst().map((entry) => entry.id)).toEqual(["v4.33.0"]);
+      expect(activeEnvironmentList()).toBe("v4.33.0 (epoch)");
       withTestEnvironments([{ id: "v4.31.0" }], () => {
         expect(environments().map((entry) => entry.id)).toEqual([...compiled, "v4.31.0"]);
         // an injected entry borrows the installed toolchain, so one Lean

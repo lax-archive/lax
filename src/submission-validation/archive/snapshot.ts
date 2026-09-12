@@ -152,6 +152,7 @@ function loadRecordDirectory(root: string, id: string): ArchiveSourceRecord {
     throw new Error(`${id}/record.json is malformed`);
   if (!["init", "draft", "registered", "deleted"].includes(String(record.state)))
     throw new Error(`${id}/record.json has an invalid state`);
+  const createdAt = archiveTimestamp(record.createdAt, `${id}/record.json createdAt`);
   let source;
   if (record.state === "draft" || record.state === "registered") {
     if (!isObject(record.source)) throw new Error(`${id}/record.json has no source triple`);
@@ -171,10 +172,24 @@ function loadRecordDirectory(root: string, id: string): ArchiveSourceRecord {
   return {
     id,
     state: record.state as ArchiveSourceRecord["state"],
+    createdAt,
     ...(source === undefined ? {} : { source }),
     buildOutput,
     owners: readOwners(root, id),
   };
+}
+
+/** The Archive schema's canonical timestamp shape, repeated here because the
+ * read-only validation snapshot intentionally parses only the fields it uses. */
+function archiveTimestamp(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/u.test(value)) {
+    throw new Error(`${label} is not a UTC timestamp without fractional seconds`);
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().replace(".000Z", "Z") !== value) {
+    throw new Error(`${label} is not a real timestamp`);
+  }
+  return value;
 }
 
 /**

@@ -75,7 +75,13 @@ export function registerUpstream(
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(
     path.join(directory, "record.json"),
-    JSON.stringify({ id: upstream.id, specVersion: "1", state, source: upstream.source }),
+    JSON.stringify({
+      id: upstream.id,
+      specVersion: "1",
+      state,
+      createdAt: "2026-01-01T00:00:00Z",
+      source: upstream.source,
+    }),
   );
   fs.writeFileSync(
     path.join(directory, "build-output.json"),
@@ -119,6 +125,7 @@ export function withSuccessor(
       id: successor,
       specVersion: "1",
       state: "registered",
+      createdAt: "2026-01-01T00:00:00Z",
       source: {
         repository: "https://github.com/lax-e2e/successor",
         commit: "b".repeat(40),

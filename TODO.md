@@ -337,12 +337,14 @@ and rendering defects that one fixture could not reach. What remains:
 ## Archive environments (closed 2026-09-04; record in history/)
 
 Several Lean/mathlib versions: a yearly **epoch** as the default, monthly
-mathlib `vX.Y.0` release tags as admitted environments authors may stray
-to after a typed confirmation. All six stages, the first admission
+mathlib `vX.Y.0` release tags, and retained pins for closed environments which
+still have existing submissions. All six stages, the first admission
 (`v4.33.0`, CLI 0.1.39) and the first off-epoch round trip (lax-851268,
 deleted afterwards) landed 2026-09-04; the plan is
 `history/environments-plan.md` and the round trip, with its measurements,
-is `history/environments-roundtrip-20260904.md`. What stays open:
+is `history/environments-roundtrip-20260904.md`. The epoch moved to v4.33.0
+and v4.30.0 closed to new records on 2026-09-13; its support is now limited to
+records which already existed. What stays open:
 
 - **Actions may open pull requests since 2026-09-04 evening** (Jan
   turned on "Allow GitHub Actions to create and approve pull requests" in
@@ -350,6 +352,7 @@ is `history/environments-roundtrip-20260904.md`. What stays open:
   request was opened by hand because it was off; the next scheduled run
   (Tuesdays 04:41 UTC) is the first to exercise `gh pr create` from the
   admit job — check that it lands.
+
 ## Admin tool (admin-plan.md — issue-scoped verbs and the driver landed 2026-09-04)
 
 `/lax admin revalidate|delete|reset-draft|owners` are live in the control
