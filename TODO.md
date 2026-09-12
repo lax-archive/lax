@@ -350,12 +350,6 @@ is `history/environments-roundtrip-20260904.md`. What stays open:
   request was opened by hand because it was off; the next scheduled run
   (Tuesdays 04:41 UTC) is the first to exercise `gh pr create` from the
   admit job — check that it lands.
-- **Finish the v4.33.0 epoch rollout**: merge and deploy the coordinated
-  Website epoch, merge and release the CLI with that renderer pinned, and
-  re-measure `DEFAULT_LIMITS` on v4.33.0's full mathlib. The next yearly
-  choice reuses the runbook in the plan ("Islands, porting, and the epoch
-  bump").
-
 ## Admin tool (admin-plan.md — issue-scoped verbs and the driver landed 2026-09-04)
 
 `/lax admin revalidate|delete|reset-draft|owners` are live in the control
