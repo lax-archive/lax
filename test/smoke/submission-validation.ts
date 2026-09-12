@@ -125,10 +125,11 @@ const runtime: RuntimePins = {
 assert(await ensureValidationHost({ environment, echo: true }), "validation host setup failed");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-submission-validation-smoke-"));
 // `peakMemoryBytes` is the figure an admission run reads back off the log and
-// records in its pull request as a note (never as the entry's `limits`: these
-// fixtures import a sliver of mathlib, so the peak is not a submission
-// budget). The container runner samples the cgroup, so it is the container's
-// own peak, not this process's.
+// records in its pull request as a note. The full-mathlib fixture below makes
+// the run exercise the real replay/inspect memory class at two concurrent
+// workers, but the sampled number remains one container's cgroup peak rather
+// than their aggregate host usage, so it is evidence for a reviewed `limits`
+// decision rather than an automatic container cap.
 const completed: Array<{
   name: string;
   ok: boolean;
@@ -233,6 +234,18 @@ function fixtures(): SmokeFixture[] {
       name: "warm-cache-permissions",
       id: "lax-42",
       files: warmCachePermissionFiles(),
+      check(report) {
+        assertSuccessful(report);
+      },
+    },
+    {
+      // Two independent modules force the replay/inspect worker pool to hold
+      // two complete Mathlib environments at once. This is the load-bearing
+      // DEFAULT_LIMITS.leanThreads measurement that the original admission
+      // smoke's narrow imports could not make.
+      name: "full-mathlib-memory",
+      id: "lax-46",
+      files: fullMathlibFiles(),
       check(report) {
         assertSuccessful(report);
       },
@@ -509,6 +522,32 @@ ${conceptModule(
 axiom cache_readable : [0, 1].length = 2 ∧ (0 : Nat) ∈ ({0} : Set Nat)
 
 end Lax42.WarmCache
+`,
+)}`,
+  };
+}
+
+function fullMathlibFiles(): Record<string, string> {
+  return {
+    "concepts/Lax46.lean": "import Lax46.Left\nimport Lax46.Right\n",
+    "concepts/Lax46/Left.lean": `import Mathlib
+
+${conceptModule(
+  "Full Mathlib import, left",
+  `namespace Lax46.Left
+/-- One of two concurrent full-Mathlib replay tasks. -/
+axiom holds : True
+end Lax46.Left
+`,
+)}`,
+    "concepts/Lax46/Right.lean": `import Mathlib
+
+${conceptModule(
+  "Full Mathlib import, right",
+  `namespace Lax46.Right
+/-- One of two concurrent full-Mathlib replay tasks. -/
+axiom holds : True
+end Lax46.Right
 `,
 )}`,
   };

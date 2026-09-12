@@ -350,35 +350,6 @@ is `history/environments-roundtrip-20260904.md`. What stays open:
   request was opened by hand because it was off; the next scheduled run
   (Tuesdays 04:41 UTC) is the first to exercise `gh pr create` from the
   admit job — check that it lands.
-- **Only the epoch's host cache is saved, so every off-epoch submission
-  provisions cold.** Every `submission.yml` run since 2026-08-07 carries
-  `Cache reservation failed: cache write denied: token has no writable
-  scopes` on its save steps (route's `dist` cache, validate's lean host
-  cache): an `issue_comment`-run job with only `contents: read` gets a
-  token the cache service refuses to write with. It was invisible because
-  `ci.yml` saves the epoch's host cache on every push to `main` and
-  validate restores it; the cache API shows the epoch's `v2` entry alone
-  (3.28 GB, saved from `refs/heads/main`). After the 2026-09-12 epoch
-  bump this is v4.33.0; old v4.30.0 submissions may provision cold. Fix
-  in `ci.yml`, whose saves work — provision and save every admitted
-  environment, e.g. in `inspector-matrix`, which already runs per
-  environment on table changes and weekly — after weighing the 10 GB
-  repository cache ceiling (~3.3 GB per environment, LRU eviction). Do
-  not fix it by giving the validate job a writable scope: that job runs
-  submission code — and since 2026-09-07 no job that holds a token
-  restores the `dist` cache at all, so a writable validate token could
-  poison nothing privileged, but the rule stands. The dead save steps in
-  `submission.yml` could then go (route's is kept deliberately; see its
-  comment).
-- **The admission's measurement is a note, not a cap** (decided
-  2026-09-04, after the first run nearly merged the smoke's 1.15 GiB
-  fixture peak as the container cap). The admit job records the peak in
-  the pull request body and passes no limits flag; the entry inherits
-  `DEFAULT_LIMITS`, and `limits` is written by hand only after a
-  full-mathlib replay has been measured in the environment (typically
-  `leanThreads: 1` once an import no longer fits twice). A
-  workflow-definition test pins it. Nothing to do unless an environment's
-  real import outgrows the defaults.
 - **Finish the v4.33.0 epoch rollout**: merge and deploy the coordinated
   Website epoch, merge and release the CLI with that renderer pinned, and
   re-measure `DEFAULT_LIMITS` on v4.33.0's full mathlib. The next yearly
