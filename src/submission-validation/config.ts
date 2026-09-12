@@ -97,11 +97,12 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   minFreeDiskBytes: 5 * 1024 * 1024 * 1024,
   memoryBytes: 16 * 1024 * 1024 * 1024,
   cpuCount: 4,
-  // Replay/Inspect worker budget. Measured 2026-08-05 (rewrite-plan.md
-  // red-team addendum point 1): one full-mathlib environment import is
-  // ~5.6 GiB and leanchecker holds one per concurrent task, so 2 threads
-  // peak at ~11-12 GiB — the most a 16 GB swapless hosted runner fits.
-  // Replay and Inspect must also never run concurrently with each other.
+  // Replay/Inspect worker budget. The original full-mathlib measurement
+  // (2026-08-05, rewrite-plan.md red-team addendum point 1) peaked at
+  // ~11-12 GiB with two workers. Re-measured for the v4.33.0 epoch on
+  // 2026-09-12: two concurrent `import Mathlib` modules peaked at 3.31 GiB
+  // in the 16 GiB Linux container smoke. Replay and Inspect must also never
+  // run concurrently with each other.
   leanThreads: 2,
   // Compile worker budget, measured in the same 2026-08-05 session
   // (history/rework-execution.md, "the three load-bearing unknowns"): a

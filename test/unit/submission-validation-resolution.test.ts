@@ -227,23 +227,28 @@ describe("Archive dependency resolution retained from main", () => {
     // two, because the fix is a port, not a flag.
     const other = "v4.31.0";
     const otherCommit = "b".repeat(40);
-    withTestEnvironments([{ id: other, mathlibCommit: otherCommit }], () => {
-      const islandRoot = temporary("lax-resolution-island-");
-      writeArchiveRecord(islandRoot, "lax-10", {
-        capture: capture({ mathlibCommit: otherCommit }),
-      });
-      const crossed = resolve(
-        withConceptRequires([{ name: "Lax10", folder: "." }]),
-        new ArchiveSnapshot(islandRoot, "a".repeat(40)),
-      );
-      expect(crossed.findings.violations.map((finding) => finding.rule)).toEqual([
-        "capture-provenance",
-      ]);
-      const message = crossed.findings.violations[0]!.message;
-      expect(message).toContain(`Lax10 was built in environment ${other}`);
-      expect(message).toContain(`not ${RUNTIME.environment}`);
-      expect(message).toContain(`only submissions in ${RUNTIME.environment} can cite one another`);
-    });
+    withTestEnvironments(
+      [{ id: other, leanToolchain: RUNTIME.leanToolchain, mathlibCommit: otherCommit }],
+      () => {
+        const islandRoot = temporary("lax-resolution-island-");
+        writeArchiveRecord(islandRoot, "lax-10", {
+          capture: capture({ mathlibCommit: otherCommit }),
+        });
+        const crossed = resolve(
+          withConceptRequires([{ name: "Lax10", folder: "." }]),
+          new ArchiveSnapshot(islandRoot, "a".repeat(40)),
+        );
+        expect(crossed.findings.violations.map((finding) => finding.rule)).toEqual([
+          "capture-provenance",
+        ]);
+        const message = crossed.findings.violations[0]!.message;
+        expect(message).toContain(`Lax10 was built in environment ${other}`);
+        expect(message).toContain(`not ${RUNTIME.environment}`);
+        expect(message).toContain(
+          `only submissions in ${RUNTIME.environment} can cite one another`,
+        );
+      },
+    );
   });
 
   it("detects cycles in transitive Archive package requirements", () => {

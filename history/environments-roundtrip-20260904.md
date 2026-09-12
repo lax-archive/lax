@@ -136,6 +136,14 @@ were), typically `leanThreads: 1` once an import no longer fits twice in
 16 GB. A workflow-definition test pins that the admit step passes no
 limits flag. The plan's checklist bullet was rewritten to say so.
 
+The epoch rollout re-measured that boundary on 2026-09-12 in the real Linux
+container smoke for v4.33.0. A permanent stress fixture validates two modules
+which each `import Mathlib`, so Replay and Inspect each exercise the default
+two-worker budget with full Mathlib environments resident concurrently. It
+passed under the 16 GiB cap with a heaviest-span peak of 3,553,529,856 bytes
+(3.31 GiB). v4.33.0 therefore needs no per-environment override and continues
+to inherit `DEFAULT_LIMITS.leanThreads = 2`.
+
 ## What the round trip found
 
 - **The validate job cannot save caches, and never could.** Every

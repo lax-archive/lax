@@ -27,7 +27,7 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 
 **Environments.** A submission is built in one **archive environment** — a
 Lean toolchain plus the mathlib commit it builds, named by the Lean version
-(`v4.30.0`) — and one of them is the **epoch**, the environment the archive
+(`v4.33.0`) — and one of them is the **epoch**, the environment the archive
 recommends this year and the one `lax init` scaffolds against. Only submissions
 in the same environment can cite one another, so an author who needs a newer
 mathlib passes `lax init --env <id>` and confirms by typing the id (`--yes`
@@ -165,9 +165,9 @@ installation tokens and never receives the private key or the installation's
 independent authority. App private keys and installation tokens must never be
 distributed with the CLI.
 
-### Empirical notes on the pinned toolchain
+### Empirical notes on the original go-live toolchain
 
-Two behaviors of the pinned toolchain (v4.30.0), discovered while
+Two behaviors of the original go-live toolchain (v4.30.0), discovered while
 implementing the inspector and worth knowing when reading the spec:
 
 - Lean strips a leading line of dashes from *persisted* docstrings, so the

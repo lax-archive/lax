@@ -162,16 +162,13 @@ jobs:
           set -euo pipefail
           npm run smoke:submission-validation | tee "$RUNNER_TEMP/smoke.json"
       # The last JSON line carries the heaviest span's peak memory, sampled
-      # from the container's own cgroup by the runner. It is a *fixture*
-      # figure — the smoke's submissions import a sliver of mathlib (1.15 GiB
-      # at v4.33.0, against ~5.6 GiB per replay thread for a real full-mathlib
-      # import at the epoch) — so it goes into the pull request as a note and
-      # never into the entry's `limits`, which is the container's cgroup cap
-      # and would refuse every real submission. The entry inherits
-      # DEFAULT_LIMITS; a maintainer who has measured a full-mathlib replay in
-      # the environment writes `limits` by hand (admit.mjs --memory-bytes /
-      # --lean-threads, or an edit). Decided 2026-09-04 after the first
-      # admission run (TODO.md, archive environments).
+      # from one container's cgroup by the runner. The smoke includes two
+      # independent full-Mathlib modules, so replay and inspect exercise their
+      # two-worker host budget; a green run establishes that the concurrency
+      # fits. The number is still a per-container fixture peak, not aggregate
+      # host usage or a safe container cap, so it goes into the pull request as
+      # a note and never automatically into the entry's `limits`. A maintainer
+      # writes an override only when the run shows DEFAULT_LIMITS is wrong.
       - name: Record the measurement
         env:
           ID: ${{ matrix.id }}

@@ -27,7 +27,7 @@ import { LAX_GENERATED_FILES } from "../submission-validation/generated-files.js
 // the environment its manifest selects, so an off-epoch folder is never
 // reported as mispinned.
 import {
-  environments,
+  environmentsEpochFirst,
   epoch,
   type ArchiveEnvironment,
 } from "../submission-validation/environments.js";
@@ -836,7 +836,7 @@ function toolchainCheck(environment: ArchiveEnvironment): Check {
  * state of every environment but one.
  */
 function environmentsCheck(): Check | undefined {
-  const admitted = environments();
+  const admitted = environmentsEpochFirst();
   if (admitted.length < 2) return undefined;
   const described = admitted.map((entry) => {
     const marks = [

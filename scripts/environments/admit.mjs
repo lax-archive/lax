@@ -15,12 +15,12 @@
 //
 // `--memory-bytes` and `--lean-threads` write `limits`, which override
 // DEFAULT_LIMITS for the environment: the container's cgroup cap and the
-// replay thread budget. They are for a maintainer who has measured a
-// full-mathlib replay in the environment (the way the epoch's defaults were
-// measured, config.ts DEFAULT_LIMITS) — the workflow never passes them,
-// because the figure its smoke produces is a fixture peak, not a budget
-// (environments.yml, "Record the measurement"). Without them the entry
-// inherits DEFAULT_LIMITS, which is the honest state.
+// replay thread budget. They are for a maintainer reviewing the admission's
+// full-mathlib concurrency run (or a later production profile) — the workflow
+// never passes them automatically, because its reported figure is one
+// container's fixture peak rather than aggregate host usage or a safe cap
+// (environments.yml, "Record the measurement"). Without an explicit review,
+// the entry inherits DEFAULT_LIMITS.
 
 import fs from "node:fs";
 import path from "node:path";

@@ -58,27 +58,39 @@ Each submission carries two central files in the root folder:
 ``manifest.yaml``, written by the authors, and ``build-output.json``, derived by
 the build.
 
-## Archive Environment
+## Archive Environments
 
-We fix the following **archive environment**:
+The archive admits the following **archive environments**. Each is an
+immutable Lean toolchain and mathlib revision pair. The **epoch** is the
+environment recommended for new submissions and used by ``lax init`` by
+default; changing it does not invalidate submissions in an older environment.
+
+| id | Lean toolchain | mathlib revision | status |
+| --- | --- | --- | --- |
+| ``v4.33.0`` | ``leanprover/lean4:v4.33.0`` | ``db584cd6d46c92f209a44c0f1c829460d327499d`` | epoch |
+| ``v4.30.0`` | ``leanprover/lean4:v4.30.0`` | ``c5ea00351c28e24afc9f0f84379aa41082b1188f`` | admitted |
+
+A submission selects exactly one environment through ``leanVersion`` and
+``mathlibVersion``. Only submissions in the same environment may depend on one
+another. Porting work to the epoch therefore creates a successor submission;
+it never rewrites the original record.
+
+The following settings are fixed archive-wide:
 
 - ``specVersion: "1"``
-- pinned Lean toolchain: ``leanprover/lean4:v4.30.0`` (the exact content of
-  every ``lean-toolchain`` file, followed by one newline; it also fixes Lake)
 - trusted background imports
-    - mathlib, pinned to revision ``c5ea00351c28e24afc9f0f84379aa41082b1188f``,
-      present in **every** submission workspace: the concept package requires
-      it at the pin (see Packages), so the whole archive shares one mathlib
-      closure. Importing it remains the author's choice — presence without
-      import is inert.
+    - mathlib from its canonical repository, pinned to the selected
+      environment's revision and present in **every** submission workspace.
+      Importing it remains the author's choice — presence without import is
+      inert.
 - concept build options
     - ``autoImplicit`` off
 - proof build options
     - ``autoImplicit`` off
 - trusted validation sandbox
     - stock image ``node:22-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066``
-      with the pinned host toolchain and warm mathlib workspace mounted
-      read-only
+      with the selected environment's pinned host toolchain and warm mathlib
+      workspace mounted read-only
 - allowed background axioms
     - ``propext``
     - ``Classical.choice``
@@ -154,10 +166,11 @@ following rules.
   or more structurally complete BibTeX entries, as in a ``.bib`` file.
 
 Additional Rules:
-- ``specVersion``, ``leanVersion``, ``mathlibVersion``: must match the
-  archive environment for now. ``leanVersion`` holds the version tag
-  (``v4.30.0``); the full toolchain name (``leanprover/lean4:v4.30.0``)
-  appears only in the ``lean-toolchain`` files.
+- ``specVersion`` must match the archive-wide value. ``leanVersion`` names an
+  admitted archive environment and ``mathlibVersion`` must equal that
+  environment's mathlib revision. The full Lean toolchain name appears only
+  in the ``lean-toolchain`` files and must equal the selected environment's
+  toolchain.
 - All scalar manifest fields are YAML strings, not numbers or other scalar
   types.
 - No keys beyond the ones listed here are allowed.
@@ -166,8 +179,8 @@ Example:
 
     specVersion: "1"
     id: lax-261
-    leanVersion: "v4.30.0"
-    mathlibVersion: "c5ea00351c28e24afc9f0f84379aa41082b1188f"
+    leanVersion: "v4.33.0"
+    mathlibVersion: "db584cd6d46c92f209a44c0f1c829460d327499d"
     title: My Submission
     authors:
       - name: Alice Smith
@@ -206,7 +219,7 @@ following rules:
   A proof package need not depend on its own concept package; it may prove
   only conjectures from unrelated submissions.
   Each package **must** require mathlib — under the name ``mathlib``
-  from its canonical URL, pinned to the archive-wide revision.
+  from its canonical URL, pinned to the submission environment's revision.
   Concept and proof packages of other submissions are added by pinning the
   full lowercase 40-character commit SHA and subfolder of the submission's
   repository. Every such
@@ -215,8 +228,9 @@ following rules:
   database (which keeps two submissions at different folders of one commit
   apart). The require's ``(git, rev, subDir)`` must equal that record's
   current source — ``repository``, ``commit``, and ``folder`` joined with
-  ``concepts`` or ``proofs`` — verbatim: write the canonical ``repository``
-  spelling (see ``lax submit``), not an ssh alias of it. A draft dependency
+  ``concepts`` or ``proofs`` — verbatim. The required submission must be in
+  the same archive environment. Write the canonical ``repository`` spelling
+  (see ``lax submit``), not an ssh alias of it. A draft dependency
   is admitted with a warning; registration admits only registered
   dependencies (see Lifecycle). Cross-submission path requirements are not
   supported: multi-submission work is committed and submitted bottom-up, with
@@ -249,8 +263,8 @@ following rules:
 
 - **Empty submission.** A submission may contain no concepts and no proofs.
 
-- **Pinned toolchain.** ``lean-toolchain`` contains exactly the archive-wide
-  toolchain followed by one newline.
+- **Pinned toolchain.** ``lean-toolchain`` contains exactly the submission
+  environment's toolchain followed by one newline.
 
 - **Builds.** Both packages must build: ``lake build`` succeeds in
   ``concepts/`` and in ``proofs/``. Lean warnings do not fail a submission.
@@ -271,11 +285,11 @@ Example ``lakefile.toml`` of a concept package:
     [leanOptions]
     autoImplicit = false
 
-    # mandatory: mathlib at the archive-wide pin
+    # mandatory: mathlib at the submission environment's pin
     [[require]]
     name = "mathlib"
     git = "https://github.com/leanprover-community/mathlib4"
-    rev = "c5ea00351c28e24afc9f0f84379aa41082b1188f"
+    rev = "db584cd6d46c92f209a44c0f1c829460d327499d"
 
     # concept package of another submission this one builds on
     [[require]]
@@ -299,7 +313,7 @@ Example ``lakefile.toml`` of the corresponding proof package:
     [[require]]
     name = "mathlib"
     git = "https://github.com/leanprover-community/mathlib4"
-    rev = "c5ea00351c28e24afc9f0f84379aa41082b1188f"
+    rev = "db584cd6d46c92f209a44c0f1c829460d327499d"
 
     [[require]]
     name = "Lax261"
@@ -529,8 +543,8 @@ Example content-bearing ``build-output.json``
         "formatVersion": 1,
         "digest": "...",
         "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
-        "leanToolchain": "leanprover/lean4:v4.30.0",
-        "mathlibCommit": "c5ea00351c28e24afc9f0f84379aa41082b1188f",
+        "leanToolchain": "leanprover/lean4:v4.33.0",
+        "mathlibCommit": "db584cd6d46c92f209a44c0f1c829460d327499d",
         "files": [ ... ],
         "registryBlob": "ghcr.io/lax-archive/lax-captures@sha256:..."
       }

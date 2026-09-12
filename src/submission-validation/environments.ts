@@ -46,7 +46,7 @@ export interface ArchiveEnvironment {
 
 /** The environment the archive recommends this year. Exactly one at a time;
  * moved once a year by the epoch-bump runbook, never by an admission. */
-export const EPOCH = "v4.30.0";
+export const EPOCH = "v4.33.0";
 
 /** An environment id is a Lean version string and nothing else. Enforced on
  * the injected test entries too, so no id can ever carry a path separator. */
@@ -109,9 +109,19 @@ export function epoch(): ArchiveEnvironment {
   return entry;
 }
 
-/** The admitted ids for an author-facing message, with the epoch marked. */
+/** Every admitted environment with the epoch first and every other entry in
+ * table order. The table itself stays oldest-first: admission scripts append
+ * to it, while author-facing lists lead with the current recommendation. */
+export function environmentsEpochFirst(): readonly ArchiveEnvironment[] {
+  const admitted = environments();
+  const index = admitted.findIndex((entry) => entry.id === EPOCH);
+  if (index <= 0) return admitted;
+  return [admitted[index]!, ...admitted.slice(0, index), ...admitted.slice(index + 1)];
+}
+
+/** The admitted ids for an author-facing message, epoch first and marked. */
 export function admittedEnvironmentList(): string {
-  return environments()
+  return environmentsEpochFirst()
     .map((entry) => (entry.id === EPOCH ? `${entry.id} (epoch)` : entry.id))
     .join(", ");
 }

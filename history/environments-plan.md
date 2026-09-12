@@ -476,18 +476,12 @@ run's operator confirms it (M) until a test exists.
 - (T, guards) The three persisted extension entry types' shapes — plus
   `declRangeExt`'s own type, which is what makes its entries `Name x a`.
 - (T, unit) `lake query -J +<mod>:olean` output shape — `host/pipeline.ts:625-645`.
-- (M) Replay/Inspect peak memory at two threads fits the 16 GB cap. The
-  admission run's container smoke reports the heaviest span's cgroup peak
-  in the pull request as a note, and that is all it is: the smoke's fixtures
-  import a sliver of mathlib (1.15 GiB at v4.33.0, against ~5.6 GiB per
-  replay thread for a real import at the epoch), so the figure is not a
-  budget and is never written into `limits` (decided 2026-09-04, after the
-  first admission run nearly merged it as the container cap). The entry
-  inherits `DEFAULT_LIMITS`; the operator confirms the fact from the first
-  real submission's validation profile in the environment, and writes
-  `limits` by hand only when a measured full-mathlib replay shows the
-  defaults are wrong there (typically `leanThreads: 1` once an import no
-  longer fits twice).
+- (T, admission smoke) Replay/Inspect at two threads fits the runner. Two
+  independent fixture modules import all of Mathlib, forcing the worker pool
+  to hold both environments concurrently. The reported peak remains one
+  container's cgroup peak rather than aggregate host usage, so it is evidence
+  for review and is never written automatically into `limits`; a maintainer
+  adds an override only when the run shows `DEFAULT_LIMITS` is wrong.
 - (T, admission smoke) `lake exe cache get` exists and succeeds at the tag —
   the candidate's warm workspace is built cold in the same run.
 

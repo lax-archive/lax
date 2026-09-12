@@ -101,8 +101,9 @@ function requireJob<T>(all: Record<string, T>, name: string): T {
  * The host store's cache identity is computed, not spelled out in YAML:
  * host/setup.ts validationHostCacheKey derives it from the environment
  * table's row. The trusted validate job takes it from its static gate's
- * output (the environment the manifest selected); ci.yml and release.yml,
- * which always provision the epoch, take it from `setup-vm.js --cache-key`.
+ * output (the environment the manifest selected); the ordinary CI and release
+ * jobs take the epoch from `setup-vm.js --cache-key`, while the inspector
+ * matrix supplies its table row through a quoted `--env` value.
  */
 const GATE_CACHE_KEY = "${{ steps.gate.outputs.cache_key }}";
 const EPOCH_CACHE_KEY = "${{ steps.host-key.outputs.cache_key }}";
@@ -365,28 +366,24 @@ describe("submission workflow wiring", () => {
     }
   });
 
-  it("saves the warm-store cache before untrusted submission code runs", () => {
-    // The cache may only ever hold what trusted setup produced: a post-job
-    // save would snapshot the tree after a potential sandbox escape and
-    // poison every later run (rewrite-plan.md stage 3 execution notes). The
-    // static gate ahead of the restore only fetches and parses; it executes
-    // nothing, and it writes only into the job dir.
+  it("restores but never writes caches in the job that runs submission code", () => {
+    // The trusted inspector matrix writes every admitted host cache. This job
+    // may restore those bytes, but a potential sandbox escape must never gain
+    // a cache-write path; its read-only token also cannot write one in
+    // production. A miss is provisioned for this run and then discarded.
     const steps = requireJob(jobs, "validate").steps;
     const gate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js --gate");
     const restore = steps.findIndex(
       (step) => step.uses?.startsWith("actions/cache/restore") === true && step.with?.key === GATE_CACHE_KEY,
     );
     const setup = steps.findIndex((step) => provisions(step.run));
-    const save = steps.findIndex(
-      (step) => step.uses?.startsWith("actions/cache/save") === true && step.with?.key === GATE_CACHE_KEY,
-    );
     const validate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js");
     expect(gate).toBeGreaterThanOrEqual(0);
     expect(gate).toBeLessThan(restore);
     expect(restore).toBeGreaterThanOrEqual(0);
     expect(restore).toBeLessThan(setup);
-    expect(setup).toBeLessThan(save);
-    expect(save).toBeLessThan(validate);
+    expect(setup).toBeLessThan(validate);
+    expect(steps.some((step) => step.uses?.startsWith("actions/cache/save"))).toBe(false);
     // Two cache identities exist in the job, each keyed by reviewed inputs:
     // the host store by the environment row the gate selected plus a layout
     // salt, the reflowtex encode venv by the hash-pinned requirements lock.
@@ -406,8 +403,8 @@ describe("submission workflow wiring", () => {
     // history/environments-plan.md stage 2. The gate is the one step that knows which
     // archive environment the manifest named, and it says so through two step
     // outputs computed from the table row (run.ts writeGateOutputs): the row's
-    // id and the host cache key. The restore and save steps take the key
-    // through `with:`; the provisioning step takes the id through `env:` and
+    // id and the host cache key. The restore step takes the key through
+    // `with:`; the provisioning step takes the id through `env:` and
     // hands it to setup-vm.js as a quoted shell variable. Neither output is
     // interpolated into a `run:` script — an expression inside a script is
     // executed as code, which is what trust rule 2 forbids for a value that
@@ -421,7 +418,6 @@ describe("submission workflow wiring", () => {
     );
     expect(cacheSteps.map((step) => step.uses?.split("@")[0])).toEqual([
       "actions/cache/restore",
-      "actions/cache/save",
     ]);
     for (const step of cacheSteps) {
       expect(step.with?.key).toBe(GATE_CACHE_KEY);
@@ -444,33 +440,31 @@ describe("submission workflow wiring", () => {
     // the environment id never becomes a job output for a privileged job.
     expect(requireJob(jobs, "validate").outputs).toBeUndefined();
     expect(workflow.match(/steps\.gate\.outputs\.environment/gu)).toHaveLength(1);
-    expect(workflow.match(/steps\.gate\.outputs\.cache_key/gu)).toHaveLength(2);
+    expect(workflow.match(/steps\.gate\.outputs\.cache_key/gu)).toHaveLength(1);
   });
 
-  it("fetches the pinned reflowtex fork before untrusted submission code, failure-tolerant", () => {
+  it("restores and fetches reflowtex before untrusted submission code, failure-tolerant", () => {
     // The encode venv and checkout are runner-side prerequisites of the web
     // derivation; a fetch hiccup must degrade to a `web-toolchain` skip of
     // the web view, never a failed validation — so every step tolerates
-    // failure. The venv save sits before the lean restore, i.e. before any
-    // submission code can execute, same doctrine as the warm-store cache.
+    // failure. Its cache is maintained by trusted CI, so this job has no save
+    // step and proceeds to the Lean restore after the fetch.
     const steps = requireJob(jobs, "validate").steps;
     const restore = steps.find((step) => step.name === "Restore the reflowtex encode venv");
     const fetch = steps.find((step) => step.name === "Fetch the pinned ReflowTeX fork");
-    const save = steps.find((step) => step.name === "Save the reflowtex encode venv");
-    for (const [name, step] of Object.entries({ restore, fetch, save })) {
+    for (const [name, step] of Object.entries({ restore, fetch })) {
       expect(step, name).toBeDefined();
       expect(step?.["continue-on-error"], name).toBe(true);
     }
     expect(fetch?.run).toContain("npm run reflowtex:fetch");
-    expect(save?.if).toContain("steps.reflowtex-fetch.outcome == 'success'");
+    expect(steps.some((step) => step.name === "Save the reflowtex encode venv")).toBe(false);
     const gate = steps.findIndex((step) => step.run === "node dist/submission-validation/run.js --gate");
     const leanRestore = steps.findIndex(
       (step) => step.uses?.startsWith("actions/cache/restore") === true && step.with?.key === GATE_CACHE_KEY,
     );
     expect(gate).toBeLessThan(steps.indexOf(restore!));
     expect(steps.indexOf(restore!)).toBeLessThan(steps.indexOf(fetch!));
-    expect(steps.indexOf(fetch!)).toBeLessThan(steps.indexOf(save!));
-    expect(steps.indexOf(save!)).toBeLessThan(leanRestore);
+    expect(steps.indexOf(fetch!)).toBeLessThan(leanRestore);
   });
 
   // -------------------------------------------------------------------------
@@ -802,14 +796,14 @@ describe("CI workflow wiring", () => {
     expect(prooftree).toBeGreaterThan(save);
   });
 
-  it("guards every admitted environment's inspector, on the table and weekly", () => {
+  it("guards and caches every admitted environment, on the table and weekly", () => {
     // The check job installs the epoch alone, so between admissions no other
     // admitted environment's inspector is built anywhere — and an environment
     // stays open forever (history/environments-plan.md, "Islands"). The matrix job is
-    // that guard: one leg per table row, its toolchain and nothing else, the
-    // inspector build (which carries Main.lean's shape guards) and the golden
-    // report. It answers to the weekly cron as well as to a push touching the
-    // Lean sources or the table.
+    // that guard and the only trusted writer for off-epoch host caches: one leg
+    // per table row provisions the complete store, saves it before fixture code
+    // runs, then exercises the inspector and composer. It answers to the weekly
+    // cron as well as to a push touching the Lean sources or the table.
     expect(ciParsed.on).toMatchObject({ schedule: [{ cron: expect.any(String) }] });
     const plan = requireJob(ciJobs, "inspector-plan");
     expect(plan.outputs).toEqual({
@@ -842,15 +836,37 @@ describe("CI workflow wiring", () => {
     });
     expect(matrix["timeout-minutes"]).toBeGreaterThan(0);
     const steps = matrix.steps.map((step) => step.run ?? step.uses ?? "");
-    const install = steps.findIndex((run) => run.includes("install-toolchain.mjs"));
+    const key = steps.findIndex((run) => run.includes('setup-vm.js --env "$ENVIRONMENT" --cache-key'));
+    const restore = steps.findIndex((run) => run.startsWith("actions/cache/restore"));
+    const setup = steps.findIndex(
+      (run) => run.includes('setup-vm.js --env "$ENVIRONMENT"') && !run.includes("--cache-key"),
+    );
+    const save = steps.findIndex((run) => run.startsWith("actions/cache/save"));
     const golden = steps.findIndex((run) => run.includes("test/e2e/inspector-golden.test.ts"));
     const composer = steps.findIndex((run) => run.includes("npm run smoke:prooftree"));
-    expect(install).toBeGreaterThanOrEqual(0);
-    expect(golden).toBeGreaterThan(install);
-    expect(composer).toBeGreaterThan(install);
-    // no mathlib: the whole point of this job is that it costs a toolchain
-    expect(steps.some((run) => run.includes("setup-vm.js"))).toBe(false);
-    expect(matrix.steps[install]?.env?.LEAN_TOOLCHAIN).toBe("${{ matrix.leanToolchain }}");
+    expect(key).toBeGreaterThanOrEqual(0);
+    expect(restore).toBeGreaterThan(key);
+    expect(setup).toBeGreaterThan(restore);
+    expect(save).toBeGreaterThan(setup);
+    expect(golden).toBeGreaterThan(save);
+    expect(composer).toBeGreaterThan(save);
+    expect(matrix.steps[key]?.id).toBe("host-key");
+    expect(matrix.steps[key]?.env?.ENVIRONMENT).toBe("${{ matrix.id }}");
+    expect(matrix.steps[setup]?.env?.ENVIRONMENT).toBe("${{ matrix.id }}");
+    const hostCache = matrix.steps.filter((step) => step.uses?.startsWith("actions/cache/"));
+    expect(hostCache.map((step) => step.uses?.split("@")[0])).toEqual([
+      "actions/cache/restore",
+      "actions/cache/save",
+    ]);
+    for (const step of hostCache) {
+      expect(step.with?.key).toBe(EPOCH_CACHE_KEY);
+      expect(step.with?.["restore-keys"]).toBeUndefined();
+      for (const cached of HOST_CACHE_PATHS) expect(step.with?.path).toContain(cached);
+    }
+    expect(matrix.steps[save]?.if).toBe("steps.lean-cache.outputs.cache-hit != 'true'");
+    for (const step of matrix.steps) {
+      if (step.run !== undefined) expect(step.run, step.name ?? step.run).not.toContain("${{");
+    }
   });
 
   it("typechecks the trees it never compiles", () => {

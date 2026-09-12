@@ -378,7 +378,7 @@ describe("local command preflights", () => {
     write({ ...localRuntime(), runtimeImageDigest: "sha256-of-some-other-image" });
     expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
 
-    write({ ...localRuntime(), leanToolchain: "leanprover/lean4:v4.33.0" });
+    write({ ...localRuntime(), leanToolchain: "leanprover/lean4:v4.30.0" });
     expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
 
     write({ ...localRuntime(), mathlibCommit: "9".repeat(40) });

@@ -12,8 +12,8 @@
 //
 // Which environments run here is decided by which toolchains are installed:
 // the epoch in a normal run, and any environment `LAX_TEST_ENVIRONMENTS`
-// injects whose toolchain the machine has (the admission workflow and the
-// `inspector-matrix` job install exactly one and inject exactly one). An
+// injects whose toolchain the machine has (the admission workflow and each
+// `inspector-matrix` leg provision exactly one target environment). An
 // environment whose toolchain is absent is skipped rather than provisioned —
 // a Lean install is 3 GB — but a run in which *nothing* was compared fails.
 
