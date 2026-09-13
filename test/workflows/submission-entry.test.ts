@@ -233,18 +233,61 @@ describe("report-validation entry point", () => {
 
     const body = state.comments[0]!.body;
     expect(body).toContain("Submission validation failed for **lax-42**; lax-database was not changed.");
+    // One line, folded, and carrying the error rather than stopping at the
+    // progress line in front of it.
     expect(body).toContain(
-      "First finding `[compile-proofs/build]`: info: building Proofs.Main",
+      "First finding `[compile-proofs/build]`: " +
+        "info: building Proofs.Main Proofs/Main.lean:9:2: error: unsolved goals ⊢ False",
     );
     expect(body).toContain("The complete findings are in this run's artifacts");
-    // Only the first violation's first line, and no transcript, warnings, or
-    // second finding.
-    expect(body).not.toContain("unsolved goals");
+    // Only the first violation, and no fenced transcript, warnings, or second
+    // finding: the artifact is the record of the build.
     expect(body).not.toContain("the conclusion is not proved");
     expect(body).not.toContain("the abstract is short");
     expect(body).not.toContain("```");
     expect(body).toContain(resultMarker(commentId));
     expect(parseWorkflowComment(body)).toMatchObject({ outcome: "failure", runId: "777" });
+  });
+
+  it("keeps the end of a long transcript, where a lake build says what broke", async () => {
+    // The regression the Lean 4.33 ports hit: a compile finding *is* its
+    // transcript, kept from the end by `safeTranscript` because the head of a
+    // `lake build` log is module names — and the comment then quoted that head,
+    // announcing a failed submission with a line reading `✔ … Built … (2.9s)`.
+    const progress = Array.from(
+      { length: 40 },
+      (_, index) => `✔ [${3000 + index}/3029] Built Lax865980Proofs.Imp (2.9s)`,
+    ).join("\n");
+    const transcript = `${progress}\nProofs/Imp.lean:41:8: error: unknown constant 'Nat.sub_lt_sub_left'`;
+    const reportPath = path.join(workDirectory(), "validation-report.json");
+    fs.writeFileSync(reportPath, JSON.stringify({
+      reportVersion: 1,
+      ok: false,
+      request: { id: "lax-865980" },
+      warnings: [],
+      violations: [{ phase: "compile-proofs", rule: "compile", message: transcript }],
+    }));
+    stubWorkflowEnv({
+      VALIDATION_CONTEXT: encode({
+        id: "lax-865980",
+        issueNumber,
+        commentId,
+        eventCreatedAt: "2026-07-30T11:00:00Z",
+      }),
+      VALIDATION_REPORT_PATH: reportPath,
+    });
+    const state: IssueState = { comments: [], reactions: [] };
+    installIssueFetch(state);
+
+    await reportValidation();
+
+    const body = state.comments[0]!.body;
+    const summary = body.split("\n").find((line) => line.startsWith("First finding"))!;
+    expect(summary).toContain("[compile-proofs/compile]");
+    expect(summary).toContain("error: unknown constant 'Nat.sub_lt_sub_left'");
+    expect(summary).toContain("[…]");
+    // Still one line and still bounded: the artifact carries the rest.
+    expect([...summary].length).toBeLessThanOrEqual("First finding `[compile-proofs/compile]`: ".length + 400);
   });
 
   it("reports a typed transient infrastructure failure without blaming the submission", async () => {
@@ -280,10 +323,14 @@ describe("report-validation entry point", () => {
     const body = state.comments[0]!.body;
     expect(body).toContain("Validation infrastructure failed for **lax-42**");
     expect(body).toContain("did not receive a content verdict");
-    expect(body).toContain("Failure `[source/archive-snapshot]`: GitHub returned HTTP 503");
+    // Folded onto the one line, end included: an operational failure's detail
+    // is as much in its tail as a compile finding's.
+    expect(body).toContain(
+      "Failure `[source/archive-snapshot]`: GitHub returned HTTP 503 transport transcript",
+    );
     expect(body).toContain("retrying the unchanged submission may succeed");
     expect(body).not.toContain("Submission validation failed");
-    expect(body).not.toContain("transport transcript");
+    expect(body).not.toContain("```");
   });
 
   it("reports a resource limit as capacity rather than a content rejection", async () => {

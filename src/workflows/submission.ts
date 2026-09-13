@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { ArchiveRepository } from "../shared/archive.js";
 import { GhcrCaptureStore } from "../shared/capture-store.js";
 import { CONTROL_REPOSITORY } from "../shared/constants.js";
-import { safeInline } from "../shared/comment-format.js";
+import { safeInline, safeInlineEnds } from "../shared/comment-format.js";
 import { ControlPlane } from "../shared/control-plane.js";
 import { GitHubClient, repositoryPath } from "../shared/github.js";
 import { MetadataPublisher } from "../shared/metadata-publisher.js";
@@ -827,6 +827,12 @@ function parseValidationContext(value: unknown): ValidationContext {
  * artifact carries every finding with its transcript intact, and `lax submit`
  * renders that directly. A comment that also carried the transcripts would be
  * a second, worse copy — permanent, markdown-escaped, and truncated.
+ *
+ * The line is fitted from both ends (`safeInlineEnds`) and never cut off at
+ * the first newline. A compile, replay, or inspect finding *is* its transcript,
+ * kept from the end because that is where the error is — so taking its first
+ * line took the one part the pipeline had already decided was worthless, and
+ * the comment announced a failure by quoting `✔ [3009/3029] Built … (2.9s)`.
  */
 function firstViolation(report: ValidationReport): string {
   const finding = (Array.isArray(report.violations) ? report.violations : [])
@@ -834,8 +840,8 @@ function firstViolation(report: ValidationReport): string {
   if (finding === undefined) return "Validation failed without a structured finding.";
   const phase = safeInline(String(finding.phase ?? "validation"), 40) || "validation";
   const rule = safeInline(String(finding.rule ?? "unspecified"), 60) || "unspecified";
-  const message = String(finding.message ?? "").split("\n")[0] ?? "";
-  return `First finding \`[${phase}/${rule}]\`: ${safeInline(message, 400) || "unspecified failure"}`;
+  const message = String(finding.message ?? "");
+  return `First finding \`[${phase}/${rule}]\`: ${safeInlineEnds(message, 400) || "unspecified failure"}`;
 }
 
 function validationFailureSummary(report: ValidationReport): string {
@@ -843,8 +849,8 @@ function validationFailureSummary(report: ValidationReport): string {
   if (failure === undefined) return "Validation stopped without a structured operational failure.";
   const phase = safeInline(String(failure.phase), 40) || "validation";
   const rule = safeInline(String(failure.rule), 60) || "unspecified";
-  const message = String(failure.message ?? "").split("\n")[0] ?? "";
-  return `Failure \`[${phase}/${rule}]\`: ${safeInline(message, 400) || "unspecified failure"}`;
+  const message = String(failure.message ?? "");
+  return `Failure \`[${phase}/${rule}]\`: ${safeInlineEnds(message, 400) || "unspecified failure"}`;
 }
 
 function validValidationFailure(value: unknown): boolean {
