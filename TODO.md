@@ -106,8 +106,6 @@ behind:
 - **`proof-tree.json`'s `selection` value** changed from `"random"` to
   `"fallback"`. Nothing in this repo or lax-website reads it; out-of-tree
   tooling would break.
-- **`lax rekey` leaves a stale `paper.pdf`/`paper-web.tar`** in the folder
-  after renumbering (it removes `build-output.json` only).
 
 ## Pipeline simplification: rolled out and closed, 2026-08-07
 
@@ -347,6 +345,18 @@ is `history/environments-roundtrip-20260904.md`. The epoch moved to v4.33.0
 and v4.30.0 closed to new records on 2026-09-13; its support is now limited to
 records which already existed. What stays open:
 
+- **Port the registered v4.30.0 records to the epoch** (Clemens, in
+  `lax-submissions`; runbook step 2, bottom-up). Done 2026-09-13:
+  lax-13 → lax-865980 and lax-14 → lax-345067. Left, per
+  `https://laxarchive.org/index.json`: **lax-5**, **lax-12**, **lax-41**,
+  **lax-48**, **lax-49**. lax-48 is the one that carries a paper, so it
+  also wants the revalidation the reflow item above owes it — port and
+  revalidate are different records now, decide which the paper deploy
+  targets. The 35 v4.30.0 drafts need nothing: they predate `closedAt`
+  and may still submit where they are.
+  Both ports took two to three submits, each first attempt failing in
+  `compile-proofs`; budget for that, and read the failures out of the
+  report artifact (`lax submit` renders it) rather than the issue comment.
 - **Actions may open pull requests since 2026-09-04 evening** (Jan
   turned on "Allow GitHub Actions to create and approve pull requests" in
   the organization's Actions settings). The first admission's pull

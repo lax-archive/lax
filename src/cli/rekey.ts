@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { LAX_GENERATED_FILES } from "../submission-validation/generated-files.js";
 import { setManifestId } from "./manifest.js";
 import { validateScaffoldIdentity } from "./submission-id.js";
 
@@ -69,7 +70,17 @@ export function rekeySubmission(rootInput: string, oldId: string, newId: string)
     if (fs.existsSync(source)) fs.renameSync(source, target);
   }
   setManifestId(root, newId);
-  fs.rmSync(path.join(root, "build-output.json"), { force: true });
+  // Everything the previous build left in the root describes the folder under
+  // its old identity: the build output names the old packages, and a compiled
+  // paper.pdf and paper-web.tar were typeset from the markers this rekey just
+  // renumbered — and are opaque payload, so the substitution above could not
+  // move them with it. Drop the list rather than the one name that existed
+  // when this line was written; the paper layer added the other two, and
+  // `lax port` renumbering a paper-bearing record into a fresh id is exactly
+  // where a stale one is served as if it were the new submission's.
+  for (const name of LAX_GENERATED_FILES.root) {
+    fs.rmSync(path.join(root, name), { force: true });
+  }
   validateScaffoldIdentity(root, newId);
 }
 

@@ -66,6 +66,28 @@ describe("rekeying a submission folder", () => {
     ]);
   });
 
+  it("drops every generated file the old identity's build left in the root", () => {
+    // `lax port` rekeys the folder it just cloned into a fresh id, so whatever
+    // the ported record's own build wrote is left behind describing a
+    // submission this folder no longer is. paper.pdf and paper-web.tar are
+    // opaque payload — the substitution above cannot renumber them — so a
+    // survivor is the *previous* submission's typeset paper sitting under the
+    // new id, which `lax serve` would show as this one's.
+    const root = makeSubmission("lax-123456", temporary("lax-rekey-"), {
+      "manifest.yaml": manifest("lax-123456") + PAPER_BLOCK,
+      "paper/main.tex": "% lax begin lax-123456\nThe submission.\n% lax end\n",
+      "build-output.json": '{"submission":"lax-123456"}\n',
+    });
+    fs.writeFileSync(path.join(root, "paper.pdf"), FIGURE);
+    fs.writeFileSync(path.join(root, "paper-web.tar"), FIGURE);
+
+    rekeySubmission(root, "lax-123456", "lax-654321");
+
+    for (const name of ["build-output.json", "paper.pdf", "paper-web.tar"]) {
+      expect(fs.existsSync(path.join(root, name))).toBe(false);
+    }
+  });
+
   it("renumbers the markers of an offline placeholder scaffold", () => {
     // `lax-0`/`Lax0`/`Lax0Proofs` are legal mark ids while a folder is still
     // the offline placeholder; the first submit renumbers the folder, and the
