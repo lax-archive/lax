@@ -346,6 +346,20 @@ is `history/environments-roundtrip-20260904.md`. The epoch moved to v4.33.0
 and v4.30.0 closed to new records on 2026-09-13; its support is now limited to
 records which already existed. What stays open:
 
+- **The v4.33.0 port of Jan's lax-submissions chain** (word-ram,
+  ram-linear-time, refinement-tower, ND-MC, lax-introduction in place;
+  lax-264807 ⊃ lax-5 and lax-768004 ⊃ lax-48 as successors) is green
+  locally on lax-submissions branch `claude/port-ndmc-latest-epoch-0slpbd`
+  and awaits the bottom-up resubmission from a machine with submit rights
+  (`plans/port-v4.33/FINISH.md` there). Two CLI fixes came out of it
+  (`lax port` accepts pre-six-digit ids and follows a repointed require
+  into the sources); one open observation: lax-67's `supersedes: lax-13`
+  was refused (`supersedes-taken`, lax-865980 holds the slot) — decide
+  which v4.33.0 word RAM survives.
+- `test/unit/doctor.test.ts` "says everything is ready" fails in a web
+  container with a second environment provisioned (`1 note` instead of
+  `Everything is ready.`, on `main` too, 2026-09-14): the test reads
+  machine state one row does not fake. Find the row and fake it.
 - **Actions may open pull requests since 2026-09-04 evening** (Jan
   turned on "Allow GitHub Actions to create and approve pull requests" in
   the organization's Actions settings). The first admission's pull
