@@ -261,8 +261,14 @@ half, which is the first part of this that the spec can see.
   fields to the target environment (default: the epoch), adds `supersedes:
   lax-N`, and repoints every cross-submission require at the dependency's
   own port — the member of that dependency's supersedes chain that lives in
-  the target environment, found in the local copy. A dependency with no
-  such member keeps its pin and is named ("port lax-M first"), so ports
+  the target environment, found in the local copy — and follows each
+  repointed require into the sources with the same prefix-guarded
+  substitution the rekey uses (2026-09-14, after lax-5's port failed at its
+  first `import Lax12.…`; the same day the six-digit rule stopped being
+  applied to the id a port leaves, which had refused every pre-allocation
+  record). A dependency with no
+  such member keeps its pin and its spellings and is named ("port lax-M
+  first"), so ports
   flow bottom-up exactly as the chain workflow does. It refuses a record
   already in the target environment. No Lean is ported: the author fixes
   the sources and submits, and the result is an ordinary successor that the

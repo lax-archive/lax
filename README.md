@@ -374,11 +374,14 @@ in one dependency graph), rewrites both `lean-toolchain` files, both lakefiles'
 mathlib `rev` and the manifest's two version fields to the target environment,
 adds `supersedes: lax-N`, and repoints every cross-submission require at the
 dependency's own port — found by walking the supersedes chain in the local
-`~/.lax/lax-database` copy. A dependency with no port yet keeps its existing
-pin and is named ("port lax-M first"), so ports flow bottom-up exactly as the
-chain workflow does. It is scaffolding only: no Lean is ported, and `lax build`
-and `lax submit` are the author's next steps. It refuses a record already in
-the target environment.
+`~/.lax/lax-database` copy — following each repointed require into the
+sources (imports, `open`s, qualified names, prose spell the port's package
+afterwards). A dependency with no port yet keeps its existing pin and its
+spellings and is named ("port lax-M first"), so ports flow bottom-up exactly
+as the chain workflow does. It is scaffolding only: no Lean is ported, and
+`lax build` and `lax submit` are the author's next steps. It refuses a record
+already in the target environment, and accepts one whose id predates
+six-digit ids (lax-5).
 
 `lax generate-prooftree lax-N` reads the local Archive database, selects one
 recursively grounded proof for each reachable statement when possible, and
