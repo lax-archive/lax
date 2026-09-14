@@ -7,6 +7,24 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
+## Private review submissions (review-plan.md — designed 2026-09-14)
+
+Passcode-protected drafts for conference peer review. The plan is
+`review-plan.md`; nothing is implemented. Next:
+
+- **[Jan] Answer the plan's open questions**: one Review Publisher App
+  with several installations or one App per repository; retention;
+  whether the larger runner is decided by a stage-0 memory measurement;
+  whether `lax review submit` should insist on `anonymous: true`.
+- **Stage 0 spike** (`spike/review/`): the platform facts the plan marks
+  *verify* — gist creation with the CLI App's user token and the gist
+  file size cap, anonymous fetch of a secret gist commit,
+  `repository_dispatch` into a private repository, one-day artifact
+  retention, whether a standard private runner can validate a real
+  submission, the service-worker loader under the site CSP.
+- Stages 1–6 follow the spike; stage 5 is a rehearsal-script variant
+  with a scratch closed repository before anything touches production.
+
 ## Stability pass 2026-09-07: what it owes
 
 Landed on `claude/lax-repo-improvements-qruciz` (compile thread budget
