@@ -1,4 +1,4 @@
-# Private review submissions — plan
+# Private submissions — plan
 
 Status: designed 2026-09-14 (Jan and an agent session, this document is
 the record). Nothing is implemented. The platform facts marked *verify*

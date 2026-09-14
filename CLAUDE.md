@@ -58,7 +58,7 @@ inferring intent from the current code.
   the Jan-owned gates — fork repo, docker smoke, rehearsal, renderer
   release, round trip — are in TODO.md. Both plans retire to `history/`
   after the round trips.
-- **review-plan.md** — private, passcode-protected review submissions
+- **private-submissions-plan.md** — private, passcode-protected submissions
   for conference peer review: the unchanged pipeline run as a second
   deployment in one closed repository, source packed and encrypted by the
   CLI to a lax review key and deposited in a secret gist, sealed commands

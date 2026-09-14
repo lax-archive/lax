@@ -7,10 +7,10 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
-## Private review submissions (review-plan.md — designed 2026-09-14)
+## Private submissions (private-submissions-plan.md — designed 2026-09-14)
 
 Passcode-protected drafts for conference peer review. The plan is
-`review-plan.md`; nothing is implemented. Next:
+`private-submissions-plan.md`; nothing is implemented. Next:
 
 - **[Jan] Answer the plan's open questions**: one Review Publisher App
   with several installations or one App per repository; retention;
