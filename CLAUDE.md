@@ -28,8 +28,8 @@ inferring intent from the current code.
 ## The documents and their roles
 
 - **spec.md** — the normative starting point. Do **not** edit it unless
-  explicitly asked; Jan reconciles it manually. (One unreconciled agent
-  edit exists — see the 2026-08-05 spec-notes entry.)
+  explicitly asked; Jan reconciles it manually (last full reconciliation
+  2026-09-14).
 - **spec_conceptdialect.md** — normative companion specifying the concept
   dialect and its gate; same rule. **spec_conceptdialect_draft.md** is the
   proposed successor, awaiting Jan's reconciliation.
@@ -80,7 +80,7 @@ inferring intent from the current code.
   `gc-captures` remain open in TODO.md.
 - **one-axiom-plan.md** — the old one-statement-per-concept design. The
   bound was lifted on 2026-08-06 (a concept declares any number of
-  statements; see the spec-notes entry), and the plan document was deleted
+  statements), and the plan document was deleted
   in `edf2e70`; it survives only in git history.
 - **README.md** — user-facing status, trust model, and command table.
 - **assets/instructions.md** — the author-facing guide to creating a
@@ -159,7 +159,7 @@ first, before the lean cache restore and host provisioning, then Compile →
 Replay → Inspect sequential through one container runner. Both publish jobs
 dispatch the Website rebuild themselves, so both App keys live in the
 `lax-database-publish` environment (trust rule 1 is the surviving invariant;
-see the 2026-08-07 spec-notes entry). The author's channel for validation
+see spec.md, "Website dispatch"). The author's channel for validation
 detail is the report artifact, which `lax submit` downloads and renders
 (`src/cli/run-artifacts.ts`); issue comments are short outcome records with
 the hidden markers.

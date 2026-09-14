@@ -2,7 +2,7 @@
 
 Status: designed 2026-08-14; the issue-scoped verbs (`revalidate`,
 `delete`, `reset-draft`, `owners`) and a local driver landed 2026-09-04
-(spec-notes entry of that date; `scripts/admin/README.md` is the manual).
+(spec.md, "Maintainer actions"; `scripts/admin/README.md` is the manual).
 What landed differs from the text below in three places, recorded here
 rather than rewritten so the reasoning stays legible:
 
@@ -83,7 +83,7 @@ Issue-scoped (`/lax admin <verb>`):
   acyclicity of supersedes chains is *proved by* registered-record
   immutability (a claim binds only against an already-registered target, so
   registration order strictly decreases along any chain — see the
-  2026-08-23 spec-notes entry). reset-draft breaks that premise: demote B,
+  spec.md, "Successors"). reset-draft breaks that premise: demote B,
   re-submit it claiming its own successor A, and every one-hop check passes
   at re-registration while A↔B is now a cycle. When this verb lands, its
   re-registration path must additionally walk the target's chain and refuse
@@ -146,5 +146,5 @@ publish — not yet.
 Admin verbs are a deliberate deviation from spec.md's lifecycle:
 registered-is-forever and delete-is-permanent each gain the asterisk
 *except by maintainer action, publicly logged on the submission issue*.
-Record this in spec-notes.md when implementation lands, alongside the
+Recorded in spec.md (Lifecycle, Actions) on 2026-09-14, alongside the
 abuse-stance decision it partially implements.

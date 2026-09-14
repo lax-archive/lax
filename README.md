@@ -52,7 +52,7 @@ one dependency graph and keep old citations meaningful. A submission that
 builds on superseded work keeps building — its requires are rev-pinned — and
 `lax build`, `lax submit`, and `lax register` say that a newer version exists
 rather than refusing anything. Details and accepted
-limitations: spec-notes.md, "Versioning: `supersedes` successor chains".
+limitations: spec.md, "Successors".
 
 **Presentation metadata.** A manifest may carry the optional top-level
 booleans `unlisted` and `anonymous`. `unlisted: true` asks discovery surfaces
@@ -361,7 +361,7 @@ report, and `paper.web: false` in the manifest opts out. The website's
 paper page shows both surfaces — the reflow rendering at the reader's
 width, and the as-printed PDF behind a toggle — with a card for every
 marked passage. The author-facing contract is in `assets/instructions.md`, the
-proposed spec amendment in spec-notes.md (2026-09-02); the design records
+rules in spec.md ("Papers"); the design records
 are `paper-plan.md` and `paper-web-plan.md` (all code stages are
 implemented; the rehearsal, renderer release, and production round trips
 are pending — see TODO.md).

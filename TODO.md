@@ -33,7 +33,8 @@ verbs, the instructions' two-run first submit). Still owed before it ships:
 ## Submission presentation flags (core implemented 2026-09-09; Website pending)
 
 The `lax` validator and trusted artifact parser now accept and retain the
-optional manifest booleans `unlisted` and `anonymous`; see `spec-notes.md`.
+optional manifest booleans `unlisted` and `anonymous`; see spec.md,
+manifest.yaml.
 The remaining work belongs to `lax-website`:
 
 - Add both fields to the Website manifest type. Exclude `unlisted: true`
@@ -54,8 +55,8 @@ The remaining work belongs to `lax-website`:
 
 The record is `history/audit-20260903.md`. All three fix-now findings and
 all eleven fix-soon findings are fixed, each with the test that would have
-caught it; the spec-relevant behaviour changes are in spec-notes.md
-(2026-09-04). What the audit deliberately left, and what the fixes left
+caught it; the spec-relevant behaviour changes are folded into spec.md.
+What the audit deliberately left, and what the fixes left
 behind:
 
 - **Production checked 2026-09-04.** lax-3's stale-dependency failure
@@ -172,8 +173,8 @@ PDF the archive derives a reflowable web view (ReflowTeX, non-blocking,
 `web: false` opts out), and the site's paper page shows both surfaces with
 a card per marked passage. All code stages of both plans are merged
 (lax-website 2026-09-03 morning, lax the same day); the author contract
-is in instructions.md, the proposed spec amendments in spec-notes.md
-(2026-09-02, 2026-09-08). The fork `lax-archive/reflowtex` exists (`lax`
+is in instructions.md, the rules in spec.md ("Papers"). The fork
+`lax-archive/reflowtex` exists (`lax`
 branch, one commit per changed file) and the pin points at it. Jan waived
 the scratch-repo rehearsal for the 2026-09-03 merge ("finish all the
 way"); the standing rule itself stands for the next Actions-side change.
@@ -357,7 +358,7 @@ records which already existed. What stays open:
 
 `/lax admin revalidate|delete|reset-draft|owners` are live in the control
 plane (numeric-id allowlist `ADMIN_GITHUB_IDS`, gates repeated
-credential-free in both publishers; spec-notes entry 2026-09-04), driven
+credential-free in both publishers; spec.md, "Maintainer actions"), driven
 from a maintainer's machine by `npm run admin -- …` (`scripts/admin/`,
 the maintainer's own `gh` token, comments and reads only). Still owed:
 
@@ -382,22 +383,9 @@ the maintainer's own `gh` token, comments and reads only). Still owed:
 
 ## spec.md reconciliation queue (Jan, manually)
 
-- Loginless `lax init`, locally generated six-digit ids, manifest issue
-  bindings, and automatic `lax-0` migration (spec-notes, 2026-09-03): the CLI
-  and Actions/Init descriptions still assume issue-number-derived ids.
-- Versioning via `supersedes` successor chains (spec-notes, 2026-08-23):
-  the optional manifest key, what registration additionally binds and
-  checks, and the site generator's derived chain views.
-- The "Continuous preview while authoring" subsection an agent inserted into
-  this repo's spec.md (see spec-notes, 2026-08-05): bless or strip.
-- Auth model: GitHub App user tokens replaced the OAuth device flow the spec
-  era assumed (spec-notes, 2026-08-05).
-- Submission deletion (carried from old repo): Lifecycle still lists three
-  states / five transitions; `lax print spec` contradicts the implemented
-  tombstone flow.
-- Sibling path requires were *removed* (spec still needs the old feature
-  folded in or the prohibition recorded instead), and multiple statements
-  per concept were restored.
+Empty since 2026-09-14: every spec-notes entry up to that date is folded in
+and removed. Still open beside spec.md: spec_conceptdialect_draft.md
+(spec-notes, 2026-07-29).
 
 ## Author frictions (from hiccups.md, still open)
 
