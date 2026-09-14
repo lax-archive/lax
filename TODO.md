@@ -7,6 +7,44 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
+## CLI findings from the Transducers v4.33.0 port (2026-09-14)
+
+What the port of the eight *Transducers* drafts (`bojanczyk/transducer-book`,
+`lax/`) from v4.30.0 to the epoch ran into, in this repository's CLI. The
+port itself is on lax-submissions branch
+`claude/transducers-latest-epoch-port-jiv5kl` (`plans/transducers/README.md`).
+
+- **`lax port` cannot port a draft.** It scaffolds a successor with
+  `supersedes: lax-N`, and a supersedes claim binds only against a
+  registered target — `lax submit` refuses a claim that can never bind, so
+  for a draft the command's output is unsubmittable. A draft is updated by
+  resubmitting, and the publisher's only environment gate on a resubmission
+  is closure, so the port of a draft is an *in-place* pin move: manifest
+  `leanVersion`/`mathlibVersion`, both `lean-toolchain` files, both
+  lakefiles' mathlib `rev`, requires left for the chain workflow. Either
+  `lax port` should do that when the record is a draft (same folder, same
+  id, no `supersedes`), or refuse a draft and say so. The port did it with
+  `sed`.
+- **`lax build` has no local loop for a chain being moved.** A dependent's
+  requires pin records that are still in the old environment (or not yet
+  resubmitted), so resolution refuses before anything compiles, and the only
+  way to build the chain locally is a direct `lake build` behind hand-written
+  `lake-manifest.json` + `.lake/package-overrides.json` (lax-submissions'
+  `.claude/sibling-overrides.sh`; the book's `lax/tools/local-overrides.py`,
+  which also seeds the warm-store entries so it works before any `lax
+  build`). A `lax build --sibling <folder>…` (or a lax-owned overrides file
+  it reads) would make the chain workflow's local loop first-class.
+- **`lax doctor` from source reports the website renderer missing** ("the
+  bundle that draws the pages is missing → reinstall the CLI package"). True
+  for `npm run lax`, where the page-builder bundle is never assembled, but the
+  fix it names is wrong for a source checkout; say "run page-builder:fetch"
+  (or skip the row) when running from source.
+- **A second environment needs about 10 GB and the disk statement is the
+  only warning.** On a 20 GB container with the v4.30.0 store (7.5 GB)
+  already present, the v4.33.0 store fit only after deleting the old one
+  (`chmod -R u+w` first — the store is sealed read-only). `lax doctor` could
+  offer to remove a closed environment's store when disk is short.
+
 ## Stability pass 2026-09-07: what it owes
 
 Landed on `claude/lax-repo-improvements-qruciz` (compile thread budget
