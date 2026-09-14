@@ -10,28 +10,27 @@ rewrite-plan.md (fully executed).
 ## Private submissions (private-submissions-plan.md — designed 2026-09-14)
 
 Passcode-protected drafts for conference peer review, archive-validated
-in one closed repository, served encrypted from a review origin. The
-plan is `private-submissions-plan.md` (version 2, after four independent
-reviews the same day — their changes are recorded at its end); nothing
-is implemented. Next:
+in one closed repository. The plan is `private-submissions-plan.md`
+(version 3, after two review rounds the same day — their changes are
+recorded at its end); nothing is implemented. Next:
 
-- **[Jan] The plan's open questions**: the GitHub Team plan as a
-  precondition (private-repository environments and larger runners need
-  it); retention 180 days from the last submit or `extend`; insisting on
-  `anonymous: true` unless `--named`; and scope — the whole plan, or the
-  cheaper `lax export` first to see whether venues want an
-  archive-attested verdict before acceptance.
-- **Stage 0 spike** (`spike/review/`): the platform facts the plan marks
-  *verify* — gist creation with a `Gists: write` user token and the
-  per-file size, anonymous fetch of an unadvertised commit of a *secret*
-  gist, `repository_dispatch` into a private repository, whether such a
-  run can write the Actions cache, whether the standard 2-core private
-  runner validates a real submission, a loader and service-worker
-  prototype with the relative-link mapping on three browsers, and the
-  review origin's Pages deploy. Also pick the review tar cap.
+- **[Jan] The Worker decision** first: the plan as written is the
+  no-server design (issues, a secret gist, sealed commands, encrypted
+  static pages behind a service worker on a separate origin); its
+  "Worker alternative" section shows that one stateless Cloudflare
+  Worker removes the intake and viewing halves of that machinery with
+  the trust core unchanged, and recommends it. This decides stages 1, 3
+  and 4.
+- **[Jan] The other open questions**: the GitHub Team plan as a
+  precondition ($4 per seat per month, every organization member is a
+  seat; private-repository environments and larger runners need it);
+  retention 180 days from the last submit or `extend` with a 365-day
+  ceiling; insisting on `anonymous: true` unless `--named`; and scope —
+  the whole plan, or the cheaper `lax export` first.
+- **Stage 0 spike** (`spike/review/`): the facts the plan marks
+  *verify* and the constants table it owes.
 - Stages 1–6 follow the spike; stage 5 is a rehearsal-script variant
-  with scratch repositories for the closed repository, the review
-  database and the review origin, before anything touches production.
+  with scratch repositories before anything touches production.
 
 ## Stability pass 2026-09-07: what it owes
 

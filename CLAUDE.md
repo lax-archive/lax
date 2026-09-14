@@ -61,13 +61,14 @@ inferring intent from the current code.
 - **private-submissions-plan.md** — private, passcode-protected submissions
   for conference peer review: the unchanged pipeline run as a second
   deployment in one closed repository, source packed and encrypted by the
-  CLI to a lax review key and deposited in a secret gist, sealed commands
-  on public issues, and the same page-builder's render served encrypted
-  from a separate review origin behind a client-side loader, with the
-  outcome file there as the only result channel. Designed 2026-09-14 and
-  revised the same day after four independent reviews (recorded at the
-  end of the plan); the stage-0 spike is next and the open questions —
-  Team plan, retention, anonymity, scope — are Jan's.
+  CLI and deposited in a secret gist, plaintext-envelope-plus-sealed-box
+  commands on public issues, and the same page-builder's render served
+  encrypted from a separate review origin behind a client-side loader,
+  with per-command outcome files there as the only result channel.
+  Designed 2026-09-14, version 3 after two review rounds the same day
+  (recorded at the end of the plan). One decision precedes the stage-0
+  spike: whether one stateless Worker may replace the intake and viewing
+  halves — the plan's "Worker alternative" section recommends it.
 - **history/environments-plan.md** — several Lean/mathlib versions: a
   yearly *epoch* as the default, monthly mathlib `vX.Y.0` release tags as
   admitted environments, closed rows retained for existing records only,
