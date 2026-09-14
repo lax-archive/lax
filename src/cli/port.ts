@@ -29,7 +29,7 @@ import { databaseDirectory, tryRefreshDatabase } from "./database.js";
 import { diskCostLines, requestedEnvironment } from "./environments.js";
 import { setManifestEnvironment, setManifestSupersedes } from "./manifest.js";
 import { recordSubmission } from "./registry.js";
-import { rekeySubmission } from "./rekey.js";
+import { rekeySubmission, renameSpellings } from "./rekey.js";
 import { ensureEmptyFolder } from "./scaffold.js";
 import { generateSubmissionId } from "./submission-id.js";
 import * as ui from "./ui.js";
@@ -100,6 +100,13 @@ export async function portSubmission(
     rekeySubmission(root, id, newId);
     repointPins(root, target);
     repointed = repointRequires(root, archive, target);
+    // The sources spell a dependency the way its lakefile names it — imports,
+    // `open`s, qualified names, prose — so a repointed require is followed
+    // into the tree, the same substitution a rekey makes for the folder's own
+    // identity. A dependency left pinned keeps its spellings, coherently.
+    for (const done of repointed.repointed) {
+      renameSpellings(root, submissionIdForPackage(done.was)!, submissionIdForPackage(done.now)!);
+    }
     setManifestEnvironment(root, target);
     setManifestSupersedes(root, id);
     recordSubmission(root);
@@ -118,7 +125,9 @@ export async function portSubmission(
   ui.line(ui.bold(`${newId} · ${target.id}`) + ui.dim(` · supersedes ${id}`));
   ui.faint(ui.tilde(root));
   for (const done of repointed.repointed) {
-    notes.add(`${done.was} is ${done.now} in ${target.id} — the require now points there.`);
+    notes.add(
+      `${done.was} is ${done.now} in ${target.id} — the require and every spelling in the sources now point there.`,
+    );
   }
   for (const blocked of repointed.blocked) {
     notes.add(
@@ -247,9 +256,16 @@ function repointRequires(
     }
     fs.writeFileSync(lakefile, content);
   }
-  // Both lakefiles name the same dependency once each; the author reads one
-  // line per dependency, not one per package.
-  result.repointed = unique(result.repointed, (entry) => `${entry.was}→${entry.now}`);
+  // Both lakefiles name the same dependency once each, and a proofs require
+  // is the same dependency as its concepts require; the author reads one line
+  // per dependency, and the source rename runs once per dependency.
+  result.repointed = unique(
+    result.repointed.map((entry) => ({
+      was: entry.was.replace(/Proofs$/u, ""),
+      now: entry.now.replace(/Proofs$/u, ""),
+    })),
+    (entry) => `${entry.was}→${entry.now}`,
+  );
   result.blocked = unique(result.blocked, (entry) => entry.package);
   return result;
 }

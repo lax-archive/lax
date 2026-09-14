@@ -25,19 +25,46 @@ export function rekeySubmission(rootInput: string, oldId: string, newId: string)
     }
   }
 
-  // Every file of the tree is a candidate, and its own bytes decide whether it
-  // holds text: which file types a submission spells its identity in is
-  // open-ended, so a list of extensions only ever names the ones that existed
-  // when it was written. The paper layer is what such a list missed — its
-  // `% lax begin Lax261.Treewidth` markers name the concept and proof
-  // packages, and a marker left on the old package survives into the next
-  // build as a mark against a package the submission no longer has, reported
-  // as an unrequired package rather than as a stale id. manifest.yaml is the
-  // one exception: setManifestId below rewrites its id key through the YAML
-  // document, so the whole-file substitution must not touch it first.
+  renameSpellings(root, oldId, newId, { skipManifest: true });
+  for (const [source, target] of renames) {
+    if (fs.existsSync(source)) fs.renameSync(source, target);
+  }
+  setManifestId(root, newId);
+  fs.rmSync(path.join(root, "build-output.json"), { force: true });
+  validateScaffoldIdentity(root, newId);
+}
+
+/**
+ * Rewrite every spelling of the submission `oldId` in the tree as `newId`:
+ * the proofs package, the concepts package, and the id itself — the three
+ * spellings a build resolves by name (Lean imports and namespaces, lakefile
+ * and lake-manifest names, paper marker ids) and that prose names a
+ * submission by. A rekey applies it to the folder's own identity; a port
+ * applies it to each dependency it repointed at that dependency's port, so
+ * the sources import the package the requires now name.
+ *
+ * Every file of the tree is a candidate, and its own bytes decide whether it
+ * holds text: which file types a submission spells its identity in is
+ * open-ended, so a list of extensions only ever names the ones that existed
+ * when it was written. The paper layer is what such a list missed — its
+ * `% lax begin Lax261.Treewidth` markers name the concept and proof
+ * packages, and a marker left on the old package survives into the next
+ * build as a mark against a package the submission no longer has, reported
+ * as an unrequired package rather than as a stale id. `skipManifest` is the
+ * rekey's one exception: setManifestId rewrites its id key through the YAML
+ * document, so the whole-file substitution must not touch it first.
+ */
+export function renameSpellings(
+  root: string,
+  oldId: string,
+  newId: string,
+  options: { skipManifest?: boolean } = {},
+): void {
+  const oldPackage = `Lax${oldId.slice("lax-".length)}`;
+  const newPackage = `Lax${newId.slice("lax-".length)}`;
   const rewrites: Array<{ filename: string; content: string }> = [];
   for (const filename of submissionFiles(root)) {
-    if (filename === path.join(root, "manifest.yaml")) continue;
+    if (options.skipManifest === true && filename === path.join(root, "manifest.yaml")) continue;
     const stat = fs.lstatSync(filename);
     if (!stat.isFile() || stat.size > MAX_REKEY_FILE_BYTES) continue;
     const bytes = fs.readFileSync(filename);
@@ -52,11 +79,7 @@ export function rekeySubmission(rootInput: string, oldId: string, newId: string)
     // The substitution is anchored on the three spellings of the identity
     // itself and on nothing else: the proofs package first, since it begins
     // with the concepts package and would otherwise be cut in half, then the
-    // concepts package, then the submission id. Those are the spellings a
-    // build resolves by name — Lean imports and namespaces, lakefile and
-    // lake-manifest names, and paper marker ids, which spell a package the
-    // way Lean does. Prose naming the folder's own id is renamed with it,
-    // which is what renumbering a folder means.
+    // concepts package, then the submission id.
     const changed = content
       .replaceAll(`${oldPackage}Proofs`, `${newPackage}Proofs`)
       // A six-digit id can be the prefix of an older seven-digit id. Do not
@@ -65,14 +88,7 @@ export function rekeySubmission(rootInput: string, oldId: string, newId: string)
       .replace(new RegExp(`${escapeRegExp(oldId)}(?![0-9])`, "gu"), newId);
     if (changed !== content) rewrites.push({ filename, content: changed });
   }
-
   for (const rewrite of rewrites) atomicWrite(rewrite.filename, rewrite.content);
-  for (const [source, target] of renames) {
-    if (fs.existsSync(source)) fs.renameSync(source, target);
-  }
-  setManifestId(root, newId);
-  fs.rmSync(path.join(root, "build-output.json"), { force: true });
-  validateScaffoldIdentity(root, newId);
 }
 
 function escapeRegExp(value: string): string {

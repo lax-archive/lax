@@ -64,6 +64,8 @@ function publish(
     supersedes?: string;
     /** Cross-submission git requires to add to the proofs lakefile. */
     requires?: Array<{ name: string; git: string; rev: string; subDir: string }>;
+    /** Extra files, relative to the folder. */
+    files?: Record<string, string>;
   } = {},
 ): { repository: string; commit: string } {
   const repository = path.join(repositories, id);
@@ -78,6 +80,10 @@ function publish(
       `\n[[require]]\nname = "${requirement.name}"\ngit = "${requirement.git}"\n` +
         `rev = "${requirement.rev}"\nsubDir = "${requirement.subDir}"\n`,
     );
+  }
+  for (const [relative, content] of Object.entries(options.files ?? {})) {
+    fs.mkdirSync(path.dirname(path.join(repository, relative)), { recursive: true });
+    fs.writeFileSync(path.join(repository, relative), content);
   }
   git(["init", "--quiet", "--initial-branch=main"], repository);
   git(["add", "-A"], repository);
@@ -135,8 +141,14 @@ describe("lax port", () => {
     publish("lax-100003", {
       requires: [
         { name: "Lax100001", git: ported.repository, rev: ported.commit, subDir: "concepts" },
+        { name: "Lax100001Proofs", git: ported.repository, rev: ported.commit, subDir: "proofs" },
         { name: "Lax100004", git: stranded.repository, rev: stranded.commit, subDir: "concepts" },
       ],
+      files: {
+        "proofs/Lax100003Proofs/Main.lean":
+          "import Lax100001.Basic\nimport Lax100001Proofs.Lemmas\nimport Lax100004.Basic\n" +
+          "open Lax100001 in\n-- the lax-100001 order, beside lax-100004's\ntheorem t := Lax100001.Basic.t\n",
+      },
     });
     const destination = path.join(home, "ported");
     const log = quiet();
@@ -177,7 +189,22 @@ describe("lax port", () => {
     expect(proofs).not.toContain('name = "Lax100001"');
     expect(proofs).toContain('name = "Lax100004"');
     expect(proofs).toContain(`rev = "${stranded.commit}"`);
+    // The sources follow the repointed require — imports, opens, qualified
+    // names, prose — and keep spelling the dependency that stayed pinned.
+    expect(proofs).toContain('name = "Lax100002Proofs"');
+    expect(proofs).not.toContain("Lax100001");
+    const main = fs.readFileSync(
+      path.join(destination, "proofs", `${packageName}Proofs`, "Main.lean"),
+      "utf8",
+    );
+    expect(main).toBe(
+      "import Lax100002.Basic\nimport Lax100002Proofs.Lemmas\nimport Lax100004.Basic\n" +
+        "open Lax100002 in\n-- the lax-100002 order, beside lax-100004's\ntheorem t := Lax100002.Basic.t\n",
+    );
     const output = printed(log);
+    expect(output).toContain(
+      "Lax100001 is Lax100002 in v4.99.0 — the require and every spelling in the sources now point there.",
+    );
     expect(output).toContain("Lax100004 has no v4.99.0 version yet, so its require is unchanged.");
     expect(output).toContain(
       "Port lax-100004 first — then rerun this port into a fresh folder, or repoint it by hand.",
