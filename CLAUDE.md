@@ -62,10 +62,12 @@ inferring intent from the current code.
   for conference peer review: the unchanged pipeline run as a second
   deployment in one closed repository, source packed and encrypted by the
   CLI to a lax review key and deposited in a secret gist, sealed commands
-  and results on public issues, pages rendered by the same page-builder
-  and served encrypted from the existing Pages tree behind a client-side
-  loader. Designed 2026-09-14; the stage-0 spike (platform facts marked
-  *verify*) is next. The open questions are at the end of the plan.
+  on public issues, and the same page-builder's render served encrypted
+  from a separate review origin behind a client-side loader, with the
+  outcome file there as the only result channel. Designed 2026-09-14 and
+  revised the same day after four independent reviews (recorded at the
+  end of the plan); the stage-0 spike is next and the open questions —
+  Team plan, retention, anonymity, scope — are Jan's.
 - **history/environments-plan.md** — several Lean/mathlib versions: a
   yearly *epoch* as the default, monthly mathlib `vX.Y.0` release tags as
   admitted environments, closed rows retained for existing records only,

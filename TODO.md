@@ -9,21 +9,29 @@ rewrite-plan.md (fully executed).
 
 ## Private submissions (private-submissions-plan.md — designed 2026-09-14)
 
-Passcode-protected drafts for conference peer review. The plan is
-`private-submissions-plan.md`; nothing is implemented. Next:
+Passcode-protected drafts for conference peer review, archive-validated
+in one closed repository, served encrypted from a review origin. The
+plan is `private-submissions-plan.md` (version 2, after four independent
+reviews the same day — their changes are recorded at its end); nothing
+is implemented. Next:
 
-- **[Jan] Answer the plan's open questions**: one Review Publisher App
-  with several installations or one App per repository; retention;
-  whether the larger runner is decided by a stage-0 memory measurement;
-  whether `lax review submit` should insist on `anonymous: true`.
+- **[Jan] The plan's open questions**: the GitHub Team plan as a
+  precondition (private-repository environments and larger runners need
+  it); retention 180 days from the last submit or `extend`; insisting on
+  `anonymous: true` unless `--named`; and scope — the whole plan, or the
+  cheaper `lax export` first to see whether venues want an
+  archive-attested verdict before acceptance.
 - **Stage 0 spike** (`spike/review/`): the platform facts the plan marks
-  *verify* — gist creation with the CLI App's user token and the gist
-  file size cap, anonymous fetch of a secret gist commit,
-  `repository_dispatch` into a private repository, one-day artifact
-  retention, whether a standard private runner can validate a real
-  submission, the service-worker loader under the site CSP.
+  *verify* — gist creation with a `Gists: write` user token and the
+  per-file size, anonymous fetch of an unadvertised commit of a *secret*
+  gist, `repository_dispatch` into a private repository, whether such a
+  run can write the Actions cache, whether the standard 2-core private
+  runner validates a real submission, a loader and service-worker
+  prototype with the relative-link mapping on three browsers, and the
+  review origin's Pages deploy. Also pick the review tar cap.
 - Stages 1–6 follow the spike; stage 5 is a rehearsal-script variant
-  with a scratch closed repository before anything touches production.
+  with scratch repositories for the closed repository, the review
+  database and the review origin, before anything touches production.
 
 ## Stability pass 2026-09-07: what it owes
 
