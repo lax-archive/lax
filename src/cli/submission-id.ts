@@ -10,10 +10,19 @@ export function generateSubmissionId(
   return validateNewSubmissionId(`lax-${draw(100_000, 1_000_000)}`);
 }
 
-/** Catch identity drift before an issue is created and rekeying becomes expensive. */
-export function validateScaffoldIdentity(root: string, idInput: string): void {
+/**
+ * Catch identity drift before an issue is created and rekeying becomes
+ * expensive. `legacy` admits an archive id allocated before local allocation
+ * (lax-5, lax-13): a port or a rekey *starts* from the layout such a record
+ * has, and only the id it moves to owes the six-digit rule.
+ */
+export function validateScaffoldIdentity(
+  root: string,
+  idInput: string,
+  options: { legacy?: boolean } = {},
+): void {
   const id = normalizeSubmissionId(idInput, { placeholder: true });
-  if (id !== PLACEHOLDER_SUBMISSION_ID) validateNewSubmissionId(id);
+  if (id !== PLACEHOLDER_SUBMISSION_ID && options.legacy !== true) validateNewSubmissionId(id);
   const digits = id.slice("lax-".length);
   const packageName = `Lax${digits}`;
   const expected = [

@@ -14,6 +14,7 @@ import { scaffoldSubmission } from "../../src/cli/scaffold.js";
 import * as ui from "../../src/cli/ui.js";
 import { epoch } from "../../src/submission-validation/environments.js";
 import { withTestEnvironmentsAsync } from "../support/environments.js";
+import { makeSubmission } from "../support/submission-validation.js";
 import { removeTree } from "../support/tmp.js";
 
 /** The environment ported into: a Lean and a mathlib the epoch does not share,
@@ -67,7 +68,10 @@ function publish(
 ): { repository: string; commit: string } {
   const repository = path.join(repositories, id);
   fs.mkdirSync(repository, { recursive: true });
-  scaffoldSubmission(repository, id, `Submission ${id}`, epoch());
+  // The scaffold owes the six-digit rule; a legacy id (lax-5) takes the bare
+  // layout the archive's first records have.
+  if (/^lax-[1-9][0-9]{5}$/u.test(id)) scaffoldSubmission(repository, id, `Submission ${id}`, epoch());
+  else makeSubmission(id, repository);
   for (const requirement of options.requires ?? []) {
     fs.appendFileSync(
       path.join(repository, "proofs", "lakefile.toml"),
@@ -181,6 +185,35 @@ describe("lax port", () => {
     expect(output).toContain("The Lean is not ported: only the pins, the id, and the requires are.");
     // The git history of the source repository is not the new submission's.
     expect(fs.existsSync(path.join(destination, ".git"))).toBe(false);
+  });
+
+  it("ports a record whose id predates six-digit ids", async () => {
+    // The archive's first records are lax-3, lax-5, lax-11…; only the successor
+    // owes the six-digit rule, and a require on a longer id that starts with
+    // the old one (Lax55 beside Lax5) is not a spelling of it.
+    const other = publish("lax-55");
+    publish("lax-5", {
+      requires: [{ name: "Lax55", git: other.repository, rev: other.commit, subDir: "concepts" }],
+    });
+    const destination = path.join(home, "ported-legacy");
+    quiet();
+
+    const code = await withTestEnvironmentsAsync([TARGET], () =>
+      portSubmission("lax-5", destination, { env: TARGET.id }),
+    );
+
+    expect(code).toBe(0);
+    const manifest = fs.readFileSync(path.join(destination, "manifest.yaml"), "utf8");
+    const id = /^id: (lax-[1-9][0-9]{5})$/mu.exec(manifest)?.[1];
+    expect(id).toBeDefined();
+    expect(manifest).toContain("supersedes: lax-5\n");
+    const packageName = `Lax${id!.slice("lax-".length)}`;
+    expect(fs.existsSync(path.join(destination, "concepts", `${packageName}.lean`))).toBe(true);
+    expect(fs.existsSync(path.join(destination, "concepts", "Lax5.lean"))).toBe(false);
+    const proofs = fs.readFileSync(path.join(destination, "proofs", "lakefile.toml"), "utf8");
+    expect(proofs).toContain('name = "Lax55"');
+    expect(proofs).toContain(`name = "${packageName}"`);
+    expect(proofs).not.toMatch(/Lax5(?![0-9])/u);
   });
 
   it("refuses a record that is already in the target environment", async () => {

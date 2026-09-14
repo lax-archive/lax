@@ -8,7 +8,9 @@ const MAX_REKEY_FILE_BYTES = 4 * 1024 * 1024;
 /** Rewrite an unbound generated identity before any issue claims it. */
 export function rekeySubmission(rootInput: string, oldId: string, newId: string): void {
   const root = path.resolve(rootInput);
-  validateScaffoldIdentity(root, oldId);
+  // The old id only has to match the layout it is leaving: a port starts from
+  // a record that may predate six-digit ids (lax-5).
+  validateScaffoldIdentity(root, oldId, { legacy: true });
   const oldPackage = `Lax${oldId.slice("lax-".length)}`;
   const newPackage = `Lax${newId.slice("lax-".length)}`;
   const renames = [

@@ -66,6 +66,27 @@ describe("rekeying a submission folder", () => {
     ]);
   });
 
+  it("renumbers a record that predates six-digit ids, leaving a longer id that starts with it alone", () => {
+    // `lax port lax-5`: the old id is a legacy archive id, which only has to
+    // match the layout it is leaving; the six-digit rule binds the new one.
+    // `Lax55` is another submission and must survive the rename of `Lax5`.
+    const root = makeSubmission("lax-5", temporary("lax-rekey-"), {
+      "manifest.yaml": manifest("Lax5"),
+      "proofs/Lax5Proofs/Main.lean":
+        "import Lax5.Basic\nimport Lax55.Basic\nnamespace Lax5Proofs\nend Lax5Proofs\n",
+    });
+
+    rekeySubmission(root, "lax-5", "lax-654321");
+
+    const main = fs.readFileSync(path.join(root, "proofs", "Lax654321Proofs", "Main.lean"), "utf8");
+    expect(main).toBe(
+      "import Lax654321.Basic\nimport Lax55.Basic\nnamespace Lax654321Proofs\nend Lax654321Proofs\n",
+    );
+    expect(fs.readFileSync(path.join(root, "manifest.yaml"), "utf8")).toMatch(/^id: lax-654321$/mu);
+    expect(fs.existsSync(path.join(root, "concepts", "Lax654321.lean"))).toBe(true);
+    expect(fs.existsSync(path.join(root, "concepts", "Lax5.lean"))).toBe(false);
+  });
+
   it("renumbers the markers of an offline placeholder scaffold", () => {
     // `lax-0`/`Lax0`/`Lax0Proofs` are legal mark ids while a folder is still
     // the offline placeholder; the first submit renumbers the folder, and the
