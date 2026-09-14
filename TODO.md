@@ -39,6 +39,18 @@ port itself is on lax-submissions branch
   for `npm run lax`, where the page-builder bundle is never assembled, but the
   fix it names is wrong for a source checkout; say "run page-builder:fetch"
   (or skip the row) when running from source.
+- **`deriving Fintype` on an enum fails at the v4.33.0 pin.** A
+  nullary-constructor inductive with `deriving Fintype` is a hard error at
+  mathlib `db584cd6` (the handler's `mkFintypeEnum` emits a `rw` that Lean
+  4.33 rejects as type-incorrect at `implicit` transparency; reproduced
+  against bare mathlib, and it hit a *concept* file — the eight-letter
+  alphabet `Sym8` of `regular-combinators/concepts/Lax709149/Types.lean`).
+  `Fintype` is on the concept dialect's deriving whitelist, so authors will
+  meet this in the epoch. The workaround is `deriving DecidableEq` plus
+  `instance : Fintype T := derive_fintype% _` (the proxy-type path; needs
+  `Mathlib.Data.Fintype.Sum` imported). Worth a note in
+  `assets/instructions.md` or the epoch's admission record, and a check
+  whether the next mathlib tag fixes it.
 - **A second environment needs about 10 GB and the disk statement is the
   only warning.** On a 20 GB container with the v4.30.0 store (7.5 GB)
   already present, the v4.33.0 store fit only after deleting the old one
