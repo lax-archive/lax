@@ -51,6 +51,15 @@ port itself is on lax-submissions branch
   `Mathlib.Data.Fintype.Sum` imported). Worth a note in
   `assets/instructions.md` or the epoch's admission record, and a check
   whether the next mathlib tag fixes it.
+- **The 20-minute replay cap is at the edge for ordinary packages.**
+  `lax build --replay` of `pcp-undecidability` (24 Source modules, ~6.6k
+  lines, no heavy kernel work) replayed in 21m51s on a 4-CPU, 15 GB
+  machine at v4.33.0; Part D hit the cap once at v4.30.0. The cost is the
+  per-module mathlib environment import under `leanchecker`, not proofs,
+  so it scales with module count and with mathlib's growth per epoch.
+  Either the cap needs an environment-keyed measurement (the `limits`
+  field already exists per environment) or the replay should be per root
+  with fewer environment loads.
 - **A second environment needs about 10 GB and the disk statement is the
   only warning.** On a 20 GB container with the v4.30.0 store (7.5 GB)
   already present, the v4.33.0 store fit only after deleting the old one
