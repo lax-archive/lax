@@ -33,6 +33,13 @@ result with Lax. On a high level, this proceeds as follows.
   transitively, by any annotated proof theorem in the submission. The build is
   still valid, but remove the helper unless retaining it is intentional.
 
+Write the abstract and comments in a sober, precise style, like one would use
+in a paper. Double-check that the math will display well. Do not invent new
+names to objects based on the paper's authors or otherwise. Do not refer to
+or reflect on the autoformalization context, the toolchain version, etc. Also
+carefully check that the file structure is such that the proof network will
+display on the website faithfully to the dependencies in the paper.
+
 # Additional Info
 
 The first time you work with Lax, you want to run `lax print spec` to
