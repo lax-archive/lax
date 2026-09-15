@@ -382,6 +382,24 @@ the maintainer's own `gh` token, comments and reads only). Still owed:
   tombstone → pre-tombstone diff and a rule for the retired id),
   `verify` (the archive-level `lax doctor`), and `gc-captures`
   (unreferenced ghcr artifacts). `sweep` is `revalidate --all`.
+- **Pre-release database sanity check — stale dependency pins** (incident
+  2026-09-15): lax-271696, lax-62 and lax-3 were registered while their
+  `Lax808846` git requires still pinned 5a2645e, one commit behind the
+  registered lax-808846 @ 9394e53 (word-ram had been re-drafted and
+  registered after its dependents were submitted). Nothing caught it:
+  `build-output.json` records dependencies by name only
+  (`requiredByConcepts: ["Lax808846"]`), Register freezes without
+  re-running Resolution, and `lax register` prints no warning. Repaired
+  the same day with `reset-draft` → repin → resubmit → register. Before the
+  official release, the final database check (`verify`, or a one-off
+  script) must walk every registered record's frozen lakefiles and assert
+  that each cross-submission `rev` equals the dependency's *current*
+  canonical source commit, and that no registered record depends on a
+  draft. Then close the hole for good: Register re-runs Resolution against
+  the live snapshot, and — Jan's rule — **drafts are refused as
+  dependencies outright** (Resolution rejects a git require whose record
+  is a draft instead of admitting it with a warning), so a re-draft can
+  never leave a stale pin behind a registration.
 - **Deferred by design**: the plan's server-side two-phase confirm
   (`/lax admin confirm <preview-id>`) — the typed confirmation lives in
   the driver, as it does for `lax delete`; and an `admin.yml`
