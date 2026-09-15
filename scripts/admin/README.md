@@ -59,7 +59,10 @@ issue, not in the record.
 
 **reset-draft** — the inverse of registration; the record keeps its source
 and build output. Refused while a *registered* successor claims the record
-(the supersedes chain would lose its ordering proof).
+(the supersedes chain would lose its ordering proof) and while a
+*registered* record builds on it (a resubmit would move the source its
+dependent's frozen pin names — the stale-pin incident of 2026-09-15); a
+chain is reset top-down, dependents first.
 
 **owners** — replaces the list; the commenter need not be on it. Handles
 are resolved to numeric ids here, and again by the route job.

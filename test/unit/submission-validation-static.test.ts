@@ -397,7 +397,7 @@ describe("submission static validation retained from main", () => {
     const message = crossSubmission.violations[0]!.message;
     expect(message).toContain("path require reaching another submission's package is not supported");
     expect(message).toContain("chain workflow");
-    expect(message).toContain("commit and submit the dependency");
+    expect(message).toContain("commit, submit and register the dependency");
     expect(message).toContain('rev = "<commit>"');
     expect(message).toContain("package overrides");
 

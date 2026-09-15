@@ -26,11 +26,24 @@ import type { ArchiveSnapshot } from "../archive/snapshot.js";
 const STALE_DATABASE_HINT =
   "An out-of-date copy of the archive can also cause this: run `lax sync` and retry.";
 
+export interface ResolutionOptions {
+  /**
+   * What a git require on a draft record is. The archive admits only
+   * registered dependencies (spec.md, "Lifecycle"): a trusted run refuses the
+   * edge, so a re-draft of the dependency can never leave a stale pin behind
+   * a registration. A local build keeps the edge as a warning — the author's
+   * iteration loop over an unregistered chain — and `lax submit` refuses
+   * before posting, in the same words.
+   */
+  draftDependencies: "refuse" | "warn";
+}
+
 export function runResolution(
   request: ValidationRequest,
   staticResult: StaticResult,
   archive: ArchiveSnapshot,
   runtime: ValidationRuntimeIdentity,
+  options: ResolutionOptions = { draftDependencies: "refuse" },
 ): { result: ResolutionResult; findings: FindingCollector } {
   const findings = new FindingCollector("resolution");
   const concepts: ResolvedDependency[] = [];
@@ -102,8 +115,16 @@ export function runResolution(
       );
       return undefined;
     }
-    if (record.state === "draft")
-      findings.warn("draft-dependency", `dependency ${packageName} belongs to draft submission ${id}`);
+    if (record.state === "draft") {
+      const message =
+        `dependency ${packageName} belongs to draft submission ${id}; ` +
+        `the archive admits only registered dependencies — register ${id} first`;
+      if (options.draftDependencies === "refuse") {
+        findings.violate("draft-dependency", message);
+        return undefined;
+      }
+      findings.warn("draft-dependency", `${message} (admitted for this local build only)`);
+    }
     const kind = packageName.endsWith("Proofs") ? "proofs" : "concepts";
     const expectedSubDir = joinFolder(record.source.folder, kind);
     if (

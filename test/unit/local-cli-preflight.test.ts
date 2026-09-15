@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkDeleteLocally, checkRegisterLocally } from "../../src/cli/archive-preflight.js";
+import { checkDeleteLocally, checkRegisterLocally, checkSubmitLocally } from "../../src/cli/archive-preflight.js";
 import { hasCurrentLocalBuild } from "../../src/cli/build.js";
 import {
   databaseDirectory,
@@ -140,6 +140,37 @@ describe("local command preflights", () => {
         "lax-9 is not in your copy of the archive",
       warnings: [],
     });
+  });
+
+  it("refuses a submit whose dependency is still a draft, before anything is posted", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-5", "registered", []);
+    writeRecord(database, "lax-6", "draft", []);
+    writeRecord(database, "lax-8", "draft", []);
+
+    expect(checkSubmitLocally(["lax-5"], "refreshed")).toEqual({ warnings: [] });
+    expect(checkSubmitLocally([], "refreshed")).toEqual({ warnings: [] });
+    expect(checkSubmitLocally(["lax-8", "lax-5", "lax-6"], "refreshed")).toEqual({
+      refusal:
+        "the archive admits only registered dependencies — lax-6 and lax-8 are drafts; " +
+        "a chain lands bottom-up: register lax-6 and lax-8 first",
+      warnings: [],
+    });
+    // A copy that could not be refreshed leaves the verdict to the archive.
+    expect(checkSubmitLocally(["lax-6"], "failed")).toEqual({
+      warnings: [
+        { text: "Your copy of the archive could not be refreshed, so the archive itself will decide." },
+        {
+          text: "the archive admits only registered dependencies — lax-6 is a draft",
+          fix: "a chain lands bottom-up: register lax-6 first",
+        },
+      ],
+    });
+    // Without a copy there is nothing to check against; the local build
+    // already refused a dependency it could not find.
+    expect(checkSubmitLocally(["lax-6"], "missing")).toEqual({ warnings: [] });
   });
 
   it("permits registration once every dependency is registered", () => {

@@ -235,17 +235,30 @@ describe("Archive dependency resolution retained from main", () => {
     expect(byRule.get("deleted-dependency")).not.toContain("lax sync");
   });
 
-  it("warns for draft dependencies and validates capture provenance", () => {
+  it("refuses a draft dependency in a trusted run and only warns in a local build", () => {
     const draftRoot = temporary("lax-resolution-draft-");
     writeArchiveRecord(draftRoot, "lax-10", { state: "draft" });
-    const draft = resolve(
-      withConceptRequires([{ name: "Lax10", folder: "." }]),
-      new ArchiveSnapshot(draftRoot, "a".repeat(40)),
+    const archive = new ArchiveSnapshot(draftRoot, "a".repeat(40));
+    const requires = withConceptRequires([{ name: "Lax10", folder: "." }]);
+
+    // The default is the trusted verdict: the archive admits only
+    // registered dependencies, and the edge is dropped from the result.
+    const trusted = resolve(requires, archive);
+    expect(trusted.findings.violations.map((finding) => finding.rule)).toEqual(["draft-dependency"]);
+    expect(trusted.findings.violations[0]!.message).toBe(
+      "dependency Lax10 belongs to draft submission lax-10; " +
+        "the archive admits only registered dependencies — register lax-10 first",
     );
-    expect(draft.findings.violations).toEqual([]);
-    expect(draft.findings.warnings.map((finding) => finding.message).join("\n")).toContain(
-      "draft submission lax-10",
-    );
+    expect(trusted.result.all).toEqual([]);
+
+    const local = runResolution(request("lax-9"), requires, archive, RUNTIME, { draftDependencies: "warn" });
+    expect(local.findings.violations).toEqual([]);
+    expect(local.findings.warnings.map((finding) => finding.rule)).toEqual(["draft-dependency"]);
+    expect(local.findings.warnings[0]!.message).toContain("register lax-10 first (admitted for this local build only)");
+    expect(local.result.all.map((dependency) => dependency.submissionId)).toEqual(["lax-10"]);
+  });
+
+  it("validates capture provenance", () => {
 
     const staleRoot = temporary("lax-resolution-stale-capture-");
     writeArchiveRecord(staleRoot, "lax-10", {

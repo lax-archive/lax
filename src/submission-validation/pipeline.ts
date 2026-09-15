@@ -575,7 +575,9 @@ async function prepareValidation(
   let resolution;
   try {
     resolution = await phase("dependency resolution", () =>
-      runResolution(request, staticCheck.result, archive, runtime));
+      runResolution(request, staticCheck.result, archive, runtime, {
+        draftDependencies: options.local === undefined ? "refuse" : "warn",
+      }));
   } catch (error) {
     return { report: fail(base(), "resolution", "resolver", error) };
   }

@@ -252,6 +252,22 @@ export class Publisher {
           `${superseders.join(", ")} supersedes ${request.id}; a superseded submission cannot be reset to draft`,
         );
       }
+      // A registered dependent froze its pin on this record's current source.
+      // Demoting the record would let a resubmit move that source while the
+      // dependent stays immutable with the old pin — the stale-pin incident
+      // of 2026-09-15 — so the dependents are reset first, top-down.
+      const registeredDependents: string[] = [];
+      for (const dependent of await this.archive.listDependents(request.id, current.snapshot)) {
+        const state = (await this.archive.load(dependent, current.snapshot))?.files.record.state;
+        if (state === "registered") registeredDependents.push(dependent);
+      }
+      if (registeredDependents.length > 0) {
+        problems.push(
+          `${registeredDependents.join(", ")} ${registeredDependents.length === 1 ? "builds" : "build"} on ` +
+            `${request.id} and ${registeredDependents.length === 1 ? "is" : "are"} registered; a submission ` +
+            `with registered dependents cannot be reset to draft — reset the dependents first`,
+        );
+      }
     }
     if (request.action === "register") {
       // Registration admits only registered dependencies (spec.md). States

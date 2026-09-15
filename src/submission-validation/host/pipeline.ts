@@ -228,7 +228,9 @@ export async function validateSubmissionOnHost(
   let resolution: ReturnType<typeof runResolution>;
   try {
     resolution = await state.phase("dependency resolution", () =>
-      runResolution(request, staticCheck.result, options.local.archive, runtime));
+      // The host path is the author's local build: a draft dependency is
+      // a warning here and a refusal in the trusted run (resolution.ts).
+      runResolution(request, staticCheck.result, options.local.archive, runtime, { draftDependencies: "warn" }));
   } catch (error) {
     return fail("resolution", "resolver", error);
   }

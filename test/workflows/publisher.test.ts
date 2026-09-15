@@ -787,6 +787,45 @@ describe("maintainer publications", () => {
     expect(claimed.website.request).not.toHaveBeenCalled();
   });
 
+  it("refuses to reset a record that registered records build on, and ignores unregistered dependents", async () => {
+    // A registered dependent froze its pin on the current source; demoting
+    // the record would let a resubmit leave that pin stale forever.
+    const current = registered();
+    const dependents = {
+      "lax-50": registered(),
+      "lax-51": loaded(),
+    };
+    const frozen = publisherHarness(current, current, () => undefined, dependents, [], maintainers, ["lax-50", "lax-51"]);
+    await expect(
+      frozen.publisher.publish(
+        request({
+          action: "reset-draft",
+          commentId: 79,
+          command: { action: "reset-draft", admin: true },
+          preconditions: current.preconditions,
+        }),
+        run,
+      ),
+    ).rejects.toThrow(
+      "lax-50 builds on lax-42 and is registered; a submission with registered dependents " +
+        "cannot be reset to draft — reset the dependents first",
+    );
+    expect(frozen.listDependents).toHaveBeenCalledWith("lax-42", current.snapshot);
+    expect(frozen.website.request).not.toHaveBeenCalled();
+
+    const onlyDrafts = publisherHarness(current, current, () => undefined, { "lax-51": loaded() }, [], maintainers, ["lax-51"]);
+    await onlyDrafts.publisher.publish(
+      request({
+        action: "reset-draft",
+        commentId: 79,
+        command: { action: "reset-draft", admin: true },
+        preconditions: current.preconditions,
+      }),
+      run,
+    );
+    expect(JSON.parse(onlyDrafts.changes()["record.json"]!)).toMatchObject({ state: "draft" });
+  });
+
   it("replaces owners outright for a maintainer and refuses the form to anyone else", async () => {
     const current = registered();
     const harness = publisherHarness(current, current, () => undefined, {}, [], maintainers);

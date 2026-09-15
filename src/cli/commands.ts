@@ -27,9 +27,10 @@ import {
   validateRepositoryUrl,
 } from "../shared/validation.js";
 import type { GitHubIdentity, IssueBinding, SourceLocation } from "../shared/types.js";
-import type { ValidationFinding } from "../submission-validation/contracts.js";
+import { requiredSubmissionIds, type ValidationFinding } from "../submission-validation/contracts.js";
+import { BUILD_OUTPUT } from "../submission-validation/generated-files.js";
 import { environments } from "../submission-validation/environments.js";
-import { checkDeleteLocally, checkRegisterLocally } from "./archive-preflight.js";
+import { checkDeleteLocally, checkRegisterLocally, checkSubmitLocally } from "./archive-preflight.js";
 import { AuthenticationError, ensureLoggedIn, githubAppUserToken } from "./auth.js";
 import { signInIfNeeded } from "./login.js";
 import {
@@ -40,7 +41,7 @@ import {
 } from "./build.js";
 import { confirmTyped } from "./confirm.js";
 import { confirmEnvironment, diskCostLines, requestedEnvironment } from "./environments.js";
-import { databaseDirectory, tryRefreshDatabase } from "./database.js";
+import { databaseDirectory, tryRefreshDatabase, type DatabaseRefreshResult } from "./database.js";
 import { groupFindings } from "./findings.js";
 import { installHint, toolVersion } from "./doctor.js";
 import {
@@ -58,6 +59,7 @@ import {
   readLocalSubmissionManifest,
   setInitialOwners,
   setManifestIssue,
+  submissionIdFromFolder,
 } from "./manifest.js";
 import { rekeySubmission } from "./rekey.js";
 import { forgetSubmissionsById, recordSubmission } from "./registry.js";
@@ -719,6 +721,7 @@ async function checkLocally(
       detail: "reused your last build",
       time: false,
     });
+    refuseDraftDependencies(submit, localBuildRequiredIds(root), refresh);
     return;
   }
   // the local build runs on the host toolchain — no docker involved
@@ -747,6 +750,42 @@ async function checkLocally(
   }
   submit.steps.settle("local", { label: "Built on your machine" });
   submit.carry(outcome.warnings);
+  refuseDraftDependencies(submit, outcome.requiredIds ?? [], refresh);
+}
+
+/**
+ * The archive will refuse a dependency that is still a draft; the local build
+ * only warned. Said here, before anything is posted, in the words the
+ * archive would use — or noted, when the copy could not be refreshed and the
+ * archive itself must decide.
+ */
+function refuseDraftDependencies(
+  submit: SubmitReport,
+  requiredIds: readonly string[],
+  refresh: DatabaseRefreshResult,
+): void {
+  const preflight = checkSubmitLocally(requiredIds, refresh);
+  for (const warning of preflight.warnings) {
+    submit.notes.add(warning.text, ...(warning.fix === undefined ? [] : [warning.fix]));
+  }
+  if (preflight.refusal === undefined) return;
+  submit.steps.settle("archive", { hidden: true });
+  if (submit.paperRow) submit.steps.settle("paper", { hidden: true });
+  submit.steps.settle("publish", { hidden: true });
+  submit.steps.finish();
+  ui.problem(preflight.refusal, ["Nothing was sent to the archive."]);
+  ui.done();
+  throw new CommandFailedError("a dependency is still a draft");
+}
+
+/** The submissions the reused local build output requires. */
+function localBuildRequiredIds(root: string): string[] {
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(root, BUILD_OUTPUT), "utf8")) as unknown;
+    return requiredSubmissionIds(value, submissionIdFromFolder(root));
+  } catch {
+    return [];
+  }
 }
 
 async function buildCommittedTree(

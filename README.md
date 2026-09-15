@@ -23,7 +23,7 @@ The following actions are implemented by `.github/workflows/submission.yml`:
 | `/lax register <id>` | Makes an init/draft record immutable. |
 | `/lax submit <id> <JSON>` | Validates the immutable source, promotes its exact capture to digest-addressed ghcr storage, and replaces only `record.json` and `build-output.json`. A presentation-only resubmission may reuse the prior capture under the strict comparison described below. |
 | `/lax admin revalidate <id>` | Maintainers only (`ADMIN_GITHUB_IDS`): reruns the whole validation against the record's *recorded* source — any state, closed issue or not — and republishes its build output and captures without changing its state. The way a registered record picks up a pipeline fix. |
-| `/lax admin delete <id>`, `reset-draft <id>`, `owners <id> <JSON>` | Maintainers only: tombstone in any state (the takedown power), return a registered record to draft (refused while a registered successor claims it), or replace the owner list outright. Every maintainer action is a public comment on the submission's issue and an attributed `admin …` commit. |
+| `/lax admin delete <id>`, `reset-draft <id>`, `owners <id> <JSON>` | Maintainers only: tombstone in any state (the takedown power), return a registered record to draft (refused while a registered successor claims it or a registered record builds on it), or replace the owner list outright. Every maintainer action is a public comment on the submission's issue and an attributed `admin …` commit. |
 
 **Environments.** New work is built in the active **archive environment**
 `v4.33.0`: Lean `leanprover/lean4:v4.33.0` plus mathlib commit

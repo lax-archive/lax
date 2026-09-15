@@ -4,10 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ArchiveSnapshot } from "../submission-validation/archive/snapshot.js";
-import type {
-  ValidationFailure,
-  ValidationFinding,
-  ValidationScope,
+import {
+  requiredSubmissionIds,
+  type ValidationFailure,
+  type ValidationFinding,
+  type ValidationScope,
 } from "../submission-validation/contracts.js";
 import {
   BUILD_OUTPUT,
@@ -50,6 +51,8 @@ export interface LocalBuildOutcome {
   /** Statement counts, once there is a build output to count them in. */
   concepts?: number;
   proofs?: number;
+  /** The submissions this build's output requires, once there is one. */
+  requiredIds?: string[];
 }
 
 /**
@@ -250,6 +253,7 @@ export async function buildSubmission(
     if (report.buildOutput !== undefined) {
       outcome.concepts = report.buildOutput.concepts.length;
       outcome.proofs = report.buildOutput.proofs.length;
+      outcome.requiredIds = requiredSubmissionIds(report.buildOutput, id);
       // The last row's answer is the inventory it just inspected.
       details.set(
         "statements",

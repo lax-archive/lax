@@ -7,6 +7,39 @@ file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22, 2026-08-07, and 2026-09-14 and removed here; the
 folded text survives in git history.)
 
+## Drafts are not dependencies (implemented, 2026-09-15)
+
+spec.md admits a git require on a draft record with a warning ("Lakefiles":
+"A draft dependency is admitted with a warning; registration admits only
+registered dependencies") and lets drafts be "usable as a dependency only
+by other drafts" ("Lifecycle"). Implemented instead: **trusted validation
+refuses a git require whose record is a draft** (Resolution's
+`draft-dependency` is a violation, with the fix — register the dependency
+first — in the message). The chain workflow therefore lands *and
+registers* bottom-up: a dependent is validated by the archive only against
+frozen sources, so a re-draft of a dependency can never leave a stale pin
+behind a registration (the 2026-09-15 incident, TODO.md). Two deliberate
+edges of the rule:
+
+- **Local `lax build` still admits a draft dependency, with a warning**
+  (the message says the archive will refuse it). That is the author's
+  iteration loop over an unregistered chain, and the one place local
+  validation is knowingly more permissive than the trusted run.
+  `lax submit` refuses before posting when its copy of the archive shows a
+  dependency as a draft, in the archive's words; a copy that could not be
+  refreshed leaves the verdict to the archive.
+- **`/lax admin reset-draft` refuses a record that a registered record
+  builds on**, beside the existing registered-successor refusal: the
+  dependent's frozen pin names the source a resubmit would move. A chain
+  is reset top-down, dependents first.
+
+Records that already depend on drafts are not invalidated; their next
+submit fails resolution until the dependency is registered. The
+lifecycle sentence "usable as a dependency only by other drafts" and the
+"admitted with a warning" clause in "Lakefiles" are the text to reconcile;
+"Register" is unchanged (it still admits only registered dependencies, by
+name).
+
 ## Concept dialect: second draft, advisory model (proposed, 2026-07-29)
 
 [spec_conceptdialect_draft.md](spec_conceptdialect_draft.md) is a proposed

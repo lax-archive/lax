@@ -8,8 +8,8 @@
  * from wherever the author first hits the wall.
  */
 export const CHAIN_WORKFLOW_HINT =
-  "Multi-submission work uses the chain workflow: commit and submit the dependency " +
-  "first, then reference it from its dependent as a git require pinned to that exact " +
+  "Multi-submission work uses the chain workflow: commit, submit and register the " +
+  "dependency first, then reference it from its dependent as a git require pinned to that exact " +
   'commit (`[[require]] name = "LaxN", git = "https://github.com/you/yourrepo", ' +
   'rev = "<commit>", subDir = "<folder>/concepts"`), and repeat one level up the chain. ' +
   "Two local drafts can share one working tree through the lax-managed package " +

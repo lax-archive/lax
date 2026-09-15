@@ -77,6 +77,41 @@ export function checkDeleteLocally(id: string, refresh: DatabaseRefreshResult): 
   return { warnings };
 }
 
+export interface SubmitPreflight {
+  refusal?: string;
+  warnings: PreflightNote[];
+}
+
+/**
+ * The archive refuses a git require on a draft (resolution's
+ * `draft-dependency` violation; spec.md, "Lifecycle"). The local build
+ * admitted the same edge with a warning, so this is the last stop before an
+ * Actions run that can only fail: `requiredIds` are the submissions the
+ * build output the author is about to submit requires, and any that the
+ * archive copy shows as a draft is named with the fix. A missing or deleted
+ * dependency is not repeated here — the local build already refused it.
+ */
+export function checkSubmitLocally(requiredIds: readonly string[], refresh: DatabaseRefreshResult): SubmitPreflight {
+  if (requiredIds.length === 0 || refresh === "missing") return { warnings: [] };
+  let records: LocalRecord[];
+  try {
+    records = readRecords(databaseDirectory());
+  } catch {
+    // The local build read the same copy a moment ago; an unreadable copy
+    // has already been reported there.
+    return { warnings: [] };
+  }
+  const states = new Map(records.map((record) => [record.id, record.state]));
+  const drafts = [...requiredIds].filter((id) => states.get(id) === "draft").sort(compareSubmissionIds);
+  if (drafts.length === 0) return { warnings: [] };
+  const message =
+    `the archive admits only registered dependencies — ${list(drafts)} ` +
+    `${drafts.length === 1 ? "is a draft" : "are drafts"}`;
+  const fix = `a chain lands bottom-up: register ${list(drafts)} first`;
+  if (refresh === "failed") return { warnings: [STALE_LOCAL_COPY, { text: message, fix }] };
+  return { refusal: `${message}; ${fix}`, warnings: [] };
+}
+
 export interface RegisterPreflight {
   refusal?: string;
   warnings: PreflightNote[];

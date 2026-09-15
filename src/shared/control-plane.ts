@@ -509,7 +509,8 @@ function revalidatePreview(id: string, state: string, source: SourceLocation, co
 function resetDraftPreview(id: string, state: string, commentId: number): string {
   return (
     `Reset-to-draft preview for **${id}** (currently \`${state}\`), by maintainer action. The record ` +
-    `becomes a draft again — mutable, and no longer citable until it is re-registered.\n\n` +
+    `becomes a draft again — mutable, and no longer citable until it is re-registered. Refused while ` +
+    `a registered successor claims it or a registered record builds on it.\n\n` +
     previewMarker(commentId)
   );
 }

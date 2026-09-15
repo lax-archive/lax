@@ -22,7 +22,10 @@ rather than rewritten so the reasoning stays legible:
   `gc-captures`, and `undelete` are not built (TODO.md).
 
 Also decided at implementation: `reset-draft` refuses a record that a
-*registered* successor claims (the supersedes caveat below), and a
+*registered* successor claims (the supersedes caveat below) and, since
+2026-09-15, a record that a *registered* dependent builds on (the
+dependent's frozen pin would go stale the moment the draft is resubmitted;
+the "dependents keep building" note below predates that rule), and a
 revalidation must reproduce the recorded supersedes claim — same source,
 same manifest — rather than re-admitting it, since the maintainer need not
 own the target. The file closes into `history/` once the remaining verbs

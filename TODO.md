@@ -390,16 +390,21 @@ the maintainer's own `gh` token, comments and reads only). Still owed:
   `build-output.json` records dependencies by name only
   (`requiredByConcepts: ["Lax808846"]`), Register freezes without
   re-running Resolution, and `lax register` prints no warning. Repaired
-  the same day with `reset-draft` → repin → resubmit → register. Before the
-  official release, the final database check (`verify`, or a one-off
-  script) must walk every registered record's frozen lakefiles and assert
+  the same day with `reset-draft` → repin → resubmit → register. Landed the
+  same evening (spec-notes.md, "Drafts are not dependencies"): trusted
+  Resolution **refuses a git require on a draft** (local `lax build` keeps
+  it as a warning, `lax submit` refuses before posting), and `reset-draft`
+  refuses a record that a registered record builds on. Still owed before
+  the official release: the final database check (`verify`, or a one-off
+  script) walking every registered record's frozen lakefiles and asserting
   that each cross-submission `rev` equals the dependency's *current*
-  canonical source commit, and that no registered record depends on a
-  draft. Then close the hole for good: Register re-runs Resolution against
-  the live snapshot, and — Jan's rule — **drafts are refused as
-  dependencies outright** (Resolution rejects a git require whose record
-  is a draft instead of admitting it with a warning), so a re-draft can
-  never leave a stale pin behind a registration.
+  canonical source commit. Decided against for now (2026-09-15): recording
+  the resolved pins in `build-output.json` so Register can compare commits
+  — which leaves one path open: a draft validated against a *registered*
+  dependency, then an admin `reset-draft` of that dependency (allowed while
+  the dependent is still a draft), a resubmit, and a register of both. The
+  maintainer sees the draft dependents in the delete preview only; if this
+  bites, list them in the reset-draft preview or record the pins after all.
 - **Deferred by design**: the plan's server-side two-phase confirm
   (`/lax admin confirm <preview-id>`) — the typed confirmation lives in
   the driver, as it does for `lax delete`; and an `admin.yml`
