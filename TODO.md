@@ -391,7 +391,7 @@ the maintainer's own `gh` token, comments and reads only). Still owed:
   (`requiredByConcepts: ["Lax808846"]`), Register freezes without
   re-running Resolution, and `lax register` prints no warning. Repaired
   the same day with `reset-draft` → repin → resubmit → register. Landed the
-  same evening (spec-notes.md, "Drafts are not dependencies"): trusted
+  same evening (spec.md, "Lifecycle" and "Resolution"): trusted
   Resolution **refuses a git require on a draft** (local `lax build` keeps
   it as a warning, `lax submit` refuses before posting), and `reset-draft`
   refuses a record that a registered record builds on. Still owed before

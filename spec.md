@@ -282,11 +282,11 @@ following rules:
   current source — ``repository``, ``commit``, and ``folder`` joined with
   ``concepts`` or ``proofs`` — verbatim. The required submission must be in
   the same archive environment. Write the canonical ``repository`` spelling
-  (see ``lax submit``), not an ssh alias of it. A draft dependency
-  is admitted with a warning; registration admits only registered
-  dependencies (see Lifecycle). Cross-submission path requirements are not
-  supported: multi-submission work is committed and submitted bottom-up, with
-  each dependent pinning the preceding submission's exact Git commit. The
+  (see ``lax submit``), not an ssh alias of it. The required submission
+  must be registered; a require on a draft is a violation (see Lifecycle).
+  Cross-submission path requirements are not supported: multi-submission
+  work is committed, submitted, and registered bottom-up, with each
+  dependent pinning the preceding submission's exact Git commit. The
   only path exception is the proof package's own concept package via
   ``../concepts``. The transitive Archive dependency graph must be acyclic.
 
@@ -744,9 +744,9 @@ Submissions can be in four states within the database.
 nothing has been uploaded yet.
 
 **draft:** visible on the website, overwritable by its owners, not citable,
-not reviewable. Usable as a dependency only by other drafts: registration
-requires registered dependencies. A re-draft moves the record's source
-triple, so downstream drafts fail resolution until they update their pin.
+not reviewable, not usable as a dependency. A re-draft moves the record's
+source triple; since the archive validates a dependent only against frozen
+sources, no registered pin can go stale.
 
 **registered:** immutable, citable, reviewable. The normal published state.
 
@@ -854,8 +854,9 @@ owner, open-issue, and state gates. ``revalidate`` re-runs the whole pipeline
 over a draft or registered record's recorded source and republishes its
 build output and captures under its current state; a ``supersedes`` claim
 must come out unchanged. ``reset-draft`` returns a registered record to
-draft, refused while a registered successor claims it. ``delete`` tombstones
-a record in any state. ``owners`` replaces the owner list outright. Every
+draft, refused while a registered successor claims it or a registered record
+builds on it; a chain is reset top-down, dependents first. ``delete``
+tombstones a record in any state. ``owners`` replaces the owner list outright. Every
 maintainer action is a comment on the submission's issue and an attributed
 ``admin`` commit to the database; the rationale lives in the comment, never
 in the record.
@@ -961,12 +962,13 @@ over-long text is elided with `` […] ``.
 
 - **Resolution** (milliseconds): check every direct and transitive Archive
   dependency against one exact database snapshot. Each direct git require
-  must match a draft or registered record's canonical source triple, every
+  must match a registered record's canonical source triple, every
   dependency must be in the submission's environment and provide a capture
   built against its pins, and a ``supersedes`` claim must name a registered
-  record with an overlapping owner list and a free successor slot. Draft
-  dependencies are admitted with a warning; the separate Register action
-  requires them to be registered. A superseded dependency, direct or
+  record with an overlapping owner list and a free successor slot. A require
+  on a draft record is a violation whose message names the fix: register the
+  dependency first. Only local ``lax build`` admits it, with a warning (see
+  CLI). A superseded dependency, direct or
   transitive, is a warning naming its successor. A local miss may mean the
   checkout at ``~/.lax/lax-database`` is stale, so the finding suggests
   ``lax sync`` and a retry.
@@ -1150,8 +1152,8 @@ is allowed.
   statement iff its module of origin lies in a required concept package — a
   prefix test of the module name against the package names whose
   ``[[require]]`` entries Resolution has just verified. The fixed-names rule
-  can be relied on because every verified entry points at a draft or
-  registered submission, whose own trusted submit enforced it. One
+  can be relied on because every verified entry points at a registered
+  submission, whose own trusted submit enforced it. One
   cross-check guards the metadata: the axiom's name must also appear among
   the ``statements`` in that submission's ``build-output.json`` — the
   database, not the workspace, is the authority on another submission's
@@ -1305,7 +1307,9 @@ replacing ``build-output.json``; proofs-only still builds concepts as its
 prerequisite but skips concept Replay. A declared paper is compiled with the
 host ``latexmk`` as a preview (skipped with a note when absent); the
 archive's compile is the authority. Build warns when it wrote a generated
-file no ignore rule covers; it never edits ``.gitignore``. Registration never
+file no ignore rule covers; it never edits ``.gitignore``. Build alone admits
+a require on a draft record, with a warning that the archive will refuse it,
+so an unregistered chain can be iterated locally. Registration never
 trusts local output: the GitHub Actions workflow rebuilds a submitted commit
 with Replay mandatory.
 
@@ -1343,7 +1347,8 @@ validates it in an isolated worktree. ``-f``/``--force`` skips the dirty,
 pushed-HEAD, and local-build checks entirely, leaving the trusted workflow as
 the only verdict. A ``supersedes`` claim that can never bind — a non-owner
 actor, an unregistered target, an occupied slot — is refused before anything
-is posted. Submit always produces a replaceable draft. On the first submit of
+is posted, as is a dependency the local database shows as a draft. Submit
+always produces a replaceable draft. On the first submit of
 a folder it binds the id instead (see Actions) and stops for the author to
 commit the binding.
 
