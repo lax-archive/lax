@@ -68,7 +68,7 @@ export async function runInspector(
   } catch {
     throw infrastructureFailure(`${kind} inspector report is missing or oversized`);
   }
-  if (!stat.isFile() || stat.size > 32 * 1024 * 1024) {
+  if (!stat.isFile() || stat.size > limits.inspectorReportBytes) {
     throw infrastructureFailure(`${kind} inspector report is missing or oversized`);
   }
   try {

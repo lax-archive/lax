@@ -7,6 +7,33 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
+## Inspector report size (2026-09-16)
+
+Lax17's resubmission on v4.33 (405 modules, 38,484 declarations) failed as
+an infrastructure failure: its proofs inspector report is 49 MB, and both
+pipelines rejected anything above a 32 MiB literal. The bound is now a
+named limit, `inspectorReportBytes` (256 MiB), read by both runners. Still
+owed:
+
+- **Compact the report format.** 396k package-local dependency edges are
+  spelled out as ~100-character fully qualified names (31.5 of 46.8 compact
+  MB); `module` and the `propext/Classical.choice/Quot.sound` axiom triple
+  are repeated per declaration; pretty-printing adds 2.6 MB. A name table
+  with integer edges, a module index, and compact JSON would land the same
+  report near 10 MB. This changes the inspector source (so every
+  environment's inspector rebuilds once) and the parser in
+  `phases/inspect-runner.ts`, with the golden fixture; do it together.
+
+- **Unused-lemma warnings near their own cap.** The same submission raises
+  7,142 `unused-lemma` warnings; the trusted artifact parser rejects more
+  than 10,000 findings (`artifact-schema.ts`, `MAX_FINDINGS`) and the CLI
+  renders the first 1,000. 1,712 of them name compiler-generated
+  `mk.inj`/`mk.injEq`/`mk.sizeOf_spec` lemmas that `userLevelName?` in the
+  inspector should drop: on v4.33 Lean no longer marks them reserved, so
+  the filter needs a v4.33 rule (and a golden-fixture case). Consider also
+  folding the warnings into one per module, or capping them in the
+  collector, before another large submission trips the artifact bound.
+
 ## Stability pass 2026-09-07: what it owes
 
 Landed on `claude/lax-repo-improvements-qruciz` (compile thread budget

@@ -475,7 +475,7 @@ export async function validateSubmissionOnHost(
         );
       }
       const stat = fs.lstatSync(reportPath);
-      if (!stat.isFile() || stat.size > 32 * 1024 * 1024)
+      if (!stat.isFile() || stat.size > state.limits.inspectorReportBytes)
         throw new Error(`${kind} inspector report is missing or oversized`);
       return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown);
     };

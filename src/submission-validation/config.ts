@@ -13,6 +13,12 @@ export interface ValidationLimits {
   compileTimeoutMs: number;
   checkTimeoutMs: number;
   maxOutputBytes: number;
+  /** Upper bound on one inspector report (`report.json`), the untrusted
+   * JSON both pipelines read back and parse in memory. Sized from the
+   * largest real submission: Lax17 (405 modules, 38k declarations) writes a
+   * 49 MB report, dominated by per-declaration `usedConstants`, which Node
+   * parses in ~0.6 s at ~270 MB RSS. */
+  inspectorReportBytes: number;
   maxWorkspaceBytes: number;
   maxWorkspaceEntries: number;
   minFreeDiskBytes: number;
@@ -92,6 +98,7 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   compileTimeoutMs: 30 * 60_000,
   checkTimeoutMs: 20 * 60_000,
   maxOutputBytes: 8 * 1024 * 1024,
+  inspectorReportBytes: 256 * 1024 * 1024,
   maxWorkspaceBytes: 20 * 1024 * 1024 * 1024,
   maxWorkspaceEntries: 1_000_000,
   minFreeDiskBytes: 5 * 1024 * 1024 * 1024,

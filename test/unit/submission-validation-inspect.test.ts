@@ -1,3 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
+import { DEFAULT_LIMITS } from "../../src/submission-validation/config.js";
+import { runInspector } from "../../src/submission-validation/phases/inspect-runner.js";
+import type {
+  ContainerInvocation,
+  ContainerResult,
+  ValidationRunner,
+} from "../../src/submission-validation/sandbox/container.js";
 import type {
   InspectorReport,
   ModuleInventory,
@@ -563,5 +572,52 @@ describe("inspection judgments retained from main", () => {
     });
     expect(output.requiredByConcepts).toEqual(["Lax2", "Lax9"]);
     expect(output.concepts[0]?.sourceText).toBe("line one\nline two\n");
+  });
+});
+
+describe("inspector report size bound", () => {
+  // A stand-in inspector that writes a report of the requested size into the
+  // output mount, the way the real container does; the bytes are valid JSON
+  // padded with whitespace so only the size check can reject them.
+  function inspectorWriting(bytes: number): ValidationRunner {
+    return {
+      async run(invocation: ContainerInvocation): Promise<ContainerResult> {
+        const out = invocation.mounts!.find((mount) => mount.target === "/out")!.source;
+        const report = '{"modules":[],"declarations":[]}';
+        fs.writeFileSync(path.join(out, "report.json"), report.padEnd(bytes, " "));
+        return { code: 0, output: "", timedOut: false };
+      },
+      async verifyRuntime(): Promise<void> {},
+      async verifyImage(): Promise<void> {},
+    };
+  }
+
+  function inspect(bytes: number, inspectorReportBytes: number): Promise<InspectorReport> {
+    const jobDir = temporary();
+    return runInspector(
+      "proofs",
+      jobDir,
+      inventory("LaxProofs", []),
+      EMPTY_RESOLUTION,
+      jobDir,
+      path.join(jobDir, "deps"),
+      inspectorWriting(bytes),
+      { ...DEFAULT_LIMITS, inspectorReportBytes },
+    );
+  }
+
+  it("reads a report up to the configured limit", async () => {
+    const report = await inspect(256, 256);
+    expect(report).toEqual({ modules: [], declarations: [] });
+  });
+
+  it("rejects a report above the limit as an infrastructure failure, not a finding", async () => {
+    await expect(inspect(257, 256)).rejects.toThrow(/proofs inspector report is missing or oversized/);
+  });
+
+  it("admits the largest real report: Lax17's 49 MB", () => {
+    // 405 modules, 38k declarations, 396k package-local dependency edges,
+    // measured 2026-09-16 (the pretty-printed report was 49,440,510 bytes).
+    expect(DEFAULT_LIMITS.inspectorReportBytes).toBeGreaterThanOrEqual(64 * 1024 * 1024);
   });
 });
