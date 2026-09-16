@@ -717,11 +717,18 @@ describe("lax doctor", () => {
     seedWarmStore();
     const { log } = quiet();
 
-    await withTestEnvironmentsAsync([{ id: "v4.99.0" }], () => doctor({ dry: true }));
+    // The expected ids are read inside the same seam scope the report ran
+    // under: an admission run injects its candidate for the whole test
+    // process, and reading the table outside the block would expect that
+    // candidate on a line printed without it (the 2026-09-15 run, issue #116).
+    const expected = await withTestEnvironmentsAsync([{ id: "v4.99.0" }], async () => {
+      await doctor({ dry: true });
+      return activeEnvironments().map((entry) => entry.id);
+    });
 
     const line = row(printed(log), "Environments");
     expect(line).toMatch(new RegExp(`^  ✓ Environments        ${epoch().id} \\(epoch, installed\\)`, "u"));
-    for (const entry of activeEnvironments()) expect(line).toContain(entry.id);
+    for (const id of expected) expect(line).toContain(id);
     expect(line).toContain("v4.99.0 (not installed)");
     expect(line).not.toContain("v4.30.0");
   });

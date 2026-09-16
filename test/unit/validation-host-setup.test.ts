@@ -24,7 +24,7 @@ import {
   validationHostCacheKey,
 } from "../../src/submission-validation/host/setup.js";
 import { appendWorkflowOutput } from "../../src/submission-validation/outputs.js";
-import { withTestEnvironments } from "../support/environments.js";
+import { withTestEnvironments, withoutTestEnvironments } from "../support/environments.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const tsx = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
@@ -145,8 +145,11 @@ describe("setup-vm arguments", () => {
       failure = error as { status?: number; stderr?: string };
     }
     expect(failure?.status).toBe(1);
+    // The child ran against the compiled table alone, so the list it names
+    // is read the same way; under an admission run the parent's seam holds
+    // the candidate and would otherwise expect it here (issue #116).
     expect(failure?.stderr).toContain(
-      `lax setup: environment "v9.9.9" is not admitted; the admitted environments are ${admittedEnvironmentList()}`,
+      `lax setup: environment "v9.9.9" is not admitted; the admitted environments are ${withoutTestEnvironments(admittedEnvironmentList)}`,
     );
   });
 

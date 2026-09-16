@@ -357,12 +357,18 @@ records which already existed. What stays open:
   Both ports took two to three submits, each first attempt failing in
   `compile-proofs`; budget for that, and read the failures out of the
   report artifact (`lax submit` renders it) rather than the issue comment.
-- **Actions may open pull requests since 2026-09-04 evening** (Jan
-  turned on "Allow GitHub Actions to create and approve pull requests" in
-  the organization's Actions settings). The first admission's pull
-  request was opened by hand because it was off; the next scheduled run
-  (Tuesdays 04:41 UTC) is the first to exercise `gh pr create` from the
-  admit job — check that it lands.
+- **Admit v4.34.0, and see the admit job open its first pull request.**
+  The 2026-09-15 scheduled run found v4.34.0 and failed in `npm test`:
+  two tests read the expected environment list outside the seam scope
+  their subject ran in (`doctor.test.ts`, `validation-host-setup.test.ts`;
+  issue #116), so under the workflow's injected candidate they expected
+  it where the report had none. Fixed 2026-09-16, suite green with a
+  candidate injected. Until the admission lands, authors on v4.34.0 are
+  refused. Next: push, then `gh workflow run environments.yml -f
+  tag=v4.34.0` — the first run to exercise `gh pr create` from the admit
+  job ("Allow GitHub Actions to create and approve pull requests" has
+  been on since 2026-09-04 evening; the first admission's pull request
+  was opened by hand). Merge the pull request, release, close #116.
 
 ## Admin tool (admin-plan.md — issue-scoped verbs and the driver landed 2026-09-04)
 
