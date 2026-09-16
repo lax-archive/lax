@@ -7,10 +7,27 @@ export class GitHubError extends Error {
     message: string,
     readonly status: number,
     readonly responseBody?: unknown,
+    /**
+     * When GitHub will accept requests again, as a millisecond timestamp —
+     * set only when the refusal is a rate limit (a 403 or 429 carrying
+     * `retry-after`, or `x-ratelimit-remaining: 0` with the reset time), so a
+     * poller can wait it out rather than fail on a budget it can replenish.
+     */
+    readonly rateLimitResetAt?: number,
   ) {
     super(message);
     this.name = "GitHubError";
   }
+}
+
+/** The moment a rate-limited response says to retry at, or undefined. */
+export function rateLimitResetAt(status: number, headers: Headers, now = Date.now()): number | undefined {
+  if (status !== 403 && status !== 429) return undefined;
+  const retryAfter = Number(headers.get("retry-after"));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) return now + retryAfter * 1_000;
+  if (headers.get("x-ratelimit-remaining") !== "0") return undefined;
+  const reset = Number(headers.get("x-ratelimit-reset"));
+  return Number.isFinite(reset) && reset > 0 ? reset * 1_000 : now + 60_000;
 }
 
 export class GitHubClient {
@@ -66,7 +83,12 @@ export class GitHubClient {
         parsed !== null && typeof parsed === "object" && "message" in parsed
           ? String((parsed as { message: unknown }).message)
           : response.statusText;
-      throw new GitHubError(`GitHub API ${response.status}: ${detail}`, response.status, parsed);
+      throw new GitHubError(
+        `GitHub API ${response.status}: ${detail}`,
+        response.status,
+        parsed,
+        rateLimitResetAt(response.status, response.headers),
+      );
     }
     return parsed as T;
   }
@@ -169,7 +191,12 @@ export class GitHubClient {
         parsed !== null && typeof parsed === "object" && "message" in parsed
           ? String((parsed as { message: unknown }).message)
           : response.statusText;
-      throw new GitHubError(`GitHub API ${response.status}: ${detail}`, response.status, parsed);
+      throw new GitHubError(
+        `GitHub API ${response.status}: ${detail}`,
+        response.status,
+        parsed,
+        rateLimitResetAt(response.status, response.headers),
+      );
     }
     return parsed as T;
   }

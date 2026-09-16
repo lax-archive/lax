@@ -234,6 +234,23 @@ function stepDetail(
   return table.find(([prefix]) => name.startsWith(prefix))?.[1];
 }
 
+/**
+ * How long to wait before the next poll. The first minute polls every
+ * `base` (3 s): most commands answer within it, and an author watching a
+ * short one should see each row turn as it happens. After that the interval
+ * doubles per poll up to ten times the base, because a long queue in front of
+ * a 25-minute validation at four requests every 3 s is 4,800 requests an
+ * hour against a 5,000-an-hour budget — the follow loop must never be what
+ * spends it.
+ */
+export function pollInterval(base: number, elapsedMs: number, previous: number): number {
+  if (elapsedMs < FIRST_MINUTE_MS) return base;
+  return Math.min(previous * 2, base * BACKOFF_CAP);
+}
+
+const FIRST_MINUTE_MS = 60_000;
+const BACKOFF_CAP = 10;
+
 async function follow(
   client: GitHubClient,
   issueNumber: number,
@@ -245,9 +262,11 @@ async function follow(
   sourceCommentId?: number,
   successReactionCommentId?: number,
 ): Promise<FollowResult> {
-  const interval = positiveEnv("LAX_POLL_INTERVAL_MS", 3_000);
+  const baseInterval = positiveEnv("LAX_POLL_INTERVAL_MS", 3_000);
   const timeout = positiveEnv("LAX_WORKFLOW_TIMEOUT_MS", 6 * 60 * 60 * 1_000);
-  const deadline = Date.now() + timeout;
+  const started = Date.now();
+  const deadline = started + timeout;
+  let interval = baseInterval;
   let announcedPreview = false;
   let announcedRun: string | undefined;
   let runId: string | undefined;
@@ -256,6 +275,7 @@ async function follow(
   let actionsStatusAvailable = true;
   let validationRead = false;
   let stage = "";
+  let current: WorkflowStage = { row: "queued" };
   const commentPath = `${base}/issues/${issueNumber}/comments` +
     (options.since === undefined ? "" : `?since=${encodeURIComponent(options.since)}`);
 
@@ -263,11 +283,33 @@ async function follow(
     const fingerprint = `${next.row} ${next.detail ?? ""} ${next.completed === true}`;
     if (fingerprint === stage) return;
     stage = fingerprint;
+    current = next;
     options.onStage?.(next);
   };
   report({ row: "queued" });
 
   while (Date.now() <= deadline) {
+    try {
+      const result = await poll();
+      if (result !== undefined) return result;
+    } catch (error) {
+      // The budget ran out, not the command: wait for the reset GitHub named
+      // and carry on. Anything else is the caller's to hear about.
+      const resetAt = error instanceof GitHubError ? error.rateLimitResetAt : undefined;
+      if (resetAt === undefined) throw error;
+      const wait = Math.min(Math.max(resetAt - Date.now(), 1_000), Math.max(deadline - Date.now(), 0));
+      report({ ...current, detail: `waiting out GitHub's API rate limit (${Math.ceil(wait / 60_000)} min)` });
+      ui.verbose(`GitHub rate limit reached; polling again in ${Math.ceil(wait / 1_000)} s`);
+      await delay(wait);
+      continue;
+    }
+    interval = pollInterval(baseInterval, Date.now() - started, interval);
+    await delay(interval);
+  }
+  throw new Error(`the archive did not answer about lax-${issueNumber} in time`);
+
+  /** One round: the comments, then the run. A result ends the command. */
+  async function poll(): Promise<FollowResult | undefined> {
     const [comments, successReaction] = await Promise.all([
       client.paginate<IssueComment>(commentPath),
       successReactionCommentId === undefined
@@ -318,6 +360,7 @@ async function follow(
         next = status.stage;
         jobs = status.jobs;
       } catch (error) {
+        if (error instanceof GitHubError && error.rateLimitResetAt !== undefined) throw error;
         if (error instanceof GitHubError && error.status === 403) {
           actionsStatusAvailable = false;
           ui.verbose("GitHub is not reporting run status for this token");
@@ -344,10 +387,8 @@ async function follow(
         }
       }
     }
-
-    await delay(interval);
+    return undefined;
   }
-  throw new Error(`the archive did not answer about lax-${issueNumber} in time`);
 }
 
 function matchComments(

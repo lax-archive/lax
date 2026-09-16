@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { zipSync } from "fflate";
 import {
   followCommand,
+  pollInterval,
   workflowStage,
   type WorkflowStage,
 } from "../../src/cli/follow.js";
@@ -12,7 +13,7 @@ import {
   upsertCommandContext,
   workflowRunMarker,
 } from "../../src/shared/workflow-comments.js";
-import type { GitHubClient } from "../../src/shared/github.js";
+import { GitHubError, rateLimitResetAt, type GitHubClient } from "../../src/shared/github.js";
 
 const bot = { id: 41_898_282, login: "github-actions[bot]", type: "Bot" };
 
@@ -20,6 +21,72 @@ afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.LAX_POLL_INTERVAL_MS;
   delete process.env.LAX_WORKFLOW_TIMEOUT_MS;
+});
+
+describe("the polling budget", () => {
+  it("polls every 3 s for the first minute, then backs off to 30 s", () => {
+    // Four requests per poll at 3 s is 4,800 an hour against a 5,000 budget;
+    // a long queue in front of a 25-minute validation used to spend it all.
+    expect(pollInterval(3_000, 0, 3_000)).toBe(3_000);
+    expect(pollInterval(3_000, 59_999, 3_000)).toBe(3_000);
+    let interval = 3_000;
+    const intervals: number[] = [];
+    for (let elapsed = 60_000; intervals.length < 6; elapsed += interval) {
+      interval = pollInterval(3_000, elapsed, interval);
+      intervals.push(interval);
+    }
+    expect(intervals).toEqual([6_000, 12_000, 24_000, 30_000, 30_000, 30_000]);
+  });
+
+  it("reads the reset time out of a rate-limited response and nothing else", () => {
+    const now = 1_000_000;
+    expect(rateLimitResetAt(403, new Headers({ "retry-after": "30" }), now)).toBe(now + 30_000);
+    expect(rateLimitResetAt(429, new Headers({ "x-ratelimit-remaining": "0", "x-ratelimit-reset": "2000" }), now)).toBe(2_000_000);
+    expect(rateLimitResetAt(403, new Headers({ "x-ratelimit-remaining": "0" }), now)).toBe(now + 60_000);
+    // A 403 with budget left is a permission problem, not a rate limit.
+    expect(rateLimitResetAt(403, new Headers({ "x-ratelimit-remaining": "4999" }), now)).toBeUndefined();
+    expect(rateLimitResetAt(404, new Headers({ "retry-after": "30" }), now)).toBeUndefined();
+  });
+
+  it("waits out a rate limit and carries on rather than failing the command", async () => {
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "5000";
+    const result = appendWorkflowRun(
+      `Registered **lax-42**.\n\n${resultMarker(9001)}`,
+      { id: "123", url: "https://github.com/lax-archive/lax/actions/runs/123" },
+      "success",
+    );
+    const limited = new GitHubError("GitHub API 403: API rate limit exceeded", 403, undefined, Date.now() + 5);
+    const paginate = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(limited)
+      .mockResolvedValueOnce([{ id: 2, body: result, user: bot }]);
+    const stages: WorkflowStage[] = [];
+
+    const outcome = await followCommand(
+      { paginate, request: vi.fn() } as unknown as GitHubClient,
+      42,
+      9001,
+      { onStage: (stage) => stages.push(stage) },
+    );
+
+    expect(outcome.outcome).toBe("success");
+    expect(paginate).toHaveBeenCalledTimes(3);
+    // The author sees the pause on the row they were already waiting on.
+    expect(stages).toEqual([
+      { row: "queued" },
+      { row: "queued", detail: "waiting out GitHub's API rate limit (1 min)" },
+    ]);
+  });
+
+  it("still fails on a 403 that is not a rate limit", async () => {
+    process.env.LAX_POLL_INTERVAL_MS = "1";
+    process.env.LAX_WORKFLOW_TIMEOUT_MS = "100";
+    const forbidden = new GitHubError("GitHub API 403: Resource not accessible", 403);
+    const paginate = vi.fn().mockRejectedValue(forbidden);
+
+    await expect(followCommand({ paginate, request: vi.fn() } as unknown as GitHubClient, 42, 9001)).rejects.toBe(forbidden);
+  });
 });
 
 describe("GitHub Actions workflow progress", () => {
