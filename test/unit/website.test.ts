@@ -298,6 +298,7 @@ describe("the local preview", () => {
   it("redirects the link it printed to the id a mid-preview build allocates", async () => {
     currentDatabase([]);
     const local = temporaryDirectory("lax-serve-local-");
+    fs.writeFileSync(path.join(local, "manifest.yaml"), "id: lax-50\ntitle: Bounded gaps\n");
     const port = await freePort();
     const output = capture();
 
@@ -311,10 +312,14 @@ describe("the local preview", () => {
     }
 
     expect(trimmed(output.lines)).toContain(`  http://localhost:${port}/`);
-    // Before a build has named the folder, the front page files it as `local`
-    // and says what to do.
-    const front = text(await (await fetch(`http://localhost:${port}/`)).text());
-    expect(front).toContain("local\nno build output yet — run lax build in");
+    // Before a build, the manifest names the folder, the counts line says it
+    // is not built, and the row links the placeholder the renderer filed
+    // under the pre-build id — and reloads until the build lands.
+    expect(trimmed(output.lines)).toContain("  lax-50 (not built yet) and no published submissions yet.");
+    const html = await (await fetch(`http://localhost:${port}/`)).text();
+    expect(text(html)).toContain("lax-50 — Bounded gaps\nno build output yet — run lax build in");
+    expect(html).toContain('<a href="/local/">');
+    expect(html).toContain('<meta http-equiv="refresh" content="5">');
     const before = await fetch(`http://localhost:${port}/local/`);
     expect(await before.text()).toContain("the stub's local page");
 
@@ -367,10 +372,10 @@ describe("the local preview", () => {
       "",
       `  http://localhost:${taken + 1}/`,
       "",
+      `  ! Port ${taken} was busy, so this preview is on ${taken + 1}.`,
+      "",
       "  No published submissions yet.",
       "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
-      "",
-      `  ! Port ${taken} was busy, so this preview is on ${taken + 1}.`,
     ]);
   });
 
@@ -403,7 +408,7 @@ describe("the local preview", () => {
       `  http://localhost:${port}/`,
       "",
       "  1 published submission.",
-      "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
+      "  Rebuilds when your copy of the archive changes. Ctrl-C to stop.",
       "",
       "  ! Your copy of the archive is missing.",
       "    Run lax sync.",
@@ -467,7 +472,9 @@ describe("the local preview", () => {
     expect(trimmed(output.lines)).toContain("  lax-9, sibling lax-7, and no published submissions yet.");
     const front = text(await (await fetch(`http://localhost:${port}/`)).text());
     // The row states the local truth the rendered page's draft banner does not.
-    expect(front).toContain("lax-9 — B\nnonstrict local build (siblings lax-7, lax-5), v4.19.0");
+    expect(front).toContain(
+      "lax-9 — B\nnonstrict local build (siblings lax-7, lax-5), v4.19.0 — a nonstrict build previews siblings the archive accepts only as registered git requires",
+    );
     expect(front).toContain("lax-7 sibling — A\nlocal build, v4.19.0");
     expect(front).toContain(`lax-5 sibling\nno build output yet — run lax build in ${ui.tilde(c)}`);
 
@@ -492,6 +499,53 @@ describe("the local preview", () => {
     fs.renameSync(`${a}-renamed`, a);
     await waitFor(() => renderer.renders > renders, "a rebuild after the sibling came back");
     expect(renderer.seen.at(-1)).toEqual([{ id: "lax-7" }, { id: "lax-5" }, { id: "lax-9" }]);
+  });
+
+  it("treats a local record the renderer skips as a failed preview, and says an archive skip once", async () => {
+    currentDatabase(["lax-1"]);
+    const { b, a, c } = siblingLayout();
+    fs.writeFileSync(path.join(b, "build-output.json"), JSON.stringify(localBuildOutput("lax-9", "B")));
+    const port = await freePort();
+    const renderer = stubRenderer();
+    renderer.skips.set("lax-9", "statement Lax5.claim has no home concept in the archive");
+    renderer.skips.set("lax-1", "GRAPH_LABEL_GLYPH_UNSUPPORTED");
+    const output = capture();
+
+    try {
+      await serveWebsite(b, port, {
+        renderer,
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    // The renderer finished, but not with the folder in it: said like a
+    // failed rebuild, with the hint, on the first render.
+    const lines = output.lines.join("\n");
+    expect(lines).toMatch(/^ {2}✗ \d{2}:\d{2}:\d{2} {2}the preview could not render lax-9$/mu);
+    expect(lines).toContain("    lax-9: statement Lax5.claim has no home concept in the archive");
+    expect(lines).toContain(`run \`lax build\` in ${ui.tilde(a)}, ${ui.tilde(c)}.`);
+    expect(output.lines).toContain("  lax-9 (not rendered) and 1 published submission.");
+    expect(lines).toContain("  ! The renderer skipped lax-1, a record in your copy of the archive.");
+    expect(lines).toContain("    GRAPH_LABEL_GLYPH_UNSUPPORTED");
+    const html = await (await fetch(`http://localhost:${port}/`)).text();
+    const front = text(html);
+    expect(front).toContain("The preview could not be rebuilt");
+    expect(front).toContain("lax-9: statement Lax5.claim has no home concept in the archive");
+    expect(front).toContain("lax-9 — B\nlocal build, v4.19.0 — not rendered, see above");
+    expect(html).not.toContain('href="/lax-9/"');
+    expect(html).toContain('<meta http-equiv="refresh" content="10">');
+
+    // The archive skip is said once per preview, not once per rebuild.
+    const again = capture();
+    try {
+      fs.writeFileSync(path.join(b, "build-output.json"), JSON.stringify(localBuildOutput("lax-9", "B2")));
+      await waitFor(() => again.lines.some((line) => line.includes("could not render lax-9")), "the second render");
+    } finally {
+      again.restore();
+    }
+    expect(again.lines.join("\n")).not.toContain("The renderer skipped lax-1");
   });
 
   it("folds the renderer's console noise into the rebuilt line unless verbose", async () => {
@@ -936,6 +990,9 @@ interface StubRenderer extends PageBuilder {
   /** The epoch of each render: the argument a renderer released before
    * environments existed simply ignores. */
   epochs: Array<string | undefined>;
+  /** Records the stub drops at its per-record boundary, as the real
+   * renderer does with a statement it cannot place. */
+  skips: Map<string, string>;
 }
 
 /** A renderer standing in for the pinned lax-website bundle, which only a
@@ -946,9 +1003,15 @@ function stubRenderer(): StubRenderer {
     renders: 0,
     seen: [],
     epochs: [],
-    generateSite: async (submissions, outDir, epoch) => {
+    skips: new Map(),
+    generateSite: async (submissions, outDir, options) => {
       builder.renders += 1;
-      builder.epochs.push(epoch);
+      const settings = typeof options === "string" ? { epoch: options } : options ?? {};
+      builder.epochs.push(settings.epoch);
+      for (const [id, reason] of builder.skips) {
+        if (submissions.some((submission) => submission.record.id === id)) settings.onSkip?.({ id, reason });
+      }
+      submissions = submissions.filter((submission) => !builder.skips.has(submission.record.id));
       builder.seen.push(
         (submissions as Array<{ record: { id: string }; paperFile?: string; bundleFile?: string }>).map(
           (submission) => ({

@@ -13,6 +13,10 @@ rewrite-plan.md (fully executed).
 draft-dependency warning behind the same flag, strict default everywhere
 (spec-notes.md records both deviations). Owed:
 
+- `lax serve` is unreachable for the whole render: `generateSite` blocks
+  the event loop for 14–21 s on the current database, so a link clicked
+  during a rebuild hangs until it finishes. Move the render to a worker or
+  a child process.
 - A real round trip on two scratch drafts: iterate with `--nonstrict`,
   register the dependency, follow the printed git require, submit the
   dependent. The e2e (`cross-submission.test.ts`) covers the build; the

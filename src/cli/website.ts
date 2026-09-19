@@ -34,12 +34,32 @@ interface WebsiteSubmission {
   bundleFile?: string;
 }
 
+/** A record the renderer dropped at its per-record boundary and rendered
+ * the site without: the pages are a function of the whole list, so a record
+ * it cannot draw is left out rather than drawn wrong. */
+export interface SkippedRecord {
+  id: string;
+  reason: string;
+}
+
+export interface GenerateOptions {
+  /** The archive's epoch: the table the author's installed CLI actually
+   * validates against, preferred by the renderer over the `EPOCH` its own
+   * config was released with. */
+  epoch?: string;
+  /** Told of every record the renderer skipped; without it the renderer
+   * says so on its console, which the preview keeps quiet. */
+  onSkip?: (skipped: SkippedRecord) => void;
+}
+
 export interface PageBuilder {
-  /** The third argument is the archive's epoch. A renderer released before
-   * environments existed ignores it and uses the `EPOCH` its own config was
-   * released with; a newer one prefers ours, which is the table the author's
-   * installed CLI actually validates against. */
-  generateSite(submissions: WebsiteSubmission[], outDir: string, epoch?: string): Promise<void>;
+  /** The third argument is the options bag, or — the shape older CLIs called
+   * with — the epoch id on its own; the renderer takes both. */
+  generateSite(
+    submissions: WebsiteSubmission[],
+    outDir: string,
+    options?: string | GenerateOptions,
+  ): Promise<void>;
   mimeTypes: Record<string, string>;
 }
 
@@ -468,6 +488,10 @@ export async function serveWebsite(
   let counts: PreviewCounts | undefined;
   /** Why the last rebuild failed, for the front page; cleared by a success. */
   let failure: string | undefined;
+  /** Local records the last render skipped: rows not to link. */
+  let skippedLocal = new Set<string>();
+  /** Archive records the renderer has skipped, each said once per preview. */
+  const announcedSkips = new Set<string>();
   /** What the last rebuild saw of the local folders (localFingerprint). */
   let seen: string | undefined;
   const pageBuilder = options.renderer === undefined
@@ -485,6 +509,7 @@ export async function serveWebsite(
       published: counts?.published,
       warning: bannerText(advice),
       failure,
+      skipped: skippedLocal,
       building: counts === undefined && failure === undefined,
     });
 
@@ -508,16 +533,47 @@ export async function serveWebsite(
       }
       await attachPaperFiles(submissions, failedPaperFetches);
       const builder = await pageBuilder;
-      const { warnings } = await quietly(() => builder.generateSite(submissions, outDir, epoch().id));
+      const skipped: SkippedRecord[] = [];
+      const { warnings } = await quietly(() =>
+        builder.generateSite(submissions, outDir, {
+          epoch: epoch().id,
+          onSkip: (record) => { skipped.push(record); },
+        }));
       applyWebsiteWarning(outDir, bannerText(advice));
-      counts = previewCounts(submissions, localFolder, siblings.length);
-      failure = undefined;
+      // A skipped local record is the preview failing at what it is for,
+      // even though the renderer finished: said like a failed rebuild, on
+      // the first render too. A skipped archive record is the archive
+      // copy's, and is said once.
+      const localIds = new Set(submissions.slice(-(siblings.length + 1)).map((entry) => entry.record.id));
+      const localSkips = localFolder === undefined ? [] : skipped.filter((record) => localIds.has(record.id));
+      skippedLocal = new Set(localSkips.map((record) => record.id));
+      counts = previewCounts(submissions, entries[0], siblings.length, skippedLocal);
+      failure = localSkips.length === 0
+        ? undefined
+        : localSkips.map((record) => `${record.id}: ${record.reason}`).join("\n");
       if (!stopped) {
         if (ui.isVerbose()) for (const line of warnings) ui.verbose(`renderer: ${line}`);
         const noise = warnings.length === 0 || ui.isVerbose()
           ? ""
           : `  (renderer: ${ui.count(warnings.length)} ${warnings.length === 1 ? "warning" : "warnings"}; -v shows them)`;
-        if (opened) ui.faint(`↻ ${clock()}  rebuilt${noise}`);
+        if (failure !== undefined) {
+          const hint = siblingHint(entries);
+          ui.failure(
+            `${clock()}  the preview could not render ${[...skippedLocal].join(", ")}\n${failure}` +
+              (hint === undefined ? "" : `\n${hint}`),
+          );
+        } else if (opened) {
+          ui.faint(`↻ ${clock()}  rebuilt${noise}`);
+        }
+        const fresh = skipped.filter((record) => !localIds.has(record.id) && !announcedSkips.has(record.id));
+        if (fresh.length > 0) {
+          const notes = new ui.Notes();
+          for (const record of fresh) {
+            announcedSkips.add(record.id);
+            notes.add(`The renderer skipped ${record.id}, a record in your copy of the archive.`, record.reason);
+          }
+          notes.print();
+        }
       }
     } catch (error) {
       // A failed rebuild stays visible, on the terminal and on the front
@@ -647,6 +703,11 @@ export async function serveWebsite(
 
   ui.title("Preview");
   ui.link(`http://localhost:${bound}/`);
+  if (bound !== port) {
+    const walk = new ui.Notes();
+    walk.add(`Port ${port} was busy, so this preview is on ${bound}.`);
+    walk.print();
+  }
   // The first render is the one that knows how many submissions there are, so
   // the counts wait for it rather than being guessed at. The link does not
   // wait: loading the renderer takes a moment, and the URL is the line the
@@ -655,10 +716,13 @@ export async function serveWebsite(
   opened = true;
   ui.blank();
   if (counts !== undefined) ui.line(submissionsLine(counts));
-  ui.line(`Rebuilds when ${ui.cmd("lax build")} writes a new result. Ctrl-C to stop.`);
+  ui.line(
+    localFolder === undefined
+      ? "Rebuilds when your copy of the archive changes. Ctrl-C to stop."
+      : `Rebuilds when ${ui.cmd("lax build")} writes a new result. Ctrl-C to stop.`,
+  );
 
   const notes = new ui.Notes();
-  if (bound !== port) notes.add(`Port ${port} was busy, so this preview is on ${bound}.`);
   if (advice !== undefined) notes.add(advice.headline, ...noteFix(advice));
   notes.print();
   ui.blank();
@@ -728,8 +792,12 @@ function listenOnce(server: http.Server, port: number): Promise<void> {
 }
 
 interface PreviewCounts {
-  /** The id of the folder being previewed, once a build has given it one. */
+  /** The folder being previewed, by the id the build or the manifest gave it. */
   localId?: string;
+  /** The folder has no build output: its page is the renderer's placeholder. */
+  unbuilt?: boolean;
+  /** The folder was fed but the renderer skipped it. */
+  skipped?: boolean;
   /** The built siblings rendered beside it, by id. */
   siblings: string[];
   published: number;
@@ -738,20 +806,25 @@ interface PreviewCounts {
 /**
  * Split what was rendered into the author's own folder, its siblings, and the
  * archive's records: `loadWebsiteSubmissions` appends the siblings and then
- * the local submission last, and calls the latter `local` until a build has
- * written an id into build-output.json.
+ * the local submission last. The folder's id comes from its listing entry —
+ * the build's, or the manifest's before a build has named it.
  */
 function previewCounts(
   submissions: readonly WebsiteSubmission[],
-  localFolder: string | undefined,
-  siblingCount = 0,
+  local: LocalEntry | undefined,
+  siblingCount: number,
+  skipped: ReadonlySet<string>,
 ): PreviewCounts {
-  if (localFolder === undefined) return { siblings: [], published: submissions.length };
-  const id = submissions.at(-1)?.record.id;
+  if (local === undefined) return { siblings: [], published: submissions.length };
   const locals = 1 + siblingCount;
   return {
-    ...(id === undefined || id === LOCAL_SUBMISSION_ID ? {} : { localId: id }),
-    siblings: submissions.slice(-locals, -1).map((submission) => submission.record.id),
+    ...(local.id === LOCAL_SUBMISSION_ID ? {} : { localId: local.id }),
+    ...(local.built ? {} : { unbuilt: true }),
+    ...(skipped.has(submissions.at(-1)?.record.id ?? "") ? { skipped: true } : {}),
+    siblings: submissions
+      .slice(-locals, -1)
+      .map((submission) => submission.record.id)
+      .filter((id) => !skipped.has(id)),
     published: submissions.length - locals,
   };
 }
@@ -765,10 +838,11 @@ function submissionsLine(counts: PreviewCounts): string {
   if (counts.localId === undefined) {
     return `${published.charAt(0).toUpperCase()}${published.slice(1)}.`;
   }
+  const state = counts.skipped === true ? " (not rendered)" : counts.unbuilt === true ? " (not built yet)" : "";
   const siblings = counts.siblings.length === 0
     ? ""
     : `, ${counts.siblings.length === 1 ? "sibling" : "siblings"} ${counts.siblings.join(", ")},`;
-  return `${counts.localId}${siblings} and ${published}.`;
+  return `${counts.localId}${state}${siblings} and ${published}.`;
 }
 
 interface FrontPageState {
@@ -778,6 +852,8 @@ interface FrontPageState {
   published?: number;
   warning?: string;
   failure?: string;
+  /** Local records the last render skipped: listed, not linked. */
+  skipped: ReadonlySet<string>;
   /** No render has finished yet, and none has failed: the page reloads itself. */
   building: boolean;
 }
@@ -793,7 +869,15 @@ interface FrontPageState {
 function frontPageHtml(state: FrontPageState): string {
   const rendered = state.published !== undefined;
   const row = (entry: LocalEntry): string => {
-    const page = entry.built ? submissionPagePath(entry.id) : undefined;
+    // An unbuilt folder still has a page: the renderer's placeholder, filed
+    // under the pre-build id. A skipped record has none.
+    const page = state.skipped.has(entry.id)
+      ? undefined
+      : entry.built
+        ? submissionPagePath(entry.id)
+        : entry.sibling || entry.missing !== undefined
+          ? undefined
+          : submissionPagePath(LOCAL_SUBMISSION_ID);
     const name = page === undefined
       ? `<strong>${escapeHtml(entry.id)}</strong>`
       : `<a href="/${escapeHtml(page)}"><strong>${escapeHtml(entry.id)}</strong></a>`;
@@ -809,7 +893,11 @@ function frontPageHtml(state: FrontPageState): string {
         ? ""
         : ` (${entry.nonstrict.length === 1 ? "sibling" : "siblings"} ${escapeHtml(entry.nonstrict.join(", "))})`;
       status = `${entry.nonstrict === undefined ? "local build" : "nonstrict local build"}${siblings}` +
-        `${entry.environment === undefined ? "" : `, ${escapeHtml(entry.environment)}`}`;
+        `${entry.environment === undefined ? "" : `, ${escapeHtml(entry.environment)}`}` +
+        (entry.nonstrict === undefined
+          ? ""
+          : " — a nonstrict build previews siblings the archive accepts only as registered git requires");
+      if (state.skipped.has(entry.id)) status += " — not rendered, see above";
     }
     const folder = entry.built || entry.missing !== undefined
       ? `<br><span class="folder">${escapeHtml(ui.tilde(entry.folder))}</span>`
@@ -844,7 +932,16 @@ function frontPageHtml(state: FrontPageState): string {
         ? "no published submissions in it yet"
         : `${ui.count(state.published)} published ${state.published === 1 ? "submission" : "submissions"}`
   }.</p>`;
-  const refresh = state.building ? 2 : state.failure === undefined ? undefined : FAILURE_REFRESH_S;
+  // Reload while something is still to happen: the first render, a failure
+  // to fix, or a row waiting for a build or a folder.
+  const pending = state.entries.some((entry) => !entry.built || entry.missing !== undefined);
+  const refresh = state.building
+    ? 2
+    : state.failure !== undefined
+      ? FAILURE_REFRESH_S
+      : pending
+        ? PENDING_REFRESH_S
+        : undefined;
   return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" " +
     "content=\"width=device-width,initial-scale=1\"><title>Lax local preview</title>" +
     (refresh === undefined ? "" : `<meta http-equiv="refresh" content="${refresh}">`) +
@@ -863,6 +960,9 @@ function frontPageHtml(state: FrontPageState): string {
 /** How often the front page reloads while the last render failed: slow
  * enough not to matter, fast enough that fixing the cause shows up unasked. */
 const FAILURE_REFRESH_S = 10;
+
+/** How often it reloads while a listed folder is unbuilt or missing. */
+const PENDING_REFRESH_S = 5;
 
 /** `14:22:07` — the author's own wall clock, all a rebuild line has to say. */
 function clock(at = new Date()): string {
