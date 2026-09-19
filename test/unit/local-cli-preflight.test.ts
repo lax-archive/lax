@@ -331,6 +331,32 @@ describe("local command preflights", () => {
     );
     expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(true);
     expect(hasCurrentLocalBuild(root, source, "c".repeat(40))).toBe(false);
+
+    // a nonstrict build that pulled in siblings built against local checkouts
+    // the archive cannot see: never current for a submit
+    fs.writeFileSync(
+      path.join(root, "build-output.json"),
+      JSON.stringify({
+        id: "lax-7",
+        localValidation: {
+          version: 1,
+          source,
+          archiveSha: "b".repeat(40),
+          ...localRuntime(),
+          siblings: ["Lax9"],
+        },
+      }),
+    );
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
+    // any nonstrict output, siblings or not: it admitted what the archive refuses
+    fs.writeFileSync(
+      path.join(root, "build-output.json"),
+      JSON.stringify({
+        id: "lax-7",
+        localValidation: { version: 1, source, archiveSha: "b".repeat(40), ...localRuntime(), nonstrict: true },
+      }),
+    );
+    expect(hasCurrentLocalBuild(root, source, "b".repeat(40))).toBe(false);
   });
 
   it("binds a recorded paper to paper.pdf and a recorded web view to paper-web.tar by digest", () => {

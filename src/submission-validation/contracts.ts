@@ -216,12 +216,24 @@ export interface GitRequire {
   subDir?: string;
 }
 
+/** A `path` require on another local submission's package — a *sibling*.
+ * Admitted only by a non-strict local build (`lax build --nonstrict`); the
+ * archive refuses every path require but the proof package's own
+ * `../concepts` edge, so trusted validation never produces one. */
+export interface PathRequire {
+  name: string;
+  /** as written: relative to the requiring package's directory */
+  path: string;
+}
+
 export interface ValidatedLakefile {
   packageName: string;
   gitRequires: GitRequire[];
   /** the proof package's own `{ path = "../concepts" }` edge — the only
-   * `path` require a lakefile may carry */
+   * `path` require the archive admits */
   hasConceptPathRequire: boolean;
+  /** sibling path requires; always empty under strict validation */
+  pathRequires: PathRequire[];
 }
 
 export interface ModuleInventory {

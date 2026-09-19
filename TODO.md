@@ -7,6 +7,25 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
+## Sibling drafts (2026-09-19)
+
+`lax build --nonstrict` landed: sibling `path` requires built in place, the
+draft-dependency warning behind the same flag, strict default everywhere
+(spec-notes.md records both deviations). Owed:
+
+- A real round trip on two scratch drafts: iterate with `--nonstrict`,
+  register the dependency, follow the printed git require, submit the
+  dependent. The e2e (`cross-submission.test.ts`) covers the build; the
+  author journey is untested.
+- The strict refusal of a path require does not look the sibling up, so an
+  author who registered the dependency and forgot the edit sees "not
+  supported by the archive" plus the chain hint, not the triple. Run
+  `--nonstrict` once to get the triple; document or fold if it bites.
+- Two concurrent builds (the sibling's own and a dependent's) write the
+  sibling's `.lake` at once; three racing rounds did not break, and the
+  proofs → `../concepts` edge has always had the same race. No lock; note it
+  if it ever bites.
+
 ## Inspector report size (2026-09-16)
 
 Lax17's resubmission on v4.33 (405 modules, 38,484 declarations) failed as

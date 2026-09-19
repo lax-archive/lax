@@ -399,7 +399,7 @@ describe("submission static validation retained from main", () => {
     expect(message).toContain("chain workflow");
     expect(message).toContain("commit, submit and register the dependency");
     expect(message).toContain('rev = "<commit>"');
-    expect(message).toContain("package overrides");
+    expect(message).toContain("lax build --nonstrict");
 
     for (const [requirement, kind, expected] of [
       ['name = "Lax7"\npath = "/abs/concepts"', "concepts", "is not supported"],
@@ -424,6 +424,61 @@ describe("submission static validation retained from main", () => {
         `${kind}/lakefile.toml`,
         RUNTIME,
         findings,
+      );
+      expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(expected);
+    }
+  });
+
+  it("admits sibling path requires only under the nonstrict option, with the git-require rules mirrored", () => {
+    // strict is the default: the option's absence is the archive's behaviour
+    const strict = new FindingCollector("static");
+    validateLakefile(
+      lakefile("Lax9", { requirements: ['name = "Lax7"\npath = "../../other/concepts"'] }),
+      "concepts",
+      "Lax9",
+      "concepts/lakefile.toml",
+      RUNTIME,
+      strict,
+    );
+    expect(strict.violations).toHaveLength(1);
+
+    const relaxed = new FindingCollector("static");
+    const parsed = validateLakefile(
+      lakefile("Lax9Proofs", {
+        ownConcept: "Lax9",
+        requirements: ['name = "Lax7"\npath = "../../other/concepts"', 'name = "Lax8Proofs"\npath = "../../eight/proofs"'],
+      }),
+      "proofs",
+      "Lax9Proofs",
+      "proofs/lakefile.toml",
+      RUNTIME,
+      relaxed,
+      { siblings: true },
+    );
+    expect(relaxed.violations).toEqual([]);
+    expect(parsed?.hasConceptPathRequire).toBe(true);
+    expect(parsed?.pathRequires).toEqual([
+      { name: "Lax7", path: "../../other/concepts" },
+      { name: "Lax8Proofs", path: "../../eight/proofs" },
+    ]);
+    expect(relaxed.warnings.map((warning) => warning.rule)).toEqual(["proof-dependency"]);
+
+    for (const [requirement, kind, expected] of [
+      ['name = "Lax7"\npath = "/abs/concepts"', "concepts", "must be relative"],
+      ['name = "Other"\npath = "../../other/concepts"', "concepts", "not a Lax package name"],
+      ['name = "Lax9"\npath = "../../other/concepts"', "concepts", "its own package"],
+      ['name = "Lax9Proofs"\npath = "../../other/proofs"', "concepts", "its own package"],
+      ['name = "Lax7Proofs"\npath = "../../other/proofs"', "concepts", "cannot require proof packages"],
+    ] as const) {
+      const findings = new FindingCollector("static");
+      validateLakefile(
+        lakefile("Lax9", { requirements: [requirement] }),
+        kind,
+        "Lax9",
+        `${kind}/lakefile.toml`,
+        RUNTIME,
+        findings,
+        { siblings: true },
       );
       expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(expected);
     }

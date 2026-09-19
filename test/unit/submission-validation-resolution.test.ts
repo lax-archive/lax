@@ -247,7 +247,8 @@ describe("Archive dependency resolution retained from main", () => {
     expect(trusted.findings.violations.map((finding) => finding.rule)).toEqual(["draft-dependency"]);
     expect(trusted.findings.violations[0]!.message).toBe(
       "dependency Lax10 belongs to draft submission lax-10; " +
-        "the archive admits only registered dependencies — register lax-10 first",
+        "the archive admits only registered dependencies — register lax-10 first " +
+        "(locally, `lax build --nonstrict` admits a draft dependency for iteration)",
     );
     expect(trusted.result.all).toEqual([]);
 

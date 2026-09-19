@@ -95,11 +95,21 @@ program
     "--build-from-source",
     "build mathlib from source when its prebuilt artifacts cannot be fetched",
   )
+  .option(
+    "--nonstrict",
+    "admit draft dependencies and sibling `path` requires the archive refuses, to iterate on unregistered drafts together",
+  )
   .description("run the archive's checks on your machine")
   .action(
     run(async (
       folder: string,
-      options: { profile?: boolean; replay?: boolean; only?: string; buildFromSource?: boolean },
+      options: {
+        profile?: boolean;
+        replay?: boolean;
+        only?: string;
+        buildFromSource?: boolean;
+        nonstrict?: boolean;
+      },
     ) => {
       if (options.only !== undefined && options.only !== "concepts" && options.only !== "proofs") {
         throw new Error(`--only takes \`concepts\` or \`proofs\`, got \`${options.only}\``);
@@ -110,6 +120,7 @@ program
         replay: options.replay,
         scope: (options.only as ValidationScope | undefined) ?? "both",
         buildFromSource: options.buildFromSource,
+        nonstrict: options.nonstrict,
       });
       return outcome.ok ? 0 : 1;
     },
@@ -208,7 +219,10 @@ program
   .argument("[folder]", "local submission folder", ".")
   .option("--port <port>", "local preview port", "8123")
   .option("--database-only", "render only the archive, without the local folder")
-  .description("preview the pages this submission generates")
+  .description(
+    "preview the pages this submission generates; opens on a local front page that lists " +
+      "this folder and the siblings its path requires reach, with a link to each",
+  )
   .action(
     run(
       (

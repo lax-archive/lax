@@ -1,15 +1,27 @@
 import { parse } from "smol-toml";
 import { CHAIN_WORKFLOW_HINT } from "../chain-workflow.js";
-import type {
-  GitRequire,
-  ValidatedLakefile,
-  ValidationRuntimeIdentity,
+import {
+  submissionIdForPackage,
+  type GitRequire,
+  type PathRequire,
+  type ValidatedLakefile,
+  type ValidationRuntimeIdentity,
 } from "../contracts.js";
 import type { FindingCollector } from "../findings.js";
 import { validateRepositoryUrl } from "../../shared/validation.js";
 
 const TOP_KEYS = new Set(["name", "defaultTargets", "leanOptions", "require", "lean_lib"]);
 const COMMIT = /^[0-9a-f]{40}$/u;
+
+export interface LakefileOptions {
+  /**
+   * Admit `path` requires on sibling submissions. Only the local host build
+   * sets this, and only under `lax build --nonstrict`: the archive refuses
+   * every path require but the proof package's own `../concepts` edge, and
+   * so does every other caller (validators/lakefile.ts is the one boundary).
+   */
+  siblings?: boolean;
+}
 
 export function validateLakefile(
   content: string,
@@ -18,6 +30,7 @@ export function validateLakefile(
   where: string,
   runtime: ValidationRuntimeIdentity,
   findings: FindingCollector,
+  options: LakefileOptions = {},
 ): ValidatedLakefile | undefined {
   if (Buffer.byteLength(content, "utf8") > 256 * 1024) {
     findings.violate("lakefile", `${where} exceeds 256 KiB`);
@@ -56,6 +69,7 @@ export function validateLakefile(
   }
 
   const gitRequires: GitRequire[] = [];
+  const pathRequires: PathRequire[] = [];
   let mathlib = false;
   let hasConceptPathRequire = false;
   const seenRequires = new Set<string>();
@@ -87,18 +101,47 @@ export function validateLakefile(
           else hasConceptPathRequire = true;
           return;
         }
+        if (options.siblings === true) {
+          // A sibling: another local submission's package, built in place
+          // from its working tree. Admitted for local iteration only — the
+          // rules below mirror the git-require rules so that replacing the
+          // path by the registered triple later changes nothing else.
+          if (raw.path.startsWith("/")) {
+            findings.violate("lakefile", `${label}: a sibling path must be relative to ${kind}/`);
+            return;
+          }
+          const id = submissionIdForPackage(raw.name);
+          if (id === undefined) {
+            findings.violate("lakefile", `${label}: sibling package ${raw.name} is not a Lax package name (LaxN, N ≥ 1)`);
+            return;
+          }
+          const ownId = submissionIdForPackage(expectedName);
+          if (id === ownId) {
+            findings.violate("lakefile", `${label}: a submission cannot require its own package ${raw.name} as a sibling`);
+            return;
+          }
+          if (kind === "concepts" && raw.name.endsWith("Proofs"))
+            findings.violate("lakefile", `${label}: concept packages cannot require proof packages`);
+          if (raw.name.endsWith("Proofs"))
+            findings.warn("proof-dependency", `${label}: depending on a proof package is discouraged`);
+          pathRequires.push({ name: raw.name, path: raw.path });
+          return;
+        }
         // The proof package's own `../concepts` edge above is the only `path`
-        // require there is. A cross-submission path require would also break
-        // the invariant the capture cache key rests on — that every
+        // require the archive admits. A cross-submission path require would
+        // break the invariant the capture cache key rests on — that every
         // cross-submission edge is rev-pinned in source, so a submission's
         // commit transitively pins its whole source closure (rewrite-plan
         // addendum 2c). Forbidding it here is load-bearing for cache
-        // soundness, not just simplification.
+        // soundness, not just simplification. Locally, `lax build --nonstrict`
+        // admits it as a sibling (above) so unregistered drafts can be
+        // iterated together.
         findings.violate(
           "lakefile",
-          `${label}: a \`path\` require may only be the proof package's own concept package ` +
-            '(`path = "../concepts"`, from proofs/lakefile.toml); a path require reaching ' +
-            "another submission's package is not supported. " +
+          `${label}: a path require reaching another submission's package is not supported by the archive ` +
+            "(the only `path` require is the proof package's own `../concepts`). While the dependency is " +
+            "still an unregistered draft, `lax build --nonstrict` admits it as a sibling built from its " +
+            "local checkout, so only the final commits have to be chained. " +
             CHAIN_WORKFLOW_HINT,
         );
         return;
@@ -140,7 +183,7 @@ export function validateLakefile(
     });
   }
   if (!mathlib) findings.violate("lakefile", `${where}: the package must require pinned mathlib directly`);
-  return { packageName: expectedName, gitRequires, hasConceptPathRequire };
+  return { packageName: expectedName, gitRequires, hasConceptPathRequire, pathRequires };
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {

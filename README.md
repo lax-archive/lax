@@ -220,6 +220,7 @@ posts exact command comments thereafter; it never writes the database directly:
 ```sh
 lax init submission            # --title "…" (default: the folder name); uses v4.33.0
 lax build submission
+lax build submission --nonstrict   # iterate against sibling drafts (see below)
 lax serve submission
 lax generate-prooftree lax-N
 git commit && git push
@@ -317,11 +318,23 @@ timeout.
 `lax serve [folder]` uses the current `lax-website` page-builder downloaded by
 `lax update`. If none has been downloaded yet, the first preview downloads it;
 if that fails, the revision bundled in the CLI remains the safe fallback. The
-preview starts immediately with a loading page and opens on the folder's own
-page — `http://localhost:8123/<id>/`, or `/local/` until a build has named it;
-`--database-only` opens on the index. It renders the local
-`~/.lax/lax-database` checkout plus the folder's `build-output.json` and
-rebuilds when either changes. The CLI and every generated page show a warning
+preview starts immediately and opens on its own front page,
+`http://localhost:8123/`: a local page, not one of the archive's, that says
+what is being served — the folder (`/<id>/`, or `/local/` until a build has
+named it), each sibling a nonstrict build's `path` requires reach, with its
+title, environment, and whether it has build output, and a link to the
+generated archive index at `/index.html`. It renders the local
+`~/.lax/lax-database` checkout plus the folder's `build-output.json`, plus
+every sibling folder that has one (a sibling without one is listed with the
+`lax build` to run there, and not rendered; one whose folder is gone keeps
+its row, naming the require that points at it), and rebuilds when any of
+them changes — the folder is watched, the siblings are polled every two
+seconds. The front page also carries the database warning and, when a
+render failed, the reason and what to build; the terminal says the same,
+with the renderer's own font warnings folded into a count on the rebuilt
+line (`-v` prints them). The output directory under the system temp folder
+is removed when the preview ends, and stale ones from killed previews are
+swept a day later. The CLI and every generated page show a warning
 when the database is missing, stale, invalid, or cannot be checked. Pass
 `--database-only` to omit the local folder. A taken port is walked past — a
 second preview binds the next free port above 8123 and prints it — and
@@ -348,7 +361,21 @@ source fetching and artifact publication are omitted locally; kernel replay
 (the host toolchain's `leanchecker`) is opt-in with `--replay`. `--only
 concepts` and `--only proofs` provide partial iteration builds without
 replacing `build-output.json`, and `--profile` prints the nested span tree of
-every phase. The trusted workflow collects the same tree without being asked:
+every phase. By default the local build is exactly as strict as the archive:
+a require on a draft record or a `path` require reaching another submission
+fails here as it would there. `--nonstrict` admits both for iterating on
+several unregistered drafts at once. A dependent then names a sibling
+checkout with a `path` require (`[[require]] name = "LaxN", path =
+"../../other/concepts"`, relative to its own package directory); lake builds
+the sibling in place, so its artifacts are shared with the sibling's own
+builds, and the sibling's own requires are followed, so its lakefile is the
+only place its dependencies are spelled. What a package imports or concludes
+it must require itself, exactly as with git requires: a proof package that
+discharges a sibling's statement names that sibling in `proofs/lakefile.toml`
+too. An output that admitted a sibling or a draft dependency is marked and
+never reused by `lax submit`, which always builds strictly. Once the sibling
+is registered, the nonstrict build refuses the path require and prints the
+git require to write in its place; the path edge never reaches the archive. The trusted workflow collects the same tree without being asked:
 each validation job writes its spans to `validation-profile.json` beside the
 validation report, uploads it with the run's artifacts, and echoes it into the
 job's step summary. The profile is diagnostics only; nothing that

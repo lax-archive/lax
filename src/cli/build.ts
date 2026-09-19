@@ -15,7 +15,7 @@ import {
   PAPER_PDF,
   PAPER_WEB_TAR,
 } from "../submission-validation/generated-files.js";
-import { validateSubmissionOnHost } from "../submission-validation/host/pipeline.js";
+import { validateSubmissionOnHost, type HostValidationReport } from "../submission-validation/host/pipeline.js";
 import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { hostValidationRuntime } from "../submission-validation/pins.js";
 import { removeValidationWorkspace } from "../submission-validation/workspace-cleanup.js";
@@ -33,6 +33,10 @@ export interface LocalBuildOptions {
   scope?: ValidationScope;
   profile?: boolean;
   buildFromSource?: boolean;
+  /** `--nonstrict`: admit draft dependencies and sibling path requires the
+   * archive refuses, for iterating on unregistered drafts together. The
+   * output records the siblings and is never reused by `lax submit`. */
+  nonstrict?: boolean;
   /**
    * Run inside another command's step list rather than owning the screen.
    * `lax submit` needs the local build as one row of its own report, showing
@@ -68,6 +72,7 @@ export interface LocalBuildOutcome {
  */
 const ROW_OF_PHASE = new Map<string, string>([
   ["static validation", "layout"],
+  ["sibling packages", "dependencies"],
   ["dependency resolution", "dependencies"],
   ["warm store", "mathlib"],
   ["provision concepts", "concepts"],
@@ -206,6 +211,7 @@ export async function buildSubmission(
       replay: options.replay ?? false,
       scope,
       fromSource: options.buildFromSource ?? false,
+      nonstrict: options.nonstrict ?? false,
       profiler,
       echo: ui.isVerbose(),
       onDetail: (phase, detail) => {
@@ -296,6 +302,12 @@ export async function buildSubmission(
           leanToolchain: runtime.leanToolchain,
           mathlibCommit: runtime.mathlibCommit,
           replay: options.replay === true,
+          // An output that admitted what the archive refuses — a sibling, or a
+          // draft dependency — is marked, and a submit never reuses it
+          // (hasCurrentLocalBuild). A `--nonstrict` run that admitted nothing
+          // is an ordinary strict output and stays reusable.
+          ...(admittedNonstrict(report) ? { nonstrict: true } : {}),
+          ...(report.siblings === undefined || report.siblings.length === 0 ? {} : { siblings: report.siblings }),
         },
       };
       // Every generated name this build actually put in the author's folder,
@@ -464,10 +476,19 @@ export function showValidationFailure(failure: ValidationFailure): void {
   );
 }
 
+/** Whether a nonstrict build actually admitted an edge the archive refuses. */
+function admittedNonstrict(report: HostValidationReport): boolean {
+  return (
+    (report.siblings !== undefined && report.siblings.length > 0) ||
+    report.warnings.some((warning) => warning.rule === "draft-dependency")
+  );
+}
+
 /** A clean checkout can reuse a full build only when source, Archive snapshot,
  * and the runtime that produced it all match: a moved environment changes what
  * the same sources compile to, so an output from before the move is not
- * current. */
+ * current. An output marked nonstrict is never current for a submit: it
+ * admitted what the archive refuses. */
 export function hasCurrentLocalBuild(
   folder: string,
   source: SourceLocation,
@@ -494,6 +515,8 @@ export function hasCurrentLocalBuild(
         if (createHash("sha256").update(bundle).digest("hex") !== paper.web.bundle?.digest) return false;
       }
     }
+    if (validation?.nonstrict === true) return false;
+    if (Array.isArray(validation?.siblings) && validation.siblings.length > 0) return false;
     return (
       value.id === submissionIdFromFolder(folder) &&
       validation?.version === 1 &&

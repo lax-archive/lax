@@ -397,14 +397,130 @@ end Lax14.Top
     }
   });
 
-  it("accepts a draft upstream with a warning", async () => {
-    const report = await buildOnHost(down, {
+  it("refuses a draft upstream by default, like the archive, and warns about it under --nonstrict", async () => {
+    const strict = await buildOnHost(down, {
       id: "lax-12",
       archive: archiveWith(upstream, [middle, "draft"]),
     });
-    expect(report.violations).toEqual([]);
-    expect(report.warnings.map((warning) => warning.message).join("\n"))
+    expect(strict.ok).toBe(false);
+    expect(rules(strict)).toContain("draft-dependency");
+
+    const relaxed = await buildOnHost(down, {
+      id: "lax-12",
+      archive: archiveWith(upstream, [middle, "draft"]),
+      nonstrict: true,
+    });
+    expect(relaxed.violations).toEqual([]);
+    expect(relaxed.warnings.map((warning) => warning.message).join("\n"))
       .toContain("dependency Lax11 belongs to draft submission lax-11");
+  });
+
+  it("builds a sibling checkout in place under --nonstrict, seeding its own git requires, and refuses it strictly", async () => {
+    // Two drafts side by side, neither in the archive: lax-15 (which itself
+    // pins the registered lax-10 by git) and lax-16, which reaches lax-15 by
+    // path requires. The proof package discharges the sibling's statement.
+    const base = tmpDir("lax-siblings-");
+    const sibling = makeHostSubmission("lax-15", {
+      "concepts/Lax15.lean": "import Lax15.Seven\n",
+      "concepts/Lax15/Seven.lean": `import Lax10.Number
+/-!
+---
+title: Seven
+type: theorem
+---
+seven equals seven, beside Three
+-/
+namespace Lax15.Seven
+/-- the claim -/
+axiom claim : 7 = 7
+end Lax15.Seven
+`,
+    }, base);
+    fs.appendFileSync(
+      path.join(sibling, "concepts", "lakefile.toml"),
+      requireBlock("Lax10", UPSTREAM_REPOSITORY, upstream.source.commit),
+    );
+    const dependent = makeHostSubmission("lax-16", {
+      "concepts/Lax16.lean": "import Lax16.Eight\n",
+      "concepts/Lax16/Eight.lean": `import Lax15.Seven
+/-!
+---
+title: Eight
+type: theorem
+---
+eight equals eight, building on Seven
+-/
+namespace Lax16.Eight
+/-- the claim -/
+axiom claim : 8 = 8
+end Lax16.Eight
+`,
+      "proofs/Lax16Proofs.lean": "import Lax16Proofs.Basic\n",
+      "proofs/Lax16Proofs/Basic.lean": `import Lax16.Eight
+import Lax15.Seven
+
+namespace Lax16Proofs
+
+/--
+---
+conclusion: Lax16.Eight.claim
+assumptions:
+  - Lax15.Seven.claim
+---
+uses the sibling's statement
+-/
+theorem mine : 8 = 8 := by
+  have h := Lax15.Seven.claim
+  rfl
+
+/--
+---
+conclusion: Lax15.Seven.claim
+---
+discharges the sibling's statement
+-/
+theorem theirs : 7 = 7 := rfl
+
+end Lax16Proofs
+`,
+    }, base);
+    // Declared by both packages, as the archive demands of git requires:
+    // Inspect admits a package's imports and conclusions only from its own
+    // requires, so the proofs package names the sibling too.
+    for (const kind of ["concepts", "proofs"] as const) {
+      fs.appendFileSync(
+        path.join(dependent, kind, "lakefile.toml"),
+        '\n[[require]]\nname = "Lax15"\npath = "../../lax-15/concepts"\n',
+      );
+    }
+    gitInitCommit(sibling);
+    gitInitCommit(dependent);
+
+    const strict = await buildOnHost(dependent, { id: "lax-16", archive: archiveWith(upstream) });
+    expect(strict.ok).toBe(false);
+    expect(messages(strict)).toContain("not supported by the archive");
+    expect(strict.siblings).toBeUndefined();
+
+    const report = await buildOnHost(dependent, { id: "lax-16", archive: archiveWith(upstream), nonstrict: true });
+    expect(report.violations).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.siblings).toEqual(["Lax15"]);
+    expect(report.warnings.map((warning) => warning.message).join("\n"))
+      .toContain("Lax15 is built from its local checkout as a sibling");
+    // The sibling compiled in its own tree, never as a clone of the dependent;
+    // its registered dependency was cloned into the dependent's workspace
+    // because lake needs the whole closure in the root manifest.
+    expect(fs.existsSync(path.join(sibling, "concepts", ".lake", "build", "lib", "lean", "Lax15", "Seven.olean"))).toBe(true);
+    expect(fs.existsSync(path.join(dependent, "concepts", ".lake", "packages", "Lax15"))).toBe(false);
+    expect(fs.existsSync(path.join(dependent, "concepts", ".lake", "packages", "Lax10"))).toBe(true);
+    // Inspect admitted the sibling's imports and its axiom as a statement.
+    const out = report.buildOutput!;
+    expect(out.concepts[0]!.imports).toEqual(["Lax15.Seven"]);
+    expect(out.proofs.find((proof) => proof.conclusion === "Lax16.Eight.claim")!.assumptions)
+      .toEqual(["Lax15.Seven.claim"]);
+    // The sibling edge is local only: the derived dependency lists carry git
+    // requires, which a submit-ready lakefile must have replaced it by.
+    expect(out.requiredByConcepts).toEqual([]);
   });
 
   it("accepts a superseded upstream with a warning", async () => {

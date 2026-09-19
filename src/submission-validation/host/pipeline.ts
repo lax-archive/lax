@@ -24,6 +24,7 @@ import {
   type ArchiveEnvironment,
   type RuntimeSource,
 } from "../environments.js";
+import { submissionIdForPackage } from "../contracts.js";
 import { FindingCollector } from "../findings.js";
 import type {
   InspectionResult,
@@ -61,6 +62,7 @@ import { inspectorBinary } from "./inspector.js";
 import { hostLeanEnv, lakeBinary, lakePathEnv, packageLibDir, type LeanEnv } from "./leanenv.js";
 import { commitTimestamp, engineAvailable, hostPaperCompiler, MIN_LATEXMK_VERSION, probeLatexmkAsync } from "./paper.js";
 import { run } from "./proc.js";
+import { resolveSiblings, siblingManifestDir, type SiblingClosure } from "./siblings.js";
 import {
   ensureLocalWarm,
   seedManifest,
@@ -73,6 +75,15 @@ export interface HostValidationOptions {
   local: { fetched: FetchedSource; archive: ArchiveSnapshot };
   /** Kernel replay is opt-in locally (`lax build --replay`). */
   replay?: boolean;
+  /**
+   * `lax build --nonstrict`: admit what the archive refuses but local
+   * iteration on an unregistered chain needs — a git require on a draft
+   * record (a warning instead of a violation) and sibling path requires
+   * (host/siblings.ts). The default mirrors the archive exactly, so a build
+   * that passes here passes there. An output built nonstrictly is not
+   * reusable for `lax submit` (cli/build.ts).
+   */
+  nonstrict?: boolean;
   /** Fast local iteration may stop after one package. */
   scope?: ValidationScope;
   /** Build mathlib from source when its prebuilt artifacts cannot be fetched. */
@@ -121,6 +132,8 @@ interface HostState {
   violations: ValidationFinding[];
   failure?: ValidationFailure;
   dependencies: ResolutionResult["all"];
+  /** sibling package names a nonstrict build built in place (host/siblings.ts) */
+  siblings?: string[];
   phase<T>(name: string, operation: () => Promise<T> | T, judge?: (result: T) => boolean): Promise<T>;
 }
 
@@ -130,6 +143,8 @@ interface HostState {
 export interface HostValidationReport extends ValidationReport {
   paperPdfPath?: string;
   paperWebPath?: string;
+  /** Sibling packages a nonstrict build built in place; absent when strict. */
+  siblings?: string[];
 }
 
 /** Run the full local validation pipeline on the host toolchain. */
@@ -144,6 +159,7 @@ export async function validateSubmissionOnHost(
   let limits = limitsFor(environment);
   const profiler = options.profiler ?? new Profiler();
   const scope = options.scope ?? "both";
+  const nonstrict = options.nonstrict === true;
   const echo = options.echo ?? true;
   const warnings: ValidationFinding[] = [];
   const violations: ValidationFinding[] = [];
@@ -178,8 +194,8 @@ export async function validateSubmissionOnHost(
       }
     },
   };
-  const report = (ok: boolean): ValidationReport => {
-    const value: ValidationReport = {
+  const report = (ok: boolean): HostValidationReport => {
+    const value: HostValidationReport = {
       reportVersion: 1,
       ok,
       request,
@@ -189,6 +205,7 @@ export async function validateSubmissionOnHost(
       violations: [...violations],
     };
     if (state.failure !== undefined) value.failure = state.failure;
+    if (state.siblings !== undefined) value.siblings = state.siblings;
     return value;
   };
   const fail = (
@@ -208,7 +225,7 @@ export async function validateSubmissionOnHost(
   let staticCheck: ReturnType<typeof runStaticValidation>;
   try {
     staticCheck = await state.phase("static validation", () =>
-      runStaticValidation(request, state.fetched.submissionRoot, runtimeSource));
+      runStaticValidation(request, state.fetched.submissionRoot, runtimeSource, { siblings: nonstrict }));
   } catch (error) {
     return fail("static", "validator", error);
   }
@@ -225,12 +242,39 @@ export async function validateSubmissionOnHost(
   if (staticCheck.findings.failed || staticCheck.result.concepts === undefined || staticCheck.result.proofs === undefined)
     return report(false);
 
+  // Siblings (nonstrict only): the local packages the path requires reach,
+  // walked before Resolution because their git requires resolve with ours.
+  let siblings: SiblingClosure | undefined;
+  if (nonstrict) {
+    const found = new FindingCollector("resolution");
+    try {
+      siblings = await state.phase("sibling packages", () =>
+        resolveSiblings(state.fetched.submissionRoot, staticCheck.result, runtime, options.local.archive, found));
+    } catch (error) {
+      return fail("resolution", "siblings", error);
+    }
+    warnings.push(...found.warnings);
+    violations.push(...found.violations);
+    if (found.failed) return report(false);
+    const names = [...new Set([...siblings.concepts, ...siblings.proofs].map((sibling) => sibling.name))].sort();
+    for (const name of names)
+      warnings.push({
+        phase: "resolution",
+        rule: "sibling",
+        message: `${name} is built from its local checkout as a sibling; the archive admits it only as a git require on its registered commit`,
+      });
+    state.siblings = names;
+  }
+
   let resolution: ReturnType<typeof runResolution>;
   try {
     resolution = await state.phase("dependency resolution", () =>
-      // The host path is the author's local build: a draft dependency is
-      // a warning here and a refusal in the trusted run (resolution.ts).
-      runResolution(request, staticCheck.result, options.local.archive, runtime, { draftDependencies: "warn" }));
+      // Strict by default, like the trusted run (resolution.ts): a draft
+      // dependency is a warning only under `lax build --nonstrict`.
+      runResolution(request, staticCheck.result, options.local.archive, runtime, {
+        draftDependencies: nonstrict ? "warn" : "refuse",
+        ...(siblings === undefined ? {} : { additionalRequires: siblings.gitRequires }),
+      }));
   } catch (error) {
     return fail("resolution", "resolver", error);
   }
@@ -242,7 +286,11 @@ export async function validateSubmissionOnHost(
   // being absent from it.
   options.onDetail?.(
     "dependency resolution",
-    ["mathlib", ...new Set(resolution.result.all.map((dependency) => dependency.submissionId))].join(", "),
+    [
+      "mathlib",
+      ...new Set(resolution.result.all.map((dependency) => dependency.submissionId)),
+      ...(state.siblings ?? []).map((name) => `${submissionIdForPackage(name) ?? name} (sibling)`),
+    ].join(", "),
   );
   if (resolution.findings.failed) return report(false);
 
@@ -337,7 +385,7 @@ export async function validateSubmissionOnHost(
       try {
         await state.phase(`provision ${kind}`, () => {
           seedOverrides(warm, pkgDir);
-          seedManifest(warm, pkgDir, hostDependencies(kind, staticCheck.result, resolution.result));
+          seedManifest(warm, pkgDir, hostDependencies(kind, staticCheck.result, resolution.result, pkgDir, siblings));
         });
       } catch (error) {
         return fail("provision", `${kind}-workspace`, error);
@@ -397,17 +445,20 @@ export async function validateSubmissionOnHost(
     // lib/lean` — layout verified empirically at the pinned v4.30.0. Lake only
     // builds the dependency modules the package imports, so absent lib dirs
     // (a dependency nothing imported) are filtered like before.
+    // A sibling builds in place (host/siblings.ts), so its lib dir is under
+    // its own directory, not under this package's `.lake/packages`.
     const dependencyLibDirs = (kind: "concepts" | "proofs"): string[] =>
-      dependencyClosure(kind, resolution.result)
-        .map((dependency) => packageLibDir(path.join(
+      [
+        ...dependencyClosure(kind, resolution.result).map((dependency) => packageLibDir(path.join(
           state.fetched.submissionRoot,
           kind,
           ".lake",
           "packages",
           dependency.packageName,
           dependencySubDir(dependency),
-        )))
-        .filter((directory) => fs.existsSync(directory));
+        ))),
+        ...(siblings?.[kind] ?? []).map((sibling) => packageLibDir(sibling.dir)),
+      ].filter((directory) => fs.existsSync(directory));
     const leanEnvFor = (kind: "concepts" | "proofs"): LeanEnv => hostLeanEnv(
       state.environment,
       kind === "proofs"
@@ -496,6 +547,16 @@ export async function validateSubmissionOnHost(
         scope === "concepts" ? undefined : staticCheck.result.proofs!.inventory,
         resolution.result,
         scope,
+        // Only the siblings a package declares itself, exactly as the archive
+        // admits imports and statements only from a package's own requires:
+        // the whole closure is in the manifest for lake, not for Inspect, so
+        // what passes here passes there once the paths become git requires.
+        siblings === undefined
+          ? undefined
+          : {
+              concepts: staticCheck.result.concepts!.lakefile.pathRequires.map((require) => require.name),
+              proofs: staticCheck.result.proofs!.lakefile.pathRequires.map((require) => require.name),
+            },
       ));
     } catch (error) {
       return fail("inspect", "judge", error);
@@ -611,6 +672,8 @@ function hostDependencies(
   kind: "concepts" | "proofs",
   staticResult: StaticResult,
   resolution: ResolutionResult,
+  pkgDir: string,
+  siblings: SiblingClosure | undefined,
 ): SeededDependency[] {
   const staticPackage = staticResult[kind]!;
   const entries: SeededDependency[] = [];
@@ -620,6 +683,11 @@ function hostDependencies(
     staticResult.concepts !== undefined
   ) {
     entries.push({ name: staticResult.concepts.lakefile.packageName, dir: "../concepts" });
+  }
+  // Siblings are path entries into their own checkouts, built in place; lake
+  // resolves the dir relative to this package (host/siblings.ts).
+  for (const sibling of siblings?.[kind] ?? []) {
+    entries.push({ name: sibling.name, dir: siblingManifestDir(pkgDir, sibling) });
   }
   for (const dependency of dependencyClosure(kind, resolution)) {
     entries.push({

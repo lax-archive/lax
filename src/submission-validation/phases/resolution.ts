@@ -5,6 +5,7 @@ import type {
   StaticResult,
   ValidationRequest,
   ValidationRuntimeIdentity,
+  GitRequire,
 } from "../contracts.js";
 import { submissionIdForPackage } from "../contracts.js";
 import { CHAIN_WORKFLOW_HINT } from "../chain-workflow.js";
@@ -36,6 +37,13 @@ export interface ResolutionOptions {
    * before posting, in the same words.
    */
   draftDependencies: "refuse" | "warn";
+  /**
+   * Further direct requires to resolve beside the lakefiles' own: the git
+   * requires of sibling packages a nonstrict local build pulled in
+   * (host/siblings.ts). They are validated exactly like the author's — a
+   * sibling's pin on a registered record must match that record's triple.
+   */
+  additionalRequires?: { concepts: GitRequire[]; proofs: GitRequire[] };
 }
 
 export function runResolution(
@@ -120,7 +128,10 @@ export function runResolution(
         `dependency ${packageName} belongs to draft submission ${id}; ` +
         `the archive admits only registered dependencies — register ${id} first`;
       if (options.draftDependencies === "refuse") {
-        findings.violate("draft-dependency", message);
+        findings.violate(
+          "draft-dependency",
+          `${message} (locally, \`lax build --nonstrict\` admits a draft dependency for iteration)`,
+        );
         return undefined;
       }
       findings.warn("draft-dependency", `${message} (admitted for this local build only)`);
@@ -182,7 +193,10 @@ export function runResolution(
     return dependency;
   };
 
-  for (const requirement of staticResult.concepts?.lakefile.gitRequires ?? []) {
+  for (const requirement of [
+    ...(staticResult.concepts?.lakefile.gitRequires ?? []),
+    ...(options.additionalRequires?.concepts ?? []),
+  ]) {
     const dependency = resolve(requirement.name, {
       repository: requirement.git,
       commit: requirement.rev,
@@ -190,7 +204,10 @@ export function runResolution(
     });
     if (dependency !== undefined) concepts.push(dependency);
   }
-  for (const requirement of staticResult.proofs?.lakefile.gitRequires ?? []) {
+  for (const requirement of [
+    ...(staticResult.proofs?.lakefile.gitRequires ?? []),
+    ...(options.additionalRequires?.proofs ?? []),
+  ]) {
     const dependency = resolve(requirement.name, {
       repository: requirement.git,
       commit: requirement.rev,

@@ -3,9 +3,12 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parse as parseToml } from "smol-toml";
+import { parse as parseYaml } from "yaml";
 import { parseArchiveFiles } from "../shared/archive-schema.js";
 import { SUBMISSION_ID_PATTERN } from "../shared/constants.js";
-import { isObject } from "../shared/validation.js";
+import { isObject, normalizeSubmissionId } from "../shared/validation.js";
+import { submissionIdForPackage } from "../submission-validation/contracts.js";
 import { epoch } from "../submission-validation/environments.js";
 import {
   databaseDirectory,
@@ -75,14 +78,24 @@ export interface WebsitePreview {
 export function loadWebsiteSubmissions(
   archiveDirectory: string,
   localFolder?: string,
+  siblingFolders: readonly string[] = [],
 ): WebsiteSubmission[] {
   const root = path.resolve(archiveDirectory);
-  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
-    const local = localFolder === undefined ? undefined : loadLocalSubmission(localFolder);
-    return local === undefined ? [] : [local];
-  }
-
   const local = localFolder === undefined ? undefined : loadLocalSubmission(localFolder);
+  // Siblings come before the folder itself, which stays last (previewCounts
+  // and the local page rely on that), and never under its id: the folder the
+  // author started the preview on is the one they mean by it.
+  const locals: WebsiteSubmission[] = [];
+  const localIds = new Set(local === undefined ? [] : [local.record.id]);
+  for (const folder of siblingFolders) {
+    const sibling = loadLocalSubmission(folder);
+    if (localIds.has(sibling.record.id)) continue;
+    localIds.add(sibling.record.id);
+    locals.push(sibling);
+  }
+  if (local !== undefined) locals.push(local);
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return locals;
+
   const submissions = fs
     .readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && SUBMISSION_ID_PATTERN.test(entry.name))
@@ -104,10 +117,294 @@ export function loadWebsiteSubmissions(
           : { output: rendererOutput(files.buildOutput, `${id}/build-output.json`) }),
       };
     })
-    .filter((submission) => submission.record.id !== local?.record.id);
-  if (local !== undefined) submissions.push(local);
+    .filter((submission) => !localIds.has(submission.record.id));
+  submissions.push(...locals);
   return submissions;
 }
+
+/**
+ * One folder the preview shows as a local submission: the folder `lax serve`
+ * was started on, or a sibling it reaches through `path` requires. What the
+ * front page lists, and — for the built ones — what the renderer is fed.
+ */
+export interface LocalEntry {
+  /** absolute */
+  folder: string;
+  /** the id the renderer files the folder under: the build's, else the
+   * manifest's or (for a sibling) the required package's, else the pre-build
+   * `local` */
+  id: string;
+  sibling: boolean;
+  /** `build-output.json` exists; only then is the folder rendered */
+  built: boolean;
+  /** the folder does not exist: where the require that names it was written */
+  missing?: string;
+  title?: string;
+  /** the `leanVersion` the build recorded */
+  environment?: string;
+  /** a nonstrict build, with the siblings it built in place (by id) */
+  nonstrict?: string[];
+}
+
+/**
+ * The folder and every sibling its lakefiles reach — the `path` requires a
+ * nonstrict build admits (validators/lakefile.ts), followed transitively the
+ * way host/siblings.ts follows them, but leniently: this is a listing for a
+ * preview, so a lakefile the build would refuse simply contributes nothing.
+ * A sibling path names a package directory (`../A/concepts`); the sibling's
+ * folder is its parent. A required folder that does not exist keeps its row,
+ * marked missing, so a moved checkout is a line on the page and not a
+ * silent disappearance. Deduplicated by folder and by id, the folder itself
+ * excluded, and bounded like the build's own closure.
+ */
+export function localEntries(folder: string): LocalEntry[] {
+  const root = path.resolve(folder);
+  const entries = [describeLocal(root, false)];
+  let rootReal = root;
+  try {
+    rootReal = fs.realpathSync(root);
+  } catch {
+    return entries;
+  }
+  const seenFolders = new Set([rootReal]);
+  const seenIds = new Set([entries[0]!.id]);
+  const queue = [...siblingRequires(rootReal, "")];
+  while (queue.length > 0 && entries.length <= MAX_LOCAL_ENTRIES) {
+    const next = queue.shift()!;
+    let dir: string | undefined;
+    try {
+      dir = fs.realpathSync(next.dir);
+    } catch {
+      dir = undefined;
+    }
+    const siblingFolder = path.dirname(dir ?? next.dir);
+    if (
+      seenFolders.has(siblingFolder) ||
+      siblingFolder === rootReal ||
+      siblingFolder.startsWith(`${rootReal}${path.sep}`)
+    ) {
+      continue;
+    }
+    seenFolders.add(siblingFolder);
+    const entry = dir === undefined
+      ? { folder: siblingFolder, id: next.id, sibling: true, built: false, missing: next.via }
+      : describeLocal(siblingFolder, true, next.id);
+    if (seenIds.has(entry.id)) continue;
+    seenIds.add(entry.id);
+    entries.push(entry);
+    if (dir !== undefined) queue.push(...siblingRequires(siblingFolder, `${entry.id}'s `));
+  }
+  return entries;
+}
+
+const MAX_LOCAL_ENTRIES = 200;
+
+/** The sibling package directories a folder's two lakefiles require by path,
+ * each with where the require was written (`concepts/lakefile.toml as
+ * ../../A/concepts`), for the row of a folder that is not there. */
+function siblingRequires(
+  folder: string,
+  owner: string,
+): Array<{ id: string; dir: string; via: string }> {
+  const found: Array<{ id: string; dir: string; via: string }> = [];
+  for (const kind of ["concepts", "proofs"] as const) {
+    const packageDir = path.join(folder, kind);
+    let lakefile: unknown;
+    try {
+      lakefile = parseToml(fs.readFileSync(path.join(packageDir, "lakefile.toml"), "utf8"));
+    } catch {
+      continue;
+    }
+    const requires = isObject(lakefile) && Array.isArray(lakefile.require) ? lakefile.require : [];
+    for (const require of requires) {
+      if (!isObject(require) || typeof require.name !== "string" || typeof require.path !== "string") {
+        continue;
+      }
+      // The proof package's own `../concepts` edge is not a sibling.
+      if (kind === "proofs" && require.path === "../concepts") continue;
+      const id = submissionIdForPackage(require.name);
+      if (id === undefined) continue;
+      found.push({
+        id,
+        dir: path.resolve(packageDir, require.path),
+        via: `${owner}${kind}/lakefile.toml as ${require.path}`,
+      });
+    }
+  }
+  return found;
+}
+
+/**
+ * What the front page says about a folder, read leniently: an unreadable
+ * `build-output.json` is the render's error to report, not the listing's.
+ * Before a build, the manifest already knows the id and the title.
+ */
+function describeLocal(folder: string, sibling: boolean, requiredId?: string): LocalEntry {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(path.join(folder, "build-output.json"), "utf8")) as unknown;
+  } catch {
+    const manifest = readJsonLike(() => parseYaml(fs.readFileSync(path.join(folder, "manifest.yaml"), "utf8")));
+    let id = requiredId ?? LOCAL_SUBMISSION_ID;
+    try {
+      if (typeof manifest.id === "string") id = normalizeSubmissionId(manifest.id, { placeholder: true });
+    } catch {
+      // the manifest's id is the build's to refuse
+    }
+    return {
+      folder,
+      id,
+      sibling,
+      built: false,
+      ...(typeof manifest.title === "string" && manifest.title.trim() !== "" ? { title: manifest.title } : {}),
+    };
+  }
+  const output = isObject(raw) ? raw : {};
+  const manifest = isObject(output.manifest)
+    ? output.manifest
+    : isObject(output.inputs) && isObject(output.inputs.manifest)
+      ? output.inputs.manifest
+      : {};
+  const validation = isObject(output.localValidation) ? output.localValidation : {};
+  const nonstrict = validation.nonstrict === true
+    ? (Array.isArray(validation.siblings) ? validation.siblings : [])
+        .flatMap((name) => (typeof name === "string" ? [submissionIdForPackage(name) ?? name] : []))
+    : undefined;
+  return {
+    folder,
+    id: typeof output.id === "string" ? output.id : requiredId ?? LOCAL_SUBMISSION_ID,
+    sibling,
+    built: true,
+    ...(typeof manifest.title === "string" ? { title: manifest.title } : {}),
+    ...(typeof manifest.leanVersion === "string" ? { environment: manifest.leanVersion } : {}),
+    ...(nonstrict === undefined ? {} : { nonstrict: [...new Set(nonstrict)] }),
+  };
+}
+
+function readJsonLike(read: () => unknown): Record<string, unknown> {
+  try {
+    const value = read();
+    return isObject(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * What changes a rebuild would show: for every listed folder, whether it is
+ * there, whether it is built, and the build's whole output set by mtime. The
+ * poll compares this with what the last rebuild saw; siblings have no
+ * watcher of their own, since a folder that is moved, removed and rebuilt, or
+ * created later is exactly what a watcher on it cannot follow.
+ */
+function localFingerprint(entries: readonly LocalEntry[]): string {
+  return entries
+    .map((entry) => {
+      const stamps = RENDERED_FILES.map((name) => {
+        try {
+          return String(fs.statSync(path.join(entry.folder, name)).mtimeMs);
+        } catch {
+          return "-";
+        }
+      });
+      return `${entry.folder}|${entry.id}|${entry.missing ?? ""}|${stamps.join(",")}`;
+    })
+    .join("\n");
+}
+
+/** The build's whole output set: the result, the compiled paper beside it,
+ * and the derived web bundle — a rebuild of any of the three is the same
+ * news to the preview. */
+const RENDERED_FILES = ["build-output.json", "paper.pdf", "paper-web.tar"];
+
+/** How often the listed folders are compared for changes; the folder itself
+ * also has a watcher, so this is the siblings' latency, not the author's. */
+const LOCAL_POLL_MS = 2_000;
+
+/**
+ * What the author can do about a render that failed with a sibling unbuilt or
+ * missing, for the terminal and the front page alike. Nothing when every
+ * sibling is built: then the failure is the renderer's own to explain.
+ */
+function siblingHint(entries: readonly LocalEntry[]): string | undefined {
+  const unbuilt = entries.filter((entry) => entry.sibling && !entry.built && entry.missing === undefined);
+  const missing = entries.filter((entry) => entry.missing !== undefined);
+  const parts: string[] = [];
+  if (unbuilt.length > 0) {
+    parts.push(
+      `A sibling without build output is not rendered, so its statements are unknown to the pages: ` +
+        `run \`lax build\` in ${unbuilt.map((entry) => ui.tilde(entry.folder)).join(", ")}.`,
+    );
+  }
+  if (missing.length > 0) {
+    parts.push(
+      `${missing.length === 1 ? "A required sibling folder is" : "Required sibling folders are"} not there: ` +
+        missing.map((entry) => `${entry.id} (${entry.missing}, ${ui.tilde(entry.folder)})`).join(", ") + ".",
+    );
+  }
+  return parts.length === 0 ? undefined : parts.join(" ");
+}
+
+/**
+ * The archive record a renderer error names, when it names one that is not a
+ * local folder: then the failure is the archive copy's, and no local build
+ * changes it — `--database-only` would fail the same way.
+ */
+function failingRecord(failure: string, entries: readonly LocalEntry[]): string | undefined {
+  const local = new Set(entries.map((entry) => entry.id));
+  for (const match of failure.matchAll(/\blax-\d+\b/gu)) {
+    if (!local.has(match[0])) return match[0];
+  }
+  return undefined;
+}
+
+/**
+ * Run the renderer with its console quiet. KaTeX warns once per glyph it has
+ * no metrics for, and a render of the whole archive says so a few hundred
+ * times — enough to bury the one line that matters. The lines are kept for
+ * `-v`; otherwise they become a count on the rebuilt line.
+ */
+async function quietly<T>(render: () => Promise<T>): Promise<{ value: T; warnings: string[] }> {
+  const warnings: string[] = [];
+  const collect = (...parts: unknown[]): void => { warnings.push(parts.map(String).join(" ")); };
+  const previous = { warn: console.warn, error: console.error };
+  console.warn = collect;
+  console.error = collect;
+  try {
+    return { value: await render(), warnings };
+  } finally {
+    console.warn = previous.warn;
+    console.error = previous.error;
+  }
+}
+
+/**
+ * Remove preview output directories a preview left behind. Each preview
+ * removes its own on exit; this catches the ones a killed process could not,
+ * once they are old enough that no preview can still be serving them — and
+ * the renderer's staging siblings (`.lax-site-…-build-…`) with them.
+ */
+function sweepStaleSites(now = Date.now()): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(os.tmpdir(), { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\.?lax-site-/u.test(entry.name)) continue;
+    const directory = path.join(os.tmpdir(), entry.name);
+    try {
+      if (now - fs.statSync(directory).mtimeMs > STALE_SITE_MS) {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    } catch {
+      // someone else's, or already gone
+    }
+  }
+}
+
+const STALE_SITE_MS = 24 * 60 * 60_000;
 
 /** Run the lax-website generator and serve its output, rebuilding on changes. */
 export async function serveWebsite(
@@ -120,17 +417,37 @@ export async function serveWebsite(
   }
   const archive = databaseDirectory();
   const localFolder = options.databaseOnly ? undefined : path.resolve(folder);
+  sweepStaleSites();
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "lax-site-"));
+  // The output is this process's alone and is removed with it — on `close`,
+  // on exit, and on the Ctrl-C that ends every preview, which runs no exit
+  // handler unless a handler of its own ends the process.
+  const removeOutDir = (): void => {
+    try {
+      fs.rmSync(outDir, { recursive: true, force: true });
+    } catch {
+      // the sweep on the next start gets it
+    }
+  };
+  const onSignal = (signal: NodeJS.Signals): void => {
+    removeOutDir();
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.on("exit", removeOutDir);
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
   let advice = fs.existsSync(path.join(archive, ".git"))
     ? undefined
     : databaseAdvice({ status: "missing" }, archive);
-  // What the preview opens on. An author who ran `lax serve` in a folder came
-  // to look at that folder's pages, and the archive's front page is one link
-  // away from them; only `--database-only`, which renders no folder, opens on
-  // the index. `linked` is the page the printed link names, `localPage` the one
-  // the last render actually filed the folder under — a build landing mid-
-  // preview moves it from `local` to the reserved id, and the tab the author
-  // already has open is redirected rather than left on a page nothing writes.
+  // The preview opens on its own front page, `/`: a local page (never one of
+  // the renderer's) that says what is being served — the folder, the siblings
+  // it pulled in, the archive copy — and links to each. The renderer's index
+  // keeps its place at `/index.html`, since the generated pages link to it
+  // relatively. `linked` is the folder's own page as the front page first
+  // names it, `localPage` the one the last render actually filed the folder
+  // under — a build landing mid-preview moves it from `local` to the reserved
+  // id, and a tab already open on the old page is redirected rather than left
+  // on a page nothing writes.
   const linked = localFolder === undefined
     ? undefined
     : submissionPagePath(localSubmissionId(localFolder));
@@ -141,6 +458,7 @@ export async function serveWebsite(
   let buildAgain = false;
   let archiveWatcher: fs.FSWatcher | undefined;
   let localWatcher: fs.FSWatcher | undefined;
+  let localPoll: NodeJS.Timeout | undefined;
   let freshnessPoll: NodeJS.Timeout | undefined;
   // Until the Preview block is on the screen a finished render is not news: it
   // is the render that block is waiting for the counts of. And once the caller
@@ -148,11 +466,27 @@ export async function serveWebsite(
   let opened = false;
   let stopped = false;
   let counts: PreviewCounts | undefined;
+  /** Why the last rebuild failed, for the front page; cleared by a success. */
+  let failure: string | undefined;
+  /** What the last rebuild saw of the local folders (localFingerprint). */
+  let seen: string | undefined;
   const pageBuilder = options.renderer === undefined
     ? loadPageBuilder()
     : Promise.resolve(options.renderer);
   /** Failed paper/bundle downloads, memoized across rebuilds of this preview. */
   const failedPaperFetches = new Map<string, number>();
+  const currentEntries = (): LocalEntry[] => (localFolder === undefined ? [] : localEntries(localFolder));
+  // Read afresh on every request — it is a few stat calls — so the page says
+  // what is on disk now, not what the last rebuild happened to see.
+  const frontPage = (): string =>
+    frontPageHtml({
+      entries: currentEntries(),
+      databaseOnly: localFolder === undefined,
+      published: counts?.published,
+      warning: bannerText(advice),
+      failure,
+      building: counts === undefined && failure === undefined,
+    });
 
   const rebuild = async (): Promise<void> => {
     if (building) {
@@ -160,23 +494,42 @@ export async function serveWebsite(
       return;
     }
     building = true;
+    const entries = currentEntries();
+    seen = localFingerprint(entries);
     try {
-      const submissions = loadWebsiteSubmissions(archive, localFolder);
+      const siblings = entries.filter((entry) => entry.sibling && entry.built);
+      const submissions = loadWebsiteSubmissions(
+        archive,
+        localFolder,
+        siblings.map((entry) => entry.folder),
+      );
       if (localFolder !== undefined) {
         localPage = submissionPagePath(submissions.at(-1)?.record.id ?? LOCAL_SUBMISSION_ID);
       }
       await attachPaperFiles(submissions, failedPaperFetches);
       const builder = await pageBuilder;
-      await builder.generateSite(submissions, outDir, epoch().id);
+      const { warnings } = await quietly(() => builder.generateSite(submissions, outDir, epoch().id));
       applyWebsiteWarning(outDir, bannerText(advice));
-      counts = previewCounts(submissions, localFolder);
-      if (opened && !stopped) ui.faint(`↻ ${clock()}  rebuilt`);
-    } catch (error) {
-      // A failed rebuild stays visible: the pages the author is looking at are
-      // now older than the folder they came from, and only the author can fix
-      // why. The preview keeps serving the last good render.
+      counts = previewCounts(submissions, localFolder, siblings.length);
+      failure = undefined;
       if (!stopped) {
-        ui.failure(`${clock()}  the preview could not be rebuilt\n${(error as Error).message}`);
+        if (ui.isVerbose()) for (const line of warnings) ui.verbose(`renderer: ${line}`);
+        const noise = warnings.length === 0 || ui.isVerbose()
+          ? ""
+          : `  (renderer: ${ui.count(warnings.length)} ${warnings.length === 1 ? "warning" : "warnings"}; -v shows them)`;
+        if (opened) ui.faint(`↻ ${clock()}  rebuilt${noise}`);
+      }
+    } catch (error) {
+      // A failed rebuild stays visible, on the terminal and on the front
+      // page: the pages the author is looking at are now older than the
+      // folder they came from, and only the author can fix why. The preview
+      // keeps serving the last good render.
+      failure = (error as Error).message;
+      if (!stopped) {
+        const hint = siblingHint(entries);
+        ui.failure(
+          `${clock()}  the preview could not be rebuilt\n${failure}${hint === undefined ? "" : `\n${hint}`}`,
+        );
       }
     } finally {
       building = false;
@@ -205,13 +558,18 @@ export async function serveWebsite(
   };
   ensureArchiveWatcher();
   if (localFolder !== undefined && fs.existsSync(localFolder)) {
-    // The build's whole output set: the result, the compiled paper beside
-    // it, and the derived web bundle — a rebuild of any of the three is the
-    // same news to the preview.
-    const rendered = new Set(["build-output.json", "paper.pdf", "paper-web.tar"]);
+    // The author's own folder is watched, so its build lands at once; the
+    // siblings — and this folder too, should the watcher miss — are covered
+    // by the poll below.
+    const rendered = new Set(RENDERED_FILES);
     localWatcher = fs.watch(localFolder, (_event, filename) => {
       if (typeof filename === "string" && rendered.has(filename)) schedule();
     });
+    localPoll = setInterval(() => {
+      if (building || stopped) return;
+      if (localFingerprint(currentEntries()) !== seen) schedule();
+    }, LOCAL_POLL_MS);
+    localPoll.unref();
   }
 
   const server = http.createServer((request, response) => {
@@ -229,7 +587,13 @@ export async function serveWebsite(
       response.end("bad request");
       return;
     }
-    if (relative === "" || relative.endsWith("/")) relative += "index.html";
+    if (relative === "") {
+      const html = frontPage();
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(request.method === "HEAD" ? undefined : html);
+      return;
+    }
+    if (relative.endsWith("/")) relative += "index.html";
     const file = path.resolve(outDir, relative);
     const inside = file === outDir || file.startsWith(`${outDir}${path.sep}`);
     if (!inside || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
@@ -269,15 +633,20 @@ export async function serveWebsite(
       stopped = true;
       clearTimeout(timer);
       if (freshnessPoll !== undefined) clearInterval(freshnessPoll);
+      if (localPoll !== undefined) clearInterval(localPoll);
       archiveWatcher?.close();
       localWatcher?.close();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => { resolve(); }));
+      process.off("exit", removeOutDir);
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+      removeOutDir();
     },
   });
 
   ui.title("Preview");
-  ui.link(`http://localhost:${bound}${linked === undefined ? "" : `/${linked}`}`);
+  ui.link(`http://localhost:${bound}/`);
   // The first render is the one that knows how many submissions there are, so
   // the counts wait for it rather than being guessed at. The link does not
   // wait: loading the renderer takes a moment, and the URL is the line the
@@ -361,27 +730,34 @@ function listenOnce(server: http.Server, port: number): Promise<void> {
 interface PreviewCounts {
   /** The id of the folder being previewed, once a build has given it one. */
   localId?: string;
+  /** The built siblings rendered beside it, by id. */
+  siblings: string[];
   published: number;
 }
 
 /**
- * Split what was rendered into the author's own folder and the archive's
- * records: `loadWebsiteSubmissions` appends the local submission last, and calls
- * it `local` until a build has written an id into build-output.json.
+ * Split what was rendered into the author's own folder, its siblings, and the
+ * archive's records: `loadWebsiteSubmissions` appends the siblings and then
+ * the local submission last, and calls the latter `local` until a build has
+ * written an id into build-output.json.
  */
 function previewCounts(
   submissions: readonly WebsiteSubmission[],
   localFolder: string | undefined,
+  siblingCount = 0,
 ): PreviewCounts {
-  if (localFolder === undefined) return { published: submissions.length };
+  if (localFolder === undefined) return { siblings: [], published: submissions.length };
   const id = submissions.at(-1)?.record.id;
+  const locals = 1 + siblingCount;
   return {
     ...(id === undefined || id === LOCAL_SUBMISSION_ID ? {} : { localId: id }),
-    published: submissions.length - 1,
+    siblings: submissions.slice(-locals, -1).map((submission) => submission.record.id),
+    published: submissions.length - locals,
   };
 }
 
-/** `lax-50 and 1,204 published submissions.` — what the preview is showing. */
+/** `lax-50, sibling lax-7, and 1,204 published submissions.` — what the
+ * preview is showing. */
 function submissionsLine(counts: PreviewCounts): string {
   const published = counts.published === 0
     ? "no published submissions yet"
@@ -389,8 +765,104 @@ function submissionsLine(counts: PreviewCounts): string {
   if (counts.localId === undefined) {
     return `${published.charAt(0).toUpperCase()}${published.slice(1)}.`;
   }
-  return `${counts.localId} and ${published}.`;
+  const siblings = counts.siblings.length === 0
+    ? ""
+    : `, ${counts.siblings.length === 1 ? "sibling" : "siblings"} ${counts.siblings.join(", ")},`;
+  return `${counts.localId}${siblings} and ${published}.`;
 }
+
+interface FrontPageState {
+  entries: readonly LocalEntry[];
+  databaseOnly: boolean;
+  /** Archive records in the last successful render; none before the first. */
+  published?: number;
+  warning?: string;
+  failure?: string;
+  /** No render has finished yet, and none has failed: the page reloads itself. */
+  building: boolean;
+}
+
+/**
+ * The preview's own front page, served at `/` and never written into the
+ * renderer's output: what is being served, from where, and in what state.
+ * Rendered on every request from what is on disk and the state the last
+ * rebuild left, so it is as current as the pages. Self-contained — one style
+ * block in the tone of the database banner — because the renderer's
+ * stylesheet is the archive's.
+ */
+function frontPageHtml(state: FrontPageState): string {
+  const rendered = state.published !== undefined;
+  const row = (entry: LocalEntry): string => {
+    const page = entry.built ? submissionPagePath(entry.id) : undefined;
+    const name = page === undefined
+      ? `<strong>${escapeHtml(entry.id)}</strong>`
+      : `<a href="/${escapeHtml(page)}"><strong>${escapeHtml(entry.id)}</strong></a>`;
+    const kind = entry.sibling ? " <small>sibling</small>" : "";
+    const title = entry.title === undefined ? "" : ` — ${escapeHtml(entry.title)}`;
+    let status: string;
+    if (entry.missing !== undefined) {
+      status = `required by ${escapeHtml(entry.missing)} — folder not found`;
+    } else if (!entry.built) {
+      status = `no build output yet — run <code>lax build</code> in ${escapeHtml(ui.tilde(entry.folder))}`;
+    } else {
+      const siblings = entry.nonstrict === undefined || entry.nonstrict.length === 0
+        ? ""
+        : ` (${entry.nonstrict.length === 1 ? "sibling" : "siblings"} ${escapeHtml(entry.nonstrict.join(", "))})`;
+      status = `${entry.nonstrict === undefined ? "local build" : "nonstrict local build"}${siblings}` +
+        `${entry.environment === undefined ? "" : `, ${escapeHtml(entry.environment)}`}`;
+    }
+    const folder = entry.built || entry.missing !== undefined
+      ? `<br><span class="folder">${escapeHtml(ui.tilde(entry.folder))}</span>`
+      : "";
+    return `<li>${name}${kind}${title}<br><span class="status">${status}</span>${folder}</li>`;
+  };
+  const notes: string[] = [];
+  if (state.warning !== undefined) notes.push(`<p class="note">${escapeHtml(state.warning)}</p>`);
+  if (state.failure !== undefined) {
+    const hint = siblingHint(state.entries);
+    const record = failingRecord(state.failure, state.entries);
+    notes.push(
+      `<p class="note">The preview could not be rebuilt; ${
+        rendered ? "the pages are from the last render that succeeded" : "no render has succeeded yet"
+      }.<br><code>${escapeHtml(state.failure)}</code>` +
+        (hint === undefined ? "" : `<br>${escapeHtml(hint).replaceAll("`lax build`", "<code>lax build</code>")}`) +
+        (record === undefined
+          ? ""
+          : `<br>${escapeHtml(record)} is a record in your copy of the archive, not a local folder: ` +
+            `this failure is the renderer's own, and <code>--database-only</code> would fail the same way.`) +
+        `<br><small>This page reloads every ${FAILURE_REFRESH_S} seconds.</small></p>`,
+    );
+  }
+  if (state.building) notes.push(`<p class="note">Building the website… this page reloads by itself.</p>`);
+  const local = state.databaseOnly
+    ? `<p>No local folder: <code>--database-only</code> renders the archive copy alone.</p>`
+    : `<ul>${state.entries.map(row).join("")}</ul>`;
+  const archive = `<p><a href="/index.html">Browse your local copy of the archive</a> — ${
+    state.published === undefined
+      ? "no render has succeeded yet"
+      : state.published === 0
+        ? "no published submissions in it yet"
+        : `${ui.count(state.published)} published ${state.published === 1 ? "submission" : "submissions"}`
+  }.</p>`;
+  const refresh = state.building ? 2 : state.failure === undefined ? undefined : FAILURE_REFRESH_S;
+  return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" " +
+    "content=\"width=device-width,initial-scale=1\"><title>Lax local preview</title>" +
+    (refresh === undefined ? "" : `<meta http-equiv="refresh" content="${refresh}">`) +
+    "<style>body{margin:0;font:16px/1.5 system-ui,sans-serif;color:#222;background:#fff}" +
+    "main{max-width:44rem;margin:0 auto;padding:1.5rem 1rem}h1{font-size:1.5rem;margin:0 0 .25rem}" +
+    "h2{font-size:1.1rem;margin:1.5rem 0 .5rem}ul{padding-left:1.25rem}li{margin:.5rem 0}" +
+    ".status,.folder{font-size:14px;color:#555}small{font-size:12px;color:#555;text-transform:uppercase}" +
+    ".note small{text-transform:none;color:inherit}code{font:14px/1.4 ui-monospace,monospace}" +
+    ".note{padding:.75rem 1rem;background:#fff3cd;color:#4d3b00;border:1px solid #e2c55b;font-size:14px}" +
+    "</style></head><body><main><h1>Lax local preview</h1>" +
+    "<p class=\"status\">Served by <code>lax serve</code> on this machine — not the archive.</p>" +
+    notes.join("") +
+    `<h2>Local submissions</h2>${local}<h2>Archive</h2>${archive}</main></body></html>`;
+}
+
+/** How often the front page reloads while the last render failed: slow
+ * enough not to matter, fast enough that fixing the cause shows up unasked. */
+const FAILURE_REFRESH_S = 10;
 
 /** `14:22:07` — the author's own wall clock, all a rebuild line has to say. */
 function clock(at = new Date()): string {
@@ -481,7 +953,8 @@ export function applyWebsiteWarning(outDir: string, warning?: string): void {
 function writePlaceholder(outDir: string, warning?: string, localPage?: string): void {
   const html = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" " +
     "content=\"width=device-width,initial-scale=1\"><title>Lax local preview</title></head>" +
-    `<body><main><h1>Lax local preview</h1><p>Building the website…</p>${
+    `<body><main><h1>Lax local preview</h1><p>Building the website… ` +
+    `<a href="/">The front page</a> says what is being served and why a render failed.</p>${
       warning === undefined ? "" : `<p>${escapeHtml(warning)}</p>`
     }</main></body></html>`;
   fs.writeFileSync(path.join(outDir, "index.html"), html);

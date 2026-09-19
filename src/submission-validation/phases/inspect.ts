@@ -16,6 +16,14 @@ import { leanFacts } from "../lean-facts.js";
 const BACKGROUND_AXIOMS = new Set(leanFacts().backgroundAxioms);
 const IMPORT_PREFIXES = leanFacts().coreImportRoots;
 
+/** Sibling package names a nonstrict local build admits per package
+ * (host/siblings.ts): imports from them are declared, and a sibling concept
+ * package's axioms are admissible statements. Empty in trusted validation. */
+export interface SiblingPackages {
+  concepts: string[];
+  proofs: string[];
+}
+
 export function judgeInspection(
   conceptReport: InspectorReport,
   proofReport: InspectorReport | undefined,
@@ -23,13 +31,20 @@ export function judgeInspection(
   proofInventory: ModuleInventory | undefined,
   resolution: ResolutionResult,
   scope: ValidationScope = "both",
+  siblings: SiblingPackages = { concepts: [], proofs: [] },
 ): { result: InspectionResult; findings: FindingCollector } {
   const findings = new FindingCollector("inspect");
   const conceptDeclarations = uniqueDeclarations(conceptReport.declarations);
   const proofDeclarations = uniqueDeclarations(proofReport?.declarations ?? []);
   checkReportShape(conceptReport, "concept", findings);
   checkRootModule(conceptReport, conceptInventory, findings);
-  checkImports(conceptReport, conceptInventory, new Set(resolution.concepts.map((entry) => entry.packageName)), findings);
+  checkImports(
+    conceptReport,
+    conceptInventory,
+    new Set([...resolution.concepts.map((entry) => entry.packageName), ...siblings.concepts]),
+    findings,
+    new Set(siblings.proofs),
+  );
   if (scope !== "concepts") {
     if (proofReport === undefined || proofInventory === undefined) {
       throw new Error("proof inspection is required outside a concepts-only build");
@@ -39,8 +54,13 @@ export function judgeInspection(
     checkImports(
       proofReport,
       proofInventory,
-      new Set([conceptInventory.packageName, ...resolution.proofs.map((entry) => entry.packageName)]),
+      new Set([
+        conceptInventory.packageName,
+        ...resolution.proofs.map((entry) => entry.packageName),
+        ...siblings.proofs,
+      ]),
       findings,
+      new Set(siblings.concepts),
     );
   }
 
@@ -123,7 +143,15 @@ export function judgeInspection(
       .filter((dependency) => dependency.kind === "concepts")
       .flatMap((dependency) => dependency.statements),
   );
-  const admissibleStatement = (name: string): boolean => ownStatements.has(name) || upstreamStatements.has(name);
+  // A sibling concept package has no record to take statements from. Every
+  // axiom a concept module declares is one of its statements (see the
+  // concept loop above), so for a sibling the statement set is "an axiom
+  // under its package prefix" — the kernel facts below still guard what the
+  // name is. The archive never sees this: a nonstrict output is not
+  // submittable (cli/build.ts), and the sibling's own build judges it.
+  const siblingConcepts = new Set(siblings.proofs.filter((name) => !name.endsWith("Proofs")));
+  const admissibleStatement = (name: string): boolean =>
+    ownStatements.has(name) || upstreamStatements.has(name) || siblingConcepts.has(name.split(".")[0]!);
   const proofs: ProofEntry[] = [];
   for (const declaration of proofDeclarations) {
     if (proofInventory === undefined) break;
@@ -264,17 +292,25 @@ function checkImports(
   inventory: ModuleInventory,
   required: Set<string>,
   findings: FindingCollector,
+  /** siblings the *other* package of this submission declares: the likely
+   * slip is a require written in concepts/lakefile.toml only */
+  declaredElsewhere: Set<string> = new Set(),
 ): void {
   const allowed = new Set([inventory.packageName, ...IMPORT_PREFIXES, ...required]);
   const importable = [...allowed].sort().join(", ");
+  const kind = inventory.packageName.endsWith("Proofs") ? "proofs" : "concepts";
   for (const module of report.modules) {
     if (module.name === inventory.rootModule) continue;
     for (const imported of new Set(module.imports)) {
-      if (!allowed.has(imported.split(".")[0]!))
-        findings.violate(
-          "imports",
-          `module ${module.name} imports undeclared package module ${imported}; importable prefixes: ${importable}`,
-        );
+      const prefix = imported.split(".")[0]!;
+      if (allowed.has(prefix)) continue;
+      findings.violate(
+        "imports",
+        declaredElsewhere.has(prefix)
+          ? `module ${module.name} imports ${imported}, but ${kind}/lakefile.toml does not require ${prefix} — ` +
+            `add the same \`[[require]]\` the other package carries; every package declares what it imports`
+          : `module ${module.name} imports undeclared package module ${imported}; importable prefixes: ${importable}`,
+      );
     }
   }
 }

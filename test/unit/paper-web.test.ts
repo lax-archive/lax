@@ -427,7 +427,7 @@ describe("join passthrough", () => {
       located: [],
       ...(web === undefined ? {} : { web }),
     };
-    const lakefile = (packageName: string) => ({ packageName, gitRequires: [], hasConceptPathRequire: false });
+    const lakefile = (packageName: string) => ({ packageName, gitRequires: [], hasConceptPathRequire: false, pathRequires: [] });
     const inventory = (packageName: string) => ({
       packageName,
       packageDir: packageName,

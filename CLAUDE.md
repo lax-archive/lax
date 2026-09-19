@@ -165,7 +165,10 @@ detail is the report artifact, which `lax submit` downloads and renders
 the hidden markers.
 The validation phases live in `src/submission-validation/` and are shared
 between the trusted workflow and local `lax build`; local mode may omit only
-server-only fetching, mandatory replay, and publishable artifact creation.
+server-only fetching, mandatory replay, and publishable artifact creation,
+and only `lax build --nonstrict` admits what the archive refuses (draft
+dependencies, sibling `path` requires built in place —
+`host/siblings.ts`); its output is never reused by `lax submit`.
 `src/workflows/` holds the workflow TS entry points, `src/shared/` the
 publisher/control-plane/archive code, `src/cli/` the CLI. Untrusted code
 runs in docker containers (`src/submission-validation/sandbox/`) with

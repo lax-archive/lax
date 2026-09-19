@@ -11,6 +11,7 @@ import {
   applyWebsiteWarning,
   attachPaperFiles,
   loadWebsiteSubmissions,
+  localEntries,
   type PageBuilder,
   serveWebsite,
   websiteDatabaseWarning,
@@ -127,6 +128,58 @@ describe("local website Archive adapter", () => {
       "lax-local-warning",
     );
   });
+
+  it("lists the folder and the siblings its lakefiles reach, built, unbuilt or gone", () => {
+    const { b, a, c } = siblingLayout();
+    fs.writeFileSync(
+      path.join(a, "build-output.json"),
+      JSON.stringify({
+        ...localBuildOutput("lax-7", "Sibling A"),
+        localValidation: { nonstrict: true, siblings: ["Lax5"] },
+      }),
+    );
+    // Before its first build the folder's manifest already names it.
+    fs.writeFileSync(path.join(b, "manifest.yaml"), "id: lax-9\ntitle: Drafted B\n");
+    // A required checkout that is not there — moved away, or not cloned yet.
+    fs.appendFileSync(
+      path.join(b, "concepts", "lakefile.toml"),
+      '\n[[require]]\nname = "Lax3"\npath = "../../D/concepts"\n',
+    );
+
+    // B itself first; A through B's concepts, C through B's proofs and again
+    // through A's concepts — once. The proof package's own `../concepts` edge
+    // is no sibling, B never lists itself, and D keeps a row that says where
+    // it was required.
+    expect(localEntries(b)).toEqual([
+      { folder: b, id: "lax-9", sibling: false, built: false, title: "Drafted B" },
+      {
+        folder: a, id: "lax-7", sibling: true, built: true, title: "Sibling A", environment: "v4.19.0",
+        nonstrict: ["lax-5"],
+      },
+      {
+        folder: path.join(path.dirname(b), "D"), id: "lax-3", sibling: true, built: false,
+        missing: "concepts/lakefile.toml as ../../D/concepts",
+      },
+      { folder: c, id: "lax-5", sibling: true, built: false },
+    ]);
+  });
+
+  it("renders built siblings before the folder and never under its id", () => {
+    const archive = temporaryDirectory("lax-site-database-");
+    writeSubmission(archive, "lax-7", initialFiles("lax-7", issue, alice, "2026-07-30T10:00:00Z"));
+    fs.mkdirSync(path.join(archive, ".git"));
+    const { b, a, c } = siblingLayout();
+    fs.writeFileSync(path.join(b, "build-output.json"), JSON.stringify(localBuildOutput("lax-9", "B")));
+    fs.writeFileSync(path.join(a, "build-output.json"), JSON.stringify(localBuildOutput("lax-7", "A")));
+    // A sibling that a stale build filed under the folder's own id is dropped.
+    fs.writeFileSync(path.join(c, "build-output.json"), JSON.stringify(localBuildOutput("lax-9", "C")));
+
+    const submissions = loadWebsiteSubmissions(archive, b, [a, c]);
+    expect(submissions.map((submission) => submission.record.id)).toEqual(["lax-7", "lax-9"]);
+    // The local checkout of lax-7 replaces the archive's record of it.
+    expect(submissions[0]?.output).toMatchObject({ manifest: { title: "A" } });
+    expect(submissions[1]?.output).toMatchObject({ manifest: { title: "B" } });
+  });
 });
 
 describe("the local preview", () => {
@@ -161,6 +214,12 @@ describe("the local preview", () => {
 
   it("opens with the URL and says what it is showing once the first render knows", async () => {
     currentDatabase(["lax-1", "lax-2"]);
+    // A killed preview's output from yesterday is swept on start; this
+    // preview's own is removed when it closes.
+    const stale = temporaryDirectory("lax-site-");
+    const yesterday = new Date(Date.now() - 25 * 60 * 60_000);
+    fs.utimesSync(stale, yesterday, yesterday);
+    const sitesBefore = siteDirectories();
     const local = temporaryDirectory("lax-serve-local-");
     fs.writeFileSync(
       path.join(local, "build-output.json"),
@@ -183,17 +242,26 @@ describe("the local preview", () => {
     expect(trimmed(output.lines)).toEqual([
       "  Preview",
       "",
-      `  http://localhost:${port}/lax-50/`,
+      `  http://localhost:${port}/`,
       "",
       "  lax-50 and 2 published submissions.",
       "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
     ]);
 
-    // The line the author opened this command for goes to the submission they
-    // are working on, and it is a page, not the archive's front door.
+    // The line the author opened this command for goes to the preview's own
+    // front page, which names the folder and links to its page; the archive's
+    // front door keeps its place, where the generated pages link to it.
+    const frontHtml = await (await fetch(`http://localhost:${port}/`)).text();
+    const frontText = text(frontHtml);
+    expect(frontText).toContain("Lax local preview");
+    expect(frontText).toContain("lax-50 — Bounded gaps");
+    expect(frontText).toContain("local build, v4.19.0");
+    expect(frontText).toContain("2 published submissions");
+    expect(frontText).not.toContain("Building the website");
+    expect(frontHtml).toContain('href="/lax-50/"');
     const page = await fetch(`http://localhost:${port}/lax-50/`);
     expect(await page.text()).toContain("the stub's lax-50 page");
-    const index = await fetch(`http://localhost:${port}/`);
+    const index = await fetch(`http://localhost:${port}/index.html`);
     expect(await index.text()).toContain("rendered by the stub");
 
     // The renderer is told the epoch this CLI's own table names, not the one
@@ -217,6 +285,14 @@ describe("the local preview", () => {
     expect(renderer.renders).toBeGreaterThan(1);
     expect(output.lines.join("\n")).not.toContain("site rebuilt from");
     expect(output.lines.join("\n")).not.toContain("loading the pinned");
+
+    expect(fs.existsSync(stale)).toBe(false);
+    // The sweep only removes, so what is new is this preview's own output.
+    const own = siteDirectories().filter((name) => !sitesBefore.includes(name));
+    expect(own).toHaveLength(1);
+    await preview?.close();
+    preview = undefined;
+    expect(siteDirectories()).not.toContain(own[0]);
   });
 
   it("redirects the link it printed to the id a mid-preview build allocates", async () => {
@@ -234,7 +310,11 @@ describe("the local preview", () => {
       output.restore();
     }
 
-    expect(trimmed(output.lines)).toContain(`  http://localhost:${port}/local/`);
+    expect(trimmed(output.lines)).toContain(`  http://localhost:${port}/`);
+    // Before a build has named the folder, the front page files it as `local`
+    // and says what to do.
+    const front = text(await (await fetch(`http://localhost:${port}/`)).text());
+    expect(front).toContain("local\nno build output yet — run lax build in");
     const before = await fetch(`http://localhost:${port}/local/`);
     expect(await before.text()).toContain("the stub's local page");
 
@@ -285,9 +365,7 @@ describe("the local preview", () => {
     expect(trimmed(output.lines)).toEqual([
       "  Preview",
       "",
-      // No build has named the folder yet, so the preview opens on the page the
-      // renderer files an unbuilt folder under.
-      `  http://localhost:${taken + 1}/local/`,
+      `  http://localhost:${taken + 1}/`,
       "",
       "  No published submissions yet.",
       "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
@@ -322,7 +400,7 @@ describe("the local preview", () => {
     expect(trimmed(output.lines)).toEqual([
       "  Preview",
       "",
-      `  http://localhost:${port}`,
+      `  http://localhost:${port}/`,
       "",
       "  1 published submission.",
       "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
@@ -357,6 +435,154 @@ describe("the local preview", () => {
     // Still a live preview, and no count it could not have known.
     expect(output.lines).toContain("  Rebuilds when lax build writes a new result. Ctrl-C to stop.");
     expect(output.lines.join("\n")).not.toContain("published submission");
+  });
+
+  it("shows built siblings beside the folder, lists the unbuilt, and watches them", async () => {
+    currentDatabase([]);
+    const { b, a, c } = siblingLayout();
+    fs.writeFileSync(
+      path.join(b, "build-output.json"),
+      JSON.stringify({
+        ...localBuildOutput("lax-9", "B"),
+        localValidation: { nonstrict: true, siblings: ["Lax7", "Lax5"] },
+      }),
+    );
+    fs.writeFileSync(path.join(a, "build-output.json"), JSON.stringify(localBuildOutput("lax-7", "A")));
+    const port = await freePort();
+    const renderer = stubRenderer();
+    const output = capture();
+
+    try {
+      await serveWebsite(b, port, {
+        renderer,
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    // A is fed to the renderer as a further local submission; C, unbuilt, is
+    // not — the page builder would refuse an output it cannot resolve.
+    expect(renderer.seen.at(-1)).toEqual([{ id: "lax-7" }, { id: "lax-9" }]);
+    expect(trimmed(output.lines)).toContain("  lax-9, sibling lax-7, and no published submissions yet.");
+    const front = text(await (await fetch(`http://localhost:${port}/`)).text());
+    // The row states the local truth the rendered page's draft banner does not.
+    expect(front).toContain("lax-9 — B\nnonstrict local build (siblings lax-7, lax-5), v4.19.0");
+    expect(front).toContain("lax-7 sibling — A\nlocal build, v4.19.0");
+    expect(front).toContain(`lax-5 sibling\nno build output yet — run lax build in ${ui.tilde(c)}`);
+
+    // C's first build is exactly the change the preview waits for — with no
+    // watcher on C, the poll over the listed folders catches it.
+    let renders = renderer.renders;
+    fs.writeFileSync(path.join(c, "build-output.json"), JSON.stringify(localBuildOutput("lax-5", "C")));
+    await waitFor(() => renderer.renders > renders, "a rebuild after the sibling was built");
+    expect(renderer.seen.at(-1)).toEqual([{ id: "lax-7" }, { id: "lax-5" }, { id: "lax-9" }]);
+    expect(text(await (await fetch(`http://localhost:${port}/`)).text())).toContain("lax-5 sibling — C");
+
+    // A moved away keeps its row and says where it was required; moved back,
+    // it is rendered again — the poll does not need a folder to exist.
+    renders = renderer.renders;
+    fs.renameSync(a, `${a}-renamed`);
+    await waitFor(() => renderer.renders > renders, "a rebuild after the sibling went missing");
+    expect(renderer.seen.at(-1)).toEqual([{ id: "lax-5" }, { id: "lax-9" }]);
+    expect(text(await (await fetch(`http://localhost:${port}/`)).text())).toContain(
+      "lax-7 sibling\nrequired by concepts/lakefile.toml as ../../A/concepts — folder not found",
+    );
+    renders = renderer.renders;
+    fs.renameSync(`${a}-renamed`, a);
+    await waitFor(() => renderer.renders > renders, "a rebuild after the sibling came back");
+    expect(renderer.seen.at(-1)).toEqual([{ id: "lax-7" }, { id: "lax-5" }, { id: "lax-9" }]);
+  });
+
+  it("folds the renderer's console noise into the rebuilt line unless verbose", async () => {
+    currentDatabase([]);
+    const local = temporaryDirectory("lax-serve-local-");
+    fs.writeFileSync(path.join(local, "build-output.json"), JSON.stringify(localBuildOutput("lax-50", "B")));
+    const port = await freePort();
+    const noisy = stubRenderer();
+    const inner = noisy.generateSite;
+    noisy.generateSite = async (...args) => {
+      console.warn("No character metrics for '𝓕' in style 'Main-Regular' and mode 'text'");
+      console.warn("No character metrics for '½' in style 'Main-Regular' and mode 'text'");
+      await inner(...args);
+    };
+    const output = capture();
+
+    try {
+      await serveWebsite(local, port, {
+        renderer: noisy,
+        onListening: (live) => { preview = live; },
+      });
+      const renders = noisy.renders;
+      fs.writeFileSync(path.join(local, "build-output.json"), JSON.stringify(localBuildOutput("lax-50", "B2")));
+      await waitFor(
+        () => output.lines.some((line) => /rebuilt {2}\(renderer: 2 warnings; -v shows them\)$/u.test(line)),
+        "the rebuilt line with the warning count",
+      );
+      expect(noisy.renders).toBeGreaterThan(renders);
+    } finally {
+      output.restore();
+    }
+    expect(output.lines.join("\n")).not.toContain("No character metrics");
+  });
+
+  it("says on the front page why the render failed, and what to build", async () => {
+    currentDatabase([]);
+    const { b, a, c } = siblingLayout();
+    const port = await freePort();
+    const output = capture();
+
+    try {
+      await serveWebsite(b, port, {
+        renderer: {
+          generateSite: () => Promise.reject(new Error("statement Lax5.claim has no home concept")),
+          mimeTypes: {},
+        },
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    const html = await (await fetch(`http://localhost:${port}/`)).text();
+    const front = text(html);
+    expect(front).toContain("The preview could not be rebuilt; no render has succeeded yet.");
+    expect(front).toContain("statement Lax5.claim has no home concept");
+    expect(front).toContain(`run lax build in ${ui.tilde(c)}`);
+    expect(front).toContain("Browse your local copy of the archive — no render has succeeded yet.");
+    expect(front).not.toContain("Building the website");
+    // Slow reload while failing, so building C shows up unasked.
+    expect(html).toContain('<meta http-equiv="refresh" content="10">');
+    // The terminal gets the same hint.
+    expect(output.lines).toContain(
+      `    A sibling without build output is not rendered, so its statements are unknown to the pages: run \`lax build\` in ${ui.tilde(a)}, ${ui.tilde(c)}.`,
+    );
+    // The folder's own page is the placeholder, and it points at the answer.
+    const page = await fetch(`http://localhost:${port}/local/`);
+    expect(await page.text()).toContain('<a href="/">');
+  });
+
+  it("names the archive record a renderer error blames, as not the folder's", async () => {
+    currentDatabase(["lax-771646"]);
+    const port = await freePort();
+    const output = capture();
+
+    try {
+      await serveWebsite(temporaryDirectory("lax-serve-local-"), port, {
+        renderer: {
+          generateSite: () => Promise.reject(new Error("lax-771646: GRAPH_LABEL_GLYPH_UNSUPPORTED")),
+          mimeTypes: {},
+        },
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+
+    const front = text(await (await fetch(`http://localhost:${port}/`)).text());
+    expect(front).toContain(
+      "lax-771646 is a record in your copy of the archive, not a local folder: this failure is the renderer's own, and --database-only would fail the same way.",
+    );
   });
 
   it("rejects a port that is not a port at all", async () => {
@@ -496,7 +722,7 @@ describe("the paper surfaces in the preview", () => {
 
     // The preview is up and the record rendered — just without the file.
     expect(renderer.seen.at(-1)).toEqual([{ id: "lax-9" }]);
-    const page = await fetch(`http://localhost:${preview!.port}/`);
+    const page = await fetch(`http://localhost:${preview!.port}/index.html`);
     expect(await page.text()).toContain("rendered by the stub");
   });
 
@@ -619,6 +845,57 @@ function localBuildOutput(id: string, title: string): Record<string, unknown> {
     concepts: [],
     proofs: [],
   };
+}
+
+/**
+ * Three folders side by side: B requires A (concepts) and C (proofs) by
+ * path, and A requires C in turn — the layout a nonstrict build admits.
+ */
+function siblingLayout(): { b: string; a: string; c: string } {
+  const base = temporaryDirectory("lax-serve-siblings-");
+  const folders = { b: path.join(base, "B"), a: path.join(base, "A"), c: path.join(base, "C") };
+  const lakefile = (name: string, requires: string): string =>
+    `name = "${name}"\ndefaultTargets = ["${name}"]\n\n[[require]]\nname = "mathlib"\n` +
+    `git = "https://github.com/leanprover-community/mathlib4"\nrev = "${"a".repeat(40)}"\n${requires}`;
+  const pathRequire = (name: string, to: string): string =>
+    `\n[[require]]\nname = "${name}"\npath = "${to}"\n`;
+  for (const folder of Object.values(folders)) {
+    fs.mkdirSync(path.join(folder, "concepts"), { recursive: true });
+    fs.mkdirSync(path.join(folder, "proofs"), { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(folders.b, "concepts", "lakefile.toml"),
+    lakefile("Lax9", pathRequire("Lax7", "../../A/concepts")),
+  );
+  fs.writeFileSync(
+    path.join(folders.b, "proofs", "lakefile.toml"),
+    lakefile("Lax9Proofs", pathRequire("Lax9", "../concepts") + pathRequire("Lax5", "../../C/concepts")),
+  );
+  fs.writeFileSync(
+    path.join(folders.a, "concepts", "lakefile.toml"),
+    lakefile("Lax7", pathRequire("Lax5", "../../C/concepts")),
+  );
+  fs.writeFileSync(path.join(folders.c, "concepts", "lakefile.toml"), lakefile("Lax5", ""));
+  return folders;
+}
+
+/** The preview output directories currently in the system temp folder. */
+function siteDirectories(): string[] {
+  return fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith("lax-site-"));
+}
+
+/** A page's text, one line per block, the way a reader sees it. */
+function text(html: string): string {
+  return html
+    .replace(/<style>[\s\S]*?<\/style>/gu, "")
+    .replace(/<br>|<\/(?:title|li|p|h1|h2)>/gu, "\n")
+    .replace(/<[^>]+>/gu, "")
+    .replace(/&quot;/gu, '"')
+    .replace(/&amp;/gu, "&")
+    .split("\n")
+    .map((line) => line.replace(/\s+/gu, " ").trim())
+    .filter((line) => line !== "")
+    .join("\n");
 }
 
 /**

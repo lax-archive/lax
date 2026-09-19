@@ -34,10 +34,16 @@ import { checkPackageFiles, readSubmissionTree } from "./package-files.js";
  * The selection is returned so the phases after this one provision, mount, and
  * resolve against the same environment.
  */
+export interface StaticOptions {
+  /** Admit sibling path requires (`lax build --nonstrict`); see validators/lakefile.ts. */
+  siblings?: boolean;
+}
+
 export function runStaticValidation(
   request: ValidationRequest,
   root: string,
   runtimeSource: RuntimeSource,
+  options: StaticOptions = {},
 ): {
   result: StaticResult;
   findings: FindingCollector;
@@ -127,6 +133,7 @@ export function runStaticValidation(
           `${kind}/lakefile.toml`,
           runtime,
           findings,
+          { siblings: options.siblings },
         );
     }
     const inventory = deriveInventory(root, kind, packageName, findings);

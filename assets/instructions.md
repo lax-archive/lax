@@ -33,6 +33,16 @@ result with Lax. On a high level, this proceeds as follows.
   transitively, by any annotated proof theorem in the submission. The build is
   still valid, but remove the helper unless retaining it is intentional.
 
+- A result that spans several submissions is registered bottom-up, each
+  dependent pinning the registered commit of what it builds on with a git
+  require. While the pieces are still unregistered drafts side by side, name
+  the dependency with a `path` require on its checkout, relative to the
+  requiring package directory (`[[require]] name = "LaxN" path =
+  "../../other/concepts"`, in every package that imports it), and iterate with
+  `lax build --nonstrict`; the default build and `lax submit` refuse that
+  edge, and once the dependency is registered the nonstrict build prints the
+  git require to put in its place.
+
 Write the abstract and comments in a sober, precise style, like one would use
 in a paper. Double-check that the math will display well. Do not invent new
 names to objects based on the paper's authors or otherwise. Do not refer to

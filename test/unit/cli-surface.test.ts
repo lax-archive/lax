@@ -74,6 +74,7 @@ describe("CLI compatibility surface", () => {
     expect(build.output).toContain("--profile");
     expect(build.output).toContain("--only <part>");
     expect(build.output).toContain("--build-from-source");
+    expect(build.output).toContain("--nonstrict");
     expect(build.output).toContain("--verbose");
 
     const register = cli(["register", "--help"]);

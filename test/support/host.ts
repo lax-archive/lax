@@ -127,6 +127,7 @@ export async function buildOnHost(
     archive?: ArchiveSnapshot;
     replay?: HostValidationOptions["replay"];
     scope?: HostValidationOptions["scope"];
+    nonstrict?: HostValidationOptions["nonstrict"];
     profiler?: Profiler;
     /** The claimed source repository URL (defaults to a local placeholder). */
     repository?: string;
@@ -157,6 +158,7 @@ export async function buildOnHost(
     echo: false,
     replay: options.replay,
     scope: options.scope,
+    nonstrict: options.nonstrict,
     profiler: options.profiler,
     webDeriver: options.webDeriver,
   });
