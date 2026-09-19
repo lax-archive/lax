@@ -4,64 +4,8 @@ Proposed amendments to [spec.md](spec.md), written while implementing — one
 entry per change, with the implemented behavior and the reason it diverges
 from or refines the current text. To be folded into the spec manually; this
 file is not normative. (Entries of earlier milestones were folded into
-spec.md on 2026-07-22, 2026-08-07, 2026-09-14, and 2026-09-15 and removed
-here; the folded text survives in git history.)
-
-## Local sibling path requires and the strict default (implemented, 2026-09-19)
-
-Two deviations in `lax build`, both local-only and both opt-in through one
-flag, `--nonstrict`; the trusted pipeline, the gate step, `lax submit`, and
-every other caller are unchanged and refuse exactly what spec.md says they
-refuse.
-
-- **spec.md "lax build"** says build alone admits a require on a draft record
-  with a warning. Implemented: only `lax build --nonstrict` does; the default
-  refuses it in the archive's words, so a default local build passes exactly
-  when the archive would. Reason: a second local-only relaxation (below)
-  needed a flag, and one flag governing both edges the archive refuses is the
-  coherent shape.
-- **spec.md "Packages"** says cross-submission path requirements are not
-  supported. That stays true for the archive. Locally, `lax build --nonstrict`
-  admits a `path` require on a *sibling*: another local submission's package,
-  by its Lax package name, relative to the requiring package directory. The
-  sibling's own lakefile is validated by the same rules (name, mathlib pin —
-  which is the environment check — well-formed requires); its git requires
-  join Resolution as further direct requires, its path requires are siblings
-  in turn, and the whole closure is seeded flat into the dependent's generated
-  manifest, since lake reads no path dependency's own manifest. Lake builds a
-  sibling in place, as it does the proof package's `../concepts`, so
-  artifacts are shared both ways; the sibling's lib dir joins the Replay and
-  Inspect search path; imports from it are declared, and its axioms are
-  admissible statements by package prefix (its own build judges it). A
-  registered sibling is refused with the git require to write. The output
-  records the siblings and `lax submit` never reuses it. Reason: parallel
-  work on an unregistered chain (spec.md "Packages": "committed, submitted,
-  and registered bottom-up") otherwise has no local build until the
-  dependency has a commit, and no shared artifacts at all.
-
-## `lax serve` opens on a local front page and renders siblings (implemented, 2026-09-19)
-
-spec.md "lax serve" says the preview prints the folder's own page,
-``/<id>/``, and that ``--database-only`` opens on the index. Implemented:
-the printed link is ``http://localhost:8123/``, the preview's own front
-page — a local page, never one of the renderer's, that says it is a local
-preview, lists the folder and every sibling its lakefiles' ``path`` requires
-reach (id, title, environment, "local build" or "no build output yet — run
-`lax build` in <folder>", a link to ``/<id>/``), carries the database
-warning and the reason the last render failed, and links to the generated
-archive index, which keeps its place at ``/index.html`` because the
-generated pages link to it relatively. The folder's page, the ``/local/``
-placeholder, and the redirect a mid-preview build triggers are unchanged;
-``--database-only`` opens on the same front page with no local list.
-Sibling folders that have a ``build-output.json`` are rendered as further
-local submissions (siblings first, the folder last, deduplicated by id with
-the folder winning), and are watched like the folder; a sibling without one
-is listed and not rendered. Reason: a nonstrict output whose proofs
-conclude a sibling's statements cannot be rendered without the sibling
-loaded (the page builder refuses a statement with no home concept), and the
-loading page said nothing about why; a front page that lists what is served
-and what is missing is the place for both, and makes the preview
-self-explanatory in the strict case too.
+spec.md on 2026-07-22, 2026-08-07, 2026-09-14, 2026-09-15, and 2026-09-19
+and removed here; the folded text survives in git history.)
 
 ## Concept dialect: second draft, advisory model (proposed, 2026-07-29)
 

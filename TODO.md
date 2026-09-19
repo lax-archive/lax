@@ -11,7 +11,7 @@ rewrite-plan.md (fully executed).
 
 `lax build --nonstrict` landed: sibling `path` requires built in place, the
 draft-dependency warning behind the same flag, strict default everywhere
-(spec-notes.md records both deviations). Owed:
+(spec.md "lax build" specifies both since 2026-09-19). Owed:
 
 - `lax serve` is unreachable for the whole render: `generateSite` blocks
   the event loop for 14–21 s on the current database, so a link clicked

@@ -284,11 +284,14 @@ following rules:
   the same archive environment. Write the canonical ``repository`` spelling
   (see ``lax submit``), not an ssh alias of it. The required submission
   must be registered; a require on a draft is a violation (see Lifecycle).
-  Cross-submission path requirements are not supported: multi-submission
-  work is committed, submitted, and registered bottom-up, with each
-  dependent pinning the preceding submission's exact Git commit. The
-  only path exception is the proof package's own concept package via
-  ``../concepts``. The transitive Archive dependency graph must be acyclic.
+  The archive does not accept cross-submission path requirements:
+  multi-submission work is committed, submitted, and registered bottom-up,
+  with each dependent pinning the preceding submission's exact Git commit.
+  The only path exception is the proof package's own concept package via
+  ``../concepts``. A local ``lax build --nonstrict`` additionally admits a
+  ``path`` require on a **sibling**, another unregistered submission checked
+  out beside this one, so that a chain can be built before its members have
+  commits (see CLI). The transitive Archive dependency graph must be acyclic.
 
 - **Imports.** A module may import only modules of its own package, of Lean
   core (``Init``, ``Std``, ``Lean``), of mathlib, and of the packages its
@@ -967,8 +970,8 @@ over-long text is elided with `` […] ``.
   built against its pins, and a ``supersedes`` claim must name a registered
   record with an overlapping owner list and a free successor slot. A require
   on a draft record is a violation whose message names the fix: register the
-  dependency first. Only local ``lax build`` admits it, with a warning (see
-  CLI). A superseded dependency, direct or
+  dependency first. Only ``lax build --nonstrict`` admits it, with a warning
+  (see CLI). A superseded dependency, direct or
   transitive, is a warning naming its successor. A local miss may mean the
   checkout at ``~/.lax/lax-database`` is stale, so the finding suggests
   ``lax sync`` and a retry.
@@ -979,8 +982,12 @@ over-long text is elided with `` […] ``.
   are downloaded from GHCR by digest, verified, extracted read-only, and
   mounted with the VM-installed toolchain and warm workspace into fresh build
   workspaces. Local builds instead use exact git dependencies in the generated
-  manifests and build them from source inside the package workspace. ``lax
-  init`` performs the same local seeding for a fresh scaffold.
+  manifests and build them from source inside the package workspace. A
+  nonstrict build also lists its siblings (see CLI) as path entries. The
+  generated manifest is flat: lake does not read a path dependency's own
+  manifest, so every transitive require, git or path, appears in the
+  requiring package's manifest. ``lax init`` performs the same local seeding
+  for a fresh scaffold.
 
 - **Compile:** run ``lake build`` for concepts first and proofs second. Trusted
   validation runs each package in a fresh, networkless, hardened container;
@@ -1307,26 +1314,57 @@ replacing ``build-output.json``; proofs-only still builds concepts as its
 prerequisite but skips concept Replay. A declared paper is compiled with the
 host ``latexmk`` as a preview (skipped with a note when absent); the
 archive's compile is the authority. Build warns when it wrote a generated
-file no ignore rule covers; it never edits ``.gitignore``. Build alone admits
-a require on a draft record, with a warning that the archive will refuse it,
-so an unregistered chain can be iterated locally. Registration never
+file no ignore rule covers; it never edits ``.gitignore``.
+
+Build is strict by default: it refuses what the archive refuses, with the
+same findings, so a default local build passes if and only if a submit
+would. ``--nonstrict`` admits two edges the archive refuses, each with a
+warning, so that an unregistered chain can be built locally:
+
+- a git require on a draft record;
+- a ``path`` require on a **sibling**: another local submission's package,
+  under its package name, at a path relative to the requiring package. The
+  sibling's lakefile is validated by the same rules as the author's own —
+  package name, mathlib pin, well-formed requires — and the mathlib pin is
+  the environment check. Its git requires are resolved as further direct
+  requires; its path requires are siblings in turn. Lake builds a sibling in
+  place, as it does the proof package's ``../concepts``, so the sibling's
+  own builds and every dependent's share its artifacts. The sibling's
+  library directory is on the Replay and Inspect search path, its modules
+  are importable, and its axioms are admissible statements by package prefix
+  (the sibling's own build judges them). Each package sees only the siblings
+  its own lakefile names. A path require on a sibling that the local
+  database shows as registered is refused; the finding prints the git
+  require to write instead.
+
+The output of a nonstrict build records which edges it admitted and which
+siblings it built, and ``lax submit`` never reuses it. Registration never
 trusts local output: the GitHub Actions workflow rebuilds a submitted commit
 with Replay mandatory.
 
 **lax serve [folder]** runs the **site generator** and serves the result
 locally. It is a long-running process that does not daemonize by default. It
-starts with a loading page and prints the folder's own page,
-``http://localhost:8123/<id>/`` (``/local/`` until a build has named it),
-then watches both the complete local database and the submission's
-``build-output.json``. Every change triggers a website rebuild. The local
-folder is rendered from its own ``build-output.json`` against a synthetic
-draft record, so ``lax serve`` works before the first submit. If
-``build-output.json`` is missing, the website shows a placeholder stating that
-the output has not been generated yet; ``lax serve`` does not build. It warns
-when the database is missing, stale, invalid, or unreachable. The folder's
-own ``paper.pdf`` and web bundle are shown directly; a database record's are
-fetched by digest on demand into ``~/.lax/papers/`` and ``~/.lax/bundles/``.
-``--database-only`` omits the local folder and opens on the index. A taken
+prints ``http://localhost:8123/``, a **front page** that belongs to the
+preview, not to the site generator. The front page states that this is a
+local preview, lists the folder and every sibling reachable through its
+lakefiles' ``path`` requires — id, title, environment, whether the folder has
+a ``build-output.json``, and a link to its page — and shows the database
+warning and the reason the last render failed, if any. It links to the
+generated archive index at ``/index.html``. The folder's own page is
+``http://localhost:8123/<id>/`` (``/local/`` until a build has named it).
+Serve watches the complete local database and the ``build-output.json`` of
+the folder and of every listed sibling; every change triggers a website
+rebuild. The folder is rendered from its own ``build-output.json`` against a
+synthetic draft record, so ``lax serve`` works before the first submit. A
+sibling with a ``build-output.json`` is rendered the same way; one without
+is listed and not rendered. When the folder and a sibling have the same id,
+the folder is rendered. If the folder's ``build-output.json`` is missing,
+its page shows a placeholder stating that the output has not been generated
+yet; ``lax serve`` does not build. It warns when the database is missing,
+stale, invalid, or unreachable. The folder's own ``paper.pdf`` and web
+bundle are shown directly; a database record's are fetched by digest on
+demand into ``~/.lax/papers/`` and ``~/.lax/bundles/``. ``--database-only``
+omits the folder and its siblings and opens on the same front page. A taken
 port is walked past; ``--port`` changes where the walk starts.
 
 The intended workflow is to keep ``lax serve`` running while authoring and
@@ -1341,7 +1379,8 @@ within the repository — and normalizes the supported providers' SCP or SSH
 clone spellings to credential-free HTTPS URLs, removing a trailing ``.git``.
 URLs containing credentials, ports, queries, or fragments are rejected. By default
 it requires a clean worktree and a HEAD present on ``origin``. Before posting
-the command it reuses a matching full local build or runs ``lax build``.
+the command it reuses a matching full local build or runs ``lax build``; a
+nonstrict build's output is never reused.
 ``--allow-dirty`` still submits committed HEAD, excluding local changes, and
 validates it in an isolated worktree. ``-f``/``--force`` skips the dirty,
 pushed-HEAD, and local-build checks entirely, leaving the trusted workflow as
