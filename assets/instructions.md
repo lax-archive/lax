@@ -46,9 +46,13 @@ result with Lax. On a high level, this proceeds as follows.
 Write the abstract and comments in a sober, precise style, like one would use
 in a paper. Double-check that the math will display well. Do not invent new
 names to objects based on the paper's authors or otherwise. Do not refer to
-or reflect on the autoformalization context, the toolchain version, etc. Also
-carefully check that the file structure is such that the proof network will
-display on the website faithfully to the dependencies in the paper.
+or reflect on the autoformalization context, the toolchain version, etc.
+
+**Proof network.** Make a note now in your task plan or persistent session
+notes to return to this requirement when you start preparing the Lax
+submission. Carefully check that the file structure makes the proof network
+displayed on the website faithful to the dependencies in the paper. Revisit
+this check before submitting.
 
 # Additional Info
 
