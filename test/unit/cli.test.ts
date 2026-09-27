@@ -11,7 +11,7 @@ import {
   submissionIdFromFolder,
 } from "../../src/cli/manifest.js";
 import { epoch } from "../../src/submission-validation/environments.js";
-import { ensureEmptyFolder, scaffoldSubmission } from "../../src/cli/scaffold.js";
+import { ensureEmptyFolder, ensureScaffoldTarget, scaffoldSubmission } from "../../src/cli/scaffold.js";
 
 const temporary: string[] = [];
 
@@ -92,6 +92,22 @@ describe("CLI issue references", () => {
     temporary.push(root);
     fs.writeFileSync(path.join(root, "keep.txt"), "mine\n");
     expect(() => ensureEmptyFolder(root)).toThrow("not empty");
+  });
+
+  it("scaffolds beside existing work but never over it", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-cli-test-"));
+    temporary.push(root);
+    fs.mkdirSync(path.join(root, "paper"));
+    fs.writeFileSync(path.join(root, "paper", "main.tex"), "\\documentclass{article}\n");
+    fs.writeFileSync(path.join(root, ".gitignore"), "*.aux\n.lake/");
+    scaffoldSubmission(root, "lax-123456", "Beside a paper", epoch());
+    expect(fs.readFileSync(path.join(root, "paper", "main.tex"), "utf8")).toContain("documentclass");
+    const gitignore = fs.readFileSync(path.join(root, ".gitignore"), "utf8");
+    expect(gitignore.startsWith("*.aux\n.lake/\n")).toBe(true);
+    expect(gitignore.split("\n").filter((line) => line === ".lake/")).toHaveLength(1);
+    expect(gitignore).toContain("lake-manifest.json");
+    // a second init into the same folder would overwrite the first
+    expect(() => ensureScaffoldTarget(root)).toThrow("manifest.yaml, abstract.md, LICENSE, concepts, proofs");
   });
 
   it("normalizes GitHub SSH origins for issue submissions", () => {

@@ -69,7 +69,7 @@ import {
   type RemotePaperFacts,
 } from "./run-artifacts.js";
 import {
-  ensureEmptyFolder,
+  ensureScaffoldTarget,
   provisionScaffold,
   scaffoldSubmission,
 } from "./scaffold.js";
@@ -108,7 +108,7 @@ export async function initializeSubmission(
   // Before anything is written: an id the table does not admit is a mistake
   // about which lax is installed, not about this folder.
   const environment = requestedEnvironment(options.env);
-  const root = ensureEmptyFolder(folder);
+  const root = ensureScaffoldTarget(folder);
   // No title given means the folder name stands in for one — which is a thing
   // the author will want to fix, so the identity block says so once.
   const defaulted = options.title === undefined;

@@ -272,7 +272,10 @@ submission, so an unpushed commit fails there instead of here.
 
 Every `lax init` is loginless. It generates a random six-digit id locally,
 scaffolds the matching `LaxNNNNNN` and `LaxNNNNNNProofs` packages, and opens no
-issue. On the first `lax submit`, the CLI signs in, checks that the id is still
+issue. The folder may already hold other work — typically the paper being
+formalized — as long as nothing the scaffold writes (`manifest.yaml`,
+`abstract.md`, `LICENSE`, `concepts/`, `proofs/`) is already there; an existing
+`.gitignore` is extended rather than replaced. On the first `lax submit`, the CLI signs in, checks that the id is still
 unused, creates a marked control issue, writes the authoritative issue binding
 into `manifest.yaml`, and asks the author to commit and push that binding before
 submitting again. A rare id collision is resolved by safely rekeying the

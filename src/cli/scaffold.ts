@@ -25,6 +25,30 @@ export function ensureEmptyFolder(folder: string): string {
   return root;
 }
 
+/** The root entries a scaffold creates. `.gitignore` is not among them: an
+ * existing one is extended rather than replaced. */
+const SCAFFOLD_ENTRIES = ["manifest.yaml", "abstract.md", "LICENSE", "concepts", "proofs"];
+
+/**
+ * The folder `lax init` may scaffold into: a new or empty one, or one that
+ * already holds other work — typically the paper being formalized. What it
+ * refuses is a folder where the scaffold would overwrite something, so an
+ * existing submission (or anything else by those names) is never clobbered.
+ */
+export function ensureScaffoldTarget(folder: string): string {
+  const root = path.resolve(folder);
+  if (fs.existsSync(root) && !fs.statSync(root).isDirectory()) {
+    throw new Error(`${root} is not a folder`);
+  }
+  const taken = SCAFFOLD_ENTRIES.filter((entry) => fs.existsSync(path.join(root, entry)));
+  if (taken.length > 0) {
+    throw new Error(
+      `folder ${root} already contains ${taken.join(", ")}; lax init never overwrites existing files`,
+    );
+  }
+  return root;
+}
+
 /** Scaffold a local source layout before any GitHub issue exists, in the
  * environment `lax init` selected — the epoch unless `--env` said otherwise.
  * The entry is passed rather than read here so the manifest, both
@@ -37,7 +61,7 @@ export function scaffoldSubmission(
   environment: ArchiveEnvironment,
 ): void {
   validateNewSubmissionId(id);
-  const root = ensureEmptyFolder(folder);
+  const root = ensureScaffoldTarget(folder);
   const concepts = `Lax${id.slice("lax-".length)}`;
   const proofs = `${concepts}Proofs`;
   const write = (relative: string, content: string): void => {
@@ -58,7 +82,7 @@ export function scaffoldSubmission(
   // Every name lax writes into this folder, from the module that also tells
   // static validation and `lax doctor` which names those are: a build must
   // never be able to leave a scaffolded worktree dirty.
-  write(".gitignore", generatedFilesGitignore());
+  extendGitignore(path.join(root, ".gitignore"));
   write("concepts/lean-toolchain", `${runtime.leanToolchain}\n`);
   write(
     "concepts/lakefile.toml",
@@ -70,6 +94,23 @@ export function scaffoldSubmission(
   write("proofs/lakefile.toml", lakefile(runtime, proofs, concepts, true));
   write(`proofs/${proofs}.lean`, "");
   fs.mkdirSync(path.join(root, "proofs", proofs), { recursive: true });
+}
+
+/** Add the generated-file lines a `.gitignore` is missing, keeping the rest
+ * of it — a folder that already held a paper may ignore its LaTeX output. */
+function extendGitignore(filename: string): void {
+  if (!fs.existsSync(filename)) {
+    fs.writeFileSync(filename, generatedFilesGitignore());
+    return;
+  }
+  const existing = fs.readFileSync(filename, "utf8");
+  const present = new Set(existing.split(/\r?\n/).map((line) => line.trim()));
+  const missing = generatedFilesGitignore()
+    .split("\n")
+    .filter((line) => line !== "" && !present.has(line));
+  if (missing.length === 0) return;
+  const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
+  fs.appendFileSync(filename, separator + missing.map((line) => `${line}\n`).join(""));
 }
 
 /** Whether the shared mathlib environment is ready, and why not if it is not. */

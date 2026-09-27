@@ -74,7 +74,7 @@ program
   .option("--title <title>", "submission title (defaults to the folder name)")
   .option("--env <id>", "active archive environment to work in (default: v4.33.0)")
   .option("--yes", "skip the confirmation a non-epoch --env asks for")
-  .description("generate a local six-digit id and scaffold without signing in")
+  .description("generate a local six-digit id and scaffold without signing in (beside existing files, never over them)")
   .action(
     run((folder: string, options: { title?: string; env?: string; yes?: boolean }) =>
       initializeSubmission(folder, {

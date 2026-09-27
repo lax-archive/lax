@@ -1281,7 +1281,9 @@ their fixes. Run ids, URLs, and the tools' own transcripts appear only under
 the same words without the spinner. ``lax`` has the following commands:
 
 **lax init [folder]** (default ``.``) starts a submission, see Actions. The
-folder must be empty or not yet exist; otherwise init refuses. Init draws a
+folder may hold other files (a paper, say), but init refuses if any root
+entry it would create already exists; an existing ``.gitignore`` is extended
+instead. Init draws a
 random six-digit id, signs in to nothing, and opens no issue. The scaffold
 comprises ``manifest.yaml`` (with ``id: lax-N``, the environment pins, and an
 empty author list), package folders, lakefiles (with the mandatory mathlib
