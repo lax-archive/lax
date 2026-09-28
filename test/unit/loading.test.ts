@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { LoadingBlock } from "../../src/cli/loading.js";
 
 /** A capturing stand-in for `process.stdout`. */
-function fakeOutput(options: { isTTY?: boolean; columns?: number } = {}) {
+function fakeOutput(options: { isTTY?: boolean; columns?: number; rows?: number } = {}) {
   const writes: string[] = [];
   return {
     writes,
     isTTY: options.isTTY,
     columns: options.columns,
+    rows: options.rows,
     write(chunk: string) {
       writes.push(chunk);
       return true;
@@ -79,6 +80,23 @@ describe("LoadingBlock", () => {
     block.settle("a", ["a done"]);
     block.render();
     expect(output.writes.at(-2)).toBe("\u001B[2A\r\u001B[0J");
+    block.finish();
+  });
+
+  it("never draws a region taller than the terminal", () => {
+    // A cursor-up clamps at the top row, so an over-tall region cannot be
+    // erased and each redraw would leave a copy of itself in the scrollback.
+    const output = fakeOutput({ isTTY: true, columns: 80, rows: 10 });
+    const block = new LoadingBlock(output, { commit: () => undefined });
+    for (let index = 0; index < 50; index += 1) block.add(`r${index}`, `row ${index}`);
+
+    block.render();
+    const drawn = output.writes.at(-1)!.split("\n").slice(0, -1);
+    expect(drawn).toHaveLength(9);
+    expect(drawn.at(-1)).toContain("… 42 more");
+
+    block.render();
+    expect(output.writes.at(-2)).toBe("\u001B[9A\r\u001B[0J");
     block.finish();
   });
 

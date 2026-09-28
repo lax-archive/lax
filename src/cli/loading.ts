@@ -3,6 +3,7 @@ const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", 
 export interface ProgressOutput {
   readonly isTTY?: boolean;
   readonly columns?: number;
+  readonly rows?: number;
   write(chunk: string): unknown;
 }
 
@@ -221,9 +222,18 @@ export class LoadingBlock {
       text += "\u001B[?25l";
       this.hideCursor();
     }
-    for (const row of live) text += `${truncate(this.line(row), width)}\n`;
+    // The region must fit on screen: a cursor-up clamps at the top row, so a
+    // region taller than the terminal cannot be erased and every redraw leaves
+    // a copy of it in the scrollback. `lax doctor` with fifty registered
+    // submissions is fifty live rows. Show what fits and count the rest.
+    const height = this.output.rows !== undefined && this.output.rows > 0 ? this.output.rows : Infinity;
+    const room = Math.max(1, height - 1);
+    const shown = live.length <= room ? live : live.slice(0, room - 1);
+    for (const row of shown) text += `${truncate(this.line(row), width)}\n`;
+    const hidden = live.length - shown.length;
+    if (hidden > 0) text += `${truncate(`${this.indent}  … ${hidden} more`, width)}\n`;
     this.output.write(text);
-    this.liveLines = live.length;
+    this.liveLines = shown.length + (hidden > 0 ? 1 : 0);
   }
 
   /**

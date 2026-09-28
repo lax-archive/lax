@@ -129,6 +129,9 @@ const blockOutput = {
   get columns(): number | undefined {
     return process.stdout.columns;
   },
+  get rows(): number | undefined {
+    return process.stdout.rows;
+  },
   write(chunk: string): unknown {
     depth += 1;
     try {
