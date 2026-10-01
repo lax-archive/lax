@@ -111,6 +111,10 @@ export function judgeInspection(
     if (declaration.doc?.hasFrontmatter)
       findings.violate("annotation", `concept declaration ${declaration.name} carries proof frontmatter`);
     if (declaration.kind === "axiom") {
+      if (declaration.isProp !== true) {
+        findings.violate("statement-type", `concept axiom ${declaration.name} must have a propositional type (its declared type must inhabit Prop)`);
+        continue;
+      }
       const entry = byModule.get(declaration.module);
       if (entry !== undefined) {
         ownStatements.add(declaration.name);

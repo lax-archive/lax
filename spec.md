@@ -410,6 +410,11 @@ free, since Lean imports are).
 
 Additional Rules:
 
+- **Propositional statements.** Every axiom declared by the concept package
+  must have a propositional type: in ``axiom s : P``, ``P : Prop``. Axioms
+  introducing data, types, or predicates (including ``axiom P : Prop``)
+  are not statements and are rejected.
+
 - **Axiom-free.** The axiom set (``#print axioms``) of every declaration of
   the concept package may contain only the archive environment's background
   axioms — plus, for a statement, the statement itself, which an axiom always
@@ -1142,10 +1147,14 @@ say), should Lean attribute those to the realizing package. Nothing is
 exempted: generated declarations satisfy every rule on their own, as the
 primer explains, so uniform treatment costs nothing.
 
-**Axiom checks are set comparisons.** The spec phrases its rules in terms of
-``#print axioms`` because that is the familiar name; the inspector calls the
-API behind the command (``Lean.collectAxioms``, the walk from the primer)
-and reports the resulting set per declaration. Every axiom rule is then, in
+**Statement types.** For every axiom, the inspector uses the kernel to infer
+the type of its declared type and checks that it is definitionally equal to
+``Prop``. The validator rejects concept axioms for which this fact is false.
+
+**Axiom dependency checks are set comparisons.** The spec phrases its rules
+in terms of ``#print axioms`` because that is the familiar name; the inspector
+calls the API behind the command (``Lean.collectAxioms``, the walk from the
+primer) and reports the resulting set per declaration. Every axiom dependency rule is then, in
 the validator, one comparison against an allowed set — the only question is what
 is allowed.
 

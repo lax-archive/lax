@@ -110,7 +110,7 @@ function parseDeclaration(value: unknown, index: number): InspectorDeclaration {
   const item = record(value, `inspector declaration ${index}`);
   const allowed = [
     "name", "kind", "module", "axioms", "usedConstants", "userName", "doc", "conclusionFacts",
-    "signature", "startLine", "endLine",
+    "signature", "isProp", "startLine", "endLine",
   ];
   for (const key of Object.keys(item))
     if (!allowed.includes(key)) throw new Error(`inspector declaration ${index} has unknown key ${key}`);
@@ -124,6 +124,10 @@ function parseDeclaration(value: unknown, index: number): InspectorDeclaration {
   if (item.userName !== undefined) declaration.userName = text(item.userName, "declaration userName");
   if (item.doc !== undefined) declaration.doc = parseDoc(item.doc, index);
   if (item.conclusionFacts !== undefined) declaration.conclusionFacts = parseConclusion(item.conclusionFacts);
+  if (declaration.kind === "axiom" || item.isProp !== undefined) {
+    if (typeof item.isProp !== "boolean") throw new Error("declaration isProp must be boolean");
+    declaration.isProp = item.isProp;
+  }
   if (item.signature !== undefined) declaration.signature = text(item.signature, "declaration signature", 4 * 1024 * 1024);
   if (item.startLine !== undefined) declaration.startLine = natural(item.startLine, "declaration startLine");
   if (item.endLine !== undefined) declaration.endLine = natural(item.endLine, "declaration endLine");

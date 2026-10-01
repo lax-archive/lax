@@ -139,6 +139,7 @@
    "name": "goldenAxiom",
    "module": "Golden.Basic",
    "kind": "axiom",
+   "isProp": true,
    "endLine": 46,
    "doc":
    {"scalars": [],

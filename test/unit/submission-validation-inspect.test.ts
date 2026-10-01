@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_LIMITS } from "../../src/submission-validation/config.js";
-import { runInspector } from "../../src/submission-validation/phases/inspect-runner.js";
+import { parseInspectorReport, runInspector } from "../../src/submission-validation/phases/inspect-runner.js";
 import type {
   ContainerInvocation,
   ContainerResult,
@@ -86,6 +86,7 @@ function reports(): {
         name: "Lax1.Claim.statement",
         userName: "Lax1.Claim.statement",
         kind: "axiom",
+        isProp: true,
         module: "Lax1.Claim",
         axioms: ["Lax1.Claim.statement"],
         usedConstants: [],
@@ -132,6 +133,34 @@ function reports(): {
 }
 
 describe("inspection judgments retained from main", () => {
+  it.each([false, undefined])("rejects concept axioms without a positive Prop fact (%s)", (isProp) => {
+    const fixture = reports();
+    fixture.concepts.declarations[0]!.isProp = isProp;
+    const judged = judgeInspection(
+      fixture.concepts, undefined, fixture.conceptInventory, undefined, EMPTY_RESOLUTION, "concepts",
+    );
+    expect(judged.findings.violations).toEqual([expect.objectContaining({
+      rule: "statement-type",
+      message: expect.stringContaining("Lax1.Claim.statement"),
+    })]);
+    expect(judged.result.concepts[0]!.statements).toEqual([]);
+  });
+
+  it.each([undefined, "true", 1, null])("rejects malformed axiom Prop facts (%s)", (isProp) => {
+    const fixture = reports();
+    const report = {
+      ...fixture.concepts,
+      declarations: [{ ...fixture.concepts.declarations[0], isProp }],
+    };
+    expect(() => parseInspectorReport(report)).toThrow("declaration isProp must be boolean");
+  });
+
+  it.each([true, false])("preserves the inspected axiom Prop fact (%s)", (isProp) => {
+    const fixture = reports();
+    fixture.concepts.declarations[0]!.isProp = isProp;
+    expect(parseInspectorReport(fixture.concepts).declarations[0]!.isProp).toBe(isProp);
+  });
+
   it("derives concept and proof metadata from valid inspector reports", () => {
     const fixture = reports();
     const judged = judgeInspection(
@@ -197,6 +226,7 @@ describe("inspection judgments retained from main", () => {
       name: "Lax1.Claim.second",
       userName: "Lax1.Claim.second",
       kind: "axiom",
+      isProp: true,
       module: "Lax1.Claim",
       axioms: ["Lax1.Claim.second"],
       usedConstants: [],
@@ -405,6 +435,7 @@ describe("inspection judgments retained from main", () => {
       name: "Lax1.Claim.second",
       userName: "Lax1.Claim.second",
       kind: "axiom",
+      isProp: true,
       module: "Lax1.Claim",
       axioms: ["Lax1.Claim.second"],
       usedConstants: [],

@@ -62,6 +62,41 @@ end ${name}.${module}
     expect(report.violations).toEqual([]);
   });
 
+  it("rejects data, type, and predicate axioms as concept statements", async () => {
+    const root = conceptPackage("lax-27", "Lax27", {
+      Bad: `axiom data : Nat
+axiom type : Type
+axiom proposition : Prop
+axiom predicate : Nat → Prop
+axiom function : Nat → Nat
+axiom polymorphic.{u} : Sort u
+private axiom hiddenData : Nat
+`,
+    });
+    const report = await buildOnHost(root, { id: "lax-27", scope: "concepts" });
+    expect(rules(report)).toEqual(new Set(["statement-type"]));
+    expect(report.violations).toHaveLength(7);
+    for (const name of ["data", "type", "proposition", "predicate", "function", "polymorphic", "hiddenData"]) {
+      expect(messages(report)).toContain(`Lax27.Bad.${name} must have a propositional type`);
+    }
+    expect(report.buildOutput).toBeUndefined();
+  });
+
+  it("accepts propositions through aliases and quantification over arbitrary universes", async () => {
+    const root = conceptPackage("lax-28", "Lax28", {
+      Good: `def Proposition : Type := Prop
+def claim : Proposition := True
+axiom direct : True
+axiom alias : claim
+axiom quantified : ∀ n : Nat, n = n
+axiom polymorphic.{u} : ∀ (α : Sort u) (a : α), a = a
+`,
+    });
+    const report = await buildOnHost(root, { id: "lax-28" });
+    expect(report.violations).toEqual([]);
+    expect(report.buildOutput!.concepts[0]!.statements).toHaveLength(4);
+  });
+
   it("carries every statement of a multi-statement concept into the build output", async () => {
     // The fixture the gate used to reject, now taken all the way through a
     // full concept+proof build: both axioms of Lax26.Two are statements, each

@@ -400,6 +400,8 @@ export interface InspectorDeclaration {
   userName?: string;
   doc?: ParsedDoc;
   conclusionFacts?: ConclusionFacts;
+  /** Kernel fact required for axioms: the declared type inhabits Prop. */
+  isProp?: boolean;
   signature?: string;
   startLine?: number;
   endLine?: number;

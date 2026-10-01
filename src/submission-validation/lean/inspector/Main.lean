@@ -593,8 +593,15 @@ unsafe def main (args : List String) : IO UInt32 := do
             cf := cf ++ [("originModule", Json.str om.toString)]
           fields := fields ++ [("conclusionFacts", Json.mkObj cf)]
       if let .axiomInfo _ := ci then
+        -- Check the declared type, not the axiom constant: a statement has
+        -- type P with P : Prop. Kernel reduction also handles type aliases.
+        let isProp := match Kernel.check env {} ci.type with
+          | .ok sort => match Kernel.isDefEq env {} sort (.sort .zero) with
+            | .ok result => result
+            | .error _ => false
+          | .error _ => false
         let sig ← ppType env ci.type
-        fields := fields ++ [("signature", Json.str sig)]
+        fields := fields ++ [("signature", Json.str sig), ("isProp", Json.bool isProp)]
       declJsons := declJsons.push (Json.mkObj fields)
 
   let report := Json.mkObj
