@@ -14,6 +14,11 @@ import { BUNDLE_FILES, type BundleFile } from "./generate.js";
 const BLOCK = 512;
 const RECORD = 10_240;
 
+/** The most a bundle member may hold: a Challenge is a few KB, a manifest
+ * of a large closure a few hundred. The publisher's own cap on the tar is
+ * 16 MiB (capture-store.ts). */
+const MAX_MEMBER_BYTES = 16 * 1024 * 1024;
+
 function octal(value: number, width: number): Buffer {
   const text = value.toString(8).padStart(width - 1, "0");
   if (text.length > width - 1) throw new Error("ustar field overflow");
@@ -45,10 +50,16 @@ function header(name: string, size: number): Buffer {
   Buffer.from("00", "latin1").copy(block, 263);
   octal(0, 8).copy(block, 329);
   octal(0, 8).copy(block, 337);
-  let checksum = 0;
-  for (const byte of block) checksum += byte;
-  Buffer.from(`${checksum.toString(8).padStart(6, "0")}\0 `, "latin1").copy(block, 148);
+  Buffer.from(`${headerChecksum(block).toString(8).padStart(6, "0")}\0 `, "latin1").copy(block, 148);
   return block;
+}
+
+/** The ustar checksum: every header byte summed with the checksum field
+ * itself read as eight spaces. */
+function headerChecksum(block: Buffer): number {
+  let checksum = 0;
+  for (const [index, byte] of block.entries()) checksum += index >= 148 && index < 156 ? 0x20 : byte;
+  return checksum;
 }
 
 /** The archive of these files and its sha256 (bare hex). */
@@ -59,7 +70,7 @@ export function sealBundle(files: Readonly<Record<BundleFile, string>>): { tar: 
 /**
  * A ustar archive of these members, in the order given, and its sha256.
  * The caller orders them; the bundle uses BUNDLE_FILES order, the
- * `references` layer (captures/seal.ts) path order.
+ * `references` layer (captures/seal.ts) byte order of the names.
  */
 export function sealTar(members: ReadonlyArray<{ name: string; content: Buffer }>): { tar: Buffer; digest: string } {
   const parts: Buffer[] = [];
@@ -76,21 +87,60 @@ export function sealTar(members: ReadonlyArray<{ name: string; content: Buffer }
   return { tar, digest: createHash("sha256").update(tar).digest("hex") };
 }
 
-/** The members of a bundle tar written by `sealBundle`, in order, for a
- * reader that holds the bytes and wants the files back without `tar`. */
+/** A field of a ustar header: NUL-terminated, the rest ignored. */
+function field(block: Buffer, offset: number, length: number): string {
+  const raw = block.subarray(offset, offset + length);
+  const end = raw.indexOf(0);
+  return raw.subarray(0, end === -1 ? raw.length : end).toString("utf8");
+}
+
+function malformed(what: string): never {
+  throw new Error(`malformed bundle tar: ${what}`);
+}
+
+/**
+ * The members of a tar written by `sealTar`, in order, for a reader that
+ * holds the bytes and wants the files back without `tar`. Strict, since the
+ * bytes may be a download: every header must carry the ustar magic and a
+ * valid checksum and describe a regular file with a sane size; names are
+ * unique and plain (no NUL, no leading `/`, no `..` component); the archive
+ * ends with two zero blocks, followed by zero padding to the 10240-byte
+ * record and nothing else. Anything else is refused rather than read.
+ */
 export function readBundle(tar: Buffer): Map<string, string> {
   const members = new Map<string, string>();
   let offset = 0;
+  let terminated = false;
   while (offset + BLOCK <= tar.length) {
     const block = tar.subarray(offset, offset + BLOCK);
-    if (block.every((byte) => byte === 0)) break;
-    const prefix = block.subarray(345, 500).toString("utf8").replace(/\0.*$/su, "");
-    const name = (prefix === "" ? "" : `${prefix}/`) + block.subarray(0, 100).toString("utf8").replace(/\0.*$/su, "");
-    const size = parseInt(block.subarray(124, 136).toString("latin1").replace(/\0.*$/su, "").trim(), 8);
-    if (!Number.isSafeInteger(size) || size < 0 || offset + BLOCK + size > tar.length)
-      throw new Error("malformed bundle tar");
-    members.set(name, tar.subarray(offset + BLOCK, offset + BLOCK + size).toString("utf8"));
-    offset += BLOCK + Math.ceil(size / BLOCK) * BLOCK;
+    if (block.every((byte) => byte === 0)) {
+      // the end: a second zero block, then only zero padding
+      if (offset + 2 * BLOCK > tar.length) malformed("a single zero block ends the archive");
+      if (!tar.subarray(offset + BLOCK).every((byte) => byte === 0)) malformed("data after the end-of-archive blocks");
+      terminated = true;
+      break;
+    }
+    if (field(block, 257, 6) !== "ustar" || block.subarray(263, 265).toString("latin1") !== "00") malformed("not a ustar header");
+    const recorded = parseInt(block.subarray(148, 156).toString("latin1").replace(/\0.*$/su, "").trim(), 8);
+    if (recorded !== headerChecksum(block)) malformed("header checksum");
+    const typeflag = block[156];
+    if (typeflag !== 0x30 && typeflag !== 0) malformed("a member that is not a regular file");
+    const sizeText = block.subarray(124, 136).toString("latin1").replace(/\0.*$/su, "").trim();
+    if (!/^[0-7]+$/u.test(sizeText)) malformed("member size");
+    const size = parseInt(sizeText, 8);
+    if (!Number.isSafeInteger(size) || size > MAX_MEMBER_BYTES) malformed("member size");
+    const prefix = field(block, 345, 155);
+    const name = (prefix === "" ? "" : `${prefix}/`) + field(block, 0, 100);
+    if (name === "" || name.startsWith("/") || name.split("/").some((part) => part === "..")) malformed(`member name ${JSON.stringify(name)}`);
+    if (members.has(name)) malformed(`duplicate member ${name}`);
+    const padded = Math.ceil(size / BLOCK) * BLOCK;
+    if (offset + BLOCK + padded > tar.length) malformed("truncated member");
+    const content = tar.subarray(offset + BLOCK, offset + BLOCK + size);
+    if (!tar.subarray(offset + BLOCK + size, offset + BLOCK + padded).every((byte) => byte === 0)) malformed("member padding");
+    members.set(name, content.toString("utf8"));
+    offset += BLOCK + padded;
   }
+  if (!terminated) malformed("no end-of-archive blocks");
+  if (tar.length % RECORD !== 0) malformed("not blocked to 10240 bytes");
   return members;
 }

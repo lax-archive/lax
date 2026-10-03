@@ -112,14 +112,16 @@ function regularContainedArtifact(compiledLibrary: string, filename: string): bo
 export const REFERENCES_FILENAME = "references.tar";
 
 /** The members of the `references` layer: the concept sources and their
- * `.ilean` files, in inventory (path) order, named `./<path>` as the
- * capture tar names them. */
+ * `.ilean` files, named `./<path>` as the capture tar names them, in the
+ * byte order of those names — an explicit ordering every machine agrees on,
+ * where the inventory's own walk sorts with the process's locale. */
 function referenceMembers(captureRoot: string, files: readonly CapturedFile[]): Array<{ name: string; content: Buffer }> {
   return files
     .filter((file) =>
       (file.path.startsWith("concepts/package/") && file.path.endsWith(".lean")) ||
       (file.path.startsWith("concepts/lib/") && file.path.endsWith(".ilean")))
-    .map((file) => ({ name: `./${file.path}`, content: fs.readFileSync(path.join(captureRoot, file.path)) }));
+    .map((file) => ({ name: `./${file.path}`, content: fs.readFileSync(path.join(captureRoot, file.path)) }))
+    .sort((a, b) => Buffer.compare(Buffer.from(a.name, "utf8"), Buffer.from(b.name, "utf8")));
 }
 
 /**

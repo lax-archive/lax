@@ -21,6 +21,7 @@ import {
   parseSuccessfulValidationArtifacts,
   type SuccessfulValidationArtifacts,
 } from "../submission-validation/artifact-schema.js";
+import { verifyCertificateBundle } from "../submission-validation/certify/verify-bundle.js";
 import { configuredRuntime } from "../submission-validation/config.js";
 import {
   admittedEnvironmentList,
@@ -728,7 +729,10 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
     throw new ValidationError("validation artifact carries a paper-web.tar its build output does not record");
   }
   // The certificate bundle: present exactly when the build output records a
-  // certificate, hashed against the recorded bundle digest, like the paper.
+  // certificate, and not merely hashed against the recorded digest — it is
+  // regenerated from the record's own telescopes, source triples, and
+  // environment pins, re-sealed, and held to the published bytes
+  // (certify/verify-bundle.ts), credential-free, before anything is minted.
   const certificatePath = requiredEnv("VALIDATION_CERTIFICATE_PATH");
   const certificate = artifacts.buildOutput.certificate;
   let certificateStat: fs.Stats | undefined;
@@ -745,9 +749,14 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
     if (!certificateStat.isFile() || certificateStat.size <= 0 || certificateStat.size > 16 * 1024 * 1024) {
       throw new ValidationError("validation certificate bundle must be a non-empty regular file no larger than 16 MiB");
     }
-    if (sha256File(certificatePath) !== certificate.bundle.digest) {
-      throw new ValidationError("validation certificate bundle digest does not match its build output");
-    }
+    verifyCertificateBundle(fs.readFileSync(certificatePath), {
+      id: request.id,
+      proofs: artifacts.buildOutput.proofs,
+      source: artifacts.report.request.source,
+      environment: entry,
+      dependencies: artifacts.report.dependencies,
+      certificate,
+    });
   }
   // The `references` layer: present exactly when the capture records one
   // (spec 2), hashed against the recorded digest and size.

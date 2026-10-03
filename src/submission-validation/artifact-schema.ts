@@ -12,7 +12,7 @@ import {
   validateSubmissionId,
   ValidationError,
 } from "../shared/validation.js";
-import { PAPER_CAPS } from "./config.js";
+import { PAPER_CAPS, limitsFor } from "./config.js";
 import { certifiedProof, challengeText } from "./certify/generate.js";
 import { environment as environmentById } from "./environments.js";
 import { leanFacts } from "./lean-facts.js";
@@ -365,15 +365,26 @@ function parseBuildOutputPayload(
   };
 }
 
-const KERNELS: readonly CertificationKernel[] = ["lean", ...leanFacts().paranoidKernels];
+/** The kernels the environment's setting runs (certify/project.ts kernelsOf):
+ * what a certificate judged in this environment must name, exactly. */
+function configuredKernels(runtime: ValidationRuntimeIdentity): CertificationKernel[] {
+  const environment = environmentById(runtime.environment);
+  if (environment === undefined) throw new ValidationError("generated certificate names an environment that is not admitted");
+  return limitsFor(environment).certificationKernels === "paranoid"
+    ? ["lean", ...leanFacts(environment).paranoidKernels]
+    : ["lean"];
+}
 
 /**
  * The `certificate` key of a spec-2 build output (contracts.ts
  * CertificateOutput): the judge is this run's toolchain and exit 0, the
- * kernels are a known set with Lean's own among them, the bundle is a
- * digest (plus its registry address once published, carrying exactly that
- * digest), and `challenge` is byte-for-byte what certify/generate.ts writes
- * for these proofs.
+ * kernels are exactly the set the environment's setting runs, the bundle is
+ * a digest (plus its registry address once published, carrying exactly that
+ * digest), the two export digests are well-formed — host-recorded
+ * provenance a rerun compares, which no publisher can check — and
+ * `challenge` is byte-for-byte what certify/generate.ts writes for these
+ * proofs. The bundle's bytes are held to the record by
+ * certify/verify-bundle.ts, where the publisher has them.
  */
 export function parseCertificate(
   value: unknown,
@@ -383,7 +394,7 @@ export function parseCertificate(
 ): CertificateOutput {
   const object = exactObject(
     value,
-    ["judge", "kernels", "bundle", "challengeExportSha256", "challenge"],
+    ["judge", "kernels", "bundle", "challengeExportSha256", "solutionExportSha256", "challenge"],
     "generated certificate",
   );
   const judge = exactObject(object.judge, ["toolchain", "comparatorExitCode"], "generated certificate judge");
@@ -392,12 +403,18 @@ export function parseCertificate(
     throw new ValidationError("generated certificate was judged by a toolchain other than the environment's");
   }
   if (judge.comparatorExitCode !== 0) throw new ValidationError("generated certificate judge comparatorExitCode must be 0");
-  const kernels = boundedArray(object.kernels, "generated certificate kernels", KERNELS.length).map((kernel) => {
-    if (!(KERNELS as readonly unknown[]).includes(kernel)) throw new ValidationError("generated certificate names an unknown kernel");
+  const expectedKernels = configuredKernels(runtime);
+  const kernels = boundedArray(object.kernels, "generated certificate kernels", expectedKernels.length).map((kernel) => {
+    if (!(expectedKernels as readonly unknown[]).includes(kernel)) throw new ValidationError("generated certificate names an unknown kernel");
     return kernel as CertificationKernel;
   });
   requireUnique(kernels, "generated certificate kernels");
   if (!kernels.includes("lean")) throw new ValidationError("generated certificate kernels must include Lean's own");
+  if (kernels.length !== expectedKernels.length || kernels.some((kernel, index) => kernel !== expectedKernels[index])) {
+    throw new ValidationError(
+      `generated certificate kernels are not the environment's configured set (${expectedKernels.join(", ")})`,
+    );
+  }
   const bundle = exactObject(
     object.bundle,
     ["formatVersion", "digest", ...(published ? ["registryBlob"] : [])],
@@ -422,6 +439,7 @@ export function parseCertificate(
     kernels,
     bundle: { formatVersion: 1, digest, ...(registryBlob === undefined ? {} : { registryBlob }) },
     challengeExportSha256: sha256(object.challengeExportSha256, "generated certificate challengeExportSha256"),
+    solutionExportSha256: sha256(object.solutionExportSha256, "generated certificate solutionExportSha256"),
     challenge,
   };
 }

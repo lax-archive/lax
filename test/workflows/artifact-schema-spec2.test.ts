@@ -38,7 +38,7 @@ describe("the trusted parser on a spec-2 record", () => {
       expect(buildOutput.capture).not.toHaveProperty("files");
       expect(buildOutput.capture).toMatchObject({ bytes: 3, fileCount: 1, references: { digest: "f".repeat(64), bytes: 10_240 } });
       expect(Object.keys(buildOutput.proofs[0])).toEqual(["id", "path", "levelParams", "telescope", "description"]);
-      expect(Object.keys(buildOutput.certificate)).toEqual(["judge", "kernels", "bundle", "challengeExportSha256", "challenge"]);
+      expect(Object.keys(buildOutput.certificate)).toEqual(["judge", "kernels", "bundle", "challengeExportSha256", "solutionExportSha256", "challenge"]);
       // and what the code holds again
       const parsed = parse(report, buildOutput);
       // the full payload again — minus the inventory, which only the report
@@ -118,10 +118,17 @@ describe("the trusted parser on a spec-2 record", () => {
       for (const [mutate, expected] of [
         [(c: Record<string, any>) => { c.judge.toolchain = "leanprover/lean4:v4.33.0"; }, "judged by a toolchain other than the environment's"],
         [(c: Record<string, any>) => { c.judge.comparatorExitCode = 1; }, "comparatorExitCode must be 0"],
-        [(c: Record<string, any>) => { c.kernels = ["nanoda"]; }, "must include Lean's own"],
-        [(c: Record<string, any>) => { c.kernels = ["lean", "lean"]; }, "must be unique"],
-        [(c: Record<string, any>) => { c.kernels = ["lean", "my-kernel"]; }, "unknown kernel"],
+        [(c: Record<string, any>) => { c.kernels = ["nanoda"]; }, "unknown kernel"],
+        [(c: Record<string, any>) => { c.kernels = ["lean", "lean"]; }, "contains more than"],
+        [(c: Record<string, any>) => { c.kernels = ["my-kernel"]; }, "unknown kernel"],
+        // the kernels are the environment's configured set, exactly — a
+        // record claiming more kernels than the row runs is not this row's
+        [(c: Record<string, any>) => { c.kernels = ["lean", "lean4lean"]; }, "contains more than"],
+        [(c: Record<string, any>) => { c.kernels = ["lean4lean"]; }, "unknown kernel"],
+        [(c: Record<string, any>) => { c.kernels = []; }, "must include Lean's own"],
         [(c: Record<string, any>) => { c.bundle.digest = "abc"; }, "lowercase SHA-256"],
+        [(c: Record<string, any>) => { c.solutionExportSha256 = "abc"; }, "lowercase SHA-256"],
+        [(c: Record<string, any>) => { delete c.solutionExportSha256; }, "generated certificate must contain exactly"],
         [(c: Record<string, any>) => { c.bundle.registryBlob = `ghcr.io/lax-archive/lax-captures@sha256:${"c".repeat(64)}`; }, "generated certificate bundle must contain exactly"],
         [(c: Record<string, any>) => { c.extra = 1; }, "generated certificate must contain exactly"],
       ] as const) {
@@ -164,7 +171,7 @@ describe("the trusted parser on a spec-2 record", () => {
     const spec1 = successfulArtifacts();
     expect(recordedBuildOutput(spec1.buildOutput)).toBe(spec1.buildOutput);
     const withCertificate = successfulArtifacts();
-    (withCertificate.buildOutput as Record<string, any>).certificate = { judge: {}, kernels: [], bundle: {}, challengeExportSha256: "", challenge: "" };
+    (withCertificate.buildOutput as Record<string, any>).certificate = { judge: {}, kernels: [], bundle: {}, challengeExportSha256: "", solutionExportSha256: "", challenge: "" };
     (withCertificate.report.buildOutput as Record<string, any>).certificate = (withCertificate.buildOutput as Record<string, any>).certificate;
     expect(() =>
       parseSuccessfulValidationArtifacts(withCertificate.report, withCertificate.buildOutput, validationRequest(), withCertificate.report.runtime),
