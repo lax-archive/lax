@@ -300,7 +300,53 @@ record depends on are trusted as today.
    `sorryAx` on the helper), so the comparator's own refusals are driven
    over the real comparator against hand-edited Solutions in the e2e, and
    the two-container layout is rehearsed on the host with the real tool
-   script (docker is still owed).
+   script (docker is still owed). **Hardened 2026-10-04** after the outside
+   review (`spike/axiomfree/codex-review-stages1-3-20261003.md`), one
+   sentence per finding: (1) three containers — A exports the Challenge, B
+   builds and exports the Solution (`lake build Solution` then the same
+   `leanexport` rule as A), and C, a fresh container with the bundle's five
+   files read-only, both exports as single read-only file binds, the
+   toolchain and tools alone (`runtime: "judge"`, no warm store), a
+   host-written read-only `git` shim first on PATH and nothing writable but
+   `/out`, runs `lake comparator --challenge-from-export --solution-from-export
+   --inadvisably-no-sandbox`, which with both exports builds and resolves
+   nothing (pinned `Check.lean runComparator`), so no code the proof package
+   runs shares a filesystem with the kernels; `certificate` gains
+   `solutionExportSha256` beside `challengeExportSha256`, both the host's
+   digests of the files C read. (2) The publisher regenerates the whole
+   bundle from the record — telescopes, the record's and the dependencies'
+   source triples, the row's library pins — re-seals it and holds the
+   published tar to it byte for byte and to `certificate.bundle.digest`
+   (`certify/verify-bundle.ts`), binds `kernels` to the row's
+   `certificationKernels`, and documents the two export digests as
+   host-recorded provenance a rerun compares; the warm closure's manifest
+   entries are the one input it holds to shape and pins instead of
+   regenerating (TODO.md). (3) The proof-tree composer writes a per-file
+   sha256 inventory beside an extracted spec-2 capture at download and
+   verifies every file against it on reuse (spec 1 keeps its recorded
+   inventory). (4) One name representation: a spec-2 inspector report writes
+   every name with `Name.toString (escape := false)` (spec-1 reports
+   byte-identical), the generator quotes conservatively with `«»` and refuses
+   (`certify` violation `name`) a component that cannot be quoted — empty,
+   `_`, a guillemet, whitespace, a control character — and the names handed
+   to `leanexport` and `comparator.json` are quoted too, since both read
+   Lean's name syntax (found by the e2e: `Syntax.decodeNameLit` panics on a
+   bare `证明`); the e2e proves `«定理».{«λ»}`/`«证明»` from Inspect through
+   elaboration to the comparator, and a generator golden is derived from the
+   real inspector report. (5) Metadata-only resubmission goes through
+   `recordedBuildOutput` (`metadataCandidate`) on both the classifier and
+   the publisher, and the stored keys admit `certificate`, so a spec-2
+   record takes the fast path. (6) `planCertificate` accepts local package
+   sources (`record.local`: the sibling closure and the proof package's
+   direct path requires) and marks the plan `local`, with path requires in
+   the bundle; a nonstrict sibling statement certifies in the e2e. (7)
+   Container A (and B) mount only the closure's own subtrees under `/deps`,
+   never a dependency's other package. Later items taken: `readBundle`
+   validates magic, checksums, member types, unique names, termination and
+   trailing data; the `references` layer's members are in byte order;
+   `runToFile` closes its descriptor once and takes a timeout, which the
+   host certificate passes. Deferred: the archive-reader consolidation and
+   the warm-manifest pin (TODO.md).
 4. **CLI.** `lax certify` with relative certificates, `lax doctor`,
    `lax init --env` for spec-2 rows, the instructions section. Release.
 5. **Website.** `specVersion` plumbing, telescopes on proof cards, the

@@ -23,21 +23,41 @@ inspector's `--spec 2` facts read from `LaxCore.laxStatementAttr`'s
 entries, the spec-2 classification in `phases/inspect-spec2.ts`, the
 background-only walk, `telescope`/`levelParams` in `build-output.json`,
 the spec-2 golden, spec-1 goldens byte-identical). Stage 3 landed
-2026-10-03 (the generator with its goldens, the two-container Certify
-phase in the runner, the local host run, the comparator verdict in one
-place, the certificate layer in the capture store, the `certificate`
-block and the spec-2 record shape of `recorded-shape.ts` — see the stage
-line in `axiomfree-plan.md` for the deviations). Next: stage 4 (`lax
-certify` with relative certificates over the stored bundle and
-telescopes, `lax doctor`'s kernel report, `lax init --env` for spec-2
-rows, the instructions section). Jan's items before stage 3 ships:
+2026-10-03 (the generator with its goldens, the Certify phase in the
+runner, the local host run, the comparator verdict in one place, the
+certificate layer in the capture store, the `certificate` block and the
+spec-2 record shape of `recorded-shape.ts`) and was hardened 2026-10-04
+after the outside review (`spike/axiomfree/codex-review-stages1-3-20261003.md`;
+all seven "fix now" findings and the cheap "later" items — see the stage
+line in `axiomfree-plan.md`). Next: stage 4 (`lax certify` with relative
+certificates over the stored bundle and telescopes, `lax doctor`'s kernel
+report, `lax init --env` for spec-2 rows, the instructions section). Jan's
+items before stage 3 ships:
 
-- **Docker smoke of Certify**: ran and passed 2026-10-03 night
+- **Docker smoke of Certify, again**: the 2026-10-03 run covered the
+  two-container layout; the three-container one (A exports the Challenge, B
+  builds and exports the Solution, C judges both exports with nothing of the
+  builds mounted and a read-only `git` shim) is owed a run
   (`LAX_SMOKE_CASE=spec2-certify npm run smoke:submission-validation` with
-  the spec-2 row injected — recipe in `test/smoke/submission-validation.ts`;
-  one fix: the `git` shim now lives under the project's `.lake` mount
-  because docker's `--tmpfs` is `noexec`). The smoke needs the real mathlib
-  warm store for rc3 (`~/.lax/warm/v4.35.0-…`, built on first run, ~6 min).
+  the spec-2 row injected — recipe in `test/smoke/submission-validation.ts`).
+  The smoke needs the real mathlib warm store for rc3 (`~/.lax/warm/v4.35.0-…`,
+  built on first run, ~6 min).
+- **Pin the warm manifest per spec-2 environment.** The publisher regenerates
+  and re-seals the whole certificate bundle from the record (`certify/
+  verify-bundle.ts`) except the warm closure's entries in `lake-manifest.json`
+  — mathlib's transitive dependencies at the revs its manifest pins — which
+  only the provisioned warm store knows; they are taken from the tar and held
+  to their shape and to the row's library pins. A committed copy of the warm
+  manifest per environment (an admission-checklist item) would let the
+  publisher regenerate that too and close the gap.
+- **Reader consolidation** (review, "later"): `archive-schema.ts` accepts a
+  broad envelope and `artifact-schema.ts parsePublishedCapture` picks the
+  capture shape by field presence (`files` absent → spec 2); spec selection
+  should come from the owning environment row, once, and every archive and
+  capture reader branch on that.
+- The spec draft (`spec_v2_draft.md`) still describes two containers and no
+  `solutionExportSha256`; Jan reconciles ("Two containers" → three, the
+  judge's mounts, both export digests as host-recorded provenance).
 - **Scratch-repo rehearsal** (`scripts/rehearsal/`) for the Actions-side
   change: `certificate.tar` in the validate artifact and
   `VALIDATION_CERTIFICATE_PATH` in both publish steps, the certificate
