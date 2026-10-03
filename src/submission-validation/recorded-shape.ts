@@ -6,6 +6,9 @@
 //
 //   proofs[].conclusion, proofs[].assumptions   from the telescope
 //   capture.leanToolchain, capture.mathlibCommit from the row `inputs.manifest.leanVersion` names
+//   capture.files                               from the sealed tar itself, after its digest is verified
+//                                               (a spec-2 capture carries `bytes`, `fileCount` and the
+//                                               `references` layer instead; nothing restores the list)
 //   inputs.manifest.id                          from the record's own id
 //   paper.folder, paper.main, paper.engine      from `inputs.manifest.paper`
 //
@@ -39,7 +42,7 @@ export function derivedEdge(telescope: ProofTelescope): { conclusion: string; as
 export function recordedBuildOutput(payload: BuildOutputPayload): Record<string, unknown> {
   if (recordedSpec(payload) === "1") return payload as unknown as Record<string, unknown>;
   const { id: _id, ...manifest } = payload.inputs.manifest;
-  const { leanToolchain: _toolchain, mathlibCommit: _mathlib, ...capture } = payload.capture;
+  const { leanToolchain: _toolchain, mathlibCommit: _mathlib, files: _files, ...capture } = payload.capture;
   const proofs = payload.proofs.map(({ conclusion: _conclusion, assumptions: _assumptions, ...proof }) => proof);
   const paper =
     payload.paper === undefined

@@ -583,8 +583,11 @@ function extractCapture(archive: string, destination: string): void {
   execFileSync("tar", ["-xf", archive, "-C", destination], { stdio: ["ignore", "ignore", "pipe"] });
 }
 
+/** The tar's digest was verified at download; a spec-1 record's per-file
+ * inventory is checked again here, a spec-2 record's member count
+ * (recorded-shape.ts), and on both that only regular files came out. */
 function verifyCapture(root: string, capture: PublishedCapture): void {
-  const expected = new Map(capture.files.map((file) => [file.path, file]));
+  const expected = capture.files === undefined ? undefined : new Map(capture.files.map((file) => [file.path, file]));
   const seen = new Set<string>();
   const walk = (directory: string): void => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -593,18 +596,24 @@ function verifyCapture(root: string, capture: PublishedCapture): void {
       if (entry.isDirectory()) walk(filename);
       else if (entry.isFile()) {
         const relative = path.relative(root, filename).split(path.sep).join("/");
-        const specification = expected.get(relative);
-        if (specification === undefined) throw new Error(`cached capture has unexpected file ${relative}`);
-        const stat = fs.statSync(filename);
-        if (stat.size !== specification.bytes || sha256File(filename) !== specification.sha256) {
-          throw new Error(`cached capture file failed verification: ${relative}`);
+        if (expected !== undefined) {
+          const specification = expected.get(relative);
+          if (specification === undefined) throw new Error(`cached capture has unexpected file ${relative}`);
+          const stat = fs.statSync(filename);
+          if (stat.size !== specification.bytes || sha256File(filename) !== specification.sha256) {
+            throw new Error(`cached capture file failed verification: ${relative}`);
+          }
         }
         seen.add(relative);
       } else throw new Error("cached capture contains a special entry");
     }
   };
   walk(root);
-  if (seen.size !== expected.size) throw new Error("cached capture is missing declared files");
+  if (expected !== undefined) {
+    if (seen.size !== expected.size) throw new Error("cached capture is missing declared files");
+  } else if (seen.size !== capture.fileCount) {
+    throw new Error("cached capture does not hold the declared number of files");
+  }
 }
 
 /** The composer's own mathlib workspace, one per environment: the toolchain

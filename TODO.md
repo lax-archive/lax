@@ -47,9 +47,15 @@ rows, the instructions section). Jan's items before stage 3 ships:
 - The transitively-reachable-statement e2e stage 2 only table-tested is
   still owed; the chain e2e of stage 3 (`host-spec2.test.ts`, lax-41 over
   lax-38) covers the direct require only.
-- Follow-up from the build-output investigation, not done in stage 3:
-  drop `capture.files` from spec-2 records and push a `references` OCI
-  layer (concept sources + `.ilean`) beside the capture.
+- The build-output investigation's capture change landed with stage 3 as
+  its own commit: a spec-2 record's `capture` is `{ formatVersion, digest,
+  sourceCommit, bytes, fileCount, references: { digest, bytes,
+  registryBlob }, registryBlob }` — no `files` — and the `references`
+  layer (concept sources + `.ilean`, `application/vnd.lax.references.v1+tar`)
+  rides in the record's OCI manifest. lax-website still reads
+  `capture.files` for its reference maps; until stage 5 reads the layer,
+  the local renderer adapter (`src/cli/website.ts`) withholds a spec-2
+  capture's address from the pinned renderer, which then shows no links.
 
 ## Sibling drafts (2026-09-19)
 

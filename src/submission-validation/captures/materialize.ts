@@ -28,8 +28,9 @@ export function capturesBySubmission(
   }
   let declaredBytes = 0;
   for (const capture of bySubmission.values()) {
-    for (const file of capture.files) {
-      declaredBytes += file.bytes;
+    // a spec-1 record declares its files, a spec-2 record the tar's size
+    for (const bytes of capture.files === undefined ? [capture.bytes ?? 0] : capture.files.map((file) => file.bytes)) {
+      declaredBytes += bytes;
       if (!Number.isSafeInteger(declaredBytes) || declaredBytes > limits.maxWorkspaceBytes) {
         throw resourceLimitFailure("dependency captures exceed the aggregate validation workspace limit");
       }
@@ -157,8 +158,16 @@ function touchTree(directory: string): void {
   }
 }
 
+/**
+ * Hold an extracted capture to what its record declares. The tar's digest
+ * has been verified before this runs, so every byte is already the record's;
+ * a spec-1 record also declares every file, which is checked again here, and
+ * a spec-2 record declares the member count (recorded-shape.ts), which is
+ * what the extracted tree is held to — plus, on both, that nothing but
+ * regular files and directories came out.
+ */
 export function verifyFiles(root: string, capture: PublishedCapture): void {
-  const expected = new Map(capture.files.map((file) => [file.path, file]));
+  const expected = capture.files === undefined ? undefined : new Map(capture.files.map((file) => [file.path, file]));
   const seen = new Set<string>();
   const walk = (directory: string): void => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -167,17 +176,23 @@ export function verifyFiles(root: string, capture: PublishedCapture): void {
       if (entry.isDirectory()) walk(filename);
       else if (entry.isFile()) {
         const relative = path.relative(root, filename).split(path.sep).join("/");
-        const specification = expected.get(relative);
-        if (specification === undefined) throw new Error(`dependency capture has unexpected file ${relative}`);
-        const stat = fs.statSync(filename);
-        if (stat.size !== specification.bytes || sha256File(filename) !== specification.sha256)
-          throw new Error(`dependency capture file failed verification: ${relative}`);
+        if (expected !== undefined) {
+          const specification = expected.get(relative);
+          if (specification === undefined) throw new Error(`dependency capture has unexpected file ${relative}`);
+          const stat = fs.statSync(filename);
+          if (stat.size !== specification.bytes || sha256File(filename) !== specification.sha256)
+            throw new Error(`dependency capture file failed verification: ${relative}`);
+        }
         seen.add(relative);
       } else throw new Error("dependency capture contains a non-regular entry");
     }
   };
   walk(root);
-  if (seen.size !== expected.size) throw new Error("dependency capture is missing declared files");
+  if (expected !== undefined) {
+    if (seen.size !== expected.size) throw new Error("dependency capture is missing declared files");
+  } else if (seen.size !== capture.fileCount) {
+    throw new Error("dependency capture does not hold the declared number of files");
+  }
 }
 
 export function makeReadOnly(directory: string): void {

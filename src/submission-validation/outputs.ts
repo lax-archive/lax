@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { formatProfile, type Span } from "../shared/profile.js";
 import { oneLineMessage, parseSuccessfulValidationArtifacts } from "./artifact-schema.js";
+import { REFERENCES_FILENAME } from "./captures/seal.js";
 import type { ValidationReport } from "./contracts.js";
 import { recordedBuildOutput } from "./recorded-shape.js";
 
@@ -17,6 +18,9 @@ export const PAPER_WEB_FILENAME = "paper-web.tar";
 /** The certificate bundle, present exactly when the build output records a
  * `certificate` (axiomfree-plan.md, "Certify" 4). */
 export const CERTIFICATE_FILENAME = "certificate.tar";
+/** The `references` layer, present exactly when the build output's capture
+ * records one (spec 2): the concept sources and `.ilean` files. */
+export { REFERENCES_FILENAME } from "./captures/seal.js";
 export const VALIDATION_PROFILE_FILENAME = "validation-profile.json";
 export const METADATA_RESUBMISSION_FILENAME = "metadata-resubmission.json";
 
@@ -29,6 +33,8 @@ export interface ValidationOutcome extends ValidationReport {
   paperWebPath?: string;
   /** The certificate bundle, when the build output records one. */
   certificateBundlePath?: string;
+  /** The `references` layer, when the build output's capture records one. */
+  referencesPath?: string;
 }
 
 const MAX_PROFILE_BYTES = 4 * 1024 * 1024;
@@ -51,6 +57,7 @@ export function resetValidationOutputs(
     PAPER_FILENAME,
     PAPER_WEB_FILENAME,
     CERTIFICATE_FILENAME,
+    REFERENCES_FILENAME,
     ...(opts.keepProfile === true ? [] : [VALIDATION_PROFILE_FILENAME]),
   ];
   for (const filename of filenames) {
@@ -148,7 +155,7 @@ function readProfile(filename: string): RecordedProfile {
 export function writeValidationOutputs(outputDir: string, outcome: ValidationOutcome): void {
   // The PDF and bundle paths are the job's, not the report's: the serialized
   // report keeps exactly the shape parseSuccessfulValidationArtifacts accepts.
-  const { paperPdfPath, paperWebPath, certificateBundlePath, ...report } = outcome;
+  const { paperPdfPath, paperWebPath, certificateBundlePath, referencesPath, ...report } = outcome;
   if (!report.ok) {
     if (report.failure !== undefined && report.violations.length > 0) {
       throw new Error("a validation report cannot contain both an operational failure and submission violations");
@@ -223,6 +230,19 @@ export function writeValidationOutputs(outputDir: string, outcome: ValidationOut
       throw new Error("the certificate bundle does not match the digest its build output records");
     }
     fs.writeFileSync(path.join(outputDir, CERTIFICATE_FILENAME), bytes, { mode: 0o600 });
+  }
+  // The `references` layer travels the same way, bound by its digest —
+  // present exactly when the capture records one (spec 2).
+  const references = report.buildOutput.capture.references;
+  if ((references === undefined) !== (referencesPath === undefined)) {
+    throw new Error("successful full validation recorded a references layer without its tar, or a tar without a layer");
+  }
+  if (references !== undefined && referencesPath !== undefined) {
+    const bytes = fs.readFileSync(referencesPath);
+    if (bytes.length !== references.bytes || createHash("sha256").update(bytes).digest("hex") !== references.digest) {
+      throw new Error("the references layer does not match the digest its build output records");
+    }
+    fs.writeFileSync(path.join(outputDir, REFERENCES_FILENAME), bytes, { mode: 0o600 });
   }
 
   const serializedReport = { ...report, buildOutput: recorded };

@@ -11,6 +11,7 @@ import {
   CAPTURE_FILENAME,
   CERTIFICATE_FILENAME,
   GENERATED_BUILD_OUTPUT_FILENAME,
+  REFERENCES_FILENAME,
   PAPER_FILENAME,
   PAPER_WEB_FILENAME,
   resetValidationOutputs,
@@ -228,14 +229,20 @@ describe("submission validation outputs", () => {
       const generated = readJson(path.join(directory, GENERATED_BUILD_OUTPUT_FILENAME)) as Record<string, any>;
       expect(generated.proofs[0]).not.toHaveProperty("conclusion");
       expect(generated.capture).not.toHaveProperty("leanToolchain");
+      expect(generated.capture).not.toHaveProperty("files");
+      expect(Object.keys(generated.capture)).toEqual(["formatVersion", "digest", "sourceCommit", "bytes", "fileCount", "references"]);
+      expect(fs.readFileSync(path.join(directory, REFERENCES_FILENAME))).toEqual(Buffer.from("references ustar stand-in"));
       expect(generated.certificate.bundle).toEqual({ formatVersion: 1, digest: createHash("sha256").update(bundle).digest("hex") });
       const written = readJson(path.join(directory, VALIDATION_REPORT_FILENAME)) as Record<string, any>;
       expect(written.buildOutput).toEqual(generated);
       expect(written).not.toHaveProperty("certificateBundlePath");
       expect(written.capture.leanToolchain).toBe(outcome.runtime.leanToolchain);
-      // and the publisher's parser takes it back to the full payload
+      // and the publisher's parser takes it back to the full payload — minus
+      // the inventory, which only the report and the tar hold
       const parsed = parseSuccessfulValidationArtifacts(written, generated, outcome.request, outcome.runtime);
-      expect(parsed.buildOutput).toEqual(outcome.buildOutput);
+      const { files: _files, ...capture } = outcome.buildOutput!.capture;
+      expect(parsed.buildOutput).toEqual({ ...outcome.buildOutput, capture });
+      expect(parsed.report.capture.files).toEqual(outcome.capture!.files);
 
       resetValidationOutputs(directory);
       expect(fs.existsSync(path.join(directory, CERTIFICATE_FILENAME))).toBe(false);
@@ -250,6 +257,14 @@ describe("submission validation outputs", () => {
       expect(() => writeValidationOutputs(directory, withoutTar)).toThrow("recorded a certificate without its bundle");
       const strayTar: ValidationOutcome = { ...successfulReport(), certificateBundlePath };
       expect(() => writeValidationOutputs(directory, strayTar)).toThrow("a bundle without a certificate");
+      // the references layer, under the same contract
+      const { referencesPath, ...withoutReferences } = certificateOutcome(bundle);
+      expect(() => writeValidationOutputs(directory, withoutReferences)).toThrow("recorded a references layer without its tar");
+      const strayReferences: ValidationOutcome = { ...successfulReport(), referencesPath };
+      expect(() => writeValidationOutputs(directory, strayReferences)).toThrow("a tar without a layer");
+      const tamperedReferences = certificateOutcome(bundle);
+      fs.writeFileSync(tamperedReferences.referencesPath!, "other references");
+      expect(() => writeValidationOutputs(directory, tamperedReferences)).toThrow("the references layer does not match the digest");
     });
   });
 
@@ -449,11 +464,19 @@ function webOutcome(bundle: Buffer): ValidationOutcome {
  * digest set to `bundle`, and the tar on disk where the pipeline leaves it. */
 function certificateOutcome(bundle: Buffer): ValidationOutcome {
   const artifacts = spec2Artifacts();
-  const bundlePath = path.join(temporaryDirectory(), "certificate.tar");
+  const directory = temporaryDirectory();
+  const bundlePath = path.join(directory, "certificate.tar");
   fs.writeFileSync(bundlePath, bundle);
   const digest = createHash("sha256").update(bundle).digest("hex");
   artifacts.report.buildOutput.certificate!.bundle.digest = digest;
-  return { ...artifacts.report, certificateBundlePath: bundlePath };
+  // the `references` layer a spec-2 capture records, beside the capture
+  const references = Buffer.from("references ustar stand-in");
+  const referencesPath = path.join(directory, "references.tar");
+  fs.writeFileSync(referencesPath, references);
+  const summary = { digest: createHash("sha256").update(references).digest("hex"), bytes: references.length };
+  artifacts.report.buildOutput.capture.references = summary;
+  artifacts.report.capture.references = { ...summary };
+  return { ...artifacts.report, certificateBundlePath: bundlePath, referencesPath };
 }
 
 function baseReport(): Omit<ValidationReport, "ok"> {

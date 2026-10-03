@@ -221,7 +221,7 @@ try {
       name: fixture.name,
       ok: report.ok,
       wallMs: Math.round(performance.now() - started),
-      ...(report.capture === undefined ? {} : { captureFiles: report.capture.files.length }),
+      ...(report.capture === undefined ? {} : { captureFiles: report.capture.files!.length }),
       ...(peak === undefined ? {} : { peakMemoryBytes: peak }),
     });
   }
@@ -288,7 +288,7 @@ function fixtures(): SmokeFixture[] {
         );
         assert(target.sourceText.includes("archived_claim : True"));
         assert(
-          !report.capture!.files.some((file) => file.path.includes("Generated.olean")),
+          !report.capture!.files!.some((file) => file.path.includes("Generated.olean")),
           "generated module shadow entered the capture",
         );
       },
@@ -349,7 +349,7 @@ function fixtures(): SmokeFixture[] {
         assert.equal(bytes.length, paper.pdf.bytes);
         assert.equal(createHash("sha256").update(bytes).digest("hex"), paper.pdf.digest);
         assert.deepEqual(
-          report.capture!.files.filter((file) => file.path.startsWith("paper/")).map((file) => file.path),
+          report.capture!.files!.filter((file) => file.path.startsWith("paper/")).map((file) => file.path),
           ["paper/main.tex"],
           "the paper sources were not captured",
         );

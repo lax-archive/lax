@@ -159,11 +159,16 @@ export function spec2Artifacts(id = "lax-42"): SuccessfulValidationArtifacts {
     challengeExportSha256: "e".repeat(64),
     challenge: challengeText(proofs.map(certifiedProof)),
   };
+  // a spec-2 capture is summarised beside its inventory (seal.ts): the tar's
+  // size and member count, and the `references` layer
+  const summary = { bytes: 3, fileCount: 1, references: { digest: "f".repeat(64), bytes: 10_240 } };
   for (const output of [artifacts.buildOutput, artifacts.report.buildOutput]) {
     output.inputs.manifest.specVersion = "2";
     output.concepts = structuredClone(concepts);
     output.proofs = structuredClone(proofs);
     output.certificate = structuredClone(certificate);
+    output.capture = { ...output.capture, ...structuredClone(summary) };
   }
+  artifacts.report.capture = { ...artifacts.report.capture, ...structuredClone(summary) };
   return artifacts;
 }

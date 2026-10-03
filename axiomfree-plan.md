@@ -275,7 +275,11 @@ record depends on are trusted as today.
    manifest** (not a separate artifact), and a spec-2 record stores no
    field a reader derives (`recorded-shape.ts`: no `conclusion`/
    `assumptions`, no capture pins, no `inputs.manifest.id`, no
-   `paper.folder/main/engine`); the Challenge imports the **root modules**
+   `paper.folder/main/engine`, and — the investigation's first point, a
+   second commit — no `capture.files`: the capture carries `bytes`,
+   `fileCount` and a `references` layer of the concept sources and
+   `.ilean` files, and every consumer verifies the tar by digest and
+   holds the extracted tree to the count); the Challenge imports the **root modules**
    of the concept packages the edges name (a statement's module is not
    recorded, and a root imports exactly its package); container A builds a
    lakefile that is the bundle's minus the proof require (lake loads every

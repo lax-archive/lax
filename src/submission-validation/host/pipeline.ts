@@ -329,7 +329,7 @@ export async function validateSubmissionOnHost(
       capturePaperSources(staticCheck.result.paper, state.fetched.submissionRoot, state.captureRoot);
     }
     const capture = await state.phase("emit", () =>
-      describeLocalCapture(state.captureRoot, request.source.commit, state.runtime));
+      describeLocalCapture(state.captureRoot, request.source.commit, state.runtime, state.environment.specVersion));
     const buildOutput = emitBuildOutput(
       state.fetched.submissionRoot,
       staticCheck.result,

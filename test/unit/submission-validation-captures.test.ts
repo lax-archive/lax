@@ -126,6 +126,28 @@ describe("container dependency-capture materialization", () => {
     expect(fs.existsSync(jobDir)).toBe(false);
   });
 
+  it("lays out a spec-2 capture that declares its member count instead of its files, and holds it to the count", async () => {
+    const { blob, capture } = captureFixture();
+    // a spec-2 record stores the summary (recorded-shape.ts): no inventory
+    const { files, ...rest } = capture;
+    const summarised: PublishedCapture = {
+      ...rest,
+      bytes: blob.length,
+      fileCount: files!.length,
+      references: { digest: "f".repeat(64), bytes: 10_240, registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"f".repeat(64)}` },
+    };
+    const jobDir = temporary("lax-materialize-job-");
+    const materialized = await materializeDependencyCaptures([dependencyWith(summarised)], jobDir, fakeRunner(jobDir, blob), DEFAULT_LIMITS);
+    expect(fs.existsSync(path.join(materialized.get("lax-7")!, "concepts", "lib", "Lax7.olean"))).toBe(true);
+    removeValidationWorkspace(jobDir);
+
+    const lying: PublishedCapture = { ...summarised, fileCount: files!.length + 1 };
+    const jobDir2 = temporary("lax-materialize-job-");
+    await expect(
+      materializeDependencyCaptures([dependencyWith(lying)], jobDir2, fakeRunner(jobDir2, blob), DEFAULT_LIMITS),
+    ).rejects.toThrow("does not hold the declared number of files");
+  });
+
   it("fails closed on a tampered blob before any extraction", async () => {
     const { blob, capture } = captureFixture();
     const tampered = Buffer.from(blob);
@@ -148,7 +170,7 @@ describe("container dependency-capture materialization", () => {
     // for one file — per-file verification must catch it
     const lying: PublishedCapture = {
       ...capture,
-      files: capture.files.map((file) =>
+      files: capture.files!.map((file) =>
         file.path.endsWith(".olean") ? { ...file, sha256: "b".repeat(64) } : file),
     };
     const jobDir = temporary("lax-materialize-job-");

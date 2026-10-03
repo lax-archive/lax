@@ -52,9 +52,9 @@ describe.skipIf(!withTex)("host pipeline with a paper (real latexmk, fake mathli
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(paper.pdf.digest);
     expect(paper.pdf.registryBlob).toBeUndefined();
     // the original sources ride in the capture under paper/, unrewritten
-    const captured = report.capture!.files.filter((file) => file.path.startsWith("paper/")).map((file) => file.path);
+    const captured = report.capture!.files!.filter((file) => file.path.startsWith("paper/")).map((file) => file.path);
     expect(captured).toEqual(["paper/main.tex", "paper/section.tex"]);
-    const mainEntry = report.capture!.files.find((file) => file.path === "paper/main.tex")!;
+    const mainEntry = report.capture!.files!.find((file) => file.path === "paper/main.tex")!;
     const authored = fs.readFileSync(path.join(root, "paper", "main.tex"));
     expect(mainEntry.bytes).toBe(authored.length);
     expect(mainEntry.sha256).toBe(createHash("sha256").update(authored).digest("hex"));

@@ -35,12 +35,35 @@ describe("the trusted parser on a spec-2 record", () => {
       expect(buildOutput.inputs.manifest).not.toHaveProperty("id");
       expect(buildOutput.capture).not.toHaveProperty("leanToolchain");
       expect(buildOutput.capture).not.toHaveProperty("mathlibCommit");
+      expect(buildOutput.capture).not.toHaveProperty("files");
+      expect(buildOutput.capture).toMatchObject({ bytes: 3, fileCount: 1, references: { digest: "f".repeat(64), bytes: 10_240 } });
       expect(Object.keys(buildOutput.proofs[0])).toEqual(["id", "path", "levelParams", "telescope", "description"]);
       expect(Object.keys(buildOutput.certificate)).toEqual(["judge", "kernels", "bundle", "challengeExportSha256", "challenge"]);
       // and what the code holds again
       const parsed = parse(report, buildOutput);
-      expect(parsed.buildOutput).toEqual(artifacts.buildOutput);
+      // the full payload again — minus the inventory, which only the report
+      // and the tar itself hold
+      const { files: _files, ...capture } = artifacts.buildOutput.capture;
+      expect(parsed.buildOutput).toEqual({ ...artifacts.buildOutput, capture });
       expect(parsed.report.capture).toEqual(artifacts.report.capture);
+    });
+  });
+
+  it("holds the stored capture summary to the report's inventory", () => {
+    withTestEnvironments([spec2TestEnvironment()], () => {
+      for (const [mutate, expected] of [
+        [(c: Record<string, any>) => { c.fileCount = 2; }, "different capture manifests"],
+        [(c: Record<string, any>) => { c.bytes = 4; }, "different capture manifests"],
+        [(c: Record<string, any>) => { c.references.digest = "9".repeat(64); }, "different capture manifests"],
+        [(c: Record<string, any>) => { c.files = [{ path: "concepts/Lax42.olean", bytes: 3, sha256: "5".repeat(64) }]; }, "capture manifest must contain exactly"],
+        [(c: Record<string, any>) => { delete c.references; }, "capture manifest must contain exactly"],
+        [(c: Record<string, any>) => { c.references.registryBlob = "ghcr.io/lax-archive/lax-captures@sha256:" + "f".repeat(64); }, "capture references must contain exactly"],
+      ] as const) {
+        const { report, buildOutput } = stored();
+        mutate(buildOutput.capture);
+        mutate((report.buildOutput as Record<string, any>).capture);
+        expect(() => parse(report, buildOutput), expected).toThrow(expected);
+      }
     });
   });
 
@@ -116,10 +139,17 @@ describe("the trusted parser on a spec-2 record", () => {
       const runtime = artifacts.report.runtime;
       const published = JSON.parse(JSON.stringify(buildOutput)) as Record<string, any>;
       published.capture.registryBlob = `ghcr.io/lax-archive/lax-captures@sha256:${published.capture.digest}`;
+      published.capture.references.registryBlob = `ghcr.io/lax-archive/lax-captures@sha256:${"f".repeat(64)}`;
       published.certificate.bundle.registryBlob = `ghcr.io/lax-archive/lax-captures@sha256:${"c".repeat(64)}`;
       const parsed = parsePublishedBuildOutputPayload(published, validationRequest(), runtime);
       expect(parsed.certificate?.bundle.registryBlob).toBe(`ghcr.io/lax-archive/lax-captures@sha256:${"c".repeat(64)}`);
       expect(parsed.capture.leanToolchain).toBe(runtime.leanToolchain);
+      expect(parsed.capture.references?.registryBlob).toBe(`ghcr.io/lax-archive/lax-captures@sha256:${"f".repeat(64)}`);
+      // the references address must carry the references digest
+      const wrongReferences = JSON.parse(JSON.stringify(published)) as Record<string, any>;
+      wrongReferences.capture.references.registryBlob = `ghcr.io/lax-archive/lax-captures@sha256:${"9".repeat(64)}`;
+      expect(() => parsePublishedBuildOutputPayload(wrongReferences, validationRequest(), runtime))
+        .toThrow("references registryBlob digest does not match");
 
       published.certificate.bundle.registryBlob = `ghcr.io/lax-archive/lax-captures@sha256:${"9".repeat(64)}`;
       expect(() => parsePublishedBuildOutputPayload(published, validationRequest(), runtime))

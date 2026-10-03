@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ArchiveSnapshot, fetchArchiveSnapshot } from "./archive/snapshot.js";
 import { materializeDependencyCaptures } from "./captures/materialize.js";
-import { capturePackage, describeLocalCapture, sealCapture } from "./captures/seal.js";
+import { capturePackage, describeLocalCapture, REFERENCES_FILENAME, sealCapture } from "./captures/seal.js";
 import { certifyInContainer, type CertifyResult } from "./certify/phase.js";
 import { configuredRuntime, limitsFor, type ValidationLimits } from "./config.js";
 import type {
@@ -416,9 +416,10 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       paperOutput = joined.output;
       capturePaperSources(state.staticResult.paper!, state.fetched.submissionRoot, state.captureRoot);
     }
+    const spec = state.environment.specVersion;
     const capture = await state.phase("emit", async () =>
       state.options.sealCapture === false
-        ? describeLocalCapture(state.captureRoot, state.request.source.commit, state.runtime)
+        ? describeLocalCapture(state.captureRoot, state.request.source.commit, state.runtime, spec)
         : await sealCapture(
             state.captureRoot,
             path.join(path.dirname(state.jobDir), "capture.tar"),
@@ -426,6 +427,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
             state.runtime,
             state.runner,
             state.limits,
+            spec,
           ));
     const buildOutput = emitBuildOutput(
       state.fetched.submissionRoot,
@@ -442,6 +444,16 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       ...(paper?.compiled === undefined ? {} : { paperPdfPath: paper.compiled.pdfPath }),
       ...(paper?.compiled?.web === undefined ? {} : { paperWebPath: paper.compiled.web.bundlePath }),
       ...(certified.kind === "certified" ? { certificateBundlePath: certified.bundlePath } : {}),
+      // the `references` layer sealCapture wrote beside the tar (spec 2)
+      ...(capture.references === undefined
+        ? {}
+        : {
+            referencesPath: path.join(
+              state.options.sealCapture === false ? state.captureRoot : path.dirname(state.jobDir),
+              state.options.sealCapture === false ? ".." : "",
+              REFERENCES_FILENAME,
+            ),
+          }),
     };
   } catch (error) {
     return fail(state, "emit", "emit", error);

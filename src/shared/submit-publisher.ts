@@ -80,6 +80,9 @@ export class SubmitPublisher {
     /** The certificate bundle, required exactly when the build output
      * records a `certificate` (spec 2 with proofs), under the same contract. */
     certificatePath?: string,
+    /** The `references` layer, required exactly when the build output's
+     * capture records one (spec 2). */
+    referencesPath?: string,
   ): Promise<SubmitPublishResult> {
     if (this.captureStore === undefined) throw new Error("submit publisher has no capture store");
     const ready = await this.preflight(untrustedRequest, artifacts);
@@ -105,6 +108,10 @@ export class SubmitPublisher {
     if ((certificate === undefined) !== (certificatePath === undefined)) {
       throw new ValidationError("the validated build output records a certificate exactly when a certificate.tar is supplied");
     }
+    const references = artifacts.buildOutput.capture.references;
+    if ((references === undefined) !== (referencesPath === undefined)) {
+      throw new ValidationError("the validated capture records a references layer exactly when a references.tar is supplied");
+    }
     const promoted = await this.captureStore.promote(
       request.id,
       artifacts.report.request.source,
@@ -119,7 +126,13 @@ export class SubmitPublisher {
       certificate === undefined || certificatePath === undefined
         ? undefined
         : { bundlePath: certificatePath, digest: certificate.bundle.digest },
+      references === undefined || referencesPath === undefined
+        ? undefined
+        : { tarPath: referencesPath, digest: references.digest, bytes: references.bytes },
     );
+    if ((references === undefined) !== (promoted.referencesBlob === undefined)) {
+      throw new ValidationError("the capture store did not push the references layer it was asked for");
+    }
     if ((paper === undefined) !== (promoted.paperBlob === undefined)) {
       throw new ValidationError("the capture store did not push the paper layer it was asked for");
     }
@@ -137,6 +150,7 @@ export class SubmitPublisher {
       promoted.paperBlob,
       promoted.paperWebBlob,
       promoted.certificateBlob,
+      promoted.referencesBlob,
     );
     const archiveCommit = await this.archive.writeFiles({
       id: request.id,
@@ -327,6 +341,7 @@ function constructSubmitChanges(
   paperBlob: string | undefined,
   paperWebBlob?: string,
   certificateBlob?: string,
+  referencesBlob?: string,
 ): ArchiveChanges {
   const commandSource = commandSourceOf(request);
   if (commandSource === undefined) throw new ValidationError("submit command is missing");
@@ -366,7 +381,14 @@ function constructSubmitChanges(
   // spec-2 record without the fields a reader derives, a spec-1 record as it
   // always was. The capture's address is bound onto the payload's own
   // capture, whose digest the parser already held to the pushed one.
-  const capture: PublishedCapture = { ...payload.capture, registryBlob: publishedCapture.registryBlob };
+  // the `references` layer's address is bound the same way (spec 2)
+  const capture: PublishedCapture = {
+    ...payload.capture,
+    ...(payload.capture.references === undefined || referencesBlob === undefined
+      ? {}
+      : { references: { ...payload.capture.references, registryBlob: referencesBlob } }),
+    registryBlob: publishedCapture.registryBlob,
+  };
   const buildOutput = {
     specVersion: "1",
     id: request.id,

@@ -451,6 +451,7 @@ export async function publishSubmit(): Promise<void> {
       artifacts.buildOutput.paper === undefined ? undefined : requiredEnv("VALIDATION_PAPER_PATH"),
       artifacts.buildOutput.paper?.web === undefined ? undefined : requiredEnv("VALIDATION_PAPER_WEB_PATH"),
       artifacts.buildOutput.certificate === undefined ? undefined : requiredEnv("VALIDATION_CERTIFICATE_PATH"),
+      artifacts.buildOutput.capture.references === undefined ? undefined : requiredEnv("VALIDATION_REFERENCES_PATH"),
     );
     if (result.kind === "no-op") return;
     archiveCommit = result.archiveCommit;
@@ -746,6 +747,28 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
     }
     if (sha256File(certificatePath) !== certificate.bundle.digest) {
       throw new ValidationError("validation certificate bundle digest does not match its build output");
+    }
+  }
+  // The `references` layer: present exactly when the capture records one
+  // (spec 2), hashed against the recorded digest and size.
+  const referencesPath = requiredEnv("VALIDATION_REFERENCES_PATH");
+  const references = artifacts.buildOutput.capture.references;
+  let referencesStat: fs.Stats | undefined;
+  try {
+    referencesStat = fs.lstatSync(referencesPath);
+  } catch {
+    referencesStat = undefined;
+  }
+  if (references === undefined && referencesStat !== undefined) {
+    throw new ValidationError("validation artifact carries a references.tar its build output does not record");
+  }
+  if (references !== undefined) {
+    if (referencesStat === undefined) throw new ValidationError("validation references layer is missing");
+    if (!referencesStat.isFile() || referencesStat.size !== references.bytes) {
+      throw new ValidationError("validation references layer must be a regular file of the recorded size");
+    }
+    if (sha256File(referencesPath) !== references.digest) {
+      throw new ValidationError("validation references layer digest does not match its build output");
     }
   }
   if (paper === undefined) {

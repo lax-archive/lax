@@ -395,6 +395,7 @@ describe("prepare-submit entry point", () => {
       VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
       VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
       VALIDATION_CERTIFICATE_PATH: path.join(directory, "certificate.tar"),
+      VALIDATION_REFERENCES_PATH: path.join(directory, "references.tar"),
       // Env-poisoning canary: the preflight job holds no database credential;
       // if this value ever leaves the process something read the wrong env.
       LAX_DATABASE_TOKEN: canary,
@@ -442,6 +443,7 @@ describe("prepare-submit entry point", () => {
       VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
       VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
       VALIDATION_CERTIFICATE_PATH: path.join(directory, "certificate.tar"),
+      VALIDATION_REFERENCES_PATH: path.join(directory, "references.tar"),
     });
     const state: IssueState = { comments: [], reactions: [] };
     const requests = installIssueFetch(state, texts);
@@ -489,6 +491,7 @@ describe("prepare-submit entry point", () => {
       VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
       VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
       VALIDATION_CERTIFICATE_PATH: path.join(directory, "certificate.tar"),
+      VALIDATION_REFERENCES_PATH: path.join(directory, "references.tar"),
     });
     installIssueFetch({ comments: [], reactions: [] }, texts);
 
@@ -536,6 +539,7 @@ describe("prepare-submit entry point", () => {
       VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
       VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
       VALIDATION_CERTIFICATE_PATH: path.join(directory, "certificate.tar"),
+      VALIDATION_REFERENCES_PATH: path.join(directory, "references.tar"),
     });
     installIssueFetch({ comments: [], reactions: [] }, texts);
 
@@ -597,6 +601,7 @@ describe("prepare-submit entry point", () => {
       VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
       VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
       VALIDATION_CERTIFICATE_PATH: path.join(directory, "certificate.tar"),
+      VALIDATION_REFERENCES_PATH: path.join(directory, "references.tar"),
     });
     installIssueFetch({ comments: [], reactions: [] }, texts);
 

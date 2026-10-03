@@ -23,8 +23,17 @@ function octal(value: number, width: number): Buffer {
 function header(name: string, size: number): Buffer {
   const block = Buffer.alloc(BLOCK);
   const nameBytes = Buffer.from(name, "utf8");
-  if (nameBytes.length > 100) throw new Error(`bundle member name too long: ${name}`);
-  nameBytes.copy(block, 0);
+  // ustar splits a long name into a 155-byte prefix and a 100-byte name at
+  // a slash; the capture's paths (`concepts/package/<module path>.lean`)
+  // fit the name field almost always, the prefix covers the rest
+  if (nameBytes.length > 100) {
+    const split = name.lastIndexOf("/", 155);
+    const prefix = Buffer.from(name.slice(0, split), "utf8");
+    const rest = Buffer.from(name.slice(split + 1), "utf8");
+    if (split <= 0 || prefix.length > 155 || rest.length > 100) throw new Error(`tar member name too long: ${name}`);
+    rest.copy(block, 0);
+    prefix.copy(block, 345);
+  } else nameBytes.copy(block, 0);
   octal(0o644, 8).copy(block, 100);
   octal(0, 8).copy(block, 108);
   octal(0, 8).copy(block, 116);
@@ -44,9 +53,17 @@ function header(name: string, size: number): Buffer {
 
 /** The archive of these files and its sha256 (bare hex). */
 export function sealBundle(files: Readonly<Record<BundleFile, string>>): { tar: Buffer; digest: string } {
+  return sealTar(BUNDLE_FILES.map((name) => ({ name, content: Buffer.from(files[name], "utf8") })));
+}
+
+/**
+ * A ustar archive of these members, in the order given, and its sha256.
+ * The caller orders them; the bundle uses BUNDLE_FILES order, the
+ * `references` layer (captures/seal.ts) path order.
+ */
+export function sealTar(members: ReadonlyArray<{ name: string; content: Buffer }>): { tar: Buffer; digest: string } {
   const parts: Buffer[] = [];
-  for (const name of BUNDLE_FILES) {
-    const content = Buffer.from(files[name], "utf8");
+  for (const { name, content } of members) {
     parts.push(header(name, content.length), content);
     const padding = (BLOCK - (content.length % BLOCK)) % BLOCK;
     if (padding > 0) parts.push(Buffer.alloc(padding));
@@ -67,7 +84,8 @@ export function readBundle(tar: Buffer): Map<string, string> {
   while (offset + BLOCK <= tar.length) {
     const block = tar.subarray(offset, offset + BLOCK);
     if (block.every((byte) => byte === 0)) break;
-    const name = block.subarray(0, 100).toString("utf8").replace(/\0.*$/su, "");
+    const prefix = block.subarray(345, 500).toString("utf8").replace(/\0.*$/su, "");
+    const name = (prefix === "" ? "" : `${prefix}/`) + block.subarray(0, 100).toString("utf8").replace(/\0.*$/su, "");
     const size = parseInt(block.subarray(124, 136).toString("latin1").replace(/\0.*$/su, "").trim(), 8);
     if (!Number.isSafeInteger(size) || size < 0 || offset + BLOCK + size > tar.length)
       throw new Error("malformed bundle tar");

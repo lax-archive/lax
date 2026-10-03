@@ -22,6 +22,7 @@ import {
   PAPER_FILENAME,
   PAPER_WEB_FILENAME,
   CERTIFICATE_FILENAME,
+  REFERENCES_FILENAME,
   VALIDATION_PROFILE_FILENAME,
   VALIDATION_REPORT_FILENAME,
 } from "../../src/submission-validation/outputs.js";
@@ -546,6 +547,7 @@ describe("submission workflow wiring", () => {
       PAPER_FILENAME,
       PAPER_WEB_FILENAME,
       CERTIFICATE_FILENAME,
+      REFERENCES_FILENAME,
     ]) {
       expect(full.with?.path).toContain(`.build/submission-validation/${filename}`);
     }
@@ -586,6 +588,9 @@ describe("submission workflow wiring", () => {
       );
       expect(step?.env?.VALIDATION_CERTIFICATE_PATH, stepName).toBe(
         `\${{ github.workspace }}/.build/submission-validation/${CERTIFICATE_FILENAME}`,
+      );
+      expect(step?.env?.VALIDATION_REFERENCES_PATH, stepName).toBe(
+        `\${{ github.workspace }}/.build/submission-validation/${REFERENCES_FILENAME}`,
       );
     }
   });

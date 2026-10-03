@@ -13,6 +13,7 @@ import path from "node:path";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
 import { GhcrCaptureStore } from "../../src/shared/capture-store.js";
 import { ArchiveSnapshot } from "../../src/submission-validation/archive/snapshot.js";
+import { REFERENCES_FILENAME } from "../../src/submission-validation/captures/seal.js";
 import { recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
 import type {
   PublishedCapture,
@@ -57,11 +58,35 @@ export async function publishLocalCapture(
     ".",
   ]);
   // The record's capture digest is the sealed tar's — describeLocalCapture's
-  // inventory hash never leaves the local build.
-  const manifest = { ...report.capture, digest: sha256File(tarPath) };
+  // inventory hash never leaves the local build — and so is a spec-2
+  // record's `bytes`; its `references` layer (written beside the capture
+  // root by describeLocalCapture) is pushed like the trusted publisher does.
+  const manifest = {
+    ...report.capture,
+    digest: sha256File(tarPath),
+    ...(report.capture.bytes === undefined ? {} : { bytes: fs.statSync(tarPath).size }),
+  };
   const store = new GhcrCaptureStore("fake-registry-credential", CAPTURES_REPOSITORY);
   const source = report.request.source;
-  const { capture: published } = await store.promote(id, source, manifest, tarPath);
+  const references = manifest.references;
+  const promoted = await store.promote(
+    id,
+    source,
+    manifest,
+    tarPath,
+    undefined,
+    undefined,
+    undefined,
+    references === undefined
+      ? undefined
+      : { tarPath: path.join(jobDir, REFERENCES_FILENAME), digest: references.digest, bytes: references.bytes },
+  );
+  const published: PublishedCapture = {
+    ...promoted.capture,
+    ...(references === undefined || promoted.referencesBlob === undefined
+      ? {}
+      : { references: { ...references, registryBlob: promoted.referencesBlob } }),
+  };
   return { id, source, report, published };
 }
 

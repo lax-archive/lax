@@ -1226,7 +1226,16 @@ function rendererOutput(raw: unknown, label: string): Record<string, unknown> | 
   // A spec-2 record stores no conclusion, assumptions, capture pins, or
   // repeated manifest fields (recorded-shape.ts); the renderer reads the
   // full shape, so a stored record is expanded before it is handed over.
-  const value = expandRecordedBuildOutput(raw, typeof raw.id === "string" ? raw.id : "");
+  const expanded = expandRecordedBuildOutput(raw, typeof raw.id === "string" ? raw.id : "");
+  // A spec-2 capture lists no files; the pinned renderer's reference reader
+  // addresses the capture tar by that list and refuses one without it, so
+  // the capture's address is withheld from it until the renderer reads the
+  // `references` layer (axiomfree-plan.md, stage 5) — the record keeps it.
+  const capture = isObject(expanded.capture) ? expanded.capture : undefined;
+  const value =
+    capture !== undefined && !Array.isArray(capture.files) && capture.registryBlob !== undefined
+      ? { ...expanded, capture: { ...capture, registryBlob: undefined } }
+      : expanded;
   const inputs = isObject(value.inputs) ? value.inputs : undefined;
   const manifest = value.manifest ?? inputs?.manifest;
   if (manifest === undefined) return undefined;

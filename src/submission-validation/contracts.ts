@@ -300,6 +300,20 @@ export interface CapturedFile {
   sha256: string;
 }
 
+/**
+ * The `references` layer of a spec-2 record's OCI manifest: the concept
+ * sources and their `.ilean` files — what the website addresses by name,
+ * 0.2% of a capture's bytes — sealed as one small tar beside the capture, so
+ * a reader fetches and digest-verifies it whole instead of reconstructing
+ * ranged reads from a per-file inventory. `registryBlob` is added by the
+ * publisher and must carry exactly `digest`.
+ */
+export interface CaptureReferences {
+  digest: string;
+  bytes: number;
+  registryBlob?: string;
+}
+
 export interface CaptureManifest {
   formatVersion: 1;
   digest: string;
@@ -311,7 +325,16 @@ export interface CaptureManifest {
    * may lack them. */
   leanToolchain?: string;
   mathlibCommit?: string;
-  files: CapturedFile[];
+  /** The per-file inventory of the sealed tar. Present in every validation
+   * report and in a spec-1 record; a spec-2 record stores none — the tar's
+   * own listing, read after its digest is verified, is the inventory
+   * (recorded-shape.ts; spike/axiomfree/build-output-investigation-20261003.md). */
+  files?: CapturedFile[];
+  /** Spec 2 only: the sealed tar's size and member count, and the
+   * `references` layer beside it. */
+  bytes?: number;
+  fileCount?: number;
+  references?: CaptureReferences;
 }
 
 export interface PublishedCapture extends CaptureManifest {

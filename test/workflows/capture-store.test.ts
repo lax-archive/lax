@@ -223,6 +223,31 @@ describe("ghcr capture promotion", () => {
     ).rejects.toThrow("certificate.tar does not match the digest");
   });
 
+  it("pushes a spec-2 record's references layer beside the capture, hashed and sized first", async () => {
+    const fixture = captureFixture();
+    const references = Buffer.from("references ustar fixture bytes");
+    const tarPath = path.join(temporary("lax-references-fixture-"), "references.tar");
+    fs.writeFileSync(tarPath, references);
+    const digest = createHash("sha256").update(references).digest("hex");
+    const registry = fakeRegistry();
+    const store = new GhcrCaptureStore("job-token", REPOSITORY);
+    await expect(
+      store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, undefined, undefined, undefined, { tarPath, digest, bytes: references.length }),
+    ).resolves.toEqual({
+      capture: { ...fixture.manifest, registryBlob: `ghcr.io/${REPOSITORY}@sha256:${fixture.manifest.digest}` },
+      referencesBlob: `ghcr.io/${REPOSITORY}@sha256:${digest}`,
+    });
+    const manifestPuts = registry.calls.filter((call) => call.method === "PUT" && call.url.includes("/manifests/"));
+    const manifest = JSON.parse(manifestPuts[0]!.body!) as Record<string, any>;
+    expect(manifest.layers).toEqual([
+      { mediaType: "application/vnd.lax.capture.v1+tar", digest: `sha256:${fixture.manifest.digest}`, size: fixture.size },
+      { mediaType: "application/vnd.lax.references.v1+tar", digest: `sha256:${digest}`, size: references.length },
+    ]);
+    await expect(
+      store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, undefined, undefined, undefined, { tarPath, digest, bytes: references.length + 1 }),
+    ).rejects.toThrow("references.tar does not match the digest");
+  });
+
   it("stores a three-layer manifest on the fake ghcr with every blob pullable by digest", async () => {
     // The HTTP path against test/fake-ghcr.ts, through the same
     // LAX_CAPTURE_REGISTRY_URL seam the e2es use — and the two-layer shape

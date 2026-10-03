@@ -372,7 +372,7 @@ describe("new validation trust boundaries", () => {
     const first = describeLocalCapture(root, COMMIT, RUNTIME);
     const second = describeLocalCapture(root, COMMIT, RUNTIME);
     expect(first).toEqual(second);
-    expect(first.files.map((file) => file.path)).toEqual(["a/file", "z/file"]);
+    expect(first.files!.map((file) => file.path)).toEqual(["a/file", "z/file"]);
 
     fs.symlinkSync(path.join(root, "a", "file"), path.join(root, "link"));
     expect(() => describeLocalCapture(root, COMMIT, RUNTIME)).toThrow("symbolic link");

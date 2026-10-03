@@ -123,11 +123,11 @@ export function parseSuccessfulValidationArtifacts(
   if (JSON.stringify(reportObject.buildOutput) !== JSON.stringify(buildOutputValue)) {
     throw new ValidationError("standalone generated build output does not exactly match the validation report");
   }
-  const capture = parseCaptureManifest(reportObject.capture, false);
-  if (
-    JSON.stringify(capture) !== JSON.stringify(reportBuildOutput.capture) ||
-    JSON.stringify(capture) !== JSON.stringify(standaloneBuildOutput.capture)
-  ) {
+  // The report's own capture always carries its inventory and pins; a spec-2
+  // build output stores the summary instead (recorded-shape.ts), so the two
+  // are compared field by field rather than as text.
+  const capture = parseCaptureManifest(reportObject.capture, false, undefined, false, "files", true);
+  if (!sameCapture(capture, reportBuildOutput.capture) || !sameCapture(capture, standaloneBuildOutput.capture)) {
     throw new ValidationError("validation report and generated build output have different capture manifests");
   }
   if (
@@ -183,7 +183,29 @@ function validateDependencyGraph(
 /** A record's published capture, of either spec: with its pins when it
  * stores them (spec 1), without when it does not (spec 2). */
 export function parsePublishedCapture(value: unknown): PublishedCapture {
-  return parseCaptureManifest(value, true, undefined, true) as PublishedCapture;
+  if (!isObject(value)) throw new ValidationError("published capture must be an object");
+  return parseCaptureManifest(value, true, undefined, true, value.files === undefined ? "summary" : "files") as PublishedCapture;
+}
+
+/**
+ * Whether a build output's capture is the report's: the same tar (digest,
+ * source, pins) and, where the record stores the inventory, the same
+ * inventory; where it stores the summary, a summary of that inventory.
+ */
+function sameCapture(report: CaptureManifest, recorded: CaptureManifest): boolean {
+  if (
+    report.digest !== recorded.digest ||
+    report.sourceCommit !== recorded.sourceCommit ||
+    report.leanToolchain !== recorded.leanToolchain ||
+    report.mathlibCommit !== recorded.mathlibCommit
+  ) return false;
+  if (recorded.files !== undefined) return JSON.stringify(report) === JSON.stringify(recorded);
+  return (
+    report.files?.length === recorded.fileCount &&
+    report.bytes === recorded.bytes &&
+    report.fileCount === recorded.fileCount &&
+    JSON.stringify(report.references) === JSON.stringify(recorded.references)
+  );
 }
 
 function parseRuntime(value: unknown): ValidationRuntimeIdentity {
@@ -337,7 +359,7 @@ function parseBuildOutputPayload(
     requiredByProofs: stringArray(object.requiredByProofs, "requiredByProofs", MAX_ENTRIES, 512),
     concepts,
     proofs,
-    capture: parseCaptureManifest(object.capture, published, spec === 2 ? runtime : undefined),
+    capture: parseCaptureManifest(object.capture, published, spec === 2 ? runtime : undefined, false, spec === 2 ? "summary" : "files"),
     ...(paper === undefined ? {} : { paper }),
     ...(certificate === undefined ? {} : { certificate }),
   };
@@ -840,22 +862,65 @@ function parseCaptureManifest(
   published: boolean,
   pins?: Pick<ValidationRuntimeIdentity, "leanToolchain" | "mathlibCommit">,
   lenientPins = false,
+  /** What the manifest holds instead of, or beside, the tar's digest: the
+   * per-file inventory (every report, a spec-1 record) or the summary — tar
+   * size, member count, `references` layer — of a spec-2 record. */
+  shape: "files" | "summary" = "files",
+  /** A report's capture of a spec-2 record carries the summary beside the
+   * inventory; nothing else may. */
+  summaryBesideFiles = false,
 ): CaptureManifest | PublishedCapture {
   if (!isObject(value)) throw new ValidationError("capture manifest must be an object");
   const storesPins = pins === undefined && (!lenientPins || value.leanToolchain !== undefined);
+  const summarised = shape === "summary" || (summaryBesideFiles && value.bytes !== undefined);
   const object = exactObject(value, [
     "formatVersion", "digest", "sourceCommit",
     ...(storesPins ? ["leanToolchain", "mathlibCommit"] : []),
-    "files",
+    ...(shape === "files" ? ["files"] : []),
+    ...(summarised ? ["bytes", "fileCount", "references"] : []),
     ...(published ? ["registryBlob"] : []),
   ], published ? "published capture" : "capture manifest");
   if (object.formatVersion !== 1) throw new ValidationError("capture formatVersion must be 1");
-  const files = boundedArray(object.files, "capture files", MAX_CAPTURE_FILES)
-    .map((entry, index) => parseCapturedFile(entry, index));
-  if (files.length === 0) throw new ValidationError("capture files must not be empty");
-  requireUnique(files.map((entry) => entry.path), "capture paths");
-  const total = files.reduce((sum, entry) => sum + entry.bytes, 0);
-  if (!Number.isSafeInteger(total) || total > MAX_CAPTURE_BYTES) throw new ValidationError("capture files exceed 2 GiB");
+  let files: CapturedFile[] | undefined;
+  if (shape === "files") {
+    files = boundedArray(object.files, "capture files", MAX_CAPTURE_FILES)
+      .map((entry, index) => parseCapturedFile(entry, index));
+    if (files.length === 0) throw new ValidationError("capture files must not be empty");
+    requireUnique(files.map((entry) => entry.path), "capture paths");
+    const total = files.reduce((sum, entry) => sum + entry.bytes, 0);
+    if (!Number.isSafeInteger(total) || total > MAX_CAPTURE_BYTES) throw new ValidationError("capture files exceed 2 GiB");
+  }
+  let summary: Pick<CaptureManifest, "bytes" | "fileCount" | "references"> = {};
+  if (summarised) {
+    const bytes = positiveInteger(object.bytes, "capture bytes");
+    if (bytes > MAX_CAPTURE_BYTES) throw new ValidationError("capture exceeds 2 GiB");
+    const fileCount = positiveInteger(object.fileCount, "capture fileCount");
+    if (fileCount > MAX_CAPTURE_FILES) throw new ValidationError(`capture fileCount exceeds ${MAX_CAPTURE_FILES}`);
+    if (files !== undefined && files.length !== fileCount) throw new ValidationError("capture fileCount does not match its files");
+    const references = exactObject(
+      object.references,
+      ["digest", "bytes", ...(published ? ["registryBlob"] : [])],
+      "capture references",
+    );
+    const referencesDigest = sha256(references.digest, "capture references digest");
+    let referencesBlob: string | undefined;
+    if (published) {
+      if (typeof references.registryBlob !== "string") throw new ValidationError("published capture references registryBlob must be a string");
+      const address = parseCaptureBlobReference(references.registryBlob);
+      if (address === undefined) throw new ValidationError("published capture references registryBlob is not a ghcr digest reference");
+      if (address.digest !== referencesDigest) throw new ValidationError("published capture references registryBlob digest does not match the references digest");
+      referencesBlob = references.registryBlob;
+    }
+    summary = {
+      bytes,
+      fileCount,
+      references: {
+        digest: referencesDigest,
+        bytes: positiveInteger(references.bytes, "capture references bytes"),
+        ...(referencesBlob === undefined ? {} : { registryBlob: referencesBlob }),
+      },
+    };
+  }
   const base: CaptureManifest = {
     formatVersion: 1,
     digest: sha256(object.digest, "capture digest"),
@@ -868,7 +933,8 @@ function parseCaptureManifest(
       : pins === undefined
         ? {}
         : { leanToolchain: pins.leanToolchain, mathlibCommit: pins.mathlibCommit }),
-    files,
+    ...(files === undefined ? {} : { files }),
+    ...summary,
   };
   if (!published) return base;
   // Consumers never fetch a capture by tag: the reference must be a ghcr

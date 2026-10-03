@@ -130,9 +130,37 @@ export class ArchiveSnapshot {
       typeof value.digest !== "string" ||
       !/^[0-9a-f]{64}$/u.test(value.digest) ||
       typeof value.sourceCommit !== "string" ||
-      (storesPins && (typeof value.leanToolchain !== "string" || typeof value.mathlibCommit !== "string")) ||
-      !Array.isArray(value.files)
+      (storesPins && (typeof value.leanToolchain !== "string" || typeof value.mathlibCommit !== "string"))
     ) return undefined;
+    // a spec-2 record stores the tar's size, its member count, and the
+    // `references` layer instead of the per-file inventory (recorded-shape.ts)
+    if (!Array.isArray(value.files)) {
+      const references = value.references;
+      if (
+        !Number.isSafeInteger(value.bytes) || (value.bytes as number) <= 0 || (value.bytes as number) > MAX_CAPTURE_BYTES ||
+        !Number.isSafeInteger(value.fileCount) || (value.fileCount as number) <= 0 || (value.fileCount as number) > MAX_CAPTURE_FILES ||
+        !isObject(references) ||
+        typeof references.digest !== "string" || !/^[0-9a-f]{64}$/u.test(references.digest) ||
+        !Number.isSafeInteger(references.bytes) || (references.bytes as number) <= 0 ||
+        typeof references.registryBlob !== "string"
+      ) return undefined;
+      const reference = parseCaptureBlobReference(value.registryBlob);
+      if (reference === undefined || reference.digest !== value.digest) return undefined;
+      const referencesAddress = parseCaptureBlobReference(references.registryBlob);
+      if (referencesAddress === undefined || referencesAddress.digest !== references.digest) return undefined;
+      return {
+        formatVersion: 1,
+        digest: value.digest,
+        sourceCommit: value.sourceCommit,
+        ...(storesPins
+          ? { leanToolchain: value.leanToolchain as string, mathlibCommit: value.mathlibCommit as string }
+          : {}),
+        bytes: value.bytes as number,
+        fileCount: value.fileCount as number,
+        references: { digest: references.digest, bytes: references.bytes as number, registryBlob: references.registryBlob },
+        registryBlob: value.registryBlob,
+      };
+    }
     const files = value.files.flatMap((file) =>
       isObject(file) &&
       typeof file.path === "string" &&

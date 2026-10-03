@@ -149,6 +149,19 @@ export interface CertificateBlobInput {
   digest: string;
 }
 
+/** The `references` layer of a spec-2 record (contracts.ts
+ * CaptureReferences): the concept sources and `.ilean` files, bound to the
+ * digest and size the validated capture records. */
+export interface ReferencesBlobInput {
+  tarPath: string;
+  digest: string;
+  bytes: number;
+}
+
+/** The references layer, a further layer of the same artifact manifest. */
+export const REFERENCES_MEDIA_TYPE = "application/vnd.lax.references.v1+tar";
+const MAX_REFERENCES_BYTES = 64 * 1024 * 1024;
+
 export interface PromotedArtifacts {
   capture: PublishedCapture;
   /** The PDF layer's digest-addressed reference, when a paper was pushed. */
@@ -157,6 +170,8 @@ export interface PromotedArtifacts {
   paperWebBlob?: string;
   /** The certificate layer's digest-addressed reference, when one was pushed. */
   certificateBlob?: string;
+  /** The references layer's digest-addressed reference, when one was pushed. */
+  referencesBlob?: string;
 }
 
 export class GhcrCaptureStore {
@@ -178,6 +193,7 @@ export class GhcrCaptureStore {
     paper?: PaperBlobInput,
     paperWeb?: PaperWebBlobInput,
     certificate?: CertificateBlobInput,
+    references?: ReferencesBlobInput,
   ): Promise<PromotedArtifacts> {
     validateSubmissionId(id);
     if (source.commit !== manifest.sourceCommit) {
@@ -228,6 +244,17 @@ export class GhcrCaptureStore {
       }
       certificateLayer = { digest: `sha256:${certificate.digest}`, size: certificateStat.size };
     }
+    let referencesLayer: { digest: string; size: number } | undefined;
+    if (references !== undefined) {
+      const referencesStat = fs.lstatSync(references.tarPath);
+      if (!referencesStat.isFile() || referencesStat.size <= 0 || referencesStat.size > MAX_REFERENCES_BYTES) {
+        throw new ValidationError("references.tar must be a non-empty regular file no larger than 64 MiB");
+      }
+      if (referencesStat.size !== references.bytes || sha256File(references.tarPath) !== references.digest) {
+        throw new ValidationError("references.tar does not match the digest the validated capture records");
+      }
+      referencesLayer = { digest: `sha256:${references.digest}`, size: referencesStat.size };
+    }
     const digest = `sha256:${manifest.digest}`;
     const bearer = await this.exchangeToken();
     await this.ensureBlob(bearer, digest, stat.size, () =>
@@ -246,6 +273,11 @@ export class GhcrCaptureStore {
       const layer = certificateLayer;
       await this.ensureBlob(bearer, layer.digest, layer.size, () =>
         Readable.toWeb(fs.createReadStream(certificate!.bundlePath)) as unknown as BodyInit);
+    }
+    if (referencesLayer !== undefined) {
+      const layer = referencesLayer;
+      await this.ensureBlob(bearer, layer.digest, layer.size, () =>
+        Readable.toWeb(fs.createReadStream(references!.tarPath)) as unknown as BodyInit);
     }
     await this.ensureBlob(bearer, EMPTY_CONFIG_DIGEST, EMPTY_CONFIG.length, () =>
       EMPTY_CONFIG as unknown as BodyInit);
@@ -267,6 +299,9 @@ export class GhcrCaptureStore {
         ...(certificateLayer === undefined
           ? []
           : [{ mediaType: CERTIFICATE_MEDIA_TYPE, digest: certificateLayer.digest, size: certificateLayer.size }]),
+        ...(referencesLayer === undefined
+          ? []
+          : [{ mediaType: REFERENCES_MEDIA_TYPE, digest: referencesLayer.digest, size: referencesLayer.size }]),
       ],
       // Discoverability and GC metadata only; consumers trust none of it.
       annotations: {
@@ -283,6 +318,7 @@ export class GhcrCaptureStore {
       ...(paperLayer === undefined ? {} : { paperBlob: `ghcr.io/${this.repository}@${paperLayer.digest}` }),
       ...(webLayer === undefined ? {} : { paperWebBlob: `ghcr.io/${this.repository}@${webLayer.digest}` }),
       ...(certificateLayer === undefined ? {} : { certificateBlob: `ghcr.io/${this.repository}@${certificateLayer.digest}` }),
+      ...(referencesLayer === undefined ? {} : { referencesBlob: `ghcr.io/${this.repository}@${referencesLayer.digest}` }),
     };
   }
 

@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
 import { readBundle } from "../../src/submission-validation/certify/bundle.js";
 import {
   challengeProjectFiles,
@@ -265,7 +266,17 @@ end Lax38Proofs
       const stored = recordedBuildOutput(out) as Record<string, any>;
       expect(stored.proofs[0]).not.toHaveProperty("conclusion");
       expect(stored.capture).not.toHaveProperty("leanToolchain");
+      expect(stored.capture).not.toHaveProperty("files");
       expect(stored.certificate.challenge).toBe(certificate.challenge);
+      // the capture summary and the `references` layer, written beside the capture root
+      expect(stored.capture.fileCount).toBe(out.capture.files!.length);
+      const referencesTar = fs.readFileSync(path.join(jobDir, "references.tar"));
+      expect(createHash("sha256").update(referencesTar).digest("hex")).toBe(stored.capture.references.digest);
+      expect(referencesTar.length).toBe(stored.capture.references.bytes);
+      // in the capture inventory's own order (seal.ts walks a directory before its sibling files)
+      const referenceMembers = [...readBundle(referencesTar).keys()];
+      expect(referenceMembers).toEqual(["./concepts/lib/Lax38/Order.ilean", "./concepts/lib/Lax38.ilean", "./concepts/package/Lax38/Order.lean", "./concepts/package/Lax38.lean"]);
+      expect(readBundle(referencesTar).get("./concepts/package/Lax38/Order.lean")).toBe(out.concepts[0]!.sourceText);
       expect(out.inputs.manifest.specVersion).toBe("2");
       expect(out.concepts).toHaveLength(1);
       expect(out.concepts[0]!.mathlibImports).toEqual([]);
@@ -552,6 +563,9 @@ end Lax43Proofs
         const archive = archiveWith(upstream);
         const storedUpstream = JSON.parse(fs.readFileSync(path.join(archive.root, "lax-38", "build-output.json"), "utf8")) as Record<string, any>;
         expect(storedUpstream.capture).not.toHaveProperty("leanToolchain");
+        expect(storedUpstream.capture).not.toHaveProperty("files");
+        expect(storedUpstream.capture.references.registryBlob).toBe(`ghcr.io/${CAPTURES_REPOSITORY}@sha256:${storedUpstream.capture.references.digest}`);
+        expect(ghcr.state.blobs.has(`sha256:${storedUpstream.capture.references.digest}`)).toBe(true);
         expect(storedUpstream.certificate.challenge).toBe(lax38!.report.buildOutput!.certificate!.challenge);
 
         const root = makeHostSubmission(

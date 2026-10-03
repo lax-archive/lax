@@ -5,9 +5,11 @@ import type { ValidationLimits } from "../config.js";
 import type {
   CaptureManifest,
   CapturedFile,
+  ContentSpecVersion,
   ModuleInventory,
   ValidationRuntimeIdentity,
 } from "../contracts.js";
+import { sealTar } from "../certify/bundle.js";
 import type { ValidationRunner } from "../sandbox/container.js";
 import {
   containerBoundaryFailure,
@@ -105,6 +107,41 @@ function regularContainedArtifact(compiledLibrary: string, filename: string): bo
   }
 }
 
+/** The `references.tar` a spec-2 record pushes beside its capture, written
+ * next to the capture tar by sealCapture and describeLocalCapture. */
+export const REFERENCES_FILENAME = "references.tar";
+
+/** The members of the `references` layer: the concept sources and their
+ * `.ilean` files, in inventory (path) order, named `./<path>` as the
+ * capture tar names them. */
+function referenceMembers(captureRoot: string, files: readonly CapturedFile[]): Array<{ name: string; content: Buffer }> {
+  return files
+    .filter((file) =>
+      (file.path.startsWith("concepts/package/") && file.path.endsWith(".lean")) ||
+      (file.path.startsWith("concepts/lib/") && file.path.endsWith(".ilean")))
+    .map((file) => ({ name: `./${file.path}`, content: fs.readFileSync(path.join(captureRoot, file.path)) }));
+}
+
+/**
+ * The spec-2 additions to a capture manifest (contracts.ts CaptureManifest):
+ * the tar's size and member count, and the `references` layer, which is
+ * sealed here and written to `referencesPath`.
+ */
+function captureSummary(
+  captureRoot: string,
+  files: readonly CapturedFile[],
+  tarBytes: number,
+  referencesPath: string,
+): Pick<CaptureManifest, "bytes" | "fileCount" | "references"> {
+  const sealed = sealTar(referenceMembers(captureRoot, files));
+  fs.writeFileSync(referencesPath, sealed.tar, { mode: 0o600 });
+  return {
+    bytes: tarBytes,
+    fileCount: files.length,
+    references: { digest: sealed.digest, bytes: sealed.tar.length },
+  };
+}
+
 export async function sealCapture(
   captureRoot: string,
   archivePath: string,
@@ -112,6 +149,9 @@ export async function sealCapture(
   runtime: ValidationRuntimeIdentity,
   runner: ValidationRunner,
   limits: ValidationLimits,
+  /** The record's content spec: a spec-2 capture is summarised and gets its
+   * `references` layer (written beside the tar); a spec-1 one is unchanged. */
+  spec: ContentSpecVersion = 1,
 ): Promise<CaptureManifest> {
   const files = inventoryFiles(captureRoot);
   if (files.length === 0) throw new Error("cannot seal an empty artifact capture");
@@ -157,14 +197,22 @@ export async function sealCapture(
     leanToolchain: runtime.leanToolchain,
     mathlibCommit: runtime.mathlibCommit,
     files,
+    ...(spec === 2
+      ? captureSummary(captureRoot, files, fs.statSync(archivePath).size, path.join(path.dirname(archivePath), REFERENCES_FILENAME))
+      : {}),
   };
 }
 
-/** Describe a local build capture without producing the publishable tar archive. */
+/** Describe a local build capture without producing the publishable tar
+ * archive. A spec-2 description still seals its `references` layer (a few
+ * KB) into `referencesPath`, so the local record has the record's shape;
+ * `bytes` is the inventory's total, as there is no tar. */
 export function describeLocalCapture(
   captureRoot: string,
   sourceCommit: string,
   runtime: ValidationRuntimeIdentity,
+  spec: ContentSpecVersion = 1,
+  referencesPath = path.join(captureRoot, "..", REFERENCES_FILENAME),
 ): CaptureManifest {
   const files = inventoryFiles(captureRoot);
   if (files.length === 0) throw new Error("cannot describe an empty artifact capture");
@@ -178,6 +226,9 @@ export function describeLocalCapture(
     leanToolchain: runtime.leanToolchain,
     mathlibCommit: runtime.mathlibCommit,
     files,
+    ...(spec === 2
+      ? captureSummary(captureRoot, files, files.reduce((total, file) => total + file.bytes, 0), referencesPath)
+      : {}),
   };
 }
 
