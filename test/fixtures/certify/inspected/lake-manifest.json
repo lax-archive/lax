@@ -1,0 +1,54 @@
+{
+ "version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages": [
+  {
+   "url": "https://github.com/alice/spec2",
+   "type": "git",
+   "subDir": "concepts",
+   "scope": "",
+   "rev": "cccccccccccccccccccccccccccccccccccccccc",
+   "name": "Spec2",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "cccccccccccccccccccccccccccccccccccccccc",
+   "inherited": false,
+   "configFile": "lakefile.toml"
+  },
+  {
+   "url": "https://github.com/alice/spec2",
+   "type": "git",
+   "subDir": "proofs",
+   "scope": "",
+   "rev": "cccccccccccccccccccccccccccccccccccccccc",
+   "name": "Spec2Proofs",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "cccccccccccccccccccccccccccccccccccccccc",
+   "inherited": false,
+   "configFile": "lakefile.toml"
+  },
+  {
+   "url": "https://github.com/lax-archive/lax-core",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "name": "LaxCore",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "inherited": false,
+   "configFile": "lakefile.toml"
+  },
+  {
+   "url": "https://github.com/leanprover-community/mathlib4",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "mathlib",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "inherited": false,
+   "configFile": "lakefile.toml"
+  }
+ ]
+}

@@ -1,14 +1,21 @@
 // Emitting a Lean name into generated source. Every name the certificate
 // generator writes — statement constants, proof constants, package root
-// modules, the `Cert.…` theorem names — goes through `leanName`, which splits
-// a canonical dotted name into its components and brackets with `«»` every
-// component Lean would not read back as the same plain identifier: a reserved
-// word, or a component whose characters fall outside Lean's identifier
-// grammar (the archive admits any `\p{L}` in a canonical name, Lean's
-// `isIdFirst`/`isIdRest` admit far less). The rules below transcribe
-// `Lean.isLetterLike`, `isSubScriptAlnum`, `isIdFirst` and `isIdRest` of the
-// pinned toolchain; a bracketed component is always legal, so a conservative
-// escaper can only ever bracket too much, never too little.
+// modules, the `Cert.…` theorem names, and the names handed to `leanexport`
+// and `lake comparator`, which read Lean's name syntax too — goes through
+// `leanName`, which splits a canonical dotted name into its components and
+// brackets with `«»` every component Lean would not read back as the same
+// plain identifier: a reserved word, or a component whose characters fall
+// outside Lean's identifier grammar (the archive admits any `\p{L}` in a
+// canonical name, Lean's `isIdFirst`/`isIdRest` admit far less). The rules
+// below transcribe `Lean.isLetterLike`, `isSubScriptAlnum`, `isIdFirst` and
+// `isIdRest` of the pinned toolchain; a bracketed component is always legal,
+// so a conservative escaper can only ever bracket too much, never too little.
+//
+// One name representation (codex review 2026-10-03, finding 4): the inspector
+// writes a spec-2 report's names in the canonical form — dot-separated,
+// nothing escaped (`Name.toString (escape := false)`, lean/inspector/Main.lean)
+// — the validator compares them as such, and this module is the one place
+// they are quoted again. Nothing between the two ever escapes or unescapes.
 
 /** Lean's own reserved words and the command/term keywords a bare component
  * must never collide with. A superset is harmless (`«fun»` reads as `fun`). */
@@ -66,28 +73,57 @@ function isIdRest(code: number): boolean {
   );
 }
 
-/** Whether Lean reads `component` back as this very identifier, unbracketed. */
+/** Whether Lean reads `component` back as this very identifier, unbracketed.
+ * `_` alone is a hole, never an identifier. */
 export function isPlainIdentifier(component: string): boolean {
-  if (component === "" || RESERVED.has(component)) return false;
+  if (component === "" || component === "_" || RESERVED.has(component)) return false;
   const codes = [...component].map((character) => character.codePointAt(0)!);
   if (!isIdFirst(codes[0]!)) return false;
   return codes.slice(1).every(isIdRest);
 }
 
 /**
+ * A name component the generator cannot write at all. Lean's `«…»` quotes
+ * any component but these: the empty one; `_`, which Lean's own printer
+ * leaves bare and the parser reads as a hole; one carrying a guillemet (the
+ * quote's own delimiters); and one carrying whitespace or a control
+ * character (a newline would end the line). The phases turn this into a
+ * `certify` violation that names the component; nothing else in lax throws
+ * it.
+ */
+export class LeanNameError extends Error {
+  constructor(
+    readonly component: string,
+    readonly canonical: string,
+  ) {
+    super(
+      `cannot write the Lean name ${JSON.stringify(canonical)} into the certificate: its component ` +
+        `${JSON.stringify(component)} cannot be quoted with «»`,
+    );
+    this.name = "LeanNameError";
+  }
+}
+
+/** Whether `«component»` is a legal, unambiguous Lean identifier. */
+export function isQuotable(component: string): boolean {
+  return component !== "" && component !== "_" && !/[«»\s\p{Cc}]/u.test(component);
+}
+
+/**
  * A dotted canonical name as Lean source: each component plain where Lean
- * admits it, `«…»` otherwise. The input is the archive's canonical form
- * (contracts.ts LEAN_NAME_PATTERN: non-empty dot-separated components, no
- * brackets), so a component never contains a dot or a guillemet; anything
- * else is a programming error and is refused rather than emitted.
+ * reads it back as that very identifier, `«…»` otherwise — the escaper
+ * quotes conservatively, since a quoted plain identifier is the same name.
+ * The input is the archive's canonical form (contracts.ts LEAN_NAME_PATTERN:
+ * non-empty dot-separated components, the inspector's own unescaped
+ * serialization), so a component never contains a dot; a component the
+ * quotes cannot carry is refused (LeanNameError) rather than emitted.
  */
 export function leanName(canonical: string): string {
-  if (canonical === "") throw new Error("cannot emit an empty Lean name");
+  if (canonical === "") throw new LeanNameError("", canonical);
   return canonical
     .split(".")
     .map((component) => {
-      if (component === "" || /[«»\s]/u.test(component))
-        throw new Error(`cannot emit the Lean name component ${JSON.stringify(component)}`);
+      if (!isQuotable(component)) throw new LeanNameError(component, canonical);
       return isPlainIdentifier(component) ? component : `«${component}»`;
     })
     .join(".");

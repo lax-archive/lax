@@ -45,6 +45,11 @@ def Auxiliary : Prop := True
 /-- Tagged and private (refused by the real hook; the olean still carries the tag). -/
 @[lax_statement] private def Hidden : Prop := True
 
+/-- A name Lean cannot read unquoted, with a universe parameter it cannot either:
+the report writes both in the archive's canonical form, and the certificate
+generator quotes them again (certify/lean-name.ts). -/
+@[lax_statement] def «定理».{«λ»} : Prop := ∀ (α : Sort «λ») (a : α), a = a
+
 -- ## theorems
 
 theorem unconditional : Closed := fun _ => rfl
@@ -72,6 +77,8 @@ theorem repeatedLevels.{w} : Poly2.{w, w} := fun _ _ => trivial
 theorem maxLevel.{a, b} : Poly.{max a b} := fun _ _ => rfl
 
 theorem succLevel.{a} : Poly.{a + 1} := fun _ _ => rfl
+
+theorem «证明».{«λ»} (_h : Closed) : «定理».{«λ»} := fun _ _ => rfl
 
 theorem notAChain (n : Nat) : n = n := rfl
 

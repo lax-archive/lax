@@ -2,7 +2,7 @@
   "challenge_module": "Challenge",
   "solution_module": "Solution",
   "theorem_names": [
-    "Cert.Lax7Proofs.«theorem».«定理»"
+    "Cert.Spec2.Basic.«证明»"
   ],
   "definition_names": [],
   "permitted_axioms": [

@@ -222,7 +222,7 @@ export function comparatorConfigText(proofs: readonly CertifiedProof[]): string 
     {
       challenge_module: CHALLENGE_MODULE,
       solution_module: SOLUTION_MODULE,
-      theorem_names: orderedProofs(proofs).map((proof) => theoremNameOf(proof.id)),
+      theorem_names: theoremNamesOf(proofs),
       definition_names: [],
       permitted_axioms: [...leanFacts().backgroundAxioms],
     },
@@ -231,9 +231,15 @@ export function comparatorConfigText(proofs: readonly CertifiedProof[]): string 
   )}\n`;
 }
 
-/** The theorem names in `comparator.json` order. */
+/**
+ * The theorem names in `comparator.json` order, in Lean's own name syntax:
+ * `lake comparator` reads `theorem_names` with `String.toName` and
+ * `leanexport` decodes each target as a name literal (`Syntax.decodeNameLit`,
+ * which panics on a name it cannot read), so a component Lean cannot read
+ * bare is quoted here exactly as the generated source quotes it.
+ */
 export function theoremNamesOf(proofs: readonly CertifiedProof[]): string[] {
-  return orderedProofs(proofs).map((proof) => theoremNameOf(proof.id));
+  return orderedProofs(proofs).map((proof) => leanName(theoremNameOf(proof.id)));
 }
 
 /** A TOML basic string: the names and URLs here never need more than this. */

@@ -35,6 +35,7 @@ import type {
   ProofTelescope,
   StatementEntry,
 } from "../contracts.js";
+import { leanName } from "../certify/lean-name.js";
 import type { FindingCollector } from "../findings.js";
 import {
   BACKGROUND_AXIOMS,
@@ -217,13 +218,27 @@ function statementProblems(declaration: InspectorDeclaration): string[] {
   return problems;
 }
 
+/** A canonical name as Lean prints it — components Lean cannot read bare in
+ * `«»` — for a signature shown to a reader; a component the quotes cannot
+ * carry is shown as it is (the certificate generator, not this display, is
+ * where such a name is refused). */
+function displayName(canonical: string): string {
+  try {
+    return leanName(canonical);
+  } catch {
+    return canonical;
+  }
+}
+
 function statementEntry(declaration: InspectorDeclaration): StatementEntry {
   const levelParams = [...(declaration.levelParams ?? [])];
-  const universes = levelParams.length === 0 ? "" : `.{${levelParams.join(", ")}}`;
+  const universes = levelParams.length === 0 ? "" : `.{${levelParams.map(displayName).join(", ")}}`;
   return {
     id: declaration.name,
     levelParams,
-    signature: `${shortName(declaration)}${universes} : ${declaration.signature ?? "Prop"}`,
+    // the report's names are canonical (unescaped); the signature is Lean
+    // source for a reader, so it quotes them as Lean would
+    signature: `${displayName(shortName(declaration))}${universes} : ${declaration.signature ?? "Prop"}`,
     body: declaration.body ?? "",
     ...(declaration.doc?.description ? { doc: declaration.doc.description } : {}),
     ...(declaration.startLine === undefined ? {} : { startLine: declaration.startLine }),

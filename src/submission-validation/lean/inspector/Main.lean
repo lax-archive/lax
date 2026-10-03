@@ -341,7 +341,7 @@ partial def jsonOfLevel : Level → Json
   | .succ l => Json.arr #[Json.str "succ", jsonOfLevel l]
   | .max a b => Json.arr #[Json.str "max", jsonOfLevel a, jsonOfLevel b]
   | .imax a b => Json.arr #[Json.str "imax", jsonOfLevel a, jsonOfLevel b]
-  | .param n => Json.arr #[Json.str "param", Json.str n.toString]
+  | .param n => Json.arr #[Json.str "param", Json.str (n.toString (escape := false))]
   | .mvar _ => Json.arr #[Json.str "mvar"]
 
 /-- `Lean.BinderInfo`'s own constructor names. -/
@@ -376,11 +376,11 @@ def jsonOfTelescope : Option (Array TelescopeBinder × Name × List Level) → J
   | some (binders, n, ls) =>
     Json.mkObj
       [("hypotheses", Json.arr (binders.map fun b => Json.mkObj
-          [("const", Json.str b.const.toString),
+          [("const", Json.str (b.const.toString (escape := false))),
            ("levels", Json.arr (b.levels.toArray.map jsonOfLevel)),
            ("binder", jsonOfBinderInfo b.binder)])),
        ("conclusion", Json.mkObj
-          [("const", Json.str n.toString),
+          [("const", Json.str (n.toString (escape := false))),
            ("levels", Json.arr (ls.toArray.map jsonOfLevel))])]
 
 /-- The number of leading `∀`-binders of the stored type, metadata stripped:
@@ -601,6 +601,12 @@ unsafe def main (args : List String) : IO UInt32 := do
   -- the tag is read only when the environment's spec has it: the spec-1
   -- report must not change, and reading it is harmless but not free
   let laxStatements := if spec == 2 then laxStatementsOf datas else {}
+  -- One name representation per report (codex review 2026-10-03, finding 4):
+  -- a spec-2 report writes every name in the archive's canonical form —
+  -- dot-separated components, nothing escaped — which is what the validator
+  -- compares and the certificate generator re-quotes (certify/lean-name.ts);
+  -- a spec-1 report keeps `Name.toString`'s escaped form, byte-identical.
+  let nameStr (n : Name) : String := if spec == 2 then n.toString (escape := false) else n.toString
   let mut idxMap : Std.HashMap Name Nat := {}
   for i in [0:allNames.size] do
     idxMap := idxMap.insert allNames[i]! i
@@ -642,12 +648,12 @@ unsafe def main (args : List String) : IO UInt32 := do
       | IO.eprintln s!"module {m} not found in the built environment"
         return 2
     let data := datas[idx]!
-    let importsJson := Json.arr <| data.imports.map fun imp => Json.str imp.module.toString
+    let importsJson := Json.arr <| data.imports.map fun imp => Json.str (nameStr imp.module)
     let moduleDocs := moduleDocsOf data
     let declarationRanges := declarationRangesOf data
     let moduleDocsJson := Json.arr <| moduleDocs.map fun d => jsonOfParsedDoc (parseDoc d.doc)
     moduleJsons := moduleJsons.push <| Json.mkObj
-      [("name", Json.str m.toString),
+      [("name", Json.str (nameStr m)),
        ("imports", importsJson),
        ("moduleDocs", moduleDocsJson),
        ("declCount", toJson data.constNames.size)]
@@ -664,13 +670,13 @@ unsafe def main (args : List String) : IO UInt32 := do
       let doc? ← findDocString? env declName
       let parsed? := doc?.map parseDoc
       let mut fields : List (String × Json) :=
-        [("name", Json.str declName.toString),
+        [("name", Json.str (nameStr declName)),
          ("kind", Json.str (kindOf ci)),
-         ("module", Json.str m.toString),
-         ("axioms", Json.arr (axioms.map fun a => Json.str a.toString)),
-         ("usedConstants", Json.arr (usedConstants.map fun n => Json.str n.toString))]
+         ("module", Json.str (nameStr m)),
+         ("axioms", Json.arr (axioms.map fun a => Json.str (nameStr a))),
+         ("usedConstants", Json.arr (usedConstants.map fun n => Json.str (nameStr n)))]
       if let some u := userLevelName? env matchers declName then
-        fields := fields ++ [("userName", Json.str u.toString)]
+        fields := fields ++ [("userName", Json.str (nameStr u))]
       if let some ranges := declarationRanges.find? declName then
         fields := fields ++ [
           ("startLine", toJson ranges.range.pos.line),
@@ -704,7 +710,7 @@ unsafe def main (args : List String) : IO UInt32 := do
              ("originReachable", Json.bool originReachable),
              ("defeq", Json.bool defeq)]
           if let some om := originModule then
-            cf := cf ++ [("originModule", Json.str om.toString)]
+            cf := cf ++ [("originModule", Json.str (nameStr om))]
           fields := fields ++ [("conclusionFacts", Json.mkObj cf)]
       let isAxiom := match ci with | .axiomInfo _ => true | _ => false
       let tagged := spec == 2 && laxStatements.contains declName
@@ -722,7 +728,7 @@ unsafe def main (args : List String) : IO UInt32 := do
         fields := fields ++ [
           ("laxStatement", Json.bool tagged),
           ("isProp", Json.bool isProp),
-          ("levelParams", Json.arr (ci.levelParams.toArray.map fun n => Json.str n.toString)),
+          ("levelParams", Json.arr (ci.levelParams.toArray.map fun n => Json.str (nameStr n))),
           ("telescope", jsonOfTelescope (telescopeOf type))]
         if tagged then
           fields := fields ++ [("binders", toJson (leadingBinders type))]
