@@ -305,7 +305,19 @@ record depends on are trusted as today.
    `lax init --env` for spec-2 rows, the instructions section. Release.
 5. **Website.** `specVersion` plumbing, telescopes on proof cards, the
    certified mark with the collapsed Challenge, the trust note. Renderer
-   release; re-pin.
+   release; re-pin. **Landed 2026-10-04** on lax-website branch
+   `axiomfree` (three commits, not pushed, not merged to its main): the
+   loader keys on `inputs.manifest.specVersion`, derives edges from
+   telescopes, fetches the `references` layer whole and verifies it
+   (ustar parsed, allowlisted names, byte-compared with `sourceText`);
+   telescopes replace the assumption list on spec-2 proof cards; a
+   `certified` chip, the comparator line with bundle digest and rerun
+   commands, the closed Challenge details, and the trust note sit in a
+   certificate block under the proof network; `environments.json` carries
+   `specVersion` (from the records' manifests, else a `generateSite`
+   option lax may pass, else `src/config.ts`); the raw `body` is carried
+   but never rendered. Spec-1 HTML byte-identical. Jan: merge, release the
+   renderer, re-pin in lax.
 6. **Rollout and docs.** Admit `v4.35.0` at spec 2 once the mathlib tag
    exists (CSLib and LaxCore commits chosen against it; the admission
    checklist in `history/environments-plan.md` gains the two libraries);
