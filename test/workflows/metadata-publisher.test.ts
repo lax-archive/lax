@@ -13,6 +13,9 @@ import type { PublishRequest } from "../../src/shared/types.js";
 import type { ParsedMetadataResubmissionArtifact } from "../../src/submission-validation/metadata-resubmission.js";
 import { configuredRuntime } from "../../src/submission-validation/config.js";
 import { epoch } from "../../src/submission-validation/environments.js";
+import { recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
+import { spec2TestEnvironment, withTestEnvironmentsAsync } from "../support/environments.js";
+import { spec2Artifacts } from "../support/validation-artifacts.js";
 
 const repositoryId = 123456789;
 const issue = { repositoryId, number: 42 };
@@ -53,6 +56,39 @@ describe("metadata resubmission publisher", () => {
     });
     expect(parsed.buildOutput.concepts).toEqual(current.files.buildOutput.concepts);
     expect(combined["owner-list.json"]).toBe(current.texts["owner-list.json"]);
+  });
+
+  it("takes a spec-2 record with a certificate down the fast path and writes it in the record's shape", async () => {
+    await withTestEnvironmentsAsync([spec2TestEnvironment()], async () => {
+      const current = loadedSpec2();
+      const stored = current.files.buildOutput as Record<string, any>;
+      // what the record stores: telescopes only, no pins, the certificate
+      expect(stored.proofs[0]).not.toHaveProperty("conclusion");
+      expect(stored.capture).not.toHaveProperty("leanToolchain");
+      expect(stored.certificate.challenge).toContain("theorem Cert.Lax42Proofs.euclid");
+      const harness = metadataHarness(current);
+      const result = await harness.publisher.publish(request(current), artifact(current), run);
+      expect(result).toMatchObject({ kind: "committed", acceptedTitle: "Better title" });
+      const written = JSON.parse(harness.changes["build-output.json"]!) as Record<string, any>;
+      // the written output is exactly the recorded shape of the current
+      // payload with the new inputs and source commit — the one serialization
+      // rule (recorded-shape.ts), as the submit publisher writes it
+      const expectedInputs = { manifest: { ...stored.inputs.manifest, title: "Better title" }, abstract: "A better abstract.\n" };
+      expect(written).toEqual({
+        specVersion: "1",
+        id: "lax-42",
+        issue,
+        ...stored,
+        inputs: expectedInputs,
+        capture: { ...stored.capture, sourceCommit: nextSource.commit },
+      });
+      expect(written.inputs.manifest).not.toHaveProperty("id");
+      expect(written.proofs[0]).not.toHaveProperty("conclusion");
+      expect(written.certificate).toEqual(stored.certificate);
+      // and the combined record parses as an archive record
+      const parsed = parseArchiveFiles("lax-42", { ...current.texts, ...harness.changes } as Record<string, string>);
+      expect(parsed.record).toMatchObject({ state: "draft", source: nextSource });
+    });
   });
 
   it("rejects a claimed metadata update that changes any other manifest field", async () => {
@@ -196,6 +232,42 @@ function loaded(): LoadedSubmission {
       registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"4".repeat(64)}`,
     },
   });
+  return {
+    snapshot: { branch: "main", sha: "a".repeat(40) },
+    texts,
+    files: parseArchiveFiles("lax-42", texts),
+    preconditions: fileDigests(texts),
+  };
+}
+
+/** A spec-2 record as the database stores it: the fixture payload in its
+ * recorded shape, with the registry addresses a published record carries. */
+function loadedSpec2(): LoadedSubmission {
+  const artifacts = spec2Artifacts("lax-42");
+  const payload = artifacts.buildOutput;
+  const published = {
+    ...payload,
+    capture: {
+      ...payload.capture,
+      registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${payload.capture.digest}`,
+      references: { ...payload.capture.references!, registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${payload.capture.references!.digest}` },
+    },
+    certificate: {
+      ...payload.certificate!,
+      bundle: { ...payload.certificate!.bundle, registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${payload.certificate!.bundle.digest}` },
+    },
+  };
+  published.inputs = { ...payload.inputs, manifest: { ...payload.inputs.manifest, title: "Original title", authors: [{ name: "Alice Example" }] } };
+  published.capture.sourceCommit = previousSource.commit;
+  const texts = initialFiles("lax-42", issue, alice, "2026-07-30T10:00:00Z");
+  texts["record.json"] = jsonFile({
+    specVersion: "1",
+    id: "lax-42",
+    state: "draft",
+    createdAt: "2026-07-30T10:00:00Z",
+    source: previousSource,
+  });
+  texts["build-output.json"] = jsonFile({ specVersion: "1", id: "lax-42", issue, ...recordedBuildOutput(published) });
   return {
     snapshot: { branch: "main", sha: "a".repeat(40) },
     texts,

@@ -15,11 +15,13 @@ import type { WorkflowRunRef } from "./workflow-comments.js";
 import { parsePublishedBuildOutputPayload } from "../submission-validation/artifact-schema.js";
 import type { BuildOutputPayload, SubmissionManifest, ValidationRequest } from "../submission-validation/contracts.js";
 import {
+  metadataCandidate,
   parseCurrentBuildOutput,
   parseMetadataResubmissionArtifact,
   presentationChanges,
   type ParsedMetadataResubmissionArtifact,
 } from "../submission-validation/metadata-resubmission.js";
+import { recordedBuildOutput } from "../submission-validation/recorded-shape.js";
 
 export type MetadataPublishResult =
   | { kind: "no-op" }
@@ -123,13 +125,15 @@ export class MetadataPublisher {
     let plan: MetadataPlan | undefined;
     try {
       const published = parseCurrentBuildOutput(current, artifact.previousSource);
-      const candidateValue = {
-        ...published.payload,
-        inputs: artifact.inputs,
-        capture: { ...published.payload.capture, sourceCommit: artifact.source.commit },
-      };
+      // the artifact's manifest is untrusted until parsed: it goes into the
+      // candidate as the stored record would carry it, and the published
+      // parser below is what judges it
       const payload = parsePublishedBuildOutputPayload(
-        candidateValue,
+        metadataCandidate(
+          published.payload,
+          { manifest: artifact.inputs.manifest as SubmissionManifest, abstract: artifact.inputs.abstract },
+          artifact.source.commit,
+        ),
         validationRequest(request, artifact.source),
         published.runtime,
       );
@@ -175,11 +179,13 @@ function constructMetadataChanges(
     createdAt: current.files.record.createdAt,
     source,
   };
+  // the record's own shape (recorded-shape.ts), as the submit publisher
+  // writes it: the one serialization rule for both specs
   const buildOutput = {
     specVersion: "1",
     id: request.id,
     issue: current.files.buildOutput.issue,
-    ...payload,
+    ...recordedBuildOutput(payload),
   };
   const changes: ArchiveChanges = {
     "record.json": `${JSON.stringify(record, null, 2)}\n`,

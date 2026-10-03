@@ -24,6 +24,7 @@ import type {
 } from "./contracts.js";
 import { environment as environmentById } from "./environments.js";
 import { FindingCollector } from "./findings.js";
+import { recordedBuildOutput } from "./recorded-shape.js";
 import { fetchGitCommits } from "./source/fetch.js";
 import { validateManifest } from "./validators/manifest.js";
 
@@ -170,13 +171,8 @@ export function classifyFetchedMetadataResubmission(
   // Parse the exact record we intend the metadata publisher to construct.
   // This catches any current-schema incompatibility before an artifact can
   // claim the fast path, while the publisher repeats the same parse later.
-  const candidate = {
-    ...published.payload,
-    inputs: { manifest: nextManifest, abstract: nextAbstract },
-    capture: { ...published.payload.capture, sourceCommit: source.commit },
-  };
   parsePublishedBuildOutputPayload(
-    candidate,
+    metadataCandidate(published.payload, { manifest: nextManifest, abstract: nextAbstract }, source.commit),
     validationRequest(request.id, source, request.issue, request.archiveSha),
     published.runtime,
   );
@@ -274,7 +270,30 @@ export function parseMetadataResubmissionArtifact(
   };
 }
 
-/** Strictly parse the current record's reusable build payload. */
+/**
+ * The stored record a metadata resubmission writes: the published payload
+ * with the new presentation inputs and the new source commit, in the
+ * record's own shape (recorded-shape.ts) — the one serialization rule, so a
+ * spec-2 record (telescopes only, no pins, a `certificate` when it has
+ * proofs) takes the fast path exactly as a spec-1 one does, and the strict
+ * published parser reads it back as it reads every record.
+ */
+export function metadataCandidate(
+  published: BuildOutputPayload,
+  inputs: { manifest: SubmissionManifest; abstract: string },
+  sourceCommit: string,
+): Record<string, unknown> {
+  return recordedBuildOutput({
+    ...published,
+    inputs,
+    capture: { ...published.capture, sourceCommit },
+  });
+}
+
+/** Strictly parse the current record's reusable build payload. The archive
+ * envelope (`specVersion`, `id`, `issue`) is stripped; the rest is whatever
+ * the record's shape stores — `recordedBuildOutput`'s keys, which the
+ * published parser holds to their spec. */
 export function parseCurrentBuildOutput(
   current: LoadedSubmission,
   source: SourceLocation,
@@ -291,6 +310,7 @@ export function parseCurrentBuildOutput(
     "proofs",
     "capture",
     ...(output.paper === undefined ? [] : ["paper"]),
+    ...(output.certificate === undefined ? [] : ["certificate"]),
   ];
   requireExactKeys(output, expectedKeys, "published build-output.json");
   if (!isObject(output.inputs) || !isObject(output.inputs.manifest)) {
