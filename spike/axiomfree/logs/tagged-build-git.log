@@ -1,0 +1,11 @@
+## 2026-10-03T21:33:40+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake build ConceptsTagged ProofsTagged ChallengeTagged SolutionTagged
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    2.26s] ✔ [627/635] Built LaxCore (1.3s)
+[    2.26s] ⚠ [632/635] Replayed ChallengeTagged
+[    2.26s] warning: ChallengeTagged.lean:3:8: declaration uses `sorry`
+[    2.26s] warning: ChallengeTagged.lean:5:8: declaration uses `sorry`
+[    2.27s] Build completed successfully (635 jobs).
+## exit=0 wall=2.34s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.32; Maximum resident set size (kbytes): 1571740;
+## df after: /dev/sda1       450G  390G   38G  92% /

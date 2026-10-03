@@ -280,3 +280,199 @@ project whose manifest pins a different toolchain were not exercised. The
 docker variants that pass are reported, not vetted: lifting seccomp,
 AppArmor and masked paths changes what the container sandbox guarantees,
 and that trade was not analysed.
+
+## Stage 0 confirmations (2026-10-03, evening)
+
+The "remaining half-day" of stage 0 in `axiomfree-plan.md`: decision 7
+(header-less files) end to end through the comparator, and decision 4 (the
+`@[lax_statement]` tag attribute read as data by a core-only inspector with
+initializers disabled). Same box, same toolchain and mathlib as above; every
+command run from `project/` with `PATH=$HOME/.elan/bin:$PATH` through
+`scripts/run-timed.sh`, logs in `logs/<tag>.log` + `.time`. New material:
+`project/*Plain*.lean`, `project/*Tagged*.lean`, `project/NegTagged*.lean`,
+`project/comparator-plain*.json`, `project/comparator-tagged.json`, the
+scratch package `laxcore/` (one module, `import Lean` only), the core-only
+reader `tagreader/` (`Main.lean`, never imports `LaxCore`), the driver
+`scripts/tagreader.sh`, and `lakefile-stage0-libs.toml` (what was appended
+to `project/lakefile.toml`, including the `LaxCore` path require).
+
+### 1. Header-less Challenge/Solution — **GO**
+
+Files: `ConceptsPlain.lean` (`import Mathlib.Data.Nat.Prime.Defs`, two
+`def X : Prop := …`, nothing else), `ProofsPlain.lean` (hypothesis-style
+`theorem pf (h : ConceptsPlain.ExistsPrimeDivisor) :
+ConceptsPlain.InfinitelyManyPrimes`), `ChallengePlain.lean` (imports
+`ConceptsPlain` only, `theorem CertPlain.pf (h : …) : … := sorry`),
+`SolutionPlain.lean` (imports `ProofsPlain`, bodies `ProofsPlain.pf h`),
+`SolutionPlainDefeq.lean` (the unfolded-conclusion negative), and
+`ChallengePlainOfModule.lean`/`SolutionPlainOfModule.lean` (header-less
+certificate over the *`module`-style* `Concepts`/`Proofs` pair). No
+`module`, no `public`, no `@[expose]`, no attributes anywhere.
+
+| tag | command | result |
+|---|---|---|
+| `plain-build` | `lake build ConceptsPlain ProofsPlain ChallengePlain SolutionPlain SolutionPlainDefeq ChallengePlainOfModule SolutionPlainOfModule` | exit 0, 5.54 s, 641 jobs |
+| `plain-comparator-cold` | `lake comparator --config comparator-plain.json` | **exit 0, 8.54 s**, `Your solution is okay!` (build Challenge ≈1.2 s, export ≈1.2 s, build Solution ≈1.2 s, export ≈2.4 s, kernel ≈1.5 s) |
+| `plain-comparator-warm` | same | exit 0, 8.39 s |
+| `plain-neg-defeq` | `lake comparator --config comparator-plain-defeq.json` | **exit 1, 6.76 s**, `error: Challenge and solution theorem statement do not match: 'CertPlain.pf'` |
+| `plain-of-module-comparator` | `lake comparator --config comparator-plain-of-module.json` | exit 0, 8.30 s — a header-less Challenge/Solution over `module`-style concept and proof files is accepted |
+
+Nothing surprising: the plain `def X : Prop` is unfoldable from the
+header-less proof package (the `h (n.factorial + 1) …` application
+elaborates), the comparator's statement comparison and cone export behave
+exactly as with the `module` pair, and the run is ~1.5 s faster than the
+`module` pair measured earlier (8.4 s vs 10.0 s warm) — within single-run
+noise, not a claim. Decision 7 is confirmed end to end; the "`@[expose]
+public def` or `public abbrev`" blocker in the Verdict above applies only
+to `module` files and is moot under decision 7.
+
+### 2. The attribute read as data — **GO**, with one plan sentence to amend
+
+`laxcore/LaxCore.lean` (built in 6.08 s, `laxcore-build`):
+
+```lean
+initialize laxStatementAttr : TagAttribute ←
+  registerTagAttribute `lax_statement "…" (validate := validateStatement)
+```
+
+inside `namespace LaxCore`, where `validateStatement : Name → AttrM Unit`
+rejects, in this order, `isPrivateName decl`, a non-`defnInfo`, and a
+stored type (`consumeMData`) that is not literally `.sort .zero` — a
+`.forallE` gets the "has binders" message, anything else "has type `T`". A
+second, spike-only tag `lax_statement_unchecked` (no hook) exists to see
+what the exporter does with a `private` tagged def, since the hook never
+lets one through.
+
+Positives (`tagged-build`, 6.13 s): `ConceptsTagged.lean` (header-less,
+`import LaxCore`, two tagged statements + untagged `def Auxiliary : Prop`),
+`ConceptsTaggedPrivate.lean` (tagged `Visible`, unchecked-tagged
+`VisibleUnchecked` and `private Hidden`), `ProofsTagged`/`ChallengeTagged`/
+`SolutionTagged`. Negatives, each a one-line file, each `lake build <lib>`
+exit 1 in 2.2–2.7 s (`neg-tagged-*`):
+
+| file | message |
+|---|---|
+| `@[lax_statement] theorem t : True` | `@[lax_statement]: `NegTaggedTheorem.t` is a theorem; a statement must be a `def` of type `Prop`` |
+| `@[lax_statement] def P (n : Nat) : Prop` | `… `NegTaggedBinder.P` has binders; a statement takes no parameters (quantify inside with `∀`)` |
+| `@[lax_statement] def T : Type` | `… `NegTaggedType.T` has type `Type`; a statement must have type `Prop`` |
+| `@[lax_statement] private def H : Prop` | `… `_private.NegTaggedPrivate.0.NegTaggedPrivate.H` is private; a statement must be visible to the packages that depend on it` |
+| `attribute [lax_statement] ConceptsTagged.Auxiliary` in another module | Lean's own: `Cannot add attribute `[lax_statement]` to declaration `ConceptsTagged.Auxiliary` because it is in an imported module` |
+
+**The reading.** `tagreader/Main.lean` imports `Lean` only, and loads with
+the inspector's exact call:
+
+```lean
+initSearchPath (← findSysroot)
+let env ← importModules imports {} (trustLevel := 1024) (loadExts := false)
+for i in [0:env.header.moduleNames.size] do
+  for (extName, es) in env.header.moduleData[i]!.entries do
+    if (privateToUserName? extName).getD extName == `LaxCore.laxStatementAttr then
+      for e in es do
+        let decl := (unsafeCast e : Name)   -- the entry type of a TagAttribute is Name
+        …
+```
+
+run as `scripts/tagreader.sh LaxCore.laxStatementAttr ConceptsTagged
+ConceptsTaggedPrivate` (the script only sets `LEAN_PATH` from `lake env
+printenv LEAN_PATH`; no lake process is involved in the read):
+
+| tag | result |
+|---|---|
+| `tagreader-concepts` | exit 0, 2.06 s, 1.56 GB RSS, 2897 modules loaded (the mathlib closure); `ConceptsTagged` carries the extension **`LaxCore.laxStatementAttr` (2 entries)**; listed: `ConceptsTagged.InfinitelyManyPrimes`, `ConceptsTagged.ExistsPrimeDivisor`, `ConceptsTaggedPrivate.Visible`, each `kind=def isProp=true private=false levelParams=[]`; `Auxiliary` absent; **3 tagged declaration(s)** |
+| `tagreader-unchecked` | same for `LaxCore.laxStatementUncheckedAttr`: `ConceptsTaggedPrivate.VisibleUnchecked` **and** `_private.ConceptsTaggedPrivate.0.ConceptsTaggedPrivate.Hidden [… private=true]` — the private def **is** in the entries |
+
+Facts the next stages must know:
+
+- **Extension name = the `initialize` declaration's name**, not the
+  attribute's: `registerTagAttribute` passes `ref := by exact decl_name%`
+  as the persistent extension's `name`, so the entries sit under
+  `LaxCore.laxStatementAttr` (the attribute `lax_statement` names nothing
+  in the olean). Renaming or namespacing the initializer in the real
+  `lax-core` changes the key; a `private initialize` would mangle it to
+  `_private.LaxCore.0.LaxCore.laxStatementAttr`, which the inspector's
+  `(privateToUserName? extName).getD extName` comparison already absorbs.
+  The real `lax-core` should fix the initializer name as part of its
+  interface and the inspector should pin it as a constant.
+- **Entry type is `Name`**: `TagAttribute.ext : PersistentEnvExtension Name
+  Name NameSet`, `exportEntriesFnEx` writes an `Array Name` sorted by
+  `Name.quickLt` per module. The inspector cannot name
+  `LaxCore.laxStatementAttr` for a shape guard (it does not import
+  LaxCore); the guard goes on `Lean.TagAttribute`, whose `mk` is
+  `(attr : Lean.AttributeImpl) -> (ext : Lean.PersistentEnvExtension
+  Lean.Name Lean.Name Lean.NameSet) -> Lean.TagAttribute` under this
+  toolchain — that is what fixes the entry type.
+- **Loading flags**: `importModules imports {} (trustLevel := 1024)
+  (loadExts := false)` after `initSearchPath (← findSysroot)` with
+  `LEAN_PATH` covering the package, its dependencies and LaxCore — the
+  inspector's current call, unchanged. `level` stays at its default
+  `.private`: a header-less module has one `.olean` and it is written at
+  that level. LaxCore's olean is loaded as data (it is in the import
+  closure) and its `initialize` never runs; the attribute is not
+  registered in the reader process and nothing needs it to be.
+- **Private declarations: the olean filter is a module-system feature.**
+  `writeModule` emits one `.olean` for a non-`module` file via
+  `mkModuleData env` at level `.private`, and `registerTagAttribute`'s
+  `exportEntriesFnEx` returns `{ exported := filtered, server := filtered,
+  private := all }` — so for the header-less files decision 7 prescribes,
+  a `private` tagged def **does** reach the entries (measured above). The
+  plan's decision-4 sentence "Lean … does not export it for private
+  declarations" is true only of the `.olean`/`.olean.server` parts of
+  `module` files and should be reworded. Consequence: the hook is the
+  author-time guard, and the inspector re-judges `private` from the name
+  (`isPrivateName`, which the reader already reports) — exactly the "never
+  trusts the hook" rule, now load-bearing for this case too. Not measured
+  for a `module` concept file, because one cannot exist over this LaxCore:
+  `lake build ConceptsTaggedModule` → `error: cannot import non-`module`
+  LaxCore from `module`` (`tagged-module-build`, exit 1). A header-less
+  LaxCore is therefore also a hard "no module headers" for every spec-2
+  package, which is decision 7 restated.
+- **`lake update LaxCore` runs every package's post-update hook**: adding
+  the require cost 16.89 s because mathlib's `cache get` ran again (no
+  files to download; `lake-update-laxcore`). Only the LaxCore entry changed
+  in the manifest (diffed). Stage 1's warm-workspace seeding should expect
+  the hook on every manifest change.
+
+**The comparator over tagged statements.** `comparator-tagged.json` names
+`CertTagged.pa`/`CertTagged.pf` over `ChallengeTagged`/`SolutionTagged`:
+
+| tag | command | result |
+|---|---|---|
+| `tagged-comparator` | `lake comparator --config comparator-tagged.json` (sandboxed, LaxCore as `path = "../laxcore"`) | **exit 1, 0.13 s**: `error: LaxCore: package directory not found: …/project/../laxcore`, `error: Child exited with 1` — fails in "Resolving dependencies" |
+| `tagged-comparator-nosandbox` | `… --inadvisably-no-sandbox` | **exit 0, 9.15 s**, `Your solution is okay!` |
+| `tagged-comparator-git-sandboxed` | require switched to `git = "file:///…/scratchpad/laxcore-git"`, `rev = a7fb4b3…` (`lake update LaxCore` 8.45 s, materialized into `.lake/packages/LaxCore`; `tagged-build-git` 2.34 s), then `lake comparator --config comparator-tagged.json` sandboxed | **exit 0, 9.57 s**, `Your solution is okay!` |
+
+So the tag attribute and its hook are invisible to the comparator, as they
+should be (LaxCore is not in the certificate's cone; the export list is the
+same 34 primitives + 2 theorems as for the plain pair). The exit-1 run is a
+sandbox fact, not a comparator one: `Lake/CLI/Check.lean` binds `/`
+read-only, covers `/home`, `/root`, `/run/user`, `/tmp` with tmpfs, then
+binds back only `projectDir`, the toolchain sysroot and Lake's home. A path
+require outside `projectDir` (anything under `/home` that is not the
+project) does not exist inside the sandbox; a git require materialized
+under `projectDir/.lake/packages/` does. For stage 3 this costs nothing
+(container B runs `--inadvisably-no-sandbox`; the container is the
+sandbox), but for stage 4's `lax certify --run` on an author's machine the
+generated project must reference LaxCore and the concept packages as git
+requires (or path requires *inside* the project directory), and `~/.lax/warm`
+is likewise invisible to the sandboxed run. After the measurement the
+lakefile and manifest were restored to the path require (copies of both
+variants in `logs/lakefile-*-require.toml.txt`,
+`logs/lake-manifest-*-require.json.txt`), `.lake/packages/LaxCore` removed,
+and `lake build ConceptsTagged SolutionTagged` re-run (exit 0,
+`tagged-build-restored`); the scratch git repo lived in the session
+scratchpad and is not part of the spike.
+
+### Verdicts
+
+1. Header-less Challenge/Solution: **GO** — accepted in 8.4–8.5 s, the
+   unfolded-conclusion negative rejected with the same message as the
+   `module` pair, and a header-less certificate over `module`-style
+   concepts accepted too.
+2. Attribute as data: **GO** — a core-only executable with `loadExts :=
+   false` lists the tagged names from `ModuleData.entries` under
+   `LaxCore.laxStatementAttr` (entries are `Name`), the hook's five
+   negatives fail with the intended messages, and the comparator accepts
+   the tagged statements (9.2 s no-sandbox, 9.6 s sandboxed with a git
+   require). One correction to the plan: for header-less files a `private`
+   tagged def *is* exported, so the inspector's own `private` check, not
+   Lean's olean filter, is what enforces that rule.

@@ -1,0 +1,6 @@
+name = "LaxCore"
+version = "0.1.0"
+defaultTargets = ["LaxCore"]
+
+[[lean_lib]]
+name = "LaxCore"

@@ -1,0 +1,20 @@
+## 2026-10-03T21:33:06+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator-tagged.json --inadvisably-no-sandbox
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    0.03s] WARNING: Sandbox disabled, this run is not trustworthy.
+[    0.95s] Resolving dependencies
+[    0.95s] Building ChallengeTagged
+[    2.13s] ⚠ [539/540] Replayed ChallengeTagged
+[    2.13s] warning: ChallengeTagged.lean:3:8: declaration uses `sorry`
+[    2.13s] warning: ChallengeTagged.lean:5:8: declaration uses `sorry`
+[    2.13s] Build completed successfully (540 jobs).
+[    3.70s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, CertTagged.pa, CertTagged.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from ChallengeTagged
+[    3.70s] Building SolutionTagged
+[    4.87s] Build completed successfully (631 jobs).
+[    7.57s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, CertTagged.pa, CertTagged.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from SolutionTagged
+[    7.57s] Running Lean default kernel on solution
+[    9.11s] Lean default kernel accepts the solution
+[    9.11s] Your solution is okay!
+## exit=0 wall=9.15s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:09.14; Maximum resident set size (kbytes): 1939588;
+## df after: /dev/sda1       450G  390G   38G  92% /

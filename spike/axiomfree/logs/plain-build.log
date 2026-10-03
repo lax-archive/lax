@@ -1,0 +1,18 @@
+## 2026-10-03T21:29:13+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake build ConceptsPlain ProofsPlain ChallengePlain SolutionPlain SolutionPlainDefeq ChallengePlainOfModule SolutionPlainOfModule
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    2.86s] ✔ [628/641] Built ConceptsPlain (1.8s)
+[    2.86s] ⚠ [630/641] Built ChallengePlainOfModule (1.7s)
+[    2.86s] warning: ChallengePlainOfModule.lean:4:8: declaration uses `sorry`
+[    2.86s] warning: ChallengePlainOfModule.lean:6:8: declaration uses `sorry`
+[    2.86s] ✔ [632/641] Built SolutionPlainOfModule (1.7s)
+[    4.06s] ⚠ [634/641] Built ChallengePlain (1.2s)
+[    4.06s] warning: ChallengePlain.lean:4:8: declaration uses `sorry`
+[    4.06s] warning: ChallengePlain.lean:6:8: declaration uses `sorry`
+[    4.16s] ✔ [636/641] Built ProofsPlain (1.3s)
+[    5.37s] ✔ [638/641] Built SolutionPlainDefeq (1.2s)
+[    5.47s] ✔ [640/641] Built SolutionPlain (1.2s)
+[    5.47s] Build completed successfully (641 jobs).
+## exit=0 wall=5.54s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:05.53; Maximum resident set size (kbytes): 1521800;
+## df after: /dev/sda1       450G  390G   38G  92% /

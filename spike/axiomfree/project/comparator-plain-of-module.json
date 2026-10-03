@@ -1,0 +1,7 @@
+{
+  "challenge_module": "ChallengePlainOfModule",
+  "solution_module": "SolutionPlainOfModule",
+  "theorem_names": ["CertMixed.pa", "CertMixed.pf"],
+  "definition_names": [],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

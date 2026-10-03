@@ -1,0 +1,17 @@
+## 2026-10-03T21:29:41+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator-plain-defeq.json
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    0.96s] Resolving dependencies
+[    0.96s] Building ChallengePlain
+[    2.03s] ⚠ [537/538] Replayed ChallengePlain
+[    2.03s] warning: ChallengePlain.lean:4:8: declaration uses `sorry`
+[    2.03s] warning: ChallengePlain.lean:6:8: declaration uses `sorry`
+[    2.03s] Build completed successfully (538 jobs).
+[    3.24s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, CertPlain.pa, CertPlain.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from ChallengePlain
+[    3.24s] Building SolutionPlainDefeq
+[    4.42s] Build completed successfully (629 jobs).
+[    6.72s] error: Challenge and solution theorem statement do not match: 'CertPlain.pf'
+[    6.72s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, CertPlain.pa, CertPlain.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from SolutionPlainDefeq
+## exit=1 wall=6.76s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:06.75; Maximum resident set size (kbytes): 134116;
+## df after: /dev/sda1       450G  390G   38G  92% /

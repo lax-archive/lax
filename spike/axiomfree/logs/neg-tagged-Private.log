@@ -1,0 +1,12 @@
+## 2026-10-03T21:31:25+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake build NegTaggedPrivate
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    2.17s] ✖ [4/5] Building NegTaggedPrivate (1.2s)
+[    2.17s] trace: .> LEAN_PATH=/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Cli/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/batteries/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Qq/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/aesop/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/proofwidgets/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/importGraph/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/LeanSearchClient/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/plausible/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/mathlib/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/laxcore/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean /home/jan/git/lax/spike/axiomfree/project/NegTaggedPrivate.lean -o /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/NegTaggedPrivate.olean -i /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/NegTaggedPrivate.ilean -c /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/NegTaggedPrivate.c --setup /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/NegTaggedPrivate.setup.json --json
+[    2.17s] error: NegTaggedPrivate.lean:2:2: @[lax_statement]: `_private.NegTaggedPrivate.0.NegTaggedPrivate.H` is private; a statement must be visible to the packages that depend on it
+[    2.17s] Some required targets logged failures:
+[    2.17s] - NegTaggedPrivate
+[    2.17s] error: build failed
+## exit=1 wall=2.24s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.23; Maximum resident set size (kbytes): 1552340;
+## df after: /dev/sda1       450G  390G   38G  92% /

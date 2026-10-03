@@ -1,0 +1,7 @@
+{
+  "challenge_module": "ChallengeTagged",
+  "solution_module": "SolutionTagged",
+  "theorem_names": ["CertTagged.pa", "CertTagged.pf"],
+  "definition_names": [],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

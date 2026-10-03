@@ -1,0 +1,6 @@
+name = "tagreader"
+defaultTargets = ["tagreader"]
+
+[[lean_exe]]
+name = "tagreader"
+root = "Main"

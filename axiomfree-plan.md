@@ -30,8 +30,11 @@ spec.md: the spec-2 text is a draft Jan reconciles.
    attribute with a validation hook; one commit serves every environment
    (it imports only `Lean`); the row pins it like mathlib. Statement-hood
    is declared at the definition site, where a reviewer reads it (Lean
-   refuses a tag attribute from another module and does not export it for
-   private declarations).
+   refuses a tag attribute from another module). The library's
+   `initialize laxStatementAttr` declaration name is interface: the
+   inspector reads the extension by that name (stage 0 confirmation 2).
+   A header-less file exports a tagged `private` definition too, so the
+   hook rejects `private` and the inspector re-judges it from the name.
 5. The judge is the toolchain's `lake comparator`, frozen with the
    environment. The certificate bundle is independent of which kernels
    ran: production runs the kernel set the environment's setting names
@@ -197,12 +200,17 @@ record depends on are trusted as today.
 
 ## Stages
 
-0. **Spike — done 2026-10-03** (`spike/axiomfree/REPORT.md`). Remaining
-   half-day: one comparator run with header-less Challenge/Solution files
-   (plain imports) to confirm decision 7 end to end, and a ten-line
-   scratch `LaxCore` to confirm the inspector can read the tag's exported
-   entries with initializers disabled. GO/NO-GO for the attribute-as-data
-   reading only; everything else is already measured.
+0. **Spike — done 2026-10-03**, confirmations landed the same evening
+   (`spike/axiomfree/REPORT.md`, "Stage 0 confirmations"): header-less
+   Challenge/Solution pairs pass and the unfolded negative fails (8.5 s);
+   a core-only reader lists the tagged names from `ModuleData.entries`
+   with the inspector's own `importModules … (loadExts := false)` call.
+   Facts: the extension is named after the `initialize` declaration
+   (`LaxCore.laxStatementAttr`); a `module` file cannot import a
+   header-less library, so `LaxCore` is header-less like every spec-2
+   package; Lake's bwrap sandbox sees only the project directory, the
+   sysroot, and Lake's home, so a sandboxed `lax certify --run` needs git
+   requires or in-project path requires, never `~/.lax/warm`.
 1. **Libraries and the table.** `lax-archive/lax-core` (one module, the
    attribute with its hook, an example file whose negatives fail with the
    intended messages, CI under the toolchain); `pins.ts` URLs for CSLib

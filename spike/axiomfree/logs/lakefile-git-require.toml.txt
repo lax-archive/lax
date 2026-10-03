@@ -80,7 +80,8 @@ name = "SolutionPlainOfModule"
 # --- stage-0: the scratch LaxCore (decision 4) as a path require, plus the tagged files ---
 [[require]]
 name = "LaxCore"
-path = "../laxcore"
+git = "file:///tmp/claude-1000/-home-jan-git-lax/fdc69cb1-22d9-4063-85b5-2a3d52852bd4/scratchpad/laxcore-git"
+rev = "a7fb4b35b5ce75fca5c1161e510fae06984b71f5"
 
 [[lean_lib]]
 name = "ConceptsTagged"

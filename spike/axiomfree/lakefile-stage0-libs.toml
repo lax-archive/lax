@@ -1,0 +1,58 @@
+# --- appended for the stage-0 confirmations (header-less files, LaxCore tag) ---
+[[lean_lib]]
+name = "ConceptsPlain"
+
+[[lean_lib]]
+name = "ProofsPlain"
+
+[[lean_lib]]
+name = "ChallengePlain"
+
+[[lean_lib]]
+name = "SolutionPlain"
+
+[[lean_lib]]
+name = "SolutionPlainDefeq"
+
+[[lean_lib]]
+name = "ChallengePlainOfModule"
+
+[[lean_lib]]
+name = "SolutionPlainOfModule"
+# --- stage-0: the scratch LaxCore (decision 4) as a path require, plus the tagged files ---
+[[require]]
+name = "LaxCore"
+path = "../laxcore"
+
+[[lean_lib]]
+name = "ConceptsTagged"
+
+[[lean_lib]]
+name = "ConceptsTaggedPrivate"
+
+[[lean_lib]]
+name = "ConceptsTaggedModule"
+
+[[lean_lib]]
+name = "ProofsTagged"
+
+[[lean_lib]]
+name = "ChallengeTagged"
+
+[[lean_lib]]
+name = "SolutionTagged"
+
+[[lean_lib]]
+name = "NegTaggedTheorem"
+
+[[lean_lib]]
+name = "NegTaggedBinder"
+
+[[lean_lib]]
+name = "NegTaggedType"
+
+[[lean_lib]]
+name = "NegTaggedPrivate"
+
+[[lean_lib]]
+name = "NegTaggedImported"

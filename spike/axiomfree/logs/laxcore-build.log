@@ -1,0 +1,10 @@
+## 2026-10-03T21:30:01+02:00 cwd=/home/jan/git/lax/spike/axiomfree/laxcore
+## cmd: lake build
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    0.03s] info: LaxCore: no previous manifest, creating one from scratch
+[    0.03s] info: toolchain not updated; already up-to-date
+[    6.04s] ✔ [2/3] Built LaxCore (5.0s)
+[    6.04s] Build completed successfully (3 jobs).
+## exit=0 wall=6.08s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:06.07; Maximum resident set size (kbytes): 1564564;
+## df after: /dev/sda1       450G  390G   38G  92% /

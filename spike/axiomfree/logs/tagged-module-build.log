@@ -1,0 +1,12 @@
+## 2026-10-03T21:31:17+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake build ConceptsTaggedModule
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    1.35s] ✖ [4/5] Building ConceptsTaggedModule (465ms)
+[    1.35s] trace: .> LEAN_PATH=/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Cli/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/batteries/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Qq/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/aesop/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/proofwidgets/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/importGraph/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/LeanSearchClient/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/plausible/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/mathlib/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/laxcore/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean /home/jan/git/lax/spike/axiomfree/project/ConceptsTaggedModule.lean -o /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/ConceptsTaggedModule.olean -i /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/ConceptsTaggedModule.ilean -c /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/ConceptsTaggedModule.c --setup /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/ConceptsTaggedModule.setup.json --json
+[    1.35s] error: ConceptsTaggedModule.lean:1:0: cannot import non-`module` LaxCore from `module`
+[    1.35s] Some required targets logged failures:
+[    1.35s] - ConceptsTaggedModule
+[    1.36s] error: build failed
+## exit=1 wall=1.43s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.41; Maximum resident set size (kbytes): 820208;
+## df after: /dev/sda1       450G  390G   38G  92% /

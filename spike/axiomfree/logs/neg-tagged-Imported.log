@@ -1,0 +1,12 @@
+## 2026-10-03T21:31:28+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake build NegTaggedImported
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    2.66s] ✖ [539/540] Building NegTaggedImported (1.5s)
+[    2.66s] trace: .> LEAN_PATH=/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Cli/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/batteries/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Qq/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/aesop/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/proofwidgets/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/importGraph/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/LeanSearchClient/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/plausible/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/mathlib/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/laxcore/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean /home/jan/git/lax/spike/axiomfree/project/NegTaggedImported.lean -o /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/NegTaggedImported.olean -i /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/NegTaggedImported.ilean -c /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/NegTaggedImported.c --setup /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/NegTaggedImported.setup.json --json
+[    2.66s] error: NegTaggedImported.lean:3:11: Cannot add attribute `[lax_statement]` to declaration `ConceptsTagged.Auxiliary` because it is in an imported module
+[    2.66s] Some required targets logged failures:
+[    2.66s] - NegTaggedImported
+[    2.66s] error: build failed
+## exit=1 wall=2.73s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.72; Maximum resident set size (kbytes): 1907960;
+## df after: /dev/sda1       450G  390G   38G  92% /

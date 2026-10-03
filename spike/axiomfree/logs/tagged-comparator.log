@@ -1,0 +1,9 @@
+## 2026-10-03T21:31:55+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator-tagged.json
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    0.09s] error: LaxCore: package directory not found: /home/jan/git/lax/spike/axiomfree/project/../laxcore
+[    0.09s] error: Child exited with 1
+[    0.09s] Resolving dependencies
+## exit=1 wall=0.13s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.12; Maximum resident set size (kbytes): 105804;
+## df after: /dev/sda1       450G  390G   38G  92% /

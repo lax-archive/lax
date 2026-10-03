@@ -1,0 +1,12 @@
+## 2026-10-03T21:30:45+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake update LaxCore
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    0.17s] info: toolchain not updated; already up-to-date
+[    2.34s] info: mathlib: running post-update hooks
+[   16.80s] Current branch: HEAD
+[   16.80s] Using cache from origin: (some leanprover-community/mathlib4)
+[   16.80s] No files to download
+[   16.80s] Already decompressed 8943 file(s)
+## exit=0 wall=16.89s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:16.88; Maximum resident set size (kbytes): 865204;
+## df after: /dev/sda1       450G  390G   38G  92% /

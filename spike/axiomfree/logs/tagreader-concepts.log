@@ -1,0 +1,29 @@
+## 2026-10-03T21:31:50+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: ../scripts/tagreader.sh LaxCore.laxStatementAttr ConceptsTagged ConceptsTaggedPrivate
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    1.96s] loaded 2897 modules; looking for extension `LaxCore.laxStatementAttr`
+[    1.96s] -- extensions with entries in ConceptsTagged:
+[    1.96s]    Lean.declRangeExt  (3 entries)
+[    1.96s]    _private.Lean.Namespace.0.Lean.namespacesExt  (1 entries)
+[    1.96s]    Lean.docStringExt  (3 entries)
+[    1.96s]    _private.Lean.Util.CollectAxioms.0.Lean.exportedAxiomsExt  (3 entries)
+[    1.96s]    _private.Lean.Compiler.ModPkgExt.0.Lean.modPkgExt  (1 entries)
+[    1.96s]    _private.Lean.ExtraModUses.0.Lean.extraModUses  (4 entries)
+[    1.96s]    Lean.deprecatedModuleExt  (1 entries)
+[    1.96s]    LaxCore.laxStatementAttr  (2 entries)
+[    1.96s] -- extensions with entries in ConceptsTaggedPrivate:
+[    1.96s]    Lean.declRangeExt  (3 entries)
+[    1.96s]    _private.Lean.Namespace.0.Lean.namespacesExt  (1 entries)
+[    1.96s]    _private.Lean.Util.CollectAxioms.0.Lean.exportedAxiomsExt  (3 entries)
+[    1.96s]    _private.Lean.Compiler.ModPkgExt.0.Lean.modPkgExt  (1 entries)
+[    1.96s]    _private.Lean.ExtraModUses.0.Lean.extraModUses  (1 entries)
+[    1.96s]    Lean.deprecatedModuleExt  (1 entries)
+[    1.96s]    LaxCore.laxStatementAttr  (1 entries)
+[    1.96s]    LaxCore.laxStatementUncheckedAttr  (2 entries)
+[    1.96s] tagged: ConceptsTagged :: ConceptsTagged.InfinitelyManyPrimes  [kind=def isProp=true private=false levelParams=[]]
+[    1.96s] tagged: ConceptsTagged :: ConceptsTagged.ExistsPrimeDivisor  [kind=def isProp=true private=false levelParams=[]]
+[    1.96s] tagged: ConceptsTaggedPrivate :: ConceptsTaggedPrivate.Visible  [kind=def isProp=true private=false levelParams=[]]
+[    1.96s] 3 tagged declaration(s)
+## exit=0 wall=2.06s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.05; Maximum resident set size (kbytes): 1559192;
+## df after: /dev/sda1       450G  390G   38G  92% /

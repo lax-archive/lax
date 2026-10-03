@@ -1,0 +1,15 @@
+## 2026-10-03T21:33:31+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake update LaxCore
+## df before: /dev/sda1       450G  390G   38G  92% /
+[    0.03s] info: LaxCore: materializing new dependency
+[    0.04s] info: LaxCore: fetching revision 'a7fb4b35b5ce75fca5c1161e510fae06984b71f5' from file:///tmp/claude-1000/-home-jan-git-lax/fdc69cb1-22d9-4063-85b5-2a3d52852bd4/scratchpad/laxcore-git
+[    0.12s] info: LaxCore: checking out revision 'a7fb4b35b5ce75fca5c1161e510fae06984b71f5'
+[    0.31s] info: toolchain not updated; already up-to-date
+[    2.61s] info: mathlib: running post-update hooks
+[    8.36s] Current branch: HEAD
+[    8.36s] Using cache from origin: (some leanprover-community/mathlib4)
+[    8.36s] No files to download
+[    8.36s] Already decompressed 8943 file(s)
+## exit=0 wall=8.45s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:08.44; Maximum resident set size (kbytes): 865900;
+## df after: /dev/sda1       450G  390G   38G  92% /
