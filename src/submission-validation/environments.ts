@@ -80,8 +80,12 @@ interface EnvironmentRow {
   inspector: "inspector" | string;
   /** Measured overrides of DEFAULT_LIMITS (leanThreads, memoryBytes, and
    * compileLeanThreads — the admission script writes the first two; the
-   * compile count is lowered by hand when a `lake build` outgrows the cap). */
-  limits?: Partial<Pick<ValidationLimits, "leanThreads" | "compileLeanThreads" | "memoryBytes">>;
+   * compile count is lowered by hand when a `lake build` outgrows the cap;
+   * a spec-2 row names its certification kernel set here once the cone cost
+   * is measured). */
+  limits?: Partial<
+    Pick<ValidationLimits, "leanThreads" | "compileLeanThreads" | "memoryBytes" | "certificationKernels">
+  >;
   /** UTC date on which newly created Archive records stop being accepted.
    * Older records, including init stubs which submit later, remain valid. */
   closedAt?: string;

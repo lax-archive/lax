@@ -9,6 +9,7 @@ import type { CaptureManifest, ValidationReport } from "../../src/submission-val
 import { FindingCollector } from "../../src/submission-validation/findings.js";
 import {
   CAPTURE_FILENAME,
+  CERTIFICATE_FILENAME,
   GENERATED_BUILD_OUTPUT_FILENAME,
   PAPER_FILENAME,
   PAPER_WEB_FILENAME,
@@ -18,6 +19,8 @@ import {
   writeValidationOutputs,
 } from "../../src/submission-validation/outputs.js";
 import { webCompileProblem } from "../../src/submission-validation/paper/web.js";
+import { spec2TestEnvironment, withTestEnvironments } from "../support/environments.js";
+import { spec2Artifacts } from "../support/validation-artifacts.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -213,6 +216,43 @@ describe("submission validation outputs", () => {
     expect(() => writeValidationOutputs(directory, strayTar)).toThrow("a bundle without a web view");
   });
 
+  it("copies a recorded certificate bundle bound by its digest, stores the spec-2 shape, and refuses a mismatch", () => {
+    withTestEnvironments([spec2TestEnvironment()], () => {
+      const directory = temporaryDirectory();
+      fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+      const bundle = Buffer.from("certificate ustar stand-in");
+      const outcome = certificateOutcome(bundle);
+      writeValidationOutputs(directory, outcome);
+      expect(fs.readFileSync(path.join(directory, CERTIFICATE_FILENAME))).toEqual(bundle);
+      // the generated build output is the record's own shape, and the report embeds the same object
+      const generated = readJson(path.join(directory, GENERATED_BUILD_OUTPUT_FILENAME)) as Record<string, any>;
+      expect(generated.proofs[0]).not.toHaveProperty("conclusion");
+      expect(generated.capture).not.toHaveProperty("leanToolchain");
+      expect(generated.certificate.bundle).toEqual({ formatVersion: 1, digest: createHash("sha256").update(bundle).digest("hex") });
+      const written = readJson(path.join(directory, VALIDATION_REPORT_FILENAME)) as Record<string, any>;
+      expect(written.buildOutput).toEqual(generated);
+      expect(written).not.toHaveProperty("certificateBundlePath");
+      expect(written.capture.leanToolchain).toBe(outcome.runtime.leanToolchain);
+      // and the publisher's parser takes it back to the full payload
+      const parsed = parseSuccessfulValidationArtifacts(written, generated, outcome.request, outcome.runtime);
+      expect(parsed.buildOutput).toEqual(outcome.buildOutput);
+
+      resetValidationOutputs(directory);
+      expect(fs.existsSync(path.join(directory, CERTIFICATE_FILENAME))).toBe(false);
+
+      fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+      const tampered = certificateOutcome(bundle);
+      fs.writeFileSync(tampered.certificateBundlePath!, "other bytes");
+      expect(() => writeValidationOutputs(directory, tampered)).toThrow(
+        "the certificate bundle does not match the digest its build output records",
+      );
+      const { certificateBundlePath, ...withoutTar } = certificateOutcome(bundle);
+      expect(() => writeValidationOutputs(directory, withoutTar)).toThrow("recorded a certificate without its bundle");
+      const strayTar: ValidationOutcome = { ...successfulReport(), certificateBundlePath };
+      expect(() => writeValidationOutputs(directory, strayTar)).toThrow("a bundle without a certificate");
+    });
+  });
+
   // The seam the lax-65 round trip fell through: a validation that SUCCEEDS
   // writes warnings whose text came from a transcript or a submission's own
   // file names, and the trusted publisher re-parses that report against a
@@ -403,6 +443,17 @@ function webOutcome(bundle: Buffer): ValidationOutcome {
     bundle: { digest: createHash("sha256").update(bundle).digest("hex"), bytes: bundle.length },
   };
   return { ...outcome, paperWebPath: bundlePath };
+}
+
+/** A spec-2 outcome: the fixture artifacts of test/support, the bundle's
+ * digest set to `bundle`, and the tar on disk where the pipeline leaves it. */
+function certificateOutcome(bundle: Buffer): ValidationOutcome {
+  const artifacts = spec2Artifacts();
+  const bundlePath = path.join(temporaryDirectory(), "certificate.tar");
+  fs.writeFileSync(bundlePath, bundle);
+  const digest = createHash("sha256").update(bundle).digest("hex");
+  artifacts.report.buildOutput.certificate!.bundle.digest = digest;
+  return { ...artifacts.report, certificateBundlePath: bundlePath };
 }
 
 function baseReport(): Omit<ValidationReport, "ok"> {

@@ -450,6 +450,7 @@ export async function publishSubmit(): Promise<void> {
       workflowRun(),
       artifacts.buildOutput.paper === undefined ? undefined : requiredEnv("VALIDATION_PAPER_PATH"),
       artifacts.buildOutput.paper?.web === undefined ? undefined : requiredEnv("VALIDATION_PAPER_WEB_PATH"),
+      artifacts.buildOutput.certificate === undefined ? undefined : requiredEnv("VALIDATION_CERTIFICATE_PATH"),
     );
     if (result.kind === "no-op") return;
     archiveCommit = result.archiveCommit;
@@ -724,6 +725,28 @@ function readSuccessfulArtifacts(request: PublishRequest): SuccessfulValidationA
   }
   if (web === undefined && webStat !== undefined) {
     throw new ValidationError("validation artifact carries a paper-web.tar its build output does not record");
+  }
+  // The certificate bundle: present exactly when the build output records a
+  // certificate, hashed against the recorded bundle digest, like the paper.
+  const certificatePath = requiredEnv("VALIDATION_CERTIFICATE_PATH");
+  const certificate = artifacts.buildOutput.certificate;
+  let certificateStat: fs.Stats | undefined;
+  try {
+    certificateStat = fs.lstatSync(certificatePath);
+  } catch {
+    certificateStat = undefined;
+  }
+  if (certificate === undefined && certificateStat !== undefined) {
+    throw new ValidationError("validation artifact carries a certificate.tar its build output does not record");
+  }
+  if (certificate !== undefined) {
+    if (certificateStat === undefined) throw new ValidationError("validation certificate bundle is missing");
+    if (!certificateStat.isFile() || certificateStat.size <= 0 || certificateStat.size > 16 * 1024 * 1024) {
+      throw new ValidationError("validation certificate bundle must be a non-empty regular file no larger than 16 MiB");
+    }
+    if (sha256File(certificatePath) !== certificate.bundle.digest) {
+      throw new ValidationError("validation certificate bundle digest does not match its build output");
+    }
   }
   if (paper === undefined) {
     if (paperStat !== undefined) throw new ValidationError("validation artifact carries a paper.pdf its build output does not record");

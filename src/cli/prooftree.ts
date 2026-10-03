@@ -12,6 +12,7 @@ import {
 import { leanFacts } from "../submission-validation/lean-facts.js";
 import { lakeBinary, lakePathEnv, leanBinary } from "../submission-validation/host/leanenv.js";
 import { mathlibUrl } from "../submission-validation/pins.js";
+import { expandRecordedBuildOutput } from "../submission-validation/recorded-shape.js";
 import { isObject, normalizeSubmissionId } from "../shared/validation.js";
 import { laxHome } from "./auth.js";
 import { databaseDirectory, tryRefreshDatabase } from "./database.js";
@@ -394,8 +395,11 @@ function loadArchive(directory: string): Map<string, ArchiveSubmission> {
     if (!entry.isDirectory() || !/^lax-[1-9][0-9]*$/u.test(entry.name)) continue;
     const record = readObject(path.join(directory, entry.name, "record.json"));
     if (record.id !== entry.name || (record.state !== "draft" && record.state !== "registered")) continue;
-    const output = readObject(path.join(directory, entry.name, "build-output.json"));
-    if (output.id !== entry.name) throw new Error(`${entry.name}/build-output.json has the wrong id`);
+    const stored = readObject(path.join(directory, entry.name, "build-output.json"));
+    if (stored.id !== entry.name) throw new Error(`${entry.name}/build-output.json has the wrong id`);
+    // a spec-2 record stores no conclusion, assumptions, or capture pins
+    // (recorded-shape.ts); read both shapes as the full one
+    const output = expandRecordedBuildOutput(stored, entry.name);
     const capture = parsePublishedCapture(output.capture);
     const environment = captureEnvironment(capture);
     const concepts = objectArray(output.concepts, `${entry.name} concepts`);
@@ -472,6 +476,7 @@ function compareSubmissionIds(left: string, right: string): number {
  * archive holds several; which ones this composer may load together is the
  * target submission's environment, decided in generateProofTree. */
 function captureEnvironment(capture: PublishedCapture): ArchiveEnvironment | undefined {
+  if (capture.leanToolchain === undefined || capture.mathlibCommit === undefined) return undefined;
   return environmentOfPins(capture.leanToolchain, capture.mathlibCommit);
 }
 

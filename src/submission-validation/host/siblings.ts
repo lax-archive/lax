@@ -3,14 +3,13 @@ import path from "node:path";
 import type { ArchiveSnapshot } from "../archive/snapshot.js";
 import {
   submissionIdForPackage,
+  type ArchiveSourceRecord,
   type GitRequire,
-  type PublishedCapture,
   type StaticResult,
   type ValidationRuntimeIdentity,
 } from "../contracts.js";
 import {
   type ArchiveEnvironment,
-  environmentOfPins,
   type PinnedLibrary,
   runtimeLibraries,
 } from "../environments.js";
@@ -146,7 +145,7 @@ function readSibling(
         `rev = "${record.source.commit}", subDir = "${subDir}"\`. ` +
         `To keep changing ${id} instead, make its checkout a new submission that supersedes it ` +
         `(fresh id, \`supersedes: ${id}\` in its manifest.yaml; see \`lax print spec\`, "Successors") and require that.` +
-        environmentNote(id, archive.capture(record), runtime),
+        environmentNote(id, record, archive, runtime),
     );
     return undefined;
   }
@@ -222,11 +221,9 @@ function readSibling(
 
 /** The record is in hand, so say now what Resolution would say next: a
  * dependency outside this environment cannot be cited at all. */
-function environmentNote(id: string, capture: PublishedCapture | undefined, runtime: ValidationRuntimeIdentity): string {
-  if (capture === undefined) return "";
-  if (capture.leanToolchain === runtime.leanToolchain && capture.mathlibCommit === runtime.mathlibCommit) return "";
-  const built = environmentOfPins(capture.leanToolchain, capture.mathlibCommit);
-  return ` Note: ${id} was built in environment ${built?.id ?? "unknown"}, not ${runtime.environment}; only submissions in one environment can cite one another.`;
+function environmentNote(id: string, record: ArchiveSourceRecord, archive: ArchiveSnapshot, runtime: ValidationRuntimeIdentity): string {
+  if (archive.capture(record) === undefined || archive.inEnvironment(record, runtime)) return "";
+  return ` Note: ${id} was built in environment ${archive.environmentOf(record)?.id ?? "unknown"}, not ${runtime.environment}; only submissions in one environment can cite one another.`;
 }
 
 /** The manifest `dir` of a sibling, relative to the requiring package. */

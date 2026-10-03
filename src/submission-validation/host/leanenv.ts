@@ -12,13 +12,15 @@ import os from "node:os";
 import path from "node:path";
 import type { ArchiveEnvironment } from "../environments.js";
 import { leanFacts } from "../lean-facts.js";
-import { run, type RunResult } from "./proc.js";
+import { run, runToFile, type RunResult } from "./proc.js";
 
 export interface LeanEnv {
   /** absolute path of leanchecker inside the pinned toolchain */
   leancheckerBin: string;
   /** run a binary with the composed LEAN_PATH from the given directory */
   exec: (bin: string, args: string[], cwd: string) => Promise<RunResult>;
+  /** the same, with stdout streamed to a file (the exporter's product) */
+  execToFile: (bin: string, args: string[], cwd: string, outFile: string) => Promise<RunResult>;
 }
 
 export function elanHome(): string {
@@ -89,6 +91,7 @@ export function hostLeanEnv(
   return {
     leancheckerBin: leancheckerBin(environment),
     exec: (bin, args, cwd) => run(bin, args, cwd, { env }),
+    execToFile: (bin, args, cwd, outFile) => runToFile(bin, args, cwd, outFile, { env }),
   };
 }
 

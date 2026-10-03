@@ -3,6 +3,7 @@ import path from "node:path";
 import { ArchiveSnapshot, fetchArchiveSnapshot } from "./archive/snapshot.js";
 import { materializeDependencyCaptures } from "./captures/materialize.js";
 import { capturePackage, describeLocalCapture, sealCapture } from "./captures/seal.js";
+import { certifyInContainer, type CertifyResult } from "./certify/phase.js";
 import { configuredRuntime, limitsFor, type ValidationLimits } from "./config.js";
 import type {
   PaperOutput,
@@ -27,7 +28,7 @@ import {
 } from "./failures.js";
 import { commitTimestamp, laxmarkDirectory } from "./host/paper.js";
 import { epoch, resolveRuntime, type ArchiveEnvironment, type RuntimeSource } from "./environments.js";
-import { warmDir } from "./host/warmstore.js";
+import { readWarmManifestPackages, warmDir } from "./host/warmstore.js";
 import { FindingCollector } from "./findings.js";
 import type { ValidationOutcome } from "./outputs.js";
 import { containerPaperCompiler } from "./paper/container.js";
@@ -364,6 +365,38 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
 
   if (state.scope !== "both") return report(state, true);
 
+  // Certify (spec 2 only): the comparator's independent route over the
+  // edges Inspect just classified, before anything is emitted or sealed.
+  let certified: CertifyResult = { kind: "nothing" };
+  if (state.environment.specVersion === 2) {
+    try {
+      certified = await certifyInContainer({
+        record: {
+          proofs: inspection.result.proofs,
+          ownConcepts: state.staticResult.concepts!.lakefile.packageName,
+          ownProofs: state.staticResult.proofs!.lakefile.packageName,
+          source: state.request.source,
+          environment: state.environment,
+          resolution: state.resolution,
+          warmPackages: readWarmManifestPackages(state.warmWs),
+        },
+        jobDir: state.jobDir,
+        captureRoot: state.captureRoot,
+        dependencyRoot: state.dependencyRoot,
+        warmWs: state.warmWs,
+        runner: state.runner,
+        limits: state.limits,
+        phase: state.phase,
+      });
+    } catch (error) {
+      return fail(state, "certify", "comparator", error);
+    }
+    if (certified.kind === "violation") {
+      state.violations.push({ phase: "certify", rule: certified.rule, message: certified.message });
+      return report(state, false);
+    }
+  }
+
   // The join: the paper's marks need the ids Inspect just produced.
   const paper = await joinPaper(state);
   if (paper !== undefined && (paper.findings.failed || paper.failure !== undefined))
@@ -400,6 +433,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       inspection.result,
       capture,
       paperOutput,
+      certified.kind === "certified" ? certified.certificate : undefined,
     );
     return {
       ...report(state, true),
@@ -407,6 +441,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       capture,
       ...(paper?.compiled === undefined ? {} : { paperPdfPath: paper.compiled.pdfPath }),
       ...(paper?.compiled?.web === undefined ? {} : { paperWebPath: paper.compiled.web.bundlePath }),
+      ...(certified.kind === "certified" ? { certificateBundlePath: certified.bundlePath } : {}),
     };
   } catch (error) {
     return fail(state, "emit", "emit", error);

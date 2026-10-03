@@ -19,6 +19,7 @@ export type ValidationPhase =
   | "compile-proofs"
   | "replay"
   | "inspect"
+  | "certify"
   | "paper"
   | "emit";
 
@@ -303,8 +304,13 @@ export interface CaptureManifest {
   formatVersion: 1;
   digest: string;
   sourceCommit: string;
-  leanToolchain: string;
-  mathlibCommit: string;
+  /** The pins the capture was built under. Present in every validation
+   * report and in a spec-1 record; a spec-2 record stores neither — its
+   * environment is the row `inputs.manifest.leanVersion` names
+   * (recorded-shape.ts) — so a capture read from a record of unknown spec
+   * may lack them. */
+  leanToolchain?: string;
+  mathlibCommit?: string;
   files: CapturedFile[];
 }
 
@@ -497,6 +503,55 @@ export interface InspectionResult {
   proofs: ProofEntry[];
 }
 
+/**
+ * The certificate bundle (axiomfree-plan.md, "Certify" 4): the five generated
+ * files sealed into one deterministic tar, a further layer of the record's
+ * OCI capture manifest beside the capture, the paper and the web bundle.
+ * `registryBlob` is added by the publisher after the push and must carry
+ * exactly `digest` (PublishedCapture, same rule). The tar's own listing is
+ * its inventory; the record carries none.
+ */
+export interface CertificateBundle {
+  formatVersion: 1;
+  digest: string;
+  registryBlob?: string;
+}
+
+/** The kernels `lake comparator` ran over the solution export: Lean's own
+ * (`lean`) always, and under `--paranoid` the five bundled checkers too. */
+export type CertificationKernel =
+  | "lean"
+  | "leanchecker-paranoid"
+  | "lean4lean"
+  | "nanoda"
+  | "con-leche"
+  | "con-ron";
+
+/** Who judged the certificate: the toolchain whose `lake comparator` ran, and
+ * its exit code — recorded only on a pass, so always 0. */
+export interface CertificateJudge {
+  toolchain: string;
+  comparatorExitCode: 0;
+}
+
+/**
+ * The `certificate` key of a spec-2 build output: the record of the Certify
+ * phase, present exactly when the record has proofs (a record without proofs
+ * runs nothing and carries no key). The edges are not stored: they are the
+ * proofs' telescopes, and `challenge` — `Challenge.lean` verbatim, the one
+ * artifact that states in Lean exactly what was certified — is held to the
+ * generator's regeneration from those telescopes by the trusted parser.
+ * `challengeExportSha256` is the sha256 of the Challenge export container A
+ * produced (tens of MB, never kept; a rerun compares digests).
+ */
+export interface CertificateOutput {
+  judge: CertificateJudge;
+  kernels: CertificationKernel[];
+  bundle: CertificateBundle;
+  challengeExportSha256: string;
+  challenge: string;
+}
+
 export interface BuildOutputPayload {
   inputs: {
     manifest: SubmissionManifest;
@@ -508,6 +563,10 @@ export interface BuildOutputPayload {
   proofs: ProofEntry[];
   capture: CaptureManifest;
   paper?: PaperOutput;
+  /** Spec 2 only: present exactly when a spec-2 record has proofs; never on a
+   * spec-1 record. The in-memory payload is the full one; what a spec-2
+   * record *stores* drops the fields a reader derives (recorded-shape.ts). */
+  certificate?: CertificateOutput;
 }
 
 export interface ValidationReport {

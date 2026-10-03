@@ -4,6 +4,7 @@ import path from "node:path";
 import { formatProfile, type Span } from "../shared/profile.js";
 import { oneLineMessage, parseSuccessfulValidationArtifacts } from "./artifact-schema.js";
 import type { ValidationReport } from "./contracts.js";
+import { recordedBuildOutput } from "./recorded-shape.js";
 
 export const VALIDATION_REPORT_FILENAME = "validation-report.json";
 export const GENERATED_BUILD_OUTPUT_FILENAME = "generated-build-output.json";
@@ -13,6 +14,9 @@ export const PAPER_FILENAME = "paper.pdf";
 /** The derived web bundle, present exactly when the build output records
  * `paper.web` (paper-web-plan.md, "Storage"). */
 export const PAPER_WEB_FILENAME = "paper-web.tar";
+/** The certificate bundle, present exactly when the build output records a
+ * `certificate` (axiomfree-plan.md, "Certify" 4). */
+export const CERTIFICATE_FILENAME = "certificate.tar";
 export const VALIDATION_PROFILE_FILENAME = "validation-profile.json";
 export const METADATA_RESUBMISSION_FILENAME = "metadata-resubmission.json";
 
@@ -23,6 +27,8 @@ export interface ValidationOutcome extends ValidationReport {
   paperPdfPath?: string;
   /** The derived web bundle, when the build output records one. */
   paperWebPath?: string;
+  /** The certificate bundle, when the build output records one. */
+  certificateBundlePath?: string;
 }
 
 const MAX_PROFILE_BYTES = 4 * 1024 * 1024;
@@ -44,6 +50,7 @@ export function resetValidationOutputs(
     CAPTURE_FILENAME,
     PAPER_FILENAME,
     PAPER_WEB_FILENAME,
+    CERTIFICATE_FILENAME,
     ...(opts.keepProfile === true ? [] : [VALIDATION_PROFILE_FILENAME]),
   ];
   for (const filename of filenames) {
@@ -141,7 +148,7 @@ function readProfile(filename: string): RecordedProfile {
 export function writeValidationOutputs(outputDir: string, outcome: ValidationOutcome): void {
   // The PDF and bundle paths are the job's, not the report's: the serialized
   // report keeps exactly the shape parseSuccessfulValidationArtifacts accepts.
-  const { paperPdfPath, paperWebPath, ...report } = outcome;
+  const { paperPdfPath, paperWebPath, certificateBundlePath, ...report } = outcome;
   if (!report.ok) {
     if (report.failure !== undefined && report.violations.length > 0) {
       throw new Error("a validation report cannot contain both an operational failure and submission violations");
@@ -166,6 +173,10 @@ export function writeValidationOutputs(outputDir: string, outcome: ValidationOut
   if (JSON.stringify(report.buildOutput.capture) !== JSON.stringify(report.capture)) {
     throw new Error("generated build output and validation report have different capture manifests");
   }
+  // What a record stores: the full payload on spec 1, the derivable fields
+  // dropped on spec 2 (recorded-shape.ts). Serialized once, here, and the
+  // report embeds the same object so the two files agree byte for byte.
+  const recorded = recordedBuildOutput(report.buildOutput);
   const capturePath = path.join(outputDir, CAPTURE_FILENAME);
   let captureStat: fs.Stats;
   try {
@@ -200,16 +211,27 @@ export function writeValidationOutputs(outputDir: string, outcome: ValidationOut
     }
     fs.writeFileSync(path.join(outputDir, PAPER_WEB_FILENAME), bytes, { mode: 0o600 });
   }
+  // The certificate bundle travels the same way, bound by its recorded
+  // digest — present exactly when `certificate` was recorded.
+  const certificate = report.buildOutput.certificate;
+  if ((certificate === undefined) !== (certificateBundlePath === undefined)) {
+    throw new Error("successful full validation recorded a certificate without its bundle, or a bundle without a certificate");
+  }
+  if (certificate !== undefined && certificateBundlePath !== undefined) {
+    const bytes = fs.readFileSync(certificateBundlePath);
+    if (createHash("sha256").update(bytes).digest("hex") !== certificate.bundle.digest) {
+      throw new Error("the certificate bundle does not match the digest its build output records");
+    }
+    fs.writeFileSync(path.join(outputDir, CERTIFICATE_FILENAME), bytes, { mode: 0o600 });
+  }
 
-  requirePublishableReport(outputDir, report);
+  const serializedReport = { ...report, buildOutput: recorded };
+  requirePublishableReport(outputDir, serializedReport);
 
   // Write the report last. Consumers treat its presence as the indication that
   // the complete output set was persisted successfully.
-  atomicWriteJson(
-    path.join(outputDir, GENERATED_BUILD_OUTPUT_FILENAME),
-    report.buildOutput,
-  );
-  atomicWriteJson(path.join(outputDir, VALIDATION_REPORT_FILENAME), report);
+  atomicWriteJson(path.join(outputDir, GENERATED_BUILD_OUTPUT_FILENAME), recorded);
+  atomicWriteJson(path.join(outputDir, VALIDATION_REPORT_FILENAME), serializedReport);
 }
 
 /**
@@ -225,7 +247,10 @@ export function writeValidationOutputs(outputDir: string, outcome: ValidationOut
  * request and the pinned runtime — so the report is fed its own values here
  * and only the schema rules bite.
  */
-function requirePublishableReport(outputDir: string, report: ValidationReport): void {
+function requirePublishableReport(
+  outputDir: string,
+  report: Omit<ValidationReport, "buildOutput"> & { buildOutput: unknown },
+): void {
   const serialized = JSON.parse(JSON.stringify({
     report,
     buildOutput: report.buildOutput,

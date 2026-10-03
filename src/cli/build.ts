@@ -18,6 +18,7 @@ import {
 import { validateSubmissionOnHost, type HostValidationReport } from "../submission-validation/host/pipeline.js";
 import { warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { hostValidationRuntime } from "../submission-validation/pins.js";
+import { recordedBuildOutput } from "../submission-validation/recorded-shape.js";
 import { removeValidationWorkspace } from "../submission-validation/workspace-cleanup.js";
 import { formatProfile, Profiler } from "../shared/profile.js";
 import { databaseDirectory } from "./database.js";
@@ -89,6 +90,9 @@ const ROW_OF_PHASE = new Map<string, string>([
   ["inspect concepts", "statements"],
   ["inspect proofs", "statements"],
   ["judge inspection", "statements"],
+  ["certify", "certify"],
+  ["certify challenge", "certify"],
+  ["certify solution", "certify"],
   ["resolve marks", "statements"],
   ["emit", "statements"],
   // The one row that settles out of order: the paper compiles beside the
@@ -104,6 +108,7 @@ const ROW_LABEL = new Map<string, string>([
   ["proofs", "Compiled proofs"],
   ["replay", "Replayed the kernel proofs"],
   ["statements", "Inspected the statements"],
+  ["certify", "Certified the proof network"],
   ["paper", "Compiled the paper"],
 ]);
 
@@ -116,6 +121,7 @@ const ROW_RUNNING = new Map<string, string>([
   ["proofs", "Compiling proofs"],
   ["replay", "Replaying the kernel proofs"],
   ["statements", "Inspecting the statements"],
+  ["certify", "Certifying the proof network"],
   ["paper", "Compiling the paper"],
 ]);
 
@@ -174,6 +180,9 @@ export async function buildSubmission(
   if (scope !== "concepts") rows.push("proofs");
   if (options.replay === true) rows.push("replay");
   rows.push("statements");
+  // The certificate is a spec-2 row's phase (axiomfree-plan.md, "Certify");
+  // the comparator judges the whole network, so it needs both packages.
+  if (environment.specVersion === 2 && scope === "both") rows.push("certify");
 
   const steps = embedded ? undefined : new ui.Steps();
   if (steps !== undefined) {
@@ -245,6 +254,9 @@ export async function buildSubmission(
           return;
         }
         if (event.state !== "start") return;
+        // Emit's phases close the statements row on spec 1; on spec 2 they
+        // run after the certificate, whose row stays the open one.
+        if (row === "statements" && current === "certify") return;
         if (row !== undefined && rows.includes(row)) enter(row);
       },
     });
@@ -291,7 +303,9 @@ export async function buildSubmission(
       const output = {
         specVersion: "1",
         id,
-        ...report.buildOutput!,
+        // the record's own shape: a spec-2 output drops what a reader
+        // derives (recorded-shape.ts), a spec-1 output is the payload itself
+        ...recordedBuildOutput(report.buildOutput!),
         localValidation: {
           version: 1,
           source: request.source,

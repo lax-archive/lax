@@ -4,7 +4,13 @@ import { supersedesClaim } from "../../shared/archive-schema.js";
 import { DATABASE_REPOSITORY } from "../../shared/constants.js";
 import { fetchGitCheckout } from "../source/fetch.js";
 import type { ValidationLimits } from "../config.js";
-import { parseCaptureBlobReference, type ArchiveSourceRecord, type PublishedCapture } from "../contracts.js";
+import {
+  parseCaptureBlobReference,
+  type ArchiveSourceRecord,
+  type PublishedCapture,
+  type ValidationRuntimeIdentity,
+} from "../contracts.js";
+import { environment as environmentById, environmentOfPins, type ArchiveEnvironment } from "../environments.js";
 import { isObject, validateCommit, validateFolder, validateRepositoryUrl } from "../../shared/validation.js";
 
 const MAX_ARCHIVE_FILE_BYTES = 8 * 1024 * 1024;
@@ -78,16 +84,53 @@ export class ArchiveSnapshot {
     };
   }
 
+  /**
+   * The environment a record was built in: by its capture's pins when the
+   * record stores them (spec 1), else by the row its manifest names (spec 2,
+   * recorded-shape.ts). Undefined when neither names an admitted
+   * environment — a record this CLI is too old to know.
+   */
+  environmentOf(record: ArchiveSourceRecord): ArchiveEnvironment | undefined {
+    const capture = this.capture(record);
+    if (capture?.leanToolchain !== undefined && capture.mathlibCommit !== undefined)
+      return environmentOfPins(capture.leanToolchain, capture.mathlibCommit);
+    const id = this.environmentIdOf(record);
+    return id === undefined ? undefined : environmentById(id);
+  }
+
+  /** The environment id a record's manifest names (`inputs.manifest.leanVersion`). */
+  environmentIdOf(record: ArchiveSourceRecord): string | undefined {
+    const inputs = record.buildOutput?.inputs;
+    const manifest = isObject(inputs) && isObject(inputs.manifest) ? inputs.manifest : undefined;
+    return typeof manifest?.leanVersion === "string" ? manifest.leanVersion : undefined;
+  }
+
+  /**
+   * Whether a record was built in the run's environment — the island rule
+   * (phases/resolution.ts): by the capture's pins against the runtime's
+   * when the record stores them (spec 1), else by the row its manifest
+   * names against the runtime's environment (spec 2).
+   */
+  inEnvironment(record: ArchiveSourceRecord, runtime: ValidationRuntimeIdentity): boolean {
+    const capture = this.capture(record);
+    if (capture === undefined) return false;
+    if (capture.leanToolchain !== undefined || capture.mathlibCommit !== undefined)
+      return capture.leanToolchain === runtime.leanToolchain && capture.mathlibCommit === runtime.mathlibCommit;
+    return this.environmentIdOf(record) === runtime.environment;
+  }
+
   capture(record: ArchiveSourceRecord): PublishedCapture | undefined {
     const value = record.buildOutput?.capture;
     if (!isObject(value) || typeof value.registryBlob !== "string") return undefined;
+    // the pins are stored by a spec-1 record and absent from a spec-2 one;
+    // present, they must both be there and be strings
+    const storesPins = value.leanToolchain !== undefined || value.mathlibCommit !== undefined;
     if (
       value.formatVersion !== 1 ||
       typeof value.digest !== "string" ||
       !/^[0-9a-f]{64}$/u.test(value.digest) ||
       typeof value.sourceCommit !== "string" ||
-      typeof value.leanToolchain !== "string" ||
-      typeof value.mathlibCommit !== "string" ||
+      (storesPins && (typeof value.leanToolchain !== "string" || typeof value.mathlibCommit !== "string")) ||
       !Array.isArray(value.files)
     ) return undefined;
     const files = value.files.flatMap((file) =>
@@ -119,8 +162,9 @@ export class ArchiveSnapshot {
       formatVersion: 1,
       digest: value.digest,
       sourceCommit: value.sourceCommit,
-      leanToolchain: value.leanToolchain,
-      mathlibCommit: value.mathlibCommit,
+      ...(storesPins
+        ? { leanToolchain: value.leanToolchain as string, mathlibCommit: value.mathlibCommit as string }
+        : {}),
       files,
       registryBlob: value.registryBlob,
     };

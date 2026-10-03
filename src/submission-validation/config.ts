@@ -35,6 +35,12 @@ export interface ValidationLimits {
    * rule: never a literal at a call site — every phase reads its budget
    * here, and an environment row overrides both counts independently. */
   compileLeanThreads: number;
+  /** The kernel set `lake comparator` runs per submit in a spec-2 environment
+   * (axiomfree-plan.md, decision 5): Lean's own kernel alone, or `paranoid`
+   * — Lean's plus the five checkers the toolchain bundles (`--paranoid`).
+   * A row raises it once the cone cost is measured (the Lax17 port). The
+   * phase shares Replay's `checkTimeoutMs` until then. */
+  certificationKernels: "lean" | "paranoid";
   pids: number;
   /** Wall clock for one latexmk run of a declared paper. */
   paperCompileTimeoutMs: number;
@@ -116,6 +122,7 @@ export const DEFAULT_LIMITS: ValidationLimits = {
   // `lake build` peaked at 3.84 GiB at 4 threads, a quarter of the cap, so
   // compile keeps four where replay must stop at two.
   compileLeanThreads: 4,
+  certificationKernels: "lean",
   pids: 1_024,
   paperCompileTimeoutMs: 10 * 60_000,
   paperWebCompileTimeoutMs: 30 * 60_000,

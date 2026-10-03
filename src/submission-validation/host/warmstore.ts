@@ -324,10 +324,30 @@ export function seedManifest(
   pkgDir: string,
   deps: SeededDependency[],
 ): void {
+  const target = path.join(pkgDir, "lake-manifest.json");
+  const staged = path.join(pkgDir, `.lake-manifest.lax-${process.pid}-${randomUUID()}`);
+  fs.writeFileSync(staged, manifestText(readWarmManifestPackages(warmWs), deps));
+  fs.renameSync(staged, target);
+}
+
+/** The warm workspace's locked entries, verbatim, as seedManifest copies them. */
+export function readWarmManifestPackages(warmWs: string): Record<string, unknown>[] {
   const warmManifest = JSON.parse(
     fs.readFileSync(path.join(warmWs, "lake-manifest.json"), "utf8"),
   ) as { packages: Record<string, unknown>[] };
+  return warmManifest.packages;
+}
 
+/**
+ * The complete `lake-manifest.json` text seedManifest writes: the dependency
+ * entries first (duplicates by name dropped), then the warm closure verbatim.
+ * Pure, so the certificate generator (certify/generate.ts) can write the
+ * same manifest into a bundle whose project lake never resolves.
+ */
+export function manifestText(
+  warmPackages: readonly Record<string, unknown>[],
+  deps: readonly SeededDependency[],
+): string {
   const entries: Record<string, unknown>[] = [];
   const seen = new Set<string>();
   for (const dep of deps) {
@@ -362,11 +382,8 @@ export function seedManifest(
           },
     );
   }
-  entries.push(...warmManifest.packages);
-  const target = path.join(pkgDir, "lake-manifest.json");
-  const staged = path.join(pkgDir, `.lake-manifest.lax-${process.pid}-${randomUUID()}`);
-  fs.writeFileSync(
-    staged,
+  entries.push(...warmPackages);
+  return (
     JSON.stringify(
       {
         version: leanFacts().lakeManifestVersion,
@@ -375,7 +392,6 @@ export function seedManifest(
       },
       null,
       1,
-    ) + "\n",
+    ) + "\n"
   );
-  fs.renameSync(staged, target);
 }

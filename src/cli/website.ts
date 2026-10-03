@@ -10,6 +10,7 @@ import { SUBMISSION_ID_PATTERN } from "../shared/constants.js";
 import { isObject, normalizeSubmissionId } from "../shared/validation.js";
 import { submissionIdForPackage } from "../submission-validation/contracts.js";
 import { epoch } from "../submission-validation/environments.js";
+import { expandRecordedBuildOutput } from "../submission-validation/recorded-shape.js";
 import {
   databaseDirectory,
   databaseFreshnessAsync,
@@ -1220,8 +1221,12 @@ export async function attachPaperFiles(
   }
 }
 
-function rendererOutput(value: unknown, label: string): Record<string, unknown> | undefined {
-  if (!isObject(value)) throw new Error(`${label} must contain a JSON object`);
+function rendererOutput(raw: unknown, label: string): Record<string, unknown> | undefined {
+  if (!isObject(raw)) throw new Error(`${label} must contain a JSON object`);
+  // A spec-2 record stores no conclusion, assumptions, capture pins, or
+  // repeated manifest fields (recorded-shape.ts); the renderer reads the
+  // full shape, so a stored record is expanded before it is handed over.
+  const value = expandRecordedBuildOutput(raw, typeof raw.id === "string" ? raw.id : "");
   const inputs = isObject(value.inputs) ? value.inputs : undefined;
   const manifest = value.manifest ?? inputs?.manifest;
   if (manifest === undefined) return undefined;

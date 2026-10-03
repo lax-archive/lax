@@ -12,7 +12,6 @@ import { CHAIN_WORKFLOW_HINT } from "../chain-workflow.js";
 import {
   environment as environmentById,
   environmentAcceptsRecord,
-  environmentOfPins,
   epoch,
 } from "../environments.js";
 import { FindingCollector } from "../findings.js";
@@ -162,13 +161,14 @@ export function runResolution(
       // meaning in one LEAN_PATH. So a dependency outside this submission's
       // environment is rejected here, and the message names both — porting is
       // a new submission, never a wider search path.
-      if (capture.leanToolchain !== runtime.leanToolchain || capture.mathlibCommit !== runtime.mathlibCommit) {
-        const built = environmentOfPins(capture.leanToolchain, capture.mathlibCommit);
+      if (!archive.inEnvironment(record, runtime)) {
+        const built = archive.environmentOf(record);
         findings.violate(
           "capture-provenance",
           `${packageName} was built in ` +
             (built === undefined
-              ? `an environment this CLI does not admit (${capture.leanToolchain} / ${capture.mathlibCommit})`
+              ? "an environment this CLI does not admit" +
+                (capture.leanToolchain === undefined ? "" : ` (${capture.leanToolchain} / ${capture.mathlibCommit})`)
               : `environment ${built.id}`) +
             `, not ${runtime.environment}; only submissions in ${runtime.environment} can cite one another`,
         );

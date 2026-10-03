@@ -1,0 +1,30 @@
+name = "LaxCertificate"
+defaultTargets = ["Challenge", "Solution"]
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+[[require]]
+name = "LaxCore"
+git = "https://github.com/lax-archive/lax-core"
+rev = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+[[require]]
+name = "Lax7"
+git = "https://github.com/alice/lax7"
+rev = "cccccccccccccccccccccccccccccccccccccccc"
+subDir = "concepts"
+
+[[require]]
+name = "Lax7Proofs"
+git = "https://github.com/alice/lax7"
+rev = "cccccccccccccccccccccccccccccccccccccccc"
+subDir = "proofs"
+
+[[lean_lib]]
+name = "Challenge"
+
+[[lean_lib]]
+name = "Solution"

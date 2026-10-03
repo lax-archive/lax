@@ -16,6 +16,7 @@ const PHASE_LABEL = new Map<string, string>([
   ["compile-proofs", "proofs"],
   ["replay", "kernel replay"],
   ["inspect", "statements"],
+  ["certify", "certificate"],
   ["dialect", "dialect"],
   ["paper", "paper"],
   ["emit", "output"],

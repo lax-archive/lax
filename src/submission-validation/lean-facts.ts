@@ -42,6 +42,18 @@ export interface LeanFacts {
   missingModulePattern: RegExp;
   /** `Lake version 5.0.0 (Lean version 4.30.0)` → the two numbers. */
   parseLakeBanner: (raw: string) => { lean?: string; lake?: string };
+  /** The constants `lake comparator` exports from both modules beside the
+   * named theorems and the permitted axioms, because the kernel assumes them
+   * (`Lake/CLI/Check.lean`, `primitiveTargets` — "git grep
+   * new_persistent_expr_const src/kernel/"), plus the `Quot` four it adds when
+   * `Quot.sound` is permitted (`builtinTargets`). Container A exports the
+   * Challenge with exactly the comparator's own list, so the comparison in
+   * container B finds every constant it looks up. */
+  comparatorExportTargets: readonly string[];
+  /** The checkers `--paranoid` adds beside Lean's kernel, in the order
+   * `Lake/CLI/Check.lean` `bundledKernels` runs them, by the names the record
+   * uses for them. */
+  paranoidKernels: readonly ["leanchecker-paranoid", "lean4lean", "nanoda", "con-leche", "con-ron"];
 }
 
 const SHARED: LeanFacts = {
@@ -60,6 +72,18 @@ const SHARED: LeanFacts = {
     lean: /Lean version ([^\s)]+)/u.exec(raw)?.[1],
     lake: /Lake version (\S+)/u.exec(raw)?.[1],
   }),
+  // Transcribed from the v4.35.0-rc3 toolchain's `Lake/CLI/Check.lean`
+  // (`builtinTargets` ++ `primitiveTargets`); the theorem names and the
+  // permitted axioms go between the two groups in the comparator's own list,
+  // which is a set to the exporter.
+  comparatorExportTargets: [
+    "Quot", "Quot.mk", "Quot.lift", "Quot.ind",
+    "Nat.add", "Nat.sub", "Nat.mul", "Nat.pow", "Nat.gcd", "Nat.div", "Nat.mod", "Nat.beq",
+    "Nat.ble", "Nat.land", "Nat.lor", "Nat.xor", "Nat.shiftLeft", "Nat.shiftRight",
+    "String.ofList", "Char.ofNat", "List", "eagerReduce", "Nat", "String", "String.mk", "Char",
+    "optParam", "autoParam", "semiOutParam", "outParam",
+  ],
+  paranoidKernels: ["leanchecker-paranoid", "lean4lean", "nanoda", "con-leche", "con-ron"],
 };
 
 /** Per-version overrides. Empty while every admitted environment agrees. */

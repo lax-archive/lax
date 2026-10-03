@@ -13,6 +13,7 @@ import path from "node:path";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
 import { GhcrCaptureStore } from "../../src/shared/capture-store.js";
 import { ArchiveSnapshot } from "../../src/submission-validation/archive/snapshot.js";
+import { recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
 import type {
   PublishedCapture,
   ValidationReport,
@@ -83,13 +84,14 @@ export function registerUpstream(
       source: upstream.source,
     }),
   );
+  // the record's own shape: a spec-2 upstream stores no derivable field
+  // (recorded-shape.ts), exactly as the trusted publisher writes it
   fs.writeFileSync(
     path.join(directory, "build-output.json"),
     JSON.stringify({
       id: upstream.id,
       specVersion: "1",
-      ...upstream.report.buildOutput,
-      capture: upstream.published,
+      ...recordedBuildOutput({ ...upstream.report.buildOutput!, capture: upstream.published }),
     }),
   );
 }

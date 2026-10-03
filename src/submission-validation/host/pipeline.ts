@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ArchiveSnapshot } from "../archive/snapshot.js";
 import { capturePackage, describeLocalCapture } from "../captures/seal.js";
+import { certifyOnHost } from "../certify/host.js";
 import { limitsFor, type ValidationLimits } from "../config.js";
 import {
   epoch,
@@ -27,6 +28,7 @@ import {
 import { submissionIdForPackage } from "../contracts.js";
 import { FindingCollector } from "../findings.js";
 import type {
+  CertificateOutput,
   InspectionResult,
   ModuleInventory,
   PaperOutput,
@@ -65,6 +67,7 @@ import { run } from "./proc.js";
 import { resolveSiblings, siblingManifestDir, type SiblingClosure } from "./siblings.js";
 import {
   ensureLocalWarm,
+  readWarmManifestPackages,
   seedManifest,
   seedOverrides,
   type SeededDependency,
@@ -333,6 +336,7 @@ export async function validateSubmissionOnHost(
       lean.inspection,
       capture,
       paperOutput,
+      lean.certificate,
     );
     return {
       ...report(true),
@@ -345,10 +349,12 @@ export async function validateSubmissionOnHost(
     return fail("emit", "emit", error);
   }
 
-  /** Provision, compile, capture, replay, inspect, judge — everything Lean.
-   * Returns the report to hand back when the chain stops early (a failure,
-   * or a partial scope), else the inspection Emit needs. */
-  async function runLeanChain(): Promise<ValidationReport | { inspection: InspectionResult }> {
+  /** Provision, compile, capture, replay, inspect, judge, and in a spec-2
+   * environment certify — everything Lean. Returns the report to hand back
+   * when the chain stops early (a failure, or a partial scope), else what
+   * Emit needs: the inspection and, with proofs under spec 2, the
+   * certificate. */
+  async function runLeanChain(): Promise<ValidationReport | LeanChainResult> {
     let warmWs: string | undefined;
     try {
       warmWs = await state.phase("warm store", () =>
@@ -571,11 +577,63 @@ export async function validateSubmissionOnHost(
     if (inspection.findings.failed) return report(false);
 
     if (scope !== "both") return report(true);
-    return { inspection: inspection.result };
+    if (state.environment.specVersion !== 2) return { inspection: inspection.result };
+
+    // Certify, on the host and without a sandbox: the same generator and the
+    // same two commands as the archive's containers, over the packages this
+    // build just compiled. Informational — the archive certifies again on
+    // submit — and never reused by `lax submit`.
+    let certified;
+    try {
+      certified = await state.phase("certify", () => certifyOnHost({
+        record: {
+          proofs: inspection.result.proofs,
+          ownConcepts: staticCheck.result.concepts!.lakefile.packageName,
+          ownProofs: staticCheck.result.proofs!.lakefile.packageName,
+          source: request.source,
+          environment: state.environment,
+          resolution: resolution.result,
+          warmPackages: readWarmManifestPackages(warm),
+        },
+        jobDir,
+        submissionRoot: state.fetched.submissionRoot,
+        warmWs: warm,
+        limits: state.limits,
+        echo,
+        dependencyLibs: dependencyLibDirs("proofs"),
+        ...(siblings === undefined ? {} : { siblings }),
+        phase: state.phase,
+      }));
+    } catch (error) {
+      return fail("certify", "comparator", error);
+    }
+    if (certified.kind === "violation") {
+      violations.push({ phase: "certify", rule: certified.rule, message: certified.message });
+      return report(false);
+    }
+    options.onDetail?.(
+      "certify",
+      certified.kind === "nothing"
+        ? "no proofs, nothing to certify"
+        : `${inspection.result.proofs.length === 1 ? "1 edge" : `${inspection.result.proofs.length} edges`} · ` +
+          `lake comparator, ${certified.certificate.kernels.join(", ")} · informational: the archive certifies again on submit`,
+    );
+    return {
+      inspection: inspection.result,
+      ...(certified.kind === "certified"
+        ? { certificate: certified.certificate, certificateBundlePath: certified.bundlePath }
+        : {}),
+    };
   }
 }
 
-function isReport(value: ValidationReport | { inspection: InspectionResult }): value is ValidationReport {
+interface LeanChainResult {
+  inspection: InspectionResult;
+  certificate?: CertificateOutput;
+  certificateBundlePath?: string;
+}
+
+function isReport(value: ValidationReport | LeanChainResult): value is ValidationReport {
   return "reportVersion" in value;
 }
 

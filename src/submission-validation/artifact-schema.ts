@@ -13,13 +13,18 @@ import {
   ValidationError,
 } from "../shared/validation.js";
 import { PAPER_CAPS } from "./config.js";
+import { certifiedProof, challengeText } from "./certify/generate.js";
 import { environment as environmentById } from "./environments.js";
+import { leanFacts } from "./lean-facts.js";
+import { derivedEdge } from "./recorded-shape.js";
 import type {
   AnnotationSection,
   BinderKind,
   BuildOutputPayload,
   CaptureManifest,
   CapturedFile,
+  CertificateOutput,
+  CertificationKernel,
   ConceptEntry,
   ContentSpecVersion,
   ProofEntry,
@@ -61,6 +66,7 @@ const PHASES = new Set([
   "compile-proofs",
   "replay",
   "inspect",
+  "certify",
   "paper",
   "emit",
 ]);
@@ -174,8 +180,10 @@ function validateDependencyGraph(
   }
 }
 
+/** A record's published capture, of either spec: with its pins when it
+ * stores them (spec 1), without when it does not (spec 2). */
 export function parsePublishedCapture(value: unknown): PublishedCapture {
-  return parseCaptureManifest(value, true) as PublishedCapture;
+  return parseCaptureManifest(value, true, undefined, true) as PublishedCapture;
 }
 
 function parseRuntime(value: unknown): ValidationRuntimeIdentity {
@@ -246,10 +254,14 @@ function parseDependency(
   if (state !== "draft" && state !== "registered") throw new ValidationError(`${label} state is invalid`);
   const source = parseSource(object.source, `${label} source`);
   const capture = parsePublishedCapture(object.capture);
+  // A spec-1 record's capture names its pins; a spec-2 record's names its
+  // environment through its manifest instead, which the publisher re-reads
+  // (submit-publisher.ts validateDependencies) — here only what the capture
+  // itself says is held.
   if (
     capture.sourceCommit !== source.commit ||
-    capture.leanToolchain !== runtime.leanToolchain ||
-    capture.mathlibCommit !== runtime.mathlibCommit
+    (capture.leanToolchain !== undefined && capture.leanToolchain !== runtime.leanToolchain) ||
+    (capture.mathlibCommit !== undefined && capture.mathlibCommit !== runtime.mathlibCommit)
   ) throw new ValidationError(`${label} capture provenance is inconsistent`);
   return {
     packageName,
@@ -278,37 +290,117 @@ function parseBuildOutputPayload(
     "proofs",
     "capture",
     ...(value.paper === undefined ? [] : ["paper"]),
+    ...(value.certificate === undefined ? [] : ["certificate"]),
   ], "generated build output");
   const inputs = exactObject(object.inputs, ["manifest", "abstract"], "generated build output inputs");
   const manifest = parseManifest(inputs.manifest, request.id, runtime);
   if ((manifest.paper !== undefined) !== (object.paper !== undefined)) {
     throw new ValidationError("generated build output must carry a paper exactly when the manifest declares one");
   }
+  // The content spec decides the record's shape (recorded-shape.ts): a
+  // spec-2 record's proofs carry their telescopes and its statements their
+  // bodies, and it stores nothing a reader derives — the parser refuses a
+  // stored copy and fills the field from its source of truth; a spec-1
+  // record carries everything it always has (parseManifest held the string
+  // to the environment's row).
+  const spec: ContentSpecVersion = manifest.specVersion === "2" ? 2 : 1;
   // The validate job records the PDF's digest and size; only the publisher
   // adds the registry address, after pushing the bytes (stage 3).
   const paper = object.paper === undefined
     ? undefined
-    : parsePaperOutput(object.paper, manifest.paper!, published);
+    : parsePaperOutput(object.paper, manifest.paper!, published, spec);
   const abstract = text(inputs.abstract, "generated abstract", 1024 * 1024, true);
   if (abstract.trim() === "") throw new ValidationError("generated abstract must not be empty");
-  // The content spec decides the entries' shape: a spec-2 record's proofs
-  // carry their telescopes and its statements their bodies, a spec-1 record's
-  // carry neither (parseManifest held the string to the environment's row).
-  const spec: ContentSpecVersion = manifest.specVersion === "2" ? 2 : 1;
   const concepts = boundedArray(object.concepts, "generated concepts", MAX_ENTRIES)
     .map((entry, index) => parseConcept(entry, index, spec));
   const proofs = boundedArray(object.proofs, "generated proofs", MAX_ENTRIES)
     .map((entry, index) => parseProof(entry, index, spec));
   requireUnique(concepts.map((entry) => entry.id), "generated concept ids");
   requireUnique(proofs.map((entry) => entry.id), "generated proof ids");
+  // A certificate is recorded exactly for a spec-2 record with proofs; the
+  // Challenge it carries is held to the generator's regeneration from the
+  // very proofs parsed above — the fail-closed check that binds the shown
+  // artifact to the stored telescopes.
+  if ((object.certificate !== undefined) !== (spec === 2 && proofs.length > 0)) {
+    throw new ValidationError(
+      spec === 2
+        ? "a spec-2 build output carries a certificate exactly when it has proofs"
+        : "a spec-1 build output carries no certificate",
+    );
+  }
+  const certificate = object.certificate === undefined
+    ? undefined
+    : parseCertificate(object.certificate, proofs, runtime, published);
   return {
     inputs: { manifest, abstract },
     requiredByConcepts: stringArray(object.requiredByConcepts, "requiredByConcepts", MAX_ENTRIES, 512),
     requiredByProofs: stringArray(object.requiredByProofs, "requiredByProofs", MAX_ENTRIES, 512),
     concepts,
     proofs,
-    capture: parseCaptureManifest(object.capture, published),
+    capture: parseCaptureManifest(object.capture, published, spec === 2 ? runtime : undefined),
     ...(paper === undefined ? {} : { paper }),
+    ...(certificate === undefined ? {} : { certificate }),
+  };
+}
+
+const KERNELS: readonly CertificationKernel[] = ["lean", ...leanFacts().paranoidKernels];
+
+/**
+ * The `certificate` key of a spec-2 build output (contracts.ts
+ * CertificateOutput): the judge is this run's toolchain and exit 0, the
+ * kernels are a known set with Lean's own among them, the bundle is a
+ * digest (plus its registry address once published, carrying exactly that
+ * digest), and `challenge` is byte-for-byte what certify/generate.ts writes
+ * for these proofs.
+ */
+export function parseCertificate(
+  value: unknown,
+  proofs: readonly ProofEntry[],
+  runtime: ValidationRuntimeIdentity,
+  published: boolean,
+): CertificateOutput {
+  const object = exactObject(
+    value,
+    ["judge", "kernels", "bundle", "challengeExportSha256", "challenge"],
+    "generated certificate",
+  );
+  const judge = exactObject(object.judge, ["toolchain", "comparatorExitCode"], "generated certificate judge");
+  const toolchain = nonemptyText(judge.toolchain, "generated certificate judge toolchain", 128, false);
+  if (toolchain !== runtime.leanToolchain) {
+    throw new ValidationError("generated certificate was judged by a toolchain other than the environment's");
+  }
+  if (judge.comparatorExitCode !== 0) throw new ValidationError("generated certificate judge comparatorExitCode must be 0");
+  const kernels = boundedArray(object.kernels, "generated certificate kernels", KERNELS.length).map((kernel) => {
+    if (!(KERNELS as readonly unknown[]).includes(kernel)) throw new ValidationError("generated certificate names an unknown kernel");
+    return kernel as CertificationKernel;
+  });
+  requireUnique(kernels, "generated certificate kernels");
+  if (!kernels.includes("lean")) throw new ValidationError("generated certificate kernels must include Lean's own");
+  const bundle = exactObject(
+    object.bundle,
+    ["formatVersion", "digest", ...(published ? ["registryBlob"] : [])],
+    "generated certificate bundle",
+  );
+  if (bundle.formatVersion !== 1) throw new ValidationError("generated certificate bundle formatVersion must be 1");
+  const digest = sha256(bundle.digest, "generated certificate bundle digest");
+  let registryBlob: string | undefined;
+  if (published) {
+    if (typeof bundle.registryBlob !== "string") throw new ValidationError("published certificate registryBlob must be a string");
+    const reference = parseCaptureBlobReference(bundle.registryBlob);
+    if (reference === undefined) throw new ValidationError("published certificate registryBlob is not a ghcr digest reference");
+    if (reference.digest !== digest) throw new ValidationError("published certificate registryBlob digest does not match the bundle digest");
+    registryBlob = bundle.registryBlob;
+  }
+  const challenge = text(object.challenge, "generated certificate challenge", 4 * 1024 * 1024, true, false);
+  if (challenge !== challengeText(proofs.map(certifiedProof))) {
+    throw new ValidationError("generated certificate challenge is not what the generator writes for the record's proofs");
+  }
+  return {
+    judge: { toolchain, comparatorExitCode: 0 },
+    kernels,
+    bundle: { formatVersion: 1, digest, ...(registryBlob === undefined ? {} : { registryBlob }) },
+    challengeExportSha256: sha256(object.challengeExportSha256, "generated certificate challengeExportSha256"),
+    challenge,
   };
 }
 
@@ -345,20 +437,25 @@ export function parsePublishedBuildOutputPayload(
  * validate artifact must not have them yet. `web` is optional in both
  * branches (the conditional-key idiom), so pre-web records keep parsing.
  */
-export function parsePaperOutput(value: unknown, manifest: PaperManifest, published: boolean): PaperOutput {
+export function parsePaperOutput(
+  value: unknown,
+  manifest: PaperManifest,
+  published: boolean,
+  spec: ContentSpecVersion = 1,
+): PaperOutput {
   if (!isObject(value)) throw new ValidationError("generated paper must be an object");
+  // A spec-1 paper repeats the manifest's block and is held to it; a spec-2
+  // paper stores no copy (recorded-shape.ts) and takes the block from it.
   const object = exactObject(value, [
-    "folder",
-    "main",
-    "engine",
+    ...(spec === 1 ? ["folder", "main", "engine"] : []),
     "pdf",
     "pageSizes",
     "marks",
     ...(value.web === undefined ? [] : ["web"]),
   ], "generated paper");
-  const folder = validateFolder(object.folder);
-  const main = validatePaperMain(object.main);
-  const engine = object.engine;
+  const folder = spec === 1 ? validateFolder(object.folder) : manifest.folder;
+  const main = spec === 1 ? validatePaperMain(object.main) : manifest.main;
+  const engine = spec === 1 ? object.engine : manifest.engine;
   if (typeof engine !== "string" || !(PAPER_ENGINES as readonly string[]).includes(engine)) {
     throw new ValidationError("generated paper engine is invalid");
   }
@@ -488,9 +585,15 @@ function parseManifest(
   runtime: ValidationRuntimeIdentity,
 ): SubmissionManifest {
   if (!isObject(value)) throw new ValidationError("generated manifest must be an object");
+  // The runtime's environment id is only ever a lookup key here (trust rule
+  // 2); the caller verifies the identity itself against the table. The row
+  // fixes the content spec, and with it whether the stored manifest repeats
+  // the record's id (spec 1) or leaves it to the record (spec 2).
+  const row = environmentById(runtime.environment);
+  const expectedSpec = String(row?.specVersion ?? 1);
   const object = exactObject(value, [
     "specVersion",
-    "id",
+    ...(expectedSpec === "1" ? ["id"] : []),
     "leanVersion",
     "mathlibVersion",
     "title",
@@ -503,12 +606,8 @@ function parseManifest(
   ], "generated manifest");
   // The manifest's specVersion is the *content* spec — the row's, as the
   // static phase demanded (validators/manifest.ts) — while the archive
-  // schemas' own `specVersion: "1"` is a different version. The runtime's
-  // environment id is only ever a lookup key here (trust rule 2); the caller
-  // verifies the identity itself against the table.
-  const row = environmentById(runtime.environment);
-  const expectedSpec = String(row?.specVersion ?? 1);
-  if (object.specVersion !== expectedSpec || object.id !== expectedId) {
+  // schemas' own `specVersion: "1"` is a different version.
+  if (object.specVersion !== expectedSpec || (expectedSpec === "1" && object.id !== expectedId)) {
     throw new ValidationError("generated manifest identity is invalid");
   }
   if (object.leanVersion !== runtime.leanVersion || object.mathlibVersion !== runtime.mathlibCommit) {
@@ -644,33 +743,29 @@ function parseStatement(value: unknown, label: string, spec: ContentSpecVersion)
 function parseProof(value: unknown, index: number, spec: ContentSpecVersion): BuildOutputPayload["proofs"][number] {
   const label = `generated proof ${index + 1}`;
   if (!isObject(value)) throw new ValidationError(`${label} must be an object`);
+  // A spec-1 proof stores its conclusion and assumptions; a spec-2 proof
+  // stores its telescope, from which the two are derived (recorded-shape.ts).
   requireExactKeys(value, [
     "id", "path",
-    ...(spec === 2 ? ["levelParams", "telescope"] : []),
-    "conclusion", "assumptions", "description",
+    ...(spec === 2 ? ["levelParams", "telescope"] : ["conclusion", "assumptions"]),
+    "description",
     ...(value.sections === undefined ? [] : ["sections"]),
   ], label);
-  const conclusion = identifier(value.conclusion, `${label} conclusion`, 2_048);
-  const assumptions = stringArray(value.assumptions, `${label} assumptions`, MAX_ENTRIES, 2_048);
-  let spec2: Pick<ProofEntry, "levelParams" | "telescope"> = {};
+  let edge: Pick<ProofEntry, "levelParams" | "telescope" | "conclusion" | "assumptions">;
   if (spec === 2) {
     const levelParams = levelParameters(value.levelParams, `${label} levelParams`);
     const telescope = parseTelescope(value.telescope, `${label} telescope`, new Set(levelParams));
-    // `conclusion` and `assumptions` are derived from the telescope (the
-    // draft spec, "Proofs"): a record whose copies disagree is corrupt
-    if (telescope.conclusion.statement !== conclusion)
-      throw new ValidationError(`${label} conclusion does not match its telescope`);
-    const derived = [...new Set(telescope.hypotheses.map((hypothesis) => hypothesis.statement))].sort();
-    if (JSON.stringify(derived) !== JSON.stringify([...assumptions].sort()))
-      throw new ValidationError(`${label} assumptions do not match its telescope`);
-    spec2 = { levelParams, telescope };
+    edge = { levelParams, telescope, ...derivedEdge(telescope) };
+  } else {
+    edge = {
+      conclusion: identifier(value.conclusion, `${label} conclusion`, 2_048),
+      assumptions: stringArray(value.assumptions, `${label} assumptions`, MAX_ENTRIES, 2_048),
+    };
   }
   return {
     id: identifier(value.id, `${label} id`, 2_048),
     path: relativeFile(value.path, `${label} path`),
-    ...spec2,
-    conclusion,
-    assumptions,
+    ...edge,
     description: text(value.description, `${label} description`, 1024 * 1024, true),
     ...(value.sections === undefined ? {} : { sections: parseSections(value.sections, label) }),
   };
@@ -732,9 +827,26 @@ function parseSections(value: unknown, owner: string): AnnotationSection[] {
   });
 }
 
-function parseCaptureManifest(value: unknown, published: boolean): CaptureManifest | PublishedCapture {
+/**
+ * A capture manifest. A validation report's own capture, and a spec-1
+ * record's, name their pins; a spec-2 record's capture stores none
+ * (recorded-shape.ts) — `pins` says so and supplies the row's, so the parsed
+ * manifest is the full one either way. A capture read from a record whose
+ * spec the caller does not know (a dependency's, parsePublishedCapture)
+ * keeps whichever shape it has.
+ */
+function parseCaptureManifest(
+  value: unknown,
+  published: boolean,
+  pins?: Pick<ValidationRuntimeIdentity, "leanToolchain" | "mathlibCommit">,
+  lenientPins = false,
+): CaptureManifest | PublishedCapture {
+  if (!isObject(value)) throw new ValidationError("capture manifest must be an object");
+  const storesPins = pins === undefined && (!lenientPins || value.leanToolchain !== undefined);
   const object = exactObject(value, [
-    "formatVersion", "digest", "sourceCommit", "leanToolchain", "mathlibCommit", "files",
+    "formatVersion", "digest", "sourceCommit",
+    ...(storesPins ? ["leanToolchain", "mathlibCommit"] : []),
+    "files",
     ...(published ? ["registryBlob"] : []),
   ], published ? "published capture" : "capture manifest");
   if (object.formatVersion !== 1) throw new ValidationError("capture formatVersion must be 1");
@@ -748,8 +860,14 @@ function parseCaptureManifest(value: unknown, published: boolean): CaptureManife
     formatVersion: 1,
     digest: sha256(object.digest, "capture digest"),
     sourceCommit: validateCommit(object.sourceCommit),
-    leanToolchain: nonemptyText(object.leanToolchain, "capture leanToolchain", 128, false),
-    mathlibCommit: validateCommit(object.mathlibCommit),
+    ...(storesPins
+      ? {
+          leanToolchain: nonemptyText(object.leanToolchain, "capture leanToolchain", 128, false),
+          mathlibCommit: validateCommit(object.mathlibCommit),
+        }
+      : pins === undefined
+        ? {}
+        : { leanToolchain: pins.leanToolchain, mathlibCommit: pins.mathlibCommit }),
     files,
   };
   if (!published) return base;

@@ -259,7 +259,41 @@ record depends on are trusted as today.
    asserting the phase so a fixture that dies in elaboration is noticed; a
    test that `certificate` edges and generated Challenge theorems are the
    same list. Docker smoke in the spec-2 fake environment; scratch-repo
-   rehearsal (`scripts/rehearsal/`). Release.
+   rehearsal (`scripts/rehearsal/`). Release. **Landed 2026-10-03** (code:
+   `src/submission-validation/certify/` — `generate.ts`, `lean-name.ts`,
+   `bundle.ts`, `project.ts`, `phase.ts`, `host.ts`, `verdict.ts` — plus
+   `sandbox/tools/run-certify.mjs` and `recorded-shape.ts`; the docker
+   smoke's `spec2-certify` case and the scratch-repo rehearsal are Jan's,
+   neither was run, and the release is Jan's). Deviations: the record
+   shapes follow the build-output investigation
+   (`spike/axiomfree/build-output-investigation-20261003.md`) rather than
+   this plan's point 4 — `certificate` is `{ judge, kernels, bundle,
+   challengeExportSha256, challenge }` with **no edge list** (the trusted
+   parser regenerates `Challenge.lean` from the stored telescopes and
+   requires byte equality), the key is **absent** for a record without
+   proofs, the bundle is a **further layer of the record's OCI capture
+   manifest** (not a separate artifact), and a spec-2 record stores no
+   field a reader derives (`recorded-shape.ts`: no `conclusion`/
+   `assumptions`, no capture pins, no `inputs.manifest.id`, no
+   `paper.folder/main/engine`); the Challenge imports the **root modules**
+   of the concept packages the edges name (a statement's module is not
+   recorded, and a root imports exactly its package); container A builds a
+   lakefile that is the bundle's minus the proof require (lake loads every
+   required package, so the bundle's own lakefile cannot run without the
+   proof package), while B runs the bundle's lakefile with a path-entry
+   manifest exactly as a submission build is provisioned; `lake comparator`
+   probes PATH for `git` even unsandboxed and the stock image has none, so
+   the in-container tool puts a failing shim first on the comparator's
+   PATH; local `lax build` runs the same A/B split on the host (export,
+   then `--challenge-from-export`), with path requires symlinked under the
+   generated project, so its bundle digest is local; the kernel set is
+   `certificationKernels` in the limits table (`"lean"` | `"paranoid"`, a
+   row override), the phase shares Replay's timeout; the
+   sorry-through-a-helper negative dies in Inspect (the axiom walk sees
+   `sorryAx` on the helper), so the comparator's own refusals are driven
+   over the real comparator against hand-edited Solutions in the e2e, and
+   the two-container layout is rehearsed on the host with the real tool
+   script (docker is still owed).
 4. **CLI.** `lax certify` with relative certificates, `lax doctor`,
    `lax init --env` for spec-2 rows, the instructions section. Release.
 5. **Website.** `specVersion` plumbing, telescopes on proof cards, the

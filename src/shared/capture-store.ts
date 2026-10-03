@@ -34,7 +34,14 @@ export const PAPER_MEDIA_TYPE = "application/vnd.lax.paper.v1+pdf";
  * (paper-web-plan.md, "Storage"): one digest to record, one anonymous
  * download, push-before-CAS and retry idempotency inherited unchanged. */
 export const PAPER_WEB_MEDIA_TYPE = "application/vnd.lax.paper-web.v1+tar";
+/** The certificate bundle, a further layer of the same artifact manifest
+ * (axiomfree-plan.md, "Certify" 4): the five generated files
+ * `lake comparator` judged, a few KB, fetched by its digest for a rerun. */
+export const CERTIFICATE_MEDIA_TYPE = "application/vnd.lax.certificate.v1+tar";
 const MAX_PAPER_BYTES = 25 * 1024 * 1024;
+/** Generous for five text files: the estimate for the largest live record
+ * is 34 KB of Challenge; the cap only bounds what the publisher streams. */
+const MAX_CERTIFICATE_BYTES = 16 * 1024 * 1024;
 /** The bundle cap (PAPER_CAPS.webBundleBytes and the schema parser agree). */
 const MAX_PAPER_WEB_BYTES = 25 * 1024 * 1024;
 const REPOSITORY_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u;
@@ -64,6 +71,12 @@ const REPOSITORY_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][
  * Tags are MUTABLE and carry no integrity — see GhcrCaptureStore.
  */
 export function captureTag(source: SourceLocation, manifest: CaptureManifest): string {
+  // The pins are inside the tuple, so the manifest tagged is always the
+  // validation report's own, which carries them (a spec-2 record's stored
+  // copy does not — recorded-shape.ts — and is never what gets pushed).
+  if (manifest.leanToolchain === undefined || manifest.mathlibCommit === undefined) {
+    throw new ValidationError("a capture is tagged by its pins, which this manifest does not carry");
+  }
   const canonical = JSON.stringify([
     source.repository,
     source.folder,
@@ -129,12 +142,21 @@ export interface PaperWebBlobInput {
   bytes: number;
 }
 
+/** The certificate bundle the publisher is asked to push as a further
+ * layer, bound to the digest the validated build output records. */
+export interface CertificateBlobInput {
+  bundlePath: string;
+  digest: string;
+}
+
 export interface PromotedArtifacts {
   capture: PublishedCapture;
   /** The PDF layer's digest-addressed reference, when a paper was pushed. */
   paperBlob?: string;
   /** The bundle layer's digest-addressed reference, when one was pushed. */
   paperWebBlob?: string;
+  /** The certificate layer's digest-addressed reference, when one was pushed. */
+  certificateBlob?: string;
 }
 
 export class GhcrCaptureStore {
@@ -155,6 +177,7 @@ export class GhcrCaptureStore {
     capturePath: string,
     paper?: PaperBlobInput,
     paperWeb?: PaperWebBlobInput,
+    certificate?: CertificateBlobInput,
   ): Promise<PromotedArtifacts> {
     validateSubmissionId(id);
     if (source.commit !== manifest.sourceCommit) {
@@ -194,6 +217,17 @@ export class GhcrCaptureStore {
       }
       webLayer = { digest: `sha256:${paperWeb.digest}`, size: webStat.size };
     }
+    let certificateLayer: { digest: string; size: number } | undefined;
+    if (certificate !== undefined) {
+      const certificateStat = fs.lstatSync(certificate.bundlePath);
+      if (!certificateStat.isFile() || certificateStat.size <= 0 || certificateStat.size > MAX_CERTIFICATE_BYTES) {
+        throw new ValidationError("certificate.tar must be a non-empty regular file no larger than 16 MiB");
+      }
+      if (sha256File(certificate.bundlePath) !== certificate.digest) {
+        throw new ValidationError("certificate.tar does not match the digest the validated build output records");
+      }
+      certificateLayer = { digest: `sha256:${certificate.digest}`, size: certificateStat.size };
+    }
     const digest = `sha256:${manifest.digest}`;
     const bearer = await this.exchangeToken();
     await this.ensureBlob(bearer, digest, stat.size, () =>
@@ -207,6 +241,11 @@ export class GhcrCaptureStore {
       const layer = webLayer;
       await this.ensureBlob(bearer, layer.digest, layer.size, () =>
         Readable.toWeb(fs.createReadStream(paperWeb!.bundlePath)) as unknown as BodyInit);
+    }
+    if (certificateLayer !== undefined) {
+      const layer = certificateLayer;
+      await this.ensureBlob(bearer, layer.digest, layer.size, () =>
+        Readable.toWeb(fs.createReadStream(certificate!.bundlePath)) as unknown as BodyInit);
     }
     await this.ensureBlob(bearer, EMPTY_CONFIG_DIGEST, EMPTY_CONFIG.length, () =>
       EMPTY_CONFIG as unknown as BodyInit);
@@ -225,6 +264,9 @@ export class GhcrCaptureStore {
         { mediaType: CAPTURE_MEDIA_TYPE, digest, size: stat.size },
         ...(paperLayer === undefined ? [] : [{ mediaType: PAPER_MEDIA_TYPE, digest: paperLayer.digest, size: paperLayer.size }]),
         ...(webLayer === undefined ? [] : [{ mediaType: PAPER_WEB_MEDIA_TYPE, digest: webLayer.digest, size: webLayer.size }]),
+        ...(certificateLayer === undefined
+          ? []
+          : [{ mediaType: CERTIFICATE_MEDIA_TYPE, digest: certificateLayer.digest, size: certificateLayer.size }]),
       ],
       // Discoverability and GC metadata only; consumers trust none of it.
       annotations: {
@@ -240,6 +282,7 @@ export class GhcrCaptureStore {
       capture: { ...manifest, registryBlob: `ghcr.io/${this.repository}@${digest}` },
       ...(paperLayer === undefined ? {} : { paperBlob: `ghcr.io/${this.repository}@${paperLayer.digest}` }),
       ...(webLayer === undefined ? {} : { paperWebBlob: `ghcr.io/${this.repository}@${webLayer.digest}` }),
+      ...(certificateLayer === undefined ? {} : { certificateBlob: `ghcr.io/${this.repository}@${certificateLayer.digest}` }),
     };
   }
 

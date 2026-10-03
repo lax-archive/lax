@@ -22,12 +22,34 @@ spec-2 fake environment in `test/e2e/host-spec2.test.ts` under the
 inspector's `--spec 2` facts read from `LaxCore.laxStatementAttr`'s
 entries, the spec-2 classification in `phases/inspect-spec2.ts`, the
 background-only walk, `telescope`/`levelParams` in `build-output.json`,
-the spec-2 golden, spec-1 goldens byte-identical). Next: stage 3 (the
-certificate generator from the recorded telescopes, the two-container
-Certify layout in the runner, the capture-store push and the
-`certificate` block, the comparator negatives with their phase asserted,
-the docker smoke and the scratch-repo rehearsal — which also owes the
-transitively-reachable-statement e2e stage 2 only table-tested).
+the spec-2 golden, spec-1 goldens byte-identical). Stage 3 landed
+2026-10-03 (the generator with its goldens, the two-container Certify
+phase in the runner, the local host run, the comparator verdict in one
+place, the certificate layer in the capture store, the `certificate`
+block and the spec-2 record shape of `recorded-shape.ts` — see the stage
+line in `axiomfree-plan.md` for the deviations). Next: stage 4 (`lax
+certify` with relative certificates over the stored bundle and
+telescopes, `lax doctor`'s kernel report, `lax init --env` for spec-2
+rows, the instructions section). Jan's items before stage 3 ships:
+
+- **Docker smoke of Certify** (not run): `LAX_SMOKE_CASE=spec2-certify npm
+  run smoke:submission-validation` with the spec-2 row injected — the
+  recipe is in `test/smoke/submission-validation.ts` beside the fixture.
+  What it proves that the host rehearsal could not: the stock image's
+  `which`/`env` for the comparator's probes, the `git` shim on its PATH,
+  the file bind mount of `challenge.export`, and the staged own-capture
+  layout under the real `--read-only` container.
+- **Scratch-repo rehearsal** (`scripts/rehearsal/`) for the Actions-side
+  change: `certificate.tar` in the validate artifact and
+  `VALIDATION_CERTIFICATE_PATH` in both publish steps, the certificate
+  layer's push before the CAS commit, a spec-2 record landing in the
+  database in its new shape.
+- The transitively-reachable-statement e2e stage 2 only table-tested is
+  still owed; the chain e2e of stage 3 (`host-spec2.test.ts`, lax-41 over
+  lax-38) covers the direct require only.
+- Follow-up from the build-output investigation, not done in stage 3:
+  drop `capture.files` from spec-2 records and push a `references` OCI
+  layer (concept sources + `.ilean`) beside the capture.
 
 ## Sibling drafts (2026-09-19)
 

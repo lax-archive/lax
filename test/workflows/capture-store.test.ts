@@ -196,6 +196,33 @@ describe("ghcr capture promotion", () => {
     expect(registry.calls.length).toBe(before);
   });
 
+  it("pushes a certificate bundle as a further layer of the same manifest, hashed first", async () => {
+    const fixture = captureFixture();
+    const bundle = Buffer.from("certificate ustar fixture bytes");
+    const bundlePath = path.join(temporary("lax-certificate-fixture-"), "certificate.tar");
+    fs.writeFileSync(bundlePath, bundle);
+    const digest = createHash("sha256").update(bundle).digest("hex");
+    const registry = fakeRegistry();
+    const store = new GhcrCaptureStore("job-token", REPOSITORY);
+    await expect(
+      store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, undefined, undefined, { bundlePath, digest }),
+    ).resolves.toEqual({
+      capture: { ...fixture.manifest, registryBlob: `ghcr.io/${REPOSITORY}@sha256:${fixture.manifest.digest}` },
+      certificateBlob: `ghcr.io/${REPOSITORY}@sha256:${digest}`,
+    });
+    const manifestPuts = registry.calls.filter((call) => call.method === "PUT" && call.url.includes("/manifests/"));
+    expect(manifestPuts).toHaveLength(1);
+    const manifest = JSON.parse(manifestPuts[0]!.body!) as Record<string, any>;
+    expect(manifest.layers).toEqual([
+      { mediaType: "application/vnd.lax.capture.v1+tar", digest: `sha256:${fixture.manifest.digest}`, size: fixture.size },
+      { mediaType: "application/vnd.lax.certificate.v1+tar", digest: `sha256:${digest}`, size: bundle.length },
+    ]);
+    // the bundle is hashed by the publisher itself before any push
+    await expect(
+      store.promote("lax-42", SOURCE, fixture.manifest, fixture.path, undefined, undefined, { bundlePath, digest: "0".repeat(64) }),
+    ).rejects.toThrow("certificate.tar does not match the digest");
+  });
+
   it("stores a three-layer manifest on the fake ghcr with every blob pullable by digest", async () => {
     // The HTTP path against test/fake-ghcr.ts, through the same
     // LAX_CAPTURE_REGISTRY_URL seam the e2es use — and the two-layer shape

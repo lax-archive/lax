@@ -11,10 +11,16 @@ import {
 import type { PublisherArchive, PublisherControl } from "../../src/shared/publisher.js";
 import type { PublishRequest } from "../../src/shared/types.js";
 import { SubmitPublisher, type SubmitCaptureStore } from "../../src/shared/submit-publisher.js";
-import { parsePaperOutput, type SuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
+import {
+  parsePaperOutput,
+  parsePublishedBuildOutputPayload,
+  type SuccessfulValidationArtifacts,
+} from "../../src/submission-validation/artifact-schema.js";
 import type { PublishedCapture, ResolvedDependency } from "../../src/submission-validation/contracts.js";
 import { environment as environmentById } from "../../src/submission-validation/environments.js";
+import { spec2TestEnvironment, withTestEnvironmentsAsync } from "../support/environments.js";
 import {
+  spec2Artifacts,
   successfulArtifacts,
   TEST_CAPTURE,
   TEST_SOURCE,
@@ -106,6 +112,7 @@ describe("trusted submit publisher", () => {
       "/capture.tar",
       undefined,
       undefined,
+      undefined,
     );
     // Ordering invariant: the ghcr push completes before the database CAS
     // commit that references the blob digest.
@@ -127,6 +134,7 @@ describe("trusted submit publisher", () => {
       TEST_CAPTURE,
       "/capture.tar",
       { pdfPath: "/paper.pdf", digest: "7".repeat(64), bytes: 4321 },
+      undefined,
       undefined,
     );
     const combined = { ...current.texts, ...harness.changes } as Record<string, string>;
@@ -173,6 +181,7 @@ describe("trusted submit publisher", () => {
       "/capture.tar",
       { pdfPath: "/paper.pdf", digest: "7".repeat(64), bytes: 4321 },
       { bundlePath: "/paper-web.tar", digest: "6".repeat(64), bytes: 54321 },
+      undefined,
     );
     const combined = { ...current.texts, ...harness.changes } as Record<string, string>;
     const parsed = parseArchiveFiles("lax-42", combined);
@@ -191,6 +200,60 @@ describe("trusted submit publisher", () => {
     // The record's paper parses as a published one: both registry blobs
     // required, each bound to its own recorded digest.
     expect(() => parsePaperOutput(paper, artifacts.buildOutput.inputs.manifest.paper!, true)).not.toThrow();
+  });
+
+  it("pushes a spec-2 record's certificate bundle, binds its address, and stores the record in its own shape", async () => {
+    await withTestEnvironmentsAsync([spec2TestEnvironment()], async () => {
+      const current = loaded();
+      const harness = submitHarness(new Map([["lax-42", current]]));
+      const artifacts = spec2Artifacts();
+      const result = await harness.publisher.publish(
+        request(current),
+        artifacts,
+        "/capture.tar",
+        run,
+        undefined,
+        undefined,
+        "/certificate.tar",
+      );
+      expect(result).toMatchObject({ kind: "committed" });
+      expect(harness.captureStore.promote).toHaveBeenCalledExactlyOnceWith(
+        "lax-42",
+        TEST_SOURCE,
+        artifacts.report.capture,
+        "/capture.tar",
+        undefined,
+        undefined,
+        { bundlePath: "/certificate.tar", digest: "c".repeat(64) },
+      );
+      const combined = { ...current.texts, ...harness.changes } as Record<string, string>;
+      const stored = JSON.parse(combined["build-output.json"]!) as Record<string, any>;
+      // the record stores the spec-2 shape: no derivable field, the bundle's
+      // address bound, and it parses back as a published payload
+      expect(stored.inputs.manifest).not.toHaveProperty("id");
+      expect(stored.capture).not.toHaveProperty("leanToolchain");
+      expect(stored.capture.registryBlob).toBe(`ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`);
+      expect(stored.proofs[0]).not.toHaveProperty("conclusion");
+      expect(stored.certificate.bundle).toEqual({
+        formatVersion: 1,
+        digest: "c".repeat(64),
+        registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"c".repeat(64)}`,
+      });
+      expect(stored.certificate.challenge).toBe(artifacts.buildOutput.certificate!.challenge);
+      const { specVersion: _s, id: _i, issue: _n, ...payload } = stored;
+      expect(parsePublishedBuildOutputPayload(payload, artifacts.report.request, artifacts.report.runtime).certificate)
+        .toEqual({ ...artifacts.buildOutput.certificate, bundle: stored.certificate.bundle });
+
+      // and never without its bundle, nor a bundle without a record
+      const withoutTar = submitHarness(new Map([["lax-42", current]]));
+      await expect(withoutTar.publisher.publish(request(current), spec2Artifacts(), "/capture.tar", run))
+        .rejects.toThrow("records a certificate exactly when a certificate.tar is supplied");
+      expect(withoutTar.captureStore.promote).not.toHaveBeenCalled();
+      const strayTar = submitHarness(new Map([["lax-42", current]]));
+      await expect(
+        strayTar.publisher.publish(request(current), successfulArtifacts(), "/capture.tar", run, undefined, undefined, "/certificate.tar"),
+      ).rejects.toThrow("records a certificate exactly when a certificate.tar is supplied");
+    });
   });
 
   it("refuses a recorded web view without its tar and a tar without a record, before anything is pushed", async () => {
@@ -468,10 +531,11 @@ function submitHarness(
     registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`,
   };
   const captureStore = {
-    promote: vi.fn(async (_id, _source, _manifest, _capturePath, paper, paperWeb) => ({
+    promote: vi.fn(async (_id, _source, _manifest, _capturePath, paper, paperWeb, certificate) => ({
       capture: publishedCapture,
       ...(paper === undefined ? {} : { paperBlob: `ghcr.io/lax-archive/lax-captures@sha256:${paper.digest}` }),
       ...(paperWeb === undefined ? {} : { paperWebBlob: `ghcr.io/lax-archive/lax-captures@sha256:${paperWeb.digest}` }),
+      ...(certificate === undefined ? {} : { certificateBlob: `ghcr.io/lax-archive/lax-captures@sha256:${certificate.digest}` }),
     })),
   } satisfies SubmitCaptureStore;
   return {

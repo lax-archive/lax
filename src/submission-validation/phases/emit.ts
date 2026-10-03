@@ -3,6 +3,7 @@ import path from "node:path";
 import type {
   BuildOutputPayload,
   CaptureManifest,
+  CertificateOutput,
   InspectionResult,
   PaperOutput,
   StaticResult,
@@ -14,6 +15,7 @@ export function emitBuildOutput(
   inspection: InspectionResult,
   capture: CaptureManifest,
   paper?: PaperOutput,
+  certificate?: CertificateOutput,
 ): BuildOutputPayload {
   if (
     staticResult.manifest === undefined ||
@@ -26,6 +28,11 @@ export function emitBuildOutput(
   // the key; the trusted parser is where "declared implies present" holds.
   if (paper !== undefined && staticResult.manifest.paper === undefined) {
     throw new Error("cannot emit build output: a paper result for a manifest that declares none");
+  }
+  // A certificate exists exactly for a spec-2 record with proofs (the Certify
+  // phase runs for nothing else); the trusted parser holds the record to it.
+  if ((certificate !== undefined) !== (staticResult.manifest.specVersion === "2" && inspection.proofs.length > 0)) {
+    throw new Error("cannot emit build output: a certificate is recorded exactly for a spec-2 record with proofs");
   }
   const concepts = inspection.concepts.map((concept) => ({
     ...concept,
@@ -48,6 +55,7 @@ export function emitBuildOutput(
       .sort((a, b) => a.id.localeCompare(b.id)),
     capture,
     ...(paper === undefined ? {} : { paper }),
+    ...(certificate === undefined ? {} : { certificate }),
   };
 }
 

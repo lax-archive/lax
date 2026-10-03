@@ -25,7 +25,10 @@ import { packageNameForSubmission } from "../../src/submission-validation/contra
 import {
   environment as environmentById,
   epoch,
+  librariesOf,
+  type ArchiveEnvironment,
 } from "../../src/submission-validation/environments.js";
+import { recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
 import { ensureValidationHost } from "../../src/submission-validation/host/setup.js";
 import { mathlibUrl, REFLOWTEX_REV } from "../../src/submission-validation/pins.js";
 import {
@@ -114,8 +117,9 @@ assert(
   injected.length <= 1,
   `the smoke provisions one environment; LAX_TEST_ENVIRONMENTS names ${injected.length}`,
 );
-const environment = injected[0] === undefined ? epoch() : environmentById(injected[0]);
-assert(environment !== undefined, `LAX_TEST_ENVIRONMENTS names ${injected[0]}, which is not admitted`);
+const selected = injected[0] === undefined ? epoch() : environmentById(injected[0]);
+assert(selected !== undefined, `LAX_TEST_ENVIRONMENTS names ${injected[0]}, which is not admitted`);
+const environment: ArchiveEnvironment = selected;
 const runtime: RuntimePins = {
   leanToolchain: environment.leanToolchain,
   leanVersion: environment.id,
@@ -442,6 +446,47 @@ function fixtures(): SmokeFixture[] {
         assert.equal(paper.pdf.pages, 1);
       },
     },
+    // Stage 3's Certify in the real containers (axiomfree-plan.md): a spec-2
+    // submission with an unconditional and a conditional proof runs through
+    // container A (the Challenge built and exported without the proof
+    // package) and container B (`lake comparator --challenge-from-export`
+    // over the proof capture), and the build output carries the certificate.
+    // Only selectable in a spec-2 environment, which the real table does not
+    // have yet: inject the rehearsal row with the real mathlib at its tag and
+    // the fixture LaxCore (a `file://` repository is fine — the warm store is
+    // built on the host and only its artifacts are mounted), e.g.
+    //
+    //   LAX_LAXCORE_URL=file://$HOME/.cache/lax-test/fake-laxcore-<hash> \
+    //   LAX_LAXCORE_REV=<its commit> \
+    //   LAX_TEST_ENVIRONMENTS='[{"id":"v4.35.0","leanToolchain":"leanprover/lean4:v4.35.0-rc3",
+    //     "mathlibCommit":"c55e6e786f49471c72fbddbec5415808896aec1e","specVersion":2,
+    //     "libraries":[{"name":"LaxCore","commit":"<its commit>"}]}]' \
+    //   LAX_SMOKE_CASE=spec2-certify npm run smoke:submission-validation
+    //
+    // Not run on 2026-10-03 (no docker in the stage-3 session); Jan's item.
+    ...(environment.specVersion === 2
+      ? [{
+          name: "spec2-certify",
+          id: "lax-47",
+          files: spec2CertifyFiles(),
+          check(report: ValidationReport, jobRoot: string) {
+            assertSuccessful(report);
+            const certificate = report.buildOutput!.certificate;
+            assert(certificate !== undefined, "the certificate was not recorded");
+            assert.deepEqual(certificate.kernels, ["lean"]);
+            assert.equal(certificate.judge.comparatorExitCode, 0);
+            assert.equal(certificate.judge.toolchain, environment.leanToolchain);
+            assert(certificate.challenge.includes("theorem Cert.Lax47Proofs.step"), certificate.challenge);
+            const bundlePath = (report as { certificateBundlePath?: string }).certificateBundlePath;
+            assert(bundlePath !== undefined && bundlePath.startsWith(jobRoot), "the bundle did not come out of the job directory");
+            assert.equal(createHash("sha256").update(fs.readFileSync(bundlePath)).digest("hex"), certificate.bundle.digest);
+            // the recorded shape: telescopes only, no capture pins
+            const stored = recordedBuildOutput(report.buildOutput!) as Record<string, any>;
+            assert.equal("conclusion" in stored.proofs[0], false);
+            assert.equal("leanToolchain" in stored.capture, false);
+          },
+        } satisfies SmokeFixture]
+      : []),
     {
       name: "authored-reserved-name",
       id: "lax-41",
@@ -488,7 +533,7 @@ function writeFixture(
   };
   write(
     "manifest.yaml",
-    `specVersion: "1"\nid: ${id}\nleanVersion: ${pins.leanVersion}\n` +
+    `specVersion: "${environment.specVersion}"\nid: ${id}\nleanVersion: ${pins.leanVersion}\n` +
       `mathlibVersion: ${pins.mathlibCommit}\ntitle: Smoke submission ${id}\n` +
       "authors:\n  - name: Lax Smoke\n    github: lax-archive\nbibEntries: []\n" +
       manifestExtra,
@@ -506,9 +551,17 @@ function writeFixture(
 }
 
 function lakefile(name: string, pins: RuntimePins, ownConcept?: string): string {
+  // every required library of the row at its pin: mathlib alone in a spec-1
+  // row, mathlib and LaxCore in a spec-2 one (the libraries rule)
+  const libraries = librariesOf(environment)
+    .filter((library) => library.required)
+    .map((library) =>
+      `[[require]]\nname = "${library.name}"\ngit = "${library.name === "mathlib" ? pins.mathlibRepository : library.url()}"\n` +
+      `rev = "${library.name === "mathlib" ? pins.mathlibCommit : library.commit}"\n\n`)
+    .join("");
   return (
     `name = "${name}"\ndefaultTargets = ["${name}"]\n\n[leanOptions]\nautoImplicit = false\n\n` +
-    `[[require]]\nname = "mathlib"\ngit = "${pins.mathlibRepository}"\nrev = "${pins.mathlibCommit}"\n\n` +
+    libraries +
     (ownConcept === undefined
       ? ""
       : `[[require]]\nname = "${ownConcept}"\npath = "../concepts"\n\n`) +
@@ -834,6 +887,42 @@ theorem my : pick (0 + 1) = pick 1 := by
   simp
 
 end Lax40Proofs
+`,
+  };
+}
+
+/** Two statements, an unconditional proof of one and a conditional proof of
+ * the other from it — the smallest network with both edge shapes. */
+function spec2CertifyFiles(): Record<string, string> {
+  return {
+    "concepts/Lax47.lean": "import Lax47.Order\n",
+    "concepts/Lax47/Order.lean": `import LaxCore
+
+${conceptModule(
+  "Order facts",
+  `namespace Lax47.Order
+
+/-- every natural has a strict successor -/
+@[lax_statement] def HasSucc : Prop := ∀ n : Nat, ∃ m, n < m
+
+/-- the same, stated again -/
+@[lax_statement] def HasSuccToo : Prop := ∀ n : Nat, ∃ m, n < m
+
+end Lax47.Order
+`,
+)}`,
+    "proofs/Lax47Proofs.lean": "import Lax47Proofs.Basic\n",
+    "proofs/Lax47Proofs/Basic.lean": `import Lax47.Order
+
+namespace Lax47Proofs
+
+/-- unconditional -/
+theorem hasSucc : Lax47.Order.HasSucc := fun n => ⟨n + 1, Nat.lt_succ_self n⟩
+
+/-- conditional -/
+theorem step (h : Lax47.Order.HasSucc) : Lax47.Order.HasSuccToo := h
+
+end Lax47Proofs
 `,
   };
 }

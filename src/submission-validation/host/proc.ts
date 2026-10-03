@@ -95,6 +95,42 @@ export function run(
   });
 }
 
+/**
+ * Run a command with its stdout streamed to `outFile` and only its stderr
+ * captured as the transcript — for a tool whose stdout *is* its product and
+ * is far too large to hold (the Challenge export of certify/host.ts, tens of
+ * MB of NDJSON). No echo, no timeout: the callers' phases bound it.
+ */
+export function runToFile(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  outFile: string,
+  opts: { env?: Record<string, string>; maxOutputBytes?: number } = {},
+): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const descriptor = fs.openSync(outFile, "w");
+    const child = spawn(cmd, args, {
+      cwd,
+      stdio: ["ignore", descriptor, "pipe"],
+      env: opts.env ? { ...process.env, ...opts.env } : undefined,
+    });
+    let output = "";
+    child.stderr?.on("data", (data: Buffer) => {
+      if (opts.maxOutputBytes !== undefined && output.length >= opts.maxOutputBytes) return;
+      output += data.toString();
+    });
+    child.on("error", (error) => {
+      fs.closeSync(descriptor);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      fs.closeSync(descriptor);
+      resolve({ code: code ?? 1, output });
+    });
+  });
+}
+
 const MEMORY_SAMPLE_INTERVAL_MS = 250;
 
 /** The memory-relevant lines of a /proc/<pid>/status blob; absent lines

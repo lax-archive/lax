@@ -251,10 +251,12 @@ jobs:
           path: .build/submission-validation/validation-report.json
           if-no-files-found: warn
           retention-days: 90
-      # paper.pdf is present exactly when the submission declares a paper, and
-      # paper-web.tar exactly when the build output records `paper.web`: the
-      # publisher hashes each against the digest the build output records.
-      - name: Preserve the report, generated build output, capture, paper, and profile
+      # paper.pdf is present exactly when the submission declares a paper,
+      # paper-web.tar exactly when the build output records `paper.web`, and
+      # certificate.tar exactly when it records a `certificate` (spec 2 with
+      # proofs): the publisher hashes each against the digest the build
+      # output records.
+      - name: Preserve the report, generated build output, capture, paper, certificate, and profile
         if: always() && steps.metadata.outputs.metadata_only != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -266,6 +268,7 @@ jobs:
             .build/submission-validation/capture.tar
             .build/submission-validation/paper.pdf
             .build/submission-validation/paper-web.tar
+            .build/submission-validation/certificate.tar
           if-no-files-found: warn
           retention-days: 90
       - name: Preserve the metadata-only comparison
@@ -336,6 +339,7 @@ jobs:
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
           VALIDATION_PAPER_PATH: ${{ github.workspace }}/.build/submission-validation/paper.pdf
           VALIDATION_PAPER_WEB_PATH: ${{ github.workspace }}/.build/submission-validation/paper-web.tar
+          VALIDATION_CERTIFICATE_PATH: ${{ github.workspace }}/.build/submission-validation/certificate.tar
         run: node dist/workflows/submission.js prepare-submit
       - name: Mint lax-database token
         if: steps.prepare-submit.outputs.should_publish == 'true'
@@ -375,6 +379,7 @@ jobs:
           VALIDATION_CAPTURE_PATH: ${{ github.workspace }}/.build/submission-validation/capture.tar
           VALIDATION_PAPER_PATH: ${{ github.workspace }}/.build/submission-validation/paper.pdf
           VALIDATION_PAPER_WEB_PATH: ${{ github.workspace }}/.build/submission-validation/paper-web.tar
+          VALIDATION_CERTIFICATE_PATH: ${{ github.workspace }}/.build/submission-validation/certificate.tar
         run: node dist/workflows/submission.js publish-submit
 
   # A positive comparison artifact takes this shorter publisher. It never

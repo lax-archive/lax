@@ -11,7 +11,8 @@ import {
 } from "./publisher.js";
 import { AUTHOR_MUTABLE_STATES, recordGateProblems, requireCurrentRecord } from "./record-gates.js";
 import type { PublishRequest, SourceLocation } from "./types.js";
-import { ValidationError } from "./validation.js";
+import { isObject, ValidationError } from "./validation.js";
+import { recordedBuildOutput } from "../submission-validation/recorded-shape.js";
 import type {
   BuildOutputPayload,
   PublishedCapture,
@@ -76,6 +77,9 @@ export class SubmitPublisher {
     run: WorkflowRunRef,
     paperPdfPath?: string,
     paperWebPath?: string,
+    /** The certificate bundle, required exactly when the build output
+     * records a `certificate` (spec 2 with proofs), under the same contract. */
+    certificatePath?: string,
   ): Promise<SubmitPublishResult> {
     if (this.captureStore === undefined) throw new Error("submit publisher has no capture store");
     const ready = await this.preflight(untrustedRequest, artifacts);
@@ -97,6 +101,10 @@ export class SubmitPublisher {
     if ((paper?.web === undefined) !== (paperWebPath === undefined)) {
       throw new ValidationError("the validated build output records a paper web view exactly when a paper-web.tar is supplied");
     }
+    const certificate = artifacts.buildOutput.certificate;
+    if ((certificate === undefined) !== (certificatePath === undefined)) {
+      throw new ValidationError("the validated build output records a certificate exactly when a certificate.tar is supplied");
+    }
     const promoted = await this.captureStore.promote(
       request.id,
       artifacts.report.request.source,
@@ -108,12 +116,18 @@ export class SubmitPublisher {
       paper?.web === undefined || paperWebPath === undefined
         ? undefined
         : { bundlePath: paperWebPath, digest: paper.web.bundle.digest, bytes: paper.web.bundle.bytes },
+      certificate === undefined || certificatePath === undefined
+        ? undefined
+        : { bundlePath: certificatePath, digest: certificate.bundle.digest },
     );
     if ((paper === undefined) !== (promoted.paperBlob === undefined)) {
       throw new ValidationError("the capture store did not push the paper layer it was asked for");
     }
     if ((paper?.web === undefined) !== (promoted.paperWebBlob === undefined)) {
       throw new ValidationError("the capture store did not push the paper web layer it was asked for");
+    }
+    if ((certificate === undefined) !== (promoted.certificateBlob === undefined)) {
+      throw new ValidationError("the capture store did not push the certificate layer it was asked for");
     }
     const changes = constructSubmitChanges(
       request,
@@ -122,6 +136,7 @@ export class SubmitPublisher {
       promoted.capture,
       promoted.paperBlob,
       promoted.paperWebBlob,
+      promoted.certificateBlob,
     );
     const archiveCommit = await this.archive.writeFiles({
       id: request.id,
@@ -204,6 +219,7 @@ export class SubmitPublisher {
     const dependencyProblems = await this.validateDependencies(
       artifacts.report.dependencies,
       current.snapshot,
+      artifacts.report.runtime.environment,
     );
     problems.push(...dependencyProblems);
     if (revalidation) {
@@ -238,6 +254,7 @@ export class SubmitPublisher {
   private async validateDependencies(
     dependencies: ResolvedDependency[],
     snapshot: ArchiveSnapshot,
+    environmentId: string,
   ): Promise<string[]> {
     const problems: string[] = [];
     const loaded = new Map<string, LoadedSubmission | undefined>();
@@ -279,6 +296,16 @@ export class SubmitPublisher {
       if (capture !== undefined && JSON.stringify(capture) !== JSON.stringify(expected.capture)) {
         problems.push(`dependency ${expected.packageName} capture changed after validation`);
       }
+      // A spec-2 record's capture stores no pins (recorded-shape.ts): its
+      // environment is the row its manifest names, which must be this run's
+      // — the island rule resolution applied, repeated here on the record.
+      if (capture !== undefined && capture.leanToolchain === undefined) {
+        const inputs = current.files.buildOutput.inputs;
+        const manifest = isObject(inputs) && isObject(inputs.manifest) ? inputs.manifest : undefined;
+        if (manifest?.leanVersion !== environmentId) {
+          problems.push(`dependency ${expected.packageName} is not in environment ${environmentId}`);
+        }
+      }
       const required = requiredPackages(current, expected.kind);
       if (JSON.stringify(required) !== JSON.stringify(expected.requiredPackages)) {
         problems.push(`dependency ${expected.packageName} dependency list changed after validation`);
@@ -299,6 +326,7 @@ function constructSubmitChanges(
   publishedCapture: PublishedCapture,
   paperBlob: string | undefined,
   paperWebBlob?: string,
+  certificateBlob?: string,
 ): ArchiveChanges {
   const commandSource = commandSourceOf(request);
   if (commandSource === undefined) throw new ValidationError("submit command is missing");
@@ -330,17 +358,25 @@ function constructSubmitChanges(
               },
             }),
       };
+  // The certificate's bundle gains its registry address the same way.
+  const publishedCertificate = payload.certificate === undefined || certificateBlob === undefined
+    ? undefined
+    : { ...payload.certificate, bundle: { ...payload.certificate.bundle, registryBlob: certificateBlob } };
+  // The record stores the payload in its own shape (recorded-shape.ts): a
+  // spec-2 record without the fields a reader derives, a spec-1 record as it
+  // always was. The capture's address is bound onto the payload's own
+  // capture, whose digest the parser already held to the pushed one.
+  const capture: PublishedCapture = { ...payload.capture, registryBlob: publishedCapture.registryBlob };
   const buildOutput = {
     specVersion: "1",
     id: request.id,
     issue: current.files.buildOutput.issue,
-    inputs: payload.inputs,
-    requiredByConcepts: payload.requiredByConcepts,
-    requiredByProofs: payload.requiredByProofs,
-    concepts: payload.concepts,
-    proofs: payload.proofs,
-    capture: publishedCapture,
-    ...(publishedPaper === undefined ? {} : { paper: publishedPaper }),
+    ...recordedBuildOutput({
+      ...payload,
+      capture,
+      ...(publishedPaper === undefined ? {} : { paper: publishedPaper }),
+      ...(publishedCertificate === undefined ? {} : { certificate: publishedCertificate }),
+    }),
   };
   const changes: ArchiveChanges = {
     "record.json": `${JSON.stringify(record, null, 2)}\n`,

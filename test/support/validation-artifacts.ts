@@ -1,11 +1,16 @@
 import type { SuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
+import { certifiedProof, challengeText } from "../../src/submission-validation/certify/generate.js";
 import type {
   BuildOutputPayload,
   CaptureManifest,
+  CertificateOutput,
+  ConceptEntry,
+  ProofEntry,
   ValidationReport,
   ValidationRequest,
   ValidationRuntimeIdentity,
 } from "../../src/submission-validation/contracts.js";
+import { environment as environmentById } from "../../src/submission-validation/environments.js";
 
 export const TEST_SOURCE = {
   repository: "https://github.com/alice/submission",
@@ -104,4 +109,61 @@ export function successfulArtifacts(id = "lax-42", runtime = TEST_RUNTIME): Succ
     capture: testCaptureFor(runtime),
   };
   return { report, buildOutput: output };
+}
+
+/**
+ * A successful spec-2 artifact set, in memory and full-shaped: the payload
+ * the pipeline holds before recorded-shape.ts drops what a record derives.
+ * Call it inside `withTestEnvironments([spec2TestEnvironment()], …)`: the
+ * runtime names that injected row, and the parser looks the row up.
+ */
+export function spec2Artifacts(id = "lax-42"): SuccessfulValidationArtifacts {
+  const row = environmentById("v4.35.0");
+  if (row === undefined) throw new Error("spec2Artifacts needs the spec-2 test environment injected");
+  const runtime = testRuntimeFor(row);
+  const artifacts = successfulArtifacts(id, runtime);
+  const proofs: ProofEntry[] = [
+    {
+      id: "Lax42Proofs.euclid",
+      path: "proofs/Lax42Proofs/Basic.lean",
+      levelParams: ["u"],
+      telescope: {
+        hypotheses: [{ statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [], binder: "default" }],
+        conclusion: { statement: "Lax42.Primes.InfinitelyManyPrimes", levels: ["u"] },
+      },
+      conclusion: "Lax42.Primes.InfinitelyManyPrimes",
+      assumptions: ["Lax42.Primes.ExistsPrimeDivisor"],
+      description: "Euclid's argument.",
+    },
+  ];
+  const concepts: ConceptEntry[] = [
+    {
+      id: "Lax42.Primes",
+      path: "concepts/Lax42/Primes.lean",
+      title: "Primes",
+      type: "theorem",
+      description: "Two statements.",
+      imports: [],
+      mathlibImports: [],
+      sourceText: "",
+      statements: [
+        { id: "Lax42.Primes.ExistsPrimeDivisor", levelParams: [], signature: "ExistsPrimeDivisor : Prop", body: "True" },
+        { id: "Lax42.Primes.InfinitelyManyPrimes", levelParams: ["u"], signature: "InfinitelyManyPrimes.{u} : Prop", body: "True" },
+      ],
+    },
+  ];
+  const certificate: CertificateOutput = {
+    judge: { toolchain: runtime.leanToolchain, comparatorExitCode: 0 },
+    kernels: ["lean"],
+    bundle: { formatVersion: 1, digest: "c".repeat(64) },
+    challengeExportSha256: "e".repeat(64),
+    challenge: challengeText(proofs.map(certifiedProof)),
+  };
+  for (const output of [artifacts.buildOutput, artifacts.report.buildOutput]) {
+    output.inputs.manifest.specVersion = "2";
+    output.concepts = structuredClone(concepts);
+    output.proofs = structuredClone(proofs);
+    output.certificate = structuredClone(certificate);
+  }
+  return artifacts;
 }
