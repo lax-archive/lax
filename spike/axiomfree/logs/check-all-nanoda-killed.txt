@@ -1,0 +1,1 @@
+## nanoda on check-all.export: killed by the agent at 2026-10-03T20:56:47+02:00 after     386 s; VmRSS=VmRSS:	10115000 kB VmSwap=VmSwap:	 6400472 kB VmHWM=VmHWM:	17067208 kB; free: Mem:           19419       11424        6915         115        1551        7994

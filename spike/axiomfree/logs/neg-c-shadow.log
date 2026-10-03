@@ -1,0 +1,33 @@
+## 2026-10-03T20:36:42+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator-shadow.json
+## df before: /dev/sda1       450G  419G  7,5G  99% /
+[    1.26s] Resolving dependencies
+[    1.26s] Building Challenge
+[    2.73s] ⚠ [537/538] Replayed Challenge
+[    2.73s] warning: Challenge.lean:10:8: declaration uses `sorry`
+[    2.73s] warning: Challenge.lean:12:8: declaration uses `sorry`
+[    2.73s] Build completed successfully (538 jobs).
+[    4.34s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert.pa, Cert.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge
+[    4.34s] Building SolutionShadow
+[    6.74s] ✔ [536/538] Built ConceptsShadow (958ms)
+[    8.15s] ✖ [537/538] Building SolutionShadow (1.3s)
+[    8.15s] trace: .> LEAN_PATH=/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Cli/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/batteries/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Qq/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/aesop/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/proofwidgets/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/importGraph/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/LeanSearchClient/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/plausible/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/mathlib/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean /home/jan/git/lax/spike/axiomfree/project/SolutionShadow.lean -o /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/SolutionShadow.olean -i /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/SolutionShadow.ilean -c /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/SolutionShadow.c --setup /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/SolutionShadow.setup.json --json
+[    8.15s] error: SolutionShadow.lean:10:49: Type mismatch
+[    8.15s]   trivial
+[    8.15s] has type
+[    8.15s]   True
+[    8.15s] but is expected to have type
+[    8.15s]   Concepts.ExistsPrimeDivisor
+[    8.15s] error: SolutionShadow.lean:12:85: Type mismatch
+[    8.15s]   trivial
+[    8.15s] has type
+[    8.15s]   True
+[    8.15s] but is expected to have type
+[    8.15s]   Concepts.InfinitelyManyPrimes
+[    8.15s] Some required targets logged failures:
+[    8.15s] - SolutionShadow
+[    8.15s] error: build failed
+[    8.26s] error: Child exited with 1
+## exit=1 wall=8.34s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:08.32; Maximum resident set size (kbytes): 107964;
+## df after: /dev/sda1       450G  419G  7,5G  99% /

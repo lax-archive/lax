@@ -1,0 +1,20 @@
+### apparmor label probe: host, inside bwrap
+/usr/bin/bwrap (unconfined)
+exit=0
+### host: label of a plain shell
+unconfined
+### docker defaults: container label
+docker-default (enforce)
+### docker apparmor=unconfined+seccomp=unconfined: label inside bwrap
+unconfined
+/usr/bin/bwrap (unconfined)
+      1000       1000          1
+exit=0
+### docker apparmor=unconfined only: unshare -Ur probe (is it seccomp or apparmor that blocks?)
+unshare: unshare failed: Operation not permitted
+unshare exit=1
+### docker seccomp=unconfined only: unshare -Ur probe
+unshare exit=0
+### docker defaults: unshare -Ur probe
+unshare: unshare failed: Operation not permitted
+unshare exit=1

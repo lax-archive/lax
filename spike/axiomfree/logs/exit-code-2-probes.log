@@ -1,0 +1,18 @@
+## lake comparator --config no-such.json
+error: could not read the configuration: no such file or directory (error code: 2)
+  file: no-such.json
+exit=2
+## lake comparator --config comparator.json --solution-from-export no-such.export
+error: `lake comparator --solution-from-export`: 'no-such.export' does not exist
+exit=2
+## COMPARATOR_BWRAP=/nonexistent lake comparator --config comparator.json
+error: `lake comparator` needs `/nonexistent` to sandbox the code it checks, and it was not found.
+
+  Install `bubblewrap` from your distribution and put `bwrap` on PATH, or set
+  COMPARATOR_BWRAP to its full path. It needs either unprivileged user
+  namespaces or a `bwrap` installed setuid root, which is how distributions
+  that disable them ship it.
+exit=2
+## lake check in a dir without lake-manifest.json (empty temp project)
+error: '/home/jan/git/lax/spike/axiomfree/logs/nomanifest' has no `lake-manifest.json`, and `lake check` resolves dependencies inside a sandbox that cannot write to the project directory. Run `lake build` there first.
+exit=2

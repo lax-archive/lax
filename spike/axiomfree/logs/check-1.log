@@ -1,0 +1,11 @@
+## 2026-10-03T20:31:09+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake check
+## df before: /dev/sda1       450G  419G  7,4G  99% /
+[    0.03s] Resolving dependencies
+[   57.44s] Building and exporting
+[   57.44s] Running Lean default kernel on solution
+[  284.48s] Lean default kernel accepts the solution
+[  284.48s] Uses axioms: propext, Quot.sound, Classical.choice
+## exit=0 wall=284.56s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 4:44.55; Maximum resident set size (kbytes): 1137920;
+## df after: /dev/sda1       450G  419G  7,5G  99% /

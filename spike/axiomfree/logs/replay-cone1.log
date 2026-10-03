@@ -1,0 +1,40 @@
+## [cone1-infinite-primes] export: lake env leanexport Mathlib.Data.Nat.Prime.Infinite -- Nat.exists_infinite_primes > ../logs/replay/cone1-infinite-primes.export
+exit=0
+bytes/lines: 11674093 224145
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:04.09
+	Maximum resident set size (kbytes): 1582280
+## [cone1-infinite-primes] leanchecker: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/leanchecker --silent --from-export ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.21
+	Maximum resident set size (kbytes): 129132
+output (last 3 lines):
+## [cone1-infinite-primes] leanchecker-paranoid: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/leanchecker-paranoid --silent --from-export ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.49
+	Maximum resident set size (kbytes): 44528
+output (last 3 lines):
+## [cone1-infinite-primes] lean4lean: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean4lean --import ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.20
+	Maximum resident set size (kbytes): 54316
+output (last 3 lines):
+checked 2995 declarations
+## [cone1-infinite-primes] nanoda: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/nanoda_bin ../logs/replay/cone1-infinite-primes.nanoda.json
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.43
+	Maximum resident set size (kbytes): 23744
+output (last 3 lines):
+## [cone1-infinite-primes] con-leche: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/con-leche ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.64
+	Maximum resident set size (kbytes): 57556
+output (last 3 lines):
+con-leche: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+con-leche: accepted 2994 declarations (--verified)
+## [cone1-infinite-primes] con-ron: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/con-ron ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:05.11
+	Maximum resident set size (kbytes): 121924
+output (last 3 lines):
+con-ron: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+con-ron: accepted 2994 declarations (--verified)

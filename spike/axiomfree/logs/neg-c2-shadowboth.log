@@ -1,0 +1,21 @@
+## 2026-10-03T20:36:50+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator-shadowboth.json
+## df before: /dev/sda1       450G  419G  7,5G  99% /
+[    1.48s] Resolving dependencies
+[    1.48s] Building Challenge
+[    3.13s] ⚠ [537/538] Replayed Challenge
+[    3.13s] warning: Challenge.lean:10:8: declaration uses `sorry`
+[    3.13s] warning: Challenge.lean:12:8: declaration uses `sorry`
+[    3.13s] Build completed successfully (538 jobs).
+[    5.37s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert.pa, Cert.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge
+[    5.37s] Building SolutionShadowBoth
+[    7.76s] ✖ [538/539] Building SolutionShadowBoth (794ms)
+[    7.76s] trace: .> LEAN_PATH=/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Cli/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/batteries/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Qq/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/aesop/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/proofwidgets/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/importGraph/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/LeanSearchClient/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/plausible/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/mathlib/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean /home/jan/git/lax/spike/axiomfree/project/SolutionShadowBoth.lean -o /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/SolutionShadowBoth.olean -i /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/SolutionShadowBoth.ilean -c /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/SolutionShadowBoth.c --setup /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/SolutionShadowBoth.setup.json --json
+[    7.76s] error: SolutionShadowBoth.lean:1:0: import ConceptsShadow failed, environment already contains 'Concepts.InfinitelyManyPrimes' from Concepts
+[    7.76s] Some required targets logged failures:
+[    7.76s] - SolutionShadowBoth
+[    7.76s] error: build failed
+[    7.81s] error: Child exited with 1
+## exit=1 wall=7.91s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:07.89; Maximum resident set size (kbytes): 108128;
+## df after: /dev/sda1       450G  419G  7,5G  99% /

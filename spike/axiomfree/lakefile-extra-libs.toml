@@ -1,0 +1,35 @@
+
+# --- appended after the first build (tasks 3 negative tests, 4, 5) ---
+[[lean_lib]]
+name = "SolutionDefeq"
+
+[[lean_lib]]
+name = "SolutionSorry"
+
+[[lean_lib]]
+name = "ConceptsShadow"
+
+[[lean_lib]]
+name = "SolutionShadow"
+
+[[lean_lib]]
+name = "SolutionShadowBoth"
+
+[[lean_lib]]
+name = "Concepts1"
+
+[[lean_lib]]
+name = "Challenge1"
+
+[[lean_lib]]
+name = "Solution1"
+
+[[lean_lib]]
+name = "Solution1Ax"
+
+[[lean_lib]]
+name = "ModTest"
+roots = ["ModTest.Hidden", "ModTest.UseModule", "ModTest.UseLegacy"]
+
+[[lean_lib]]
+name = "NoHeader"

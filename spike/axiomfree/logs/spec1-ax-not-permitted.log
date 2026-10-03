@@ -1,0 +1,17 @@
+## 2026-10-03T20:37:11+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator1-ax-not-permitted.json
+## df before: /dev/sda1       450G  419G  7,5G  99% /
+[    1.05s] Resolving dependencies
+[    1.05s] Building Challenge1
+[    2.45s] ⚠ [537/538] Replayed Challenge1
+[    2.45s] warning: Challenge1.lean:7:8: declaration uses `sorry`
+[    2.46s] Build completed successfully (538 jobs).
+[    4.58s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert1.e, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge1
+[    4.58s] Building Solution1Ax
+[    7.14s] ✔ [537/538] Built Solution1Ax (1.1s)
+[    7.14s] Build completed successfully (538 jobs).
+[    9.31s] error: Illegal axiom detected: 'Concepts1.AxStmt'
+[    9.31s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert1.e, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Solution1Ax
+## exit=1 wall=9.36s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:09.35; Maximum resident set size (kbytes): 116508;
+## df after: /dev/sda1       450G  419G  7,5G  99% /

@@ -1,0 +1,22 @@
+## 2026-10-03T20:29:33+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator.json
+## df before: /dev/sda1       450G  419G  7,4G  99% /
+[    1.03s] Resolving dependencies
+[    1.03s] Building Challenge
+[    3.27s] ⚠ [537/538] Built Challenge (1.1s)
+[    3.27s] warning: Challenge.lean:10:8: declaration uses `sorry`
+[    3.27s] warning: Challenge.lean:12:8: declaration uses `sorry`
+[    3.27s] Build completed successfully (538 jobs).
+[    7.16s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert.pa, Cert.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge
+[    7.16s] Building Solution
+[    9.49s] ✖ [628/629] Building Solution (1.1s)
+[    9.49s] trace: .> LEAN_PATH=/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Cli/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/batteries/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/Qq/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/aesop/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/proofwidgets/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/importGraph/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/LeanSearchClient/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/plausible/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/packages/mathlib/.lake/build/lib/lean:/home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean /home/jan/git/lax/spike/axiomfree/project/Solution.lean -o /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/Solution.olean -i /home/jan/git/lax/spike/axiomfree/project/.lake/build/lib/lean/Solution.ilean -c /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/Solution.c --setup /home/jan/git/lax/spike/axiomfree/project/.lake/build/ir/Solution.setup.json --json
+[    9.49s] error: Solution.lean:10:49: Unknown identifier `Proofs.pa`
+[    9.49s] error: Solution.lean:12:85: Unknown identifier `Proofs.pf`
+[    9.49s] Some required targets logged failures:
+[    9.49s] - Solution
+[    9.49s] error: build failed
+[    9.53s] error: Child exited with 1
+## exit=1 wall=9.57s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:09.56; Maximum resident set size (kbytes): 108104;
+## df after: /dev/sda1       450G  419G  7,4G  99% /

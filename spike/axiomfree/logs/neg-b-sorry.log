@@ -1,0 +1,19 @@
+## 2026-10-03T20:36:33+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator-sorry.json
+## df before: /dev/sda1       450G  419G  7,5G  99% /
+[    1.04s] Resolving dependencies
+[    1.04s] Building Challenge
+[    2.33s] ⚠ [537/538] Replayed Challenge
+[    2.33s] warning: Challenge.lean:10:8: declaration uses `sorry`
+[    2.33s] warning: Challenge.lean:12:8: declaration uses `sorry`
+[    2.33s] Build completed successfully (538 jobs).
+[    3.77s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert.pa, Cert.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge
+[    3.77s] Building SolutionSorry
+[    6.25s] ⚠ [628/629] Built SolutionSorry (1.1s)
+[    6.25s] warning: SolutionSorry.lean:10:8: declaration uses `sorry`
+[    6.25s] Build completed successfully (629 jobs).
+[    8.48s] error: Illegal axiom detected: 'sorryAx'
+[    8.48s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert.pa, Cert.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from SolutionSorry
+## exit=1 wall=8.53s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:08.51; Maximum resident set size (kbytes): 120660;
+## df after: /dev/sda1       450G  419G  7,5G  99% /

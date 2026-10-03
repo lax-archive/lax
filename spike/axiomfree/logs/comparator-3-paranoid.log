@@ -1,0 +1,34 @@
+## 2026-10-03T20:35:54+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator.json --paranoid
+## df before: /dev/sda1       450G  419G  7,5G  99% /
+[    1.05s] Resolving dependencies
+[    1.05s] Building Challenge
+[    2.28s] ⚠ [537/538] Replayed Challenge
+[    2.28s] warning: Challenge.lean:10:8: declaration uses `sorry`
+[    2.28s] warning: Challenge.lean:12:8: declaration uses `sorry`
+[    2.28s] Build completed successfully (538 jobs).
+[    3.64s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert.pa, Cert.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge
+[    3.64s] Building Solution
+[    4.87s] Build completed successfully (629 jobs).
+[    7.46s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert.pa, Cert.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Solution
+[    7.46s] Running Lean paranoid kernel on solution
+[    9.59s] Lean paranoid kernel accepts the solution
+[    9.59s] Running lean4lean kernel on solution
+[   11.73s] checked 3000 declarations
+[   11.73s] lean4lean kernel accepts the solution
+[   11.73s] Running nanoda kernel on solution
+[   12.16s] nanoda kernel accepts the solution
+[   12.16s] Running con-leche kernel on solution
+[   12.30s] con-leche: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+[   19.23s] con-leche: accepted 2999 declarations (--verified)
+[   19.23s] con-leche kernel accepts the solution
+[   19.23s] Running con-ron kernel on solution
+[   19.34s] con-ron: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+[   28.90s] con-ron: accepted 2999 declarations (--verified)
+[   28.93s] con-ron kernel accepts the solution
+[   28.93s] Running Lean default kernel on solution
+[   30.68s] Lean default kernel accepts the solution
+[   30.68s] Your solution is okay!
+## exit=0 wall=30.72s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:30.71; Maximum resident set size (kbytes): 137080;
+## df after: /dev/sda1       450G  419G  7,5G  99% /

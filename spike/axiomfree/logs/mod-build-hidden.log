@@ -1,0 +1,8 @@
+## 2026-10-03T20:37:29+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake build ModTest.Hidden
+## df before: /dev/sda1       450G  419G  7,5G  99% /
+[    2.51s] ✔ [536/536] Built ModTest.Hidden (1.2s)
+[    2.51s] Build completed successfully (536 jobs).
+## exit=0 wall=2.61s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.59; Maximum resident set size (kbytes): 859424;
+## df after: /dev/sda1       450G  419G  7,5G  99% /

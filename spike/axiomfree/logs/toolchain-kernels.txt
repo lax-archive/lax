@@ -1,0 +1,7 @@
+leanexport: present 644688 bytes
+leanchecker: present 59832 bytes
+leanchecker-paranoid: present 8816864 bytes
+lean4lean: present 36897680 bytes
+nanoda_bin: present 1299760 bytes
+con-leche: present 18506216 bytes
+con-ron: present 3649920 bytes

@@ -1,0 +1,18 @@
+[neg-c-shadow-exposed] exit=1 wall=10.37s  Maximum resident set size (kbytes): 116460
+[comparator-4-nosandbox] exit=0 wall=10.53s  Maximum resident set size (kbytes): 1588628
+## whole-closure export (the inner half of lake check, unsandboxed)
+/dev/sda1       450G  392G   35G  92% /
+export exit=0
+bytes/lines: 714281819 12687421
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:04.38
+	Maximum resident set size (kbytes): 3029272
+/dev/sda1       450G  393G   35G  93% /
+## leanchecker on whole-closure export
+leanchecker exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:12.64
+	Maximum resident set size (kbytes): 1133624
+## nanoda on whole-closure export
+nanoda exit=137
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 6:28.67
+	Maximum resident set size (kbytes): 17067208
+=== followups done

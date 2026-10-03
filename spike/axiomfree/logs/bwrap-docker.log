@@ -1,0 +1,60 @@
+### defaults (root)
+docker run --rm  lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+bwrap: No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces. See <https://deb.li/bubblewrap> or <file:///usr/share/doc/bubblewrap/README.Debian.gz>.
+exit=1
+
+### defaults, --user 1000:1000
+docker run --rm --user 1000:1000 lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+bwrap: exit=1
+No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces. See <https://deb.li/bubblewrap> or <file:///usr/share/doc/bubblewrap/README.Debian.gz>.
+
+### lax flags: --read-only --cap-drop=ALL --security-opt=no-new-privileges --user 1000:1000 --tmpfs /tmp
+docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges --user 1000:1000 --tmpfs=/tmp:rw,nosuid,nodev,size=1073741824 lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+bwrap: No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces. See <https://deb.li/bubblewrap> or <file:///usr/share/doc/bubblewrap/README.Debian.gz>.
+exit=1
+
+### seccomp=unconfined
+docker run --rm --security-opt seccomp=unconfined lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+bwrap: Failed to make / slave: Permission denied
+exit=1
+
+### apparmor=unconfined
+docker run --rm --security-opt apparmor=unconfined lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+bwrap: No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces. See <https://deb.li/bubblewrap> or <file:///usr/share/doc/bubblewrap/README.Debian.gz>.
+exit=1
+
+### seccomp=unconfined + apparmor=unconfined
+docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+exit=0
+
+### cap-add SYS_ADMIN
+docker run --rm --cap-add SYS_ADMIN lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+bwrap: Failed to make / slave: Permission denied
+exit=1
+
+### cap-add SYS_ADMIN + seccomp=unconfined
+docker run --rm --cap-add SYS_ADMIN --security-opt seccomp=unconfined lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+bwrap: Failed to make / slave: Permission denied
+exit=1
+
+### cap-add SYS_ADMIN + apparmor=unconfined
+docker run --rm --cap-add SYS_ADMIN --security-opt apparmor=unconfined lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+bwrap: pivot_root: Operation not permitted
+exit=1
+
+### cap-add SYS_ADMIN + seccomp=unconfined + apparmor=unconfined
+docker run --rm --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+exit=0
+
+### seccomp=unconfined + apparmor=unconfined, --user 1000:1000
+docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined --user 1000:1000 lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+exit=0
+
+### lax flags + seccomp=unconfined + apparmor=unconfined
+docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges --user 1000:1000 --tmpfs=/tmp:rw,nosuid,nodev,size=1073741824 --security-opt seccomp=unconfined --security-opt apparmor=unconfined lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+exit=0
+
+### --privileged
+docker run --rm --privileged lax-spike-bwrap:v1 sh -c 'bwrap --ro-bind / / --tmpfs /tmp --unshare-all --die-with-parent -- /bin/true; echo "exit=$?"'
+exit=0
+

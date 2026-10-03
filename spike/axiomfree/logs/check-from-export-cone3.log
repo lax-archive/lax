@@ -1,0 +1,9 @@
+## 2026-10-03T20:44:41+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake check --from-export ../logs/replay/cone3-pi-gt-three.export
+## df before: /dev/sda1       450G  412G   15G  97% /
+[    0.05s] Running Lean default kernel on solution
+[   16.80s] Lean default kernel accepts the solution
+[   16.80s] Uses axioms: propext, Quot.sound, Classical.choice
+## exit=0 wall=16.85s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:16.83; Maximum resident set size (kbytes): 221028;
+## df after: /dev/sda1       450G  412G   15G  97% /

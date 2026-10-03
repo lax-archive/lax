@@ -1,0 +1,25 @@
+## 2026-10-03T20:45:41+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator-shadow.json
+## df before: /dev/sda1       450G  397G   31G  93% /
+[    1.41s] Resolving dependencies
+[    1.41s] Building Challenge
+[    2.88s] ⚠ [537/538] Replayed Challenge
+[    2.88s] warning: Challenge.lean:10:8: declaration uses `sorry`
+[    2.88s] warning: Challenge.lean:12:8: declaration uses `sorry`
+[    2.88s] Build completed successfully (538 jobs).
+[    4.66s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert.pa, Cert.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge
+[    4.66s] Building SolutionShadow
+[    7.22s] ✔ [536/538] Built ConceptsShadow (1.3s)
+[    8.32s] ⚠ [537/538] Built SolutionShadow (1.1s)
+[    8.32s] warning: SolutionShadow.lean:12:17: Variable name `h` is not explicitly referenced.
+[    8.32s] 
+[    8.32s] Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+[    8.32s]   [apply] _h
+[    8.32s] 
+[    8.32s] Note: This linter can be disabled with `set_option linter.unusedVariables false`
+[    8.32s] Build completed successfully (538 jobs).
+[   10.30s] error: Const does not match between challenge and target 'Concepts.InfinitelyManyPrimes'
+[   10.30s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert.pa, Cert.pf, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from SolutionShadow
+## exit=1 wall=10.37s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:10.35; Maximum resident set size (kbytes): 116460;
+## df after: /dev/sda1       450G  392G   35G  92% /

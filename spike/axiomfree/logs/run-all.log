@@ -1,0 +1,142 @@
+=== start 2026-10-03T20:30:59+02:00
+[comparator-2-warm] exit=0 wall=9.98s  Maximum resident set size (kbytes): 136960
+[check-1] exit=0 wall=284.56s  Maximum resident set size (kbytes): 1137920
+[comparator-3-paranoid] exit=0 wall=30.72s  Maximum resident set size (kbytes): 137080
+=== negative tests
+[neg-a-defeq] exit=1 wall=8.54s  Maximum resident set size (kbytes): 136932
+[neg-b-sorry] exit=1 wall=8.53s  Maximum resident set size (kbytes): 120660
+[neg-c-shadow] exit=1 wall=8.34s  Maximum resident set size (kbytes): 107964
+[neg-c2-shadowboth] exit=1 wall=7.91s  Maximum resident set size (kbytes): 108128
+=== task 4: spec-1 style
+[spec1-ok] exit=0 wall=12.79s  Maximum resident set size (kbytes): 135144
+[spec1-ax-not-permitted] exit=1 wall=9.36s  Maximum resident set size (kbytes): 116508
+[spec1-relative] exit=0 wall=8.35s  Maximum resident set size (kbytes): 116420
+=== task 5: module system
+[mod-build-hidden] exit=0 wall=2.61s  Maximum resident set size (kbytes): 859424
+[mod-use-module] exit=1 wall=2.59s  Maximum resident set size (kbytes): 857512
+[mod-use-legacy] exit=1 wall=3.41s  Maximum resident set size (kbytes): 1475788
+[mod-noheader] exit=0 wall=2.93s  Maximum resident set size (kbytes): 1488172
+=== task 6: replay cost model
+## [cone1-infinite-primes] export: lake env leanexport Mathlib.Data.Nat.Prime.Infinite -- Nat.exists_infinite_primes > ../logs/replay/cone1-infinite-primes.export
+exit=0
+bytes/lines: 11674093 224145
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:04.09
+	Maximum resident set size (kbytes): 1582280
+## [cone1-infinite-primes] leanchecker: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/leanchecker --silent --from-export ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.21
+	Maximum resident set size (kbytes): 129132
+output (last 3 lines):
+## [cone1-infinite-primes] leanchecker-paranoid: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/leanchecker-paranoid --silent --from-export ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.49
+	Maximum resident set size (kbytes): 44528
+output (last 3 lines):
+## [cone1-infinite-primes] lean4lean: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean4lean --import ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.20
+	Maximum resident set size (kbytes): 54316
+output (last 3 lines):
+checked 2995 declarations
+## [cone1-infinite-primes] nanoda: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/nanoda_bin ../logs/replay/cone1-infinite-primes.nanoda.json
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.43
+	Maximum resident set size (kbytes): 23744
+output (last 3 lines):
+## [cone1-infinite-primes] con-leche: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/con-leche ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.64
+	Maximum resident set size (kbytes): 57556
+output (last 3 lines):
+con-leche: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+con-leche: accepted 2994 declarations (--verified)
+## [cone1-infinite-primes] con-ron: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/con-ron ../logs/replay/cone1-infinite-primes.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:05.11
+	Maximum resident set size (kbytes): 121924
+output (last 3 lines):
+con-ron: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+con-ron: accepted 2994 declarations (--verified)
+## [cone2-bertrand] export: lake env leanexport Mathlib.NumberTheory.Bertrand -- Nat.exists_prime_lt_and_le_two_mul > ../logs/replay/cone2-bertrand.export
+exit=0
+bytes/lines: 184765445 3429526
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:28.74
+	Maximum resident set size (kbytes): 2770312
+## [cone2-bertrand] leanchecker: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/leanchecker --silent --from-export ../logs/replay/cone2-bertrand.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:06.16
+	Maximum resident set size (kbytes): 446588
+output (last 3 lines):
+## [cone2-bertrand] leanchecker-paranoid: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/leanchecker-paranoid --silent --from-export ../logs/replay/cone2-bertrand.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:59.65
+	Maximum resident set size (kbytes): 414196
+output (last 3 lines):
+## [cone2-bertrand] lean4lean: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean4lean --import ../logs/replay/cone2-bertrand.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:04.62
+	Maximum resident set size (kbytes): 371912
+output (last 3 lines):
+checked 30162 declarations
+## [cone2-bertrand] nanoda: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/nanoda_bin ../logs/replay/cone2-bertrand.nanoda.json
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:15.68
+	Maximum resident set size (kbytes): 295056
+output (last 3 lines):
+## [cone2-bertrand] con-leche: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/con-leche ../logs/replay/cone2-bertrand.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:35.53
+	Maximum resident set size (kbytes): 278844
+output (last 3 lines):
+con-leche: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+con-leche: accepted 30161 declarations (--verified)
+## [cone2-bertrand] con-ron: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/con-ron ../logs/replay/cone2-bertrand.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:37.75
+	Maximum resident set size (kbytes): 613852
+output (last 3 lines):
+con-ron: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+con-ron: accepted 30161 declarations (--verified)
+## [cone3-pi-gt-three] export: lake env leanexport Mathlib.Analysis.Real.Pi.Bounds -- Real.pi_gt_three > ../logs/replay/cone3-pi-gt-three.export
+exit=0
+bytes/lines: 69649001 1307747
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:12.16
+	Maximum resident set size (kbytes): 2673636
+## [cone3-pi-gt-three] leanchecker: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/leanchecker --silent --from-export ../logs/replay/cone3-pi-gt-three.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:15.73
+	Maximum resident set size (kbytes): 217112
+output (last 3 lines):
+## [cone3-pi-gt-three] leanchecker-paranoid: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/leanchecker-paranoid --silent --from-export ../logs/replay/cone3-pi-gt-three.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:16.93
+	Maximum resident set size (kbytes): 151732
+output (last 3 lines):
+## [cone3-pi-gt-three] lean4lean: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/lean4lean --import ../logs/replay/cone3-pi-gt-three.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:15.41
+	Maximum resident set size (kbytes): 141668
+output (last 3 lines):
+checked 15657 declarations
+## [cone3-pi-gt-three] nanoda: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/nanoda_bin ../logs/replay/cone3-pi-gt-three.nanoda.json
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.15
+	Maximum resident set size (kbytes): 98312
+output (last 3 lines):
+## [cone3-pi-gt-three] con-leche: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/con-leche ../logs/replay/cone3-pi-gt-three.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:10.77
+	Maximum resident set size (kbytes): 149480
+output (last 3 lines):
+con-leche: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+con-leche: accepted 15656 declarations (--verified)
+## [cone3-pi-gt-three] con-ron: /home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin/con-ron ../logs/replay/cone3-pi-gt-three.export
+exit=0
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:13.11
+	Maximum resident set size (kbytes): 289976
+output (last 3 lines):
+con-ron: 1 inductive blocks modelled in-process: Lean.Syntax (30 generated records, checked by the fold as declarations and not counted as records of the file)
+con-ron: accepted 15656 declarations (--verified)
+[check-from-export-cone3] exit=0 wall=16.85s  Maximum resident set size (kbytes): 221028
+=== done 2026-10-03T20:44:58+02:00
+/dev/sda1       450G  412G   15G  97% /

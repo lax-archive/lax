@@ -7,6 +7,19 @@ record (database port, cutover, HTTPS, first releases, round trip) is
 amendments in spec-notes.md; the rework charter in rewrite.md +
 rewrite-plan.md (fully executed).
 
+## Axiom-free spec 2 and kernel certification (2026-10-03)
+
+The plan is `axiomfree-plan.md`: Jan's decisions (attribute marker from a
+pinned `LaxCore`, libraries pinned as a set with mathlib and CSLib, Replay
+kept, kernel set a per-environment setting), the design, and six stages
+released to `main` one by one. The spike is done (`spike/axiomfree/REPORT.md`);
+the outside review and the common-sense review sit beside it and are folded
+in; all decisions confirmed. Next: stage 0's remaining half-day
+(header-less Challenge/Solution run; a scratch `LaxCore` to confirm the
+inspector reads the tag as data with initializers disabled), then stage 1
+(`lax-archive/lax-core`, the libraries table and rule, the spec-2 fake
+environment in the e2e).
+
 ## Sibling drafts (2026-09-19)
 
 `lax build --nonstrict` landed: sibling `path` requires built in place, the

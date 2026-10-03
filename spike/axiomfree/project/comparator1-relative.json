@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Challenge1",
+  "solution_module": "Solution1Ax",
+  "theorem_names": ["Cert1.e"],
+  "definition_names": [],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice", "Concepts1.AxStmt"]
+}

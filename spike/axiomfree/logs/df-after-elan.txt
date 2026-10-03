@@ -1,0 +1,2 @@
+/dev/sda1       450G  412G   15G  97% /
+3,0G	/home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3

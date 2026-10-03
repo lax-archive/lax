@@ -1,0 +1,17 @@
+cadical
+clang
+con-leche
+con-ron
+lake
+ld.lld
+lean
+lean4lean
+leanc
+leanchecker
+leanchecker-paranoid
+leanexport
+leanir
+leanmake
+leantar
+llvm-ar
+nanoda_bin

@@ -1,0 +1,20 @@
+## 2026-10-03T20:36:59+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake comparator --config comparator1.json
+## df before: /dev/sda1       450G  419G  7,5G  99% /
+[    1.18s] Resolving dependencies
+[    1.18s] Building Challenge1
+[    3.38s] ✔ [536/538] Built Concepts1 (960ms)
+[    4.28s] ⚠ [537/538] Built Challenge1 (922ms)
+[    4.28s] warning: Challenge1.lean:7:8: declaration uses `sorry`
+[    4.28s] Build completed successfully (538 jobs).
+[    5.68s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert1.e, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Challenge1
+[    5.69s] Building Solution1
+[    8.00s] ✔ [604/605] Built Solution1 (991ms)
+[    8.00s] Build completed successfully (605 jobs).
+[   10.75s] Exporting #[Quot, Quot.mk, Quot.lift, Quot.ind, Cert1.e, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce, Nat, String, String.mk, Char, optParam, autoParam, semiOutParam, outParam] from Solution1
+[   10.75s] Running Lean default kernel on solution
+[   12.73s] Lean default kernel accepts the solution
+[   12.73s] Your solution is okay!
+## exit=0 wall=12.79s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:12.78; Maximum resident set size (kbytes): 135144;
+## df after: /dev/sda1       450G  419G  7,5G  99% /

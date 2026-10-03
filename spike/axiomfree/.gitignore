@@ -1,0 +1,3 @@
+.lake/
+*.export
+logs/*.export

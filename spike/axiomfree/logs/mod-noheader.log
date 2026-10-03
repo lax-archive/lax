@@ -1,0 +1,8 @@
+## 2026-10-03T20:37:38+02:00 cwd=/home/jan/git/lax/spike/axiomfree/project
+## cmd: lake build NoHeader
+## df before: /dev/sda1       450G  419G  7,5G  99% /
+[    2.81s] ✔ [536/537] Built NoHeader (1.4s)
+[    2.82s] Build completed successfully (537 jobs).
+## exit=0 wall=2.93s
+##  Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.91; Maximum resident set size (kbytes): 1488172;
+## df after: /dev/sda1       450G  419G  7,5G  99% /

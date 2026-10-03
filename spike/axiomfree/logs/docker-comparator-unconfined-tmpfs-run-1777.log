@@ -1,0 +1,30 @@
+## 2026-10-03T20:57:28+02:00
+## docker run ... --security-opt seccomp=unconfined --security-opt apparmor=unconfined --mount type=tmpfs,dst=/run,tmpfs-mode=1777,tmpfs-size=16m lax-spike-bwrap:v2 lake comparator --config comparator.json
+bwrap: Can't mount proc on /newroot/proc: Operation not permitted
+error: Child exited with 1
+Resolving dependencies
+comparator exit=1
+	Command being timed: "docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges --user 1000:1000 --tmpfs=/tmp:rw,nosuid,nodev,size=1073741824 --network=none --memory=8g --memory-swap=8g --cpus=4 --pids-limit=512 --mount type=bind,src=/home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3,dst=/home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3,readonly --mount type=bind,src=/home/jan/git/lax/spike/axiomfree/project,dst=/home/jan/git/lax/spike/axiomfree/project -e HOME=/tmp/home -e PATH=/home/jan/.elan/toolchains/leanprover--lean4---v4.35.0-rc3/bin:/usr/local/bin:/usr/bin:/bin --workdir /home/jan/git/lax/spike/axiomfree/project --security-opt seccomp=unconfined --security-opt apparmor=unconfined --mount type=tmpfs,dst=/run,tmpfs-mode=1777,tmpfs-size=16m lax-spike-bwrap:v2 sh -c mkdir -p /tmp/home /run/user && lake comparator --config comparator.json; echo "comparator exit=$?""
+	User time (seconds): 0.01
+	System time (seconds): 0.00
+	Percent of CPU this job got: 2%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.91
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 28160
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2685
+	Voluntary context switches: 586
+	Involuntary context switches: 3
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 8
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+## docker exit=0
