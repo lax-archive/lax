@@ -3,12 +3,18 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  captureInventory,
+  captureInventoryPath,
   generateProofTree,
   isBackgroundOnly,
+  readCaptureInventory,
   selectProofTree,
+  verifyCapture,
+  writeCaptureInventory,
   type NetworkProof,
   type ProofTreeSelection,
 } from "../../src/cli/prooftree.js";
+import type { PublishedCapture } from "../../src/submission-validation/contracts.js";
 
 function proof(
   id: string,
@@ -234,5 +240,61 @@ describe("proof-tree axiom classification", () => {
     expect(isBackgroundOnly([])).toBe(true);
     expect(isBackgroundOnly(["propext", "Classical.choice", "Quot.sound"])).toBe(true);
     expect(isBackgroundOnly(["Lax1.Open.statement"])).toBe(false);
+  });
+});
+
+// Reuse of an extracted spec-2 capture verifies content, not shape (codex
+// review 2026-10-03, finding 3): the inventory this CLI writes beside the
+// tree at download, from the digest-verified tar, is what a later run holds
+// every file to. Spec 1 keeps its recorded inventory.
+describe("the proof-tree capture cache", () => {
+  const capture = (fileCount: number): PublishedCapture => ({
+    formatVersion: 1,
+    digest: "a".repeat(64),
+    sourceCommit: "1".repeat(40),
+    bytes: 10_240,
+    fileCount,
+    registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${"a".repeat(64)}`,
+  });
+
+  function tree(): { root: string; inventoryPath: string } {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lax-prooftree-cache-"));
+    fs.mkdirSync(path.join(root, "concepts", "lib", "Lax1"), { recursive: true });
+    fs.writeFileSync(path.join(root, "concepts", "lib", "Lax1.olean"), "olean-root");
+    fs.writeFileSync(path.join(root, "concepts", "lib", "Lax1", "Basic.olean"), "olean-basic");
+    const inventoryPath = captureInventoryPath(root);
+    writeCaptureInventory(inventoryPath, captureInventory(root));
+    return { root, inventoryPath };
+  }
+
+  it("verifies a reused spec-2 tree against the inventory written at download, file by file", () => {
+    const { root, inventoryPath } = tree();
+    const inventory = readCaptureInventory(inventoryPath)!;
+    expect([...inventory.keys()].sort()).toEqual(["concepts/lib/Lax1.olean", "concepts/lib/Lax1/Basic.olean"]);
+    expect(() => verifyCapture(root, capture(2), inventory)).not.toThrow();
+    // a corrupted olean, same size, same count: refused
+    fs.writeFileSync(path.join(root, "concepts", "lib", "Lax1", "Basic.olean"), "olean-BASIC");
+    expect(() => verifyCapture(root, capture(2), inventory)).toThrow("failed verification: concepts/lib/Lax1/Basic.olean");
+    // a replaced file under another name, same count: refused
+    fs.rmSync(path.join(root, "concepts", "lib", "Lax1", "Basic.olean"));
+    fs.writeFileSync(path.join(root, "concepts", "lib", "Lax1", "Other.olean"), "olean-basic");
+    expect(() => verifyCapture(root, capture(2), inventory)).toThrow("unexpected file concepts/lib/Lax1/Other.olean");
+    // the count alone — what a fresh extraction of a digest-verified tar is
+    // held to — sees nothing wrong with either, which is why reuse needs more
+    expect(() => verifyCapture(root, capture(2), undefined)).not.toThrow();
+    expect(() => verifyCapture(root, capture(3), undefined)).toThrow("declared number of files");
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(inventoryPath, { force: true });
+  });
+
+  it("treats a missing or malformed inventory as no cache", () => {
+    const { root, inventoryPath } = tree();
+    fs.writeFileSync(inventoryPath, "{not json");
+    expect(readCaptureInventory(inventoryPath)).toBeUndefined();
+    fs.writeFileSync(inventoryPath, JSON.stringify({ inventoryVersion: 1, files: [{ path: "x", bytes: 1, sha256: "zz" }] }));
+    expect(readCaptureInventory(inventoryPath)).toBeUndefined();
+    fs.rmSync(inventoryPath);
+    expect(readCaptureInventory(inventoryPath)).toBeUndefined();
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });

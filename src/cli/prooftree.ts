@@ -492,9 +492,21 @@ function describeEnvironment(capture: PublishedCapture): string {
 async function materializeCapture(id: string, capture: PublishedCapture): Promise<string> {
   const parent = path.join(laxHome(), "prooftree-captures", id);
   const target = path.join(parent, capture.digest);
+  const inventoryPath = captureInventoryPath(target);
   if (fs.existsSync(target)) {
-    verifyCapture(target, capture);
-    return target;
+    // Reuse verifies content, not just shape (codex review 2026-10-03,
+    // finding 3): a spec-1 record declares its files; a spec-2 record
+    // declares a count, so the inventory this CLI wrote from the verified
+    // tar at download is what the cached tree is held to. A cache without
+    // one (an older CLI's) is thrown away and downloaded again.
+    const expected = capture.files !== undefined
+      ? declaredInventory(capture)
+      : readCaptureInventory(inventoryPath);
+    if (expected !== undefined) {
+      verifyCapture(target, capture, expected);
+      return target;
+    }
+    fs.rmSync(target, { recursive: true, force: true });
   }
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
   const staging = fs.mkdtempSync(path.join(parent, `${capture.digest}.tmp-`));
@@ -505,12 +517,82 @@ async function materializeCapture(id: string, capture: PublishedCapture): Promis
     await downloadRegistryBlob(capture.registryBlob, archive);
     if (sha256File(archive) !== capture.digest) throw new Error(`${id} capture archive digest mismatch`);
     extractCapture(archive, extracted);
-    verifyCapture(extracted, capture);
+    verifyCapture(extracted, capture, capture.files === undefined ? undefined : declaredInventory(capture));
+    // the per-file inventory of what the digest-verified tar held, written
+    // before the tree is put in place so a tree without one never exists
+    if (capture.files === undefined) writeCaptureInventory(inventoryPath, captureInventory(extracted));
     fs.renameSync(extracted, target);
     return target;
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
   }
+}
+
+/** One cached file as an inventory records it. */
+export interface CachedFile {
+  bytes: number;
+  sha256: string;
+}
+
+function declaredInventory(capture: PublishedCapture): Map<string, CachedFile> {
+  return new Map((capture.files ?? []).map((file) => [file.path, { bytes: file.bytes, sha256: file.sha256 }]));
+}
+
+/** The sidecar beside a cached capture tree: `<tree>.files.json`. */
+export function captureInventoryPath(target: string): string {
+  return `${target}.files.json`;
+}
+
+/** The per-file digests of an extracted tree, by capture-relative path. */
+export function captureInventory(root: string): Map<string, CachedFile> {
+  const files = new Map<string, CachedFile>();
+  const walk = (directory: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const filename = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error("capture contains a symlink");
+      if (entry.isDirectory()) walk(filename);
+      else if (entry.isFile()) {
+        files.set(path.relative(root, filename).split(path.sep).join("/"), {
+          bytes: fs.statSync(filename).size,
+          sha256: sha256File(filename),
+        });
+      } else throw new Error("capture contains a special entry");
+    }
+  };
+  walk(root);
+  return files;
+}
+
+export function writeCaptureInventory(inventoryPath: string, files: ReadonlyMap<string, CachedFile>): void {
+  const staged = `${inventoryPath}.tmp-${process.pid}`;
+  const body = JSON.stringify({ inventoryVersion: 1, files: [...files].map(([filePath, file]) => ({ path: filePath, ...file })) });
+  fs.writeFileSync(staged, `${body}\n`, { mode: 0o600 });
+  fs.renameSync(staged, inventoryPath);
+}
+
+/** The inventory beside a cached tree, or undefined when there is none or
+ * it is unreadable — either way the tree is not reused. */
+export function readCaptureInventory(inventoryPath: string): Map<string, CachedFile> | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(inventoryPath, "utf8"));
+  } catch {
+    return undefined;
+  }
+  if (!isObject(parsed) || parsed.inventoryVersion !== 1 || !Array.isArray(parsed.files)) return undefined;
+  const files = new Map<string, CachedFile>();
+  for (const entry of parsed.files) {
+    if (
+      !isObject(entry) ||
+      typeof entry.path !== "string" ||
+      !Number.isSafeInteger(entry.bytes) ||
+      typeof entry.sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(entry.sha256) ||
+      files.has(entry.path)
+    ) return undefined;
+    files.set(entry.path, { bytes: entry.bytes as number, sha256: entry.sha256 });
+  }
+  return files;
 }
 
 async function downloadRegistryBlob(reference: string, destination: string): Promise<void> {
@@ -583,11 +665,14 @@ function extractCapture(archive: string, destination: string): void {
   execFileSync("tar", ["-xf", archive, "-C", destination], { stdio: ["ignore", "ignore", "pipe"] });
 }
 
-/** The tar's digest was verified at download; a spec-1 record's per-file
- * inventory is checked again here, a spec-2 record's member count
- * (recorded-shape.ts), and on both that only regular files came out. */
-function verifyCapture(root: string, capture: PublishedCapture): void {
-  const expected = capture.files === undefined ? undefined : new Map(capture.files.map((file) => [file.path, file]));
+/**
+ * Hold a capture tree to what is known of it: every file against `expected`
+ * (a spec-1 record's declared inventory, or the sidecar inventory written at
+ * download for a spec-2 record) when there is one, the member count alone
+ * otherwise (a spec-2 tree fresh out of a digest-verified tar), and on both
+ * that only regular files are there.
+ */
+export function verifyCapture(root: string, capture: PublishedCapture, expected: ReadonlyMap<string, CachedFile> | undefined): void {
   const seen = new Set<string>();
   const walk = (directory: string): void => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -609,9 +694,8 @@ function verifyCapture(root: string, capture: PublishedCapture): void {
     }
   };
   walk(root);
-  if (expected !== undefined) {
-    if (seen.size !== expected.size) throw new Error("cached capture is missing declared files");
-  } else if (seen.size !== capture.fileCount) {
+  if (expected !== undefined && seen.size !== expected.size) throw new Error("cached capture is missing declared files");
+  if (capture.fileCount !== undefined && seen.size !== capture.fileCount) {
     throw new Error("cached capture does not hold the declared number of files");
   }
 }
