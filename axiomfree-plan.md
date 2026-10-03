@@ -346,6 +346,33 @@ now follow.
 - `lax print spec --env <id>` prints the spec that governs that
   environment.
 
+## Record shape for spec 2 (from the build-output investigation, 2026-10-03)
+
+`spike/axiomfree/build-output-investigation-20261003.md` measured the live
+database: `capture.files`, the per-file manifest of the sealed build, is
+55% of all `build-output.json` bytes and is read by nobody except the
+website, which addresses 0.2% of its entries. Folded into stages 3 and 5,
+for spec-2 records only (spec-1 records keep their shape until ported):
+
+- `capture` loses `files`, `leanToolchain`, and `mathlibCommit`; it gains
+  `fileCount` and a `references` layer (concept sources and their `.ilean`
+  files) beside the capture tar, which the website downloads whole and
+  verifies by digest instead of reconstructing tar offsets. Modelled
+  effect: 13.4 MB → 5.9 MB over today's corpus.
+- Proof entries store the telescope only; `conclusion` and `assumptions`
+  are derived by every reader at load, never stored.
+- `certificate` is `{ judge, kernels, bundle: { formatVersion, digest,
+  registryBlob }, challengeExportSha256, challenge }` with the Challenge
+  verbatim and no stored edge list: the publisher regenerates the
+  Challenge from the stored data and requires byte equality. Absent on a
+  record with no proofs. The bundle is a further layer of the record's
+  capture manifest.
+- Duplicates of the environment row and of the manifest are dropped.
+  `sourceText` and the parsed annotations stay in the record: every
+  concept page and `lax serve` need them without a fetch.
+- Later, after the port: delete the spec-1 reader branches; unify the two
+  `rendererOutput` copies (lax-website `database.ts`, lax `cli/website.ts`).
+
 ## Open decisions
 
 1. **CSLib: allowed or required?** Assumed allowed (a submission that does
