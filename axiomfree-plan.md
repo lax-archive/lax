@@ -441,6 +441,18 @@ Stages 1 to 3 are the feature; 4 and 5 make it usable; 6 closes it.
 - **`v4.35.0` final slips.** Rehearse on the release candidate; admission
   is a row plus two library commits.
 
+## State at the end of 2026-10-04's night session
+
+Stages 0–4 are on branch `axiomfree` (not merged to `main`, no release);
+stage 5 is on lax-website's `axiomfree` (four commits, not merged). The
+merged tip passes `npm run check` (92 files, 1042 tests) and the
+`spec2-certify` docker smoke with the three-container Certify (Challenge
+export 5.5 s, Solution export 5.6 s, judge 1.0 s; 45 s for the whole
+submission). Two outside reviews shaped the code: the charter review and
+the stages 1–3 review (`spike/axiomfree/codex-review-*.md`), both folded
+in. What remains is stage 6 and Jan's items listed in TODO.md; the next
+Codex review is due after stage 6's first round trip.
+
 ## Deferred (not in this program; none changes a data shape)
 
 The scheduled whole-environment run and its verdict document; the concept
