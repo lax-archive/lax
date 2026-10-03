@@ -88,9 +88,11 @@ generator applies the proof with `@`. Edge `{S₁..Sₖ} → C`; duplicates
 collapse in the graph but keep their positions in the telescope; `k = 0`
 is unconditional; a self-edge grounds nothing. **Universe rule**: every
 statement constant in the chain is instantiated with the proof's own
-universe variables, never a concrete level, so every edge is universally
-quantified over universes and name-only composition is sound; the
-generated Challenge theorem copies the proof's level parameters. Anything
+universe variables, never a concrete level, and the conclusion's level
+arguments are pairwise distinct (a proof of `C.{u,u}` proves a special
+case, not `C`); hypotheses may repeat a variable. Every edge is then
+universally quantified over universes and name-only composition is sound;
+the generated Challenge theorem copies the proof's level parameters. Anything
 else of theorem kind is a helper; a helper carrying docstring frontmatter
 is a violation (a spec-1 habit must fail loudly). Unused hypotheses are
 assumptions; section variables the elaborator dropped are not binders.
@@ -291,6 +293,35 @@ gate as a prerequisite; the module system; a randomised module prefix;
 `--paranoid` per submit as policy; a `lax port` rewriter; a proof marker
 (`@[lax_proof]`); advisory/suspension machinery; the helper-unfolds-to-a-
 statement hint (added when a port shows the need).
+
+## Decisions taken while drafting the spec (2026-10-03, evening; Jan may veto)
+
+The draft (`spec_v2_draft.md`, 18 `> draft note:` blocks) found the plan
+silent on these; the answers below are the ones the draft and the stages
+now follow.
+
+- **Local `lax build` runs Certify on the host without a sandbox.**
+  Local builds never use docker today, the code is the author's own, and
+  under Lake's bwrap sandbox the warm store is invisible. The local run is
+  informational, says so, and is never reused by `lax submit`; the
+  archive's per-submit run is the one that counts.
+- **Both packages require `LaxCore`**, as both require mathlib today: lake
+  flattens the workspace, so a proof package importing a tagged concept
+  needs the library resolvable anyway. `lax init` scaffolds mathlib and
+  `LaxCore`; CSLib is added by the author when needed (open decision 1
+  stays "allowed").
+- **A statement of a package that is only transitively reachable** in a
+  proof's chain is a violation, as the spec-1 axiom-hygiene rule was —
+  never a silent helper. A `private` theorem of proof shape is a violation
+  with a hint. Frontmatter anywhere in the proof package, empty or not, is
+  a violation.
+- **Later attestations** (more kernels, later tooling) are written by
+  `/lax admin revalidate`, which rewrites `build-output.json`; "beside the
+  old one" means the old attestation stays in the database's git history.
+- **Certify's timeout** shares Replay's limit until the Lax17 port measures
+  the cone; then it becomes a limits-table value.
+- `lax print spec --env <id>` prints the spec that governs that
+  environment.
 
 ## Open decisions
 
