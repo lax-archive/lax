@@ -26,6 +26,7 @@ import {
   COMMIT,
   initializeGit,
   lakefile,
+  LIBRARIES,
   makeSubmission,
   manifest,
   request,
@@ -305,7 +306,7 @@ describe("submission static validation retained from main", () => {
       "concepts",
       "Lax261",
       "concepts/lakefile.toml",
-      RUNTIME,
+      LIBRARIES,
       concepts,
     );
     expect(concepts.violations).toEqual([]);
@@ -322,7 +323,7 @@ describe("submission static validation retained from main", () => {
       "proofs",
       "Lax261Proofs",
       "proofs/lakefile.toml",
-      RUNTIME,
+      LIBRARIES,
       proofs,
     );
     expect(proofs.violations).toEqual([]);
@@ -343,7 +344,7 @@ describe("submission static validation retained from main", () => {
       "proofs",
       "Lax261Proofs",
       "proofs/lakefile.toml",
-      RUNTIME,
+      LIBRARIES,
       findings,
     );
     expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(
@@ -373,7 +374,7 @@ describe("submission static validation retained from main", () => {
       "proofs",
       "Lax9Proofs",
       "proofs/lakefile.toml",
-      RUNTIME,
+      LIBRARIES,
       own,
     );
     expect(own.violations).toEqual([]);
@@ -390,7 +391,7 @@ describe("submission static validation retained from main", () => {
       "proofs",
       "Lax9Proofs",
       "proofs/lakefile.toml",
-      RUNTIME,
+      LIBRARIES,
       crossSubmission,
     );
     expect(crossSubmission.violations).toHaveLength(1);
@@ -422,7 +423,7 @@ describe("submission static validation retained from main", () => {
         kind,
         packageName,
         `${kind}/lakefile.toml`,
-        RUNTIME,
+        LIBRARIES,
         findings,
       );
       expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(expected);
@@ -437,7 +438,7 @@ describe("submission static validation retained from main", () => {
       "concepts",
       "Lax9",
       "concepts/lakefile.toml",
-      RUNTIME,
+      LIBRARIES,
       strict,
     );
     expect(strict.violations).toHaveLength(1);
@@ -451,7 +452,7 @@ describe("submission static validation retained from main", () => {
       "proofs",
       "Lax9Proofs",
       "proofs/lakefile.toml",
-      RUNTIME,
+      LIBRARIES,
       relaxed,
       { siblings: true },
     );
@@ -476,7 +477,7 @@ describe("submission static validation retained from main", () => {
         kind,
         "Lax9",
         `${kind}/lakefile.toml`,
-        RUNTIME,
+        LIBRARIES,
         findings,
         { siblings: true },
       );
@@ -493,7 +494,7 @@ describe("submission static validation retained from main", () => {
       [lakefile("Lax9").replace(RUNTIME.mathlibRepository, "https://github.com/evil/mathlib4"), "mathlib repository"],
     ] as const) {
       const findings = new FindingCollector("static");
-      validateLakefile(content, "concepts", "Lax9", "concepts/lakefile.toml", RUNTIME, findings);
+      validateLakefile(content, "concepts", "Lax9", "concepts/lakefile.toml", LIBRARIES, findings);
       expect(findings.violations.map((finding) => finding.message).join("\n")).toContain(expected);
     }
   });

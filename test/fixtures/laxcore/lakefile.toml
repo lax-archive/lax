@@ -1,0 +1,5 @@
+name = "LaxCore"
+defaultTargets = ["LaxCore"]
+
+[[lean_lib]]
+name = "LaxCore"

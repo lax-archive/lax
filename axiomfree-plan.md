@@ -220,7 +220,14 @@ record depends on are trusted as today.
    workspace; the libraries rule in the lakefile validator; a fixture
    LaxCore and a spec-2 fake environment in the fake-mathlib e2e under
    the v4.35 toolchain (CI gains the toolchain as the admission did). No
-   author-visible change. Release.
+   author-visible change. Release. **Landed 2026-10-03** (code; the
+   `lax-archive/lax-core` push and the release are Jan's). Deviations: a
+   spec-2 row carries `libraries` only and `environments()` derives its
+   `mathlibCommit` from the set (one pin written once; every existing
+   reader keeps its shape); the import rule (`phases/inspect.ts`) admits a
+   required library's root module, so a spec-2 package can `import
+   LaxCore` already; the rehearsal toolchain is `v4.35.0-rc3` in a CI
+   cache of its own, not in the shared host store.
 2. **Inspector and validator.** The four inspector fields and the tag
    reading; spec-2 classification with a table test over the cases above
    (explicit/implicit/instance binders, duplicates, self-edge, concrete

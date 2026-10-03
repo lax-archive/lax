@@ -1,4 +1,5 @@
 import type { IssueBinding, SourceLocation } from "../shared/types.js";
+import type { LibraryName } from "./environments.js";
 import {
   isObject,
   requireExactKeys,
@@ -228,6 +229,11 @@ export interface PathRequire {
 
 export interface ValidatedLakefile {
   packageName: string;
+  /** the environment's pinned libraries this package requires, in require
+   * order — every required one, plus the allowed ones it chose (the
+   * libraries rule, validators/lakefile.ts); their root modules are what
+   * the package may import beyond its declared submissions */
+  libraries: LibraryName[];
   gitRequires: GitRequire[];
   /** the proof package's own `{ path = "../concepts" }` edge — the only
    * `path` require the archive admits */

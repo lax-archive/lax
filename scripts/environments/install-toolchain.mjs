@@ -18,7 +18,10 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { REPOSITORY_ROOT } from "./table.mjs";
 
-const TOOLCHAIN_PATTERN = /^leanprover\/lean4:v[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/u;
+// A release, or a release candidate: ci.yml installs the v4.35.0-rc3
+// toolchain the spec-2 e2e rehearses under until the final v4.35.0 exists
+// (axiomfree-plan.md, stage 1).
+const TOOLCHAIN_PATTERN = /^leanprover\/lean4:v[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?:-rc[0-9]{1,2})?$/u;
 
 const toolchain = process.argv[2];
 // The argument reaches this script from a workflow matrix and, in the

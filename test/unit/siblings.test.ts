@@ -57,7 +57,7 @@ function closureOf(root: string, snapshot = archive()) {
   const check = runStaticValidation(request("lax-9"), root, RUNTIME, { siblings: true });
   expect(check.findings.violations).toEqual([]);
   const findings = new FindingCollector("static");
-  const closure = resolveSiblings(root, check.result, check.runtime, snapshot, findings);
+  const closure = resolveSiblings(root, check.result, check.environment, check.runtime, snapshot, findings);
   return { closure, findings };
 }
 

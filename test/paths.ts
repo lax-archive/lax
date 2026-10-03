@@ -30,6 +30,17 @@ export const TEST_CACHE =
 /** The fake mathlib git fixture (see fake-mathlib.ts). */
 export const FAKE_MATHLIB_FIXTURE = path.join(TEST_CACHE, "fake-mathlib");
 
+/**
+ * The toolchain the spec-2 e2e rehearses under until the final v4.35.0 — the
+ * first spec-2 environment (axiomfree-plan.md, decision 1) — exists: the
+ * release candidate the stage-0 spike measured. The spec-2 fake environment
+ * (test/support/environments.ts SPEC2_TEST_ENVIRONMENT) and the fixture
+ * LaxCore (fake-laxcore.ts) both name it, and ci.yml installs exactly this
+ * string (test/workflows/workflow-definition.test.ts holds the two together).
+ * Retire it for the table row's toolchain once `v4.35.0` is admitted.
+ */
+export const SPEC2_TOOLCHAIN = "leanprover/lean4:v4.35.0-rc3";
+
 /** The inspector build, shared by every test home so it is built once per
  * machine rather than once per LAX_HOME. */
 export const SHARED_TOOLS = path.join(TEST_CACHE, "tools");

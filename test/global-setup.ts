@@ -17,6 +17,7 @@ import {
   warmDir,
   warmReady,
 } from "../src/submission-validation/host/warmstore.js";
+import { fakeLaxCore } from "./fake-laxcore.js";
 import { fakeMathlib } from "./fake-mathlib.js";
 import { putToolchainOnPath, SHARED_TOOLS, sharedWarmBase } from "./paths.js";
 
@@ -25,6 +26,12 @@ export default async function setup(): Promise<void> {
   const { url, rev } = fakeMathlib();
   process.env.LAX_MATHLIB_URL = url;
   process.env.LAX_MATHLIB_REV = rev;
+  // the fixture LaxCore is built here once, before the forks, for the same
+  // reason as the fake mathlib; the spec-2 fake environment's own warm store
+  // and inspector are provisioned by the one e2e that injects it
+  const laxCore = fakeLaxCore();
+  process.env.LAX_LAXCORE_URL = laxCore.url;
+  process.env.LAX_LAXCORE_REV = laxCore.rev;
   putToolchainOnPath();
   const environment = epoch();
   // Nothing to pre-build for an environment this machine does not have. The

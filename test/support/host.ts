@@ -18,7 +18,12 @@ import {
   type HostValidationOptions,
   type HostValidationReport,
 } from "../../src/submission-validation/host/pipeline.js";
-import { epoch, type ArchiveEnvironment } from "../../src/submission-validation/environments.js";
+import {
+  epoch,
+  librariesOf,
+  type ArchiveEnvironment,
+  type LibraryName,
+} from "../../src/submission-validation/environments.js";
 import { hostValidationRuntime } from "../../src/submission-validation/pins.js";
 import type { Profiler } from "../../src/shared/profile.js";
 import { SHARED_TOOLS, sharedWarmBase } from "../paths.js";
@@ -57,11 +62,24 @@ export function makeHostSubmission(
   id: string,
   files: Record<string, string> = {},
   stableBase?: string,
-  options: { manifestExtra?: string; environment?: ArchiveEnvironment } = {},
+  options: {
+    manifestExtra?: string;
+    environment?: ArchiveEnvironment;
+    /** Leave these libraries of the environment's set out of both lakefiles
+     * (a spec-2 package that forgets LaxCore, say). */
+    omitLibraries?: LibraryName[];
+  } = {},
 ): string {
   // Scaffolded against one environment's pins: the epoch's unless the test
-  // injected another through LAX_TEST_ENVIRONMENTS and names it here.
-  const runtime = hostValidationRuntime(options.environment ?? epoch());
+  // injected another through LAX_TEST_ENVIRONMENTS and names it here. Both
+  // lakefiles require the environment's *required* libraries at its pins —
+  // mathlib alone in a spec-1 row, mathlib and LaxCore in a spec-2 row — and
+  // the manifest names the row's content spec.
+  const environment = options.environment ?? epoch();
+  const runtime = hostValidationRuntime(environment);
+  const libraries = librariesOf(environment).filter(
+    (library) => library.required && !(options.omitLibraries ?? []).includes(library.name),
+  );
   const root = stableBase === undefined ? tmpDir("lax-sub-") : path.join(stableBase, id);
   if (stableBase !== undefined) fs.mkdirSync(root, { recursive: true });
   const concepts = packageNameForSubmission(id);
@@ -74,13 +92,18 @@ export function makeHostSubmission(
   const lakefile = (name: string, conceptPathRequire: boolean): string =>
     `name = "${name}"\ndefaultTargets = ["${name}"]\n\n` +
     "[leanOptions]\nautoImplicit = false\n\n" +
-    `[[require]]\nname = "mathlib"\ngit = "${runtime.mathlibRepository}"\n` +
-    `rev = "${runtime.mathlibCommit}"\n\n` +
+    libraries
+      .map(
+        (library) =>
+          `[[require]]\nname = "${library.name}"\ngit = "${library.url()}"\n` +
+          `rev = "${library.commit}"\n\n`,
+      )
+      .join("") +
     (conceptPathRequire ? `[[require]]\nname = "${concepts}"\npath = "../concepts"\n\n` : "") +
     `[[lean_lib]]\nname = "${name}"\n`;
   write(
     "manifest.yaml",
-    `specVersion: "1"\nid: ${id}\nleanVersion: ${runtime.leanVersion}\n` +
+    `specVersion: "${environment.specVersion}"\nid: ${id}\nleanVersion: ${runtime.leanVersion}\n` +
       `mathlibVersion: ${runtime.mathlibCommit}\ntitle: Host pipeline test\n` +
       "authors:\n  - name: Alice Example\n    github: alice\nbibEntries: []\n" +
       (options.manifestExtra ?? ""),

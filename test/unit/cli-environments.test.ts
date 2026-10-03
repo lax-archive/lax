@@ -83,6 +83,7 @@ function restoreTty(): void {
 function seedWarmStore(id: string, mathlibCommit: string): void {
   const warm = warmDir({
     id,
+    specVersion: 1,
     leanToolchain: epoch().leanToolchain,
     mathlibCommit,
     admittedAt: epoch().admittedAt,

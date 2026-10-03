@@ -427,7 +427,13 @@ describe("join passthrough", () => {
       located: [],
       ...(web === undefined ? {} : { web }),
     };
-    const lakefile = (packageName: string) => ({ packageName, gitRequires: [], hasConceptPathRequire: false, pathRequires: [] });
+    const lakefile = (packageName: string) => ({
+      packageName,
+      libraries: ["mathlib" as const],
+      gitRequires: [],
+      hasConceptPathRequire: false,
+      pathRequires: [],
+    });
     const inventory = (packageName: string) => ({
       packageName,
       packageDir: packageName,

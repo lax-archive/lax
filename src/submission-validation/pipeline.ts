@@ -37,7 +37,7 @@ import { containerWebDeriver } from "./paper/web-container.js";
 import type { WebDeriver } from "./paper/web.js";
 import { compileConcepts, compileProofs } from "./phases/compile.js";
 import { emitBuildOutput } from "./phases/emit.js";
-import { judgeInspection } from "./phases/inspect.js";
+import { judgeInspection, libraryRootsOf } from "./phases/inspect.js";
 import { runInspector } from "./phases/inspect-runner.js";
 import {
   installOwnConceptCapture,
@@ -347,6 +347,8 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       state.scope === "concepts" ? undefined : state.staticResult.proofs!.inventory,
       state.resolution,
       state.scope,
+      undefined,
+      libraryRootsOf(state.staticResult),
     ));
   } catch (error) {
     return fail(state, "inspect", "judge", error);

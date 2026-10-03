@@ -74,6 +74,30 @@ jobs:
             ~/.lax/warm
             ~/.lax/tools
           key: ${{ steps.host-key.outputs.cache_key }}
+      # The spec-2 e2e (test/e2e/host-spec2.test.ts) rehearses the next
+      # epoch's library set — fake mathlib plus the fixture LaxCore — under
+      # the v4.35.0-rc3 toolchain until the final v4.35.0 is admitted
+      # (axiomfree-plan.md, stage 1); it skips itself where the toolchain is
+      # missing, so this install is what makes it run here. The toolchain has
+      # a cache of its own, keyed by its name, rather than riding in the
+      # epoch's host store above: that store is shared with the trusted
+      # validate job, which has no use for 3 GB of a second toolchain. Saved
+      # right after the install, before any fixture code runs, like the host
+      # store. test/paths.ts SPEC2_TOOLCHAIN names the same toolchain.
+      - name: Restore the spec-2 rehearsal toolchain
+        id: spec2-toolchain
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.elan/toolchains/leanprover--lean4---v4.35.0-rc3
+          key: lax-spec2-toolchain-v1-${{ runner.os }}-leanprover--lean4---v4.35.0-rc3
+      - name: Install the spec-2 rehearsal toolchain
+        run: node scripts/environments/install-toolchain.mjs leanprover/lean4:v4.35.0-rc3
+      - name: Save the spec-2 rehearsal toolchain
+        if: steps.spec2-toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.elan/toolchains/leanprover--lean4---v4.35.0-rc3
+          key: lax-spec2-toolchain-v1-${{ runner.os }}-leanprover--lean4---v4.35.0-rc3
       # The proof-tree composer (assets/prooftree/) is Lean that only an
       # admitted toolchain can run, and only end to end: the smoke composes the
       # eight-theorem fixture, replays it in a fresh process, and reads the

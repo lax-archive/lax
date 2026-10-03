@@ -14,6 +14,7 @@ import {
   environment as environmentById,
   epoch,
   resolveRuntime,
+  runtimeLibraries,
   type ArchiveEnvironment,
   type RuntimeSource,
 } from "../environments.js";
@@ -74,6 +75,8 @@ export function runStaticValidation(
   // provisioned against it.
   const selected = environmentById(result.manifest?.leanVersion ?? "") ?? epoch();
   const runtime = resolveRuntime(runtimeSource, selected);
+  // The pinned library set the lakefile rule is keyed by (validators/lakefile.ts).
+  const libraries = runtimeLibraries(selected, runtime);
 
   const abstractPath = path.join(root, "abstract.md");
   if (!regularFile(abstractPath)) findings.violate("abstract", "abstract.md is missing");
@@ -131,7 +134,7 @@ export function runStaticValidation(
           kind,
           packageName,
           `${kind}/lakefile.toml`,
-          runtime,
+          libraries,
           findings,
           { siblings: options.siblings },
         );

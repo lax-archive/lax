@@ -29,7 +29,7 @@ export const TABLE_FILE = path.join(
   "environments.ts",
 );
 
-const TABLE_OPENER = "const TABLE: readonly ArchiveEnvironment[] = [";
+const TABLE_OPENER = "const TABLE: readonly ArchiveEnvironmentRow[] = [";
 const ID_PATTERN = /^v[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const DATE_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/u;
@@ -83,6 +83,11 @@ function field(text, name) {
  * The admitted environments, read out of the table's source text. Only the
  * fields a job outside TypeScript needs: the id, the toolchain to install, the
  * inspector source directory to build, and the mathlib commit.
+ *
+ * A spec-2 row (axiomfree-plan.md) pins mathlib inside its `libraries` list
+ * rather than in `mathlibCommit`; this parser does not read that shape yet
+ * and fails loudly on it, so the first spec-2 admission (stage 6) extends it
+ * — never silently guards fewer rows.
  */
 export function parseTable(source) {
   const entries = entryTexts(source).map((text) => {
@@ -140,6 +145,10 @@ export function appendEntry(source, entry) {
   const lines = [
     "  {",
     `    id: "${id}",`,
+    // The scheduled admission admits spec-1 rows: a spec-2 row also pins
+    // LaxCore (and maybe CSLib) and is written by hand per the axiom-free
+    // plan's stage 6, with the libraries chosen against the mathlib tag.
+    "    specVersion: 1,",
     `    leanToolchain: "leanprover/lean4:${id}",`,
     `    mathlibCommit: "${mathlibCommit}",`,
     `    admittedAt: "${admittedAt}",`,

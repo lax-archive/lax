@@ -8,8 +8,10 @@ import type {
   ParsedDoc,
   ProofEntry,
   ResolutionResult,
+  StaticResult,
   ValidationScope,
 } from "../contracts.js";
+import { LIBRARY_ROOT_MODULES } from "../environments.js";
 import { FindingCollector } from "../findings.js";
 import { leanFacts } from "../lean-facts.js";
 
@@ -24,6 +26,24 @@ export interface SiblingPackages {
   proofs: string[];
 }
 
+/** The root modules of the environment libraries each package requires
+ * (contracts.ts ValidatedLakefile.libraries, through
+ * environments.ts LIBRARY_ROOT_MODULES): importable beside the core roots.
+ * `Mathlib` is a core root already, so a spec-1 package passes nothing new
+ * here; a spec-2 package that requires LaxCore may import `LaxCore`. */
+export interface LibraryRoots {
+  concepts: string[];
+  proofs: string[];
+}
+
+/** The library roots a static result's two lakefiles earn (both pipelines
+ * pass this to judgeInspection; a package the scope left unread earns none). */
+export function libraryRootsOf(result: StaticResult): LibraryRoots {
+  const roots = (kind: "concepts" | "proofs"): string[] =>
+    (result[kind]?.lakefile.libraries ?? []).map((name) => LIBRARY_ROOT_MODULES[name]);
+  return { concepts: roots("concepts"), proofs: roots("proofs") };
+}
+
 export function judgeInspection(
   conceptReport: InspectorReport,
   proofReport: InspectorReport | undefined,
@@ -32,6 +52,7 @@ export function judgeInspection(
   resolution: ResolutionResult,
   scope: ValidationScope = "both",
   siblings: SiblingPackages = { concepts: [], proofs: [] },
+  libraryRoots: LibraryRoots = { concepts: [], proofs: [] },
 ): { result: InspectionResult; findings: FindingCollector } {
   const findings = new FindingCollector("inspect");
   const conceptDeclarations = uniqueDeclarations(conceptReport.declarations);
@@ -41,7 +62,11 @@ export function judgeInspection(
   checkImports(
     conceptReport,
     conceptInventory,
-    new Set([...resolution.concepts.map((entry) => entry.packageName), ...siblings.concepts]),
+    new Set([
+      ...resolution.concepts.map((entry) => entry.packageName),
+      ...siblings.concepts,
+      ...libraryRoots.concepts,
+    ]),
     findings,
     new Set(siblings.proofs),
   );
@@ -58,6 +83,7 @@ export function judgeInspection(
         conceptInventory.packageName,
         ...resolution.proofs.map((entry) => entry.packageName),
         ...siblings.proofs,
+        ...libraryRoots.proofs,
       ]),
       findings,
       new Set(siblings.concepts),

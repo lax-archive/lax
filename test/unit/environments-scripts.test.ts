@@ -109,9 +109,10 @@ const FIXTURE = `import type { ValidationLimits } from "./config.js";
 
 export const EPOCH = "v4.30.0";
 
-const TABLE: readonly ArchiveEnvironment[] = [
+const TABLE: readonly ArchiveEnvironmentRow[] = [
   {
     id: "v4.30.0",
+    specVersion: 1,
     leanToolchain: "leanprover/lean4:v4.30.0",
     mathlibCommit: "c5ea00351c28e24afc9f0f84379aa41082b1188f",
     // the go-live pin (history/go-live.md), not an admission run
@@ -139,6 +140,7 @@ describe("admit.mjs: the row an admission writes", () => {
     ) as string;
     expect(updated).toContain(`  {
     id: "v4.33.0",
+    specVersion: 1,
     leanToolchain: "leanprover/lean4:v4.33.0",
     mathlibCommit: "${COMMIT}",
     admittedAt: "2026-09-05",

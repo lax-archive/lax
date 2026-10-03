@@ -43,20 +43,24 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { laxHome } from "../../shared/lax-home.js";
-import type { ArchiveEnvironment } from "../environments.js";
+import {
+  type ArchiveEnvironment,
+  LIBRARY_ROOT_MODULES,
+  librariesOf,
+  libraryPinKey,
+} from "../environments.js";
 import { leanFacts } from "../lean-facts.js";
-import { mathlibUrl } from "../pins.js";
 import { lakeBinary, lakePathEnv } from "./leanenv.js";
 import { run } from "./proc.js";
 
 /** The local warm workspace of one environment, keyed by toolchain and
- * mathlib revision so two environments — and a pin bump within one — coexist
- * as separate stores. */
+ * library revisions so two environments — and a pin bump within one —
+ * coexist as separate stores. */
 export function warmDir(
   environment: ArchiveEnvironment,
   base = path.join(laxHome(), "warm"),
 ): string {
-  return path.join(base, `${environment.id}-${environment.mathlibCommit.slice(0, 12)}`);
+  return path.join(base, `${environment.id}-${libraryPinKey(environment)}`);
 }
 
 /** Written only after a warm build ran to the very end (including the local
@@ -98,10 +102,11 @@ export function markWarmReady(ws: string): void {
 export type WarmStage = "building" | "sealing";
 
 /**
- * Build a warm workspace at `ws`: scaffold the LaxWarm package requiring
- * mathlib at the environment's pin, pull mathlib's prebuilt artifacts, and
- * build. Everything version-bearing comes from the entry, so two environments
- * provision through this one path.
+ * Build a warm workspace at `ws`: scaffold the LaxWarm package requiring the
+ * environment's whole library set at its pins (mathlib alone in a spec-1
+ * row; mathlib, LaxCore and maybe CSLib in a spec-2 row), pull mathlib's
+ * prebuilt artifacts, and build. Everything version-bearing comes from the
+ * entry, so two environments provision through this one path.
  */
 export async function buildWarmWorkspace(
   environment: ArchiveEnvironment,
@@ -116,22 +121,32 @@ export async function buildWarmWorkspace(
   const write = (p: string, content: string): void => {
     fs.writeFileSync(p, content);
   };
+  const libraries = librariesOf(environment);
   write(
     path.join(ws, "lakefile.toml"),
     `name = "LaxWarm"
 defaultTargets = ["LaxWarm"]
 
-[[require]]
-name = "mathlib"
-git = "${mathlibUrl()}"
-rev = "${environment.mathlibCommit}"
+` +
+      libraries
+        .map(
+          (library) => `[[require]]
+name = "${library.name}"
+git = "${library.url()}"
+rev = "${library.commit}"
 
-[[lean_lib]]
+`,
+        )
+        .join("") +
+      `[[lean_lib]]
 name = "LaxWarm"
 `,
   );
   write(path.join(ws, "lean-toolchain"), environment.leanToolchain + "\n");
-  write(path.join(ws, "LaxWarm.lean"), "import Mathlib\n");
+  write(
+    path.join(ws, "LaxWarm.lean"),
+    libraries.map((library) => `import ${LIBRARY_ROOT_MODULES[library.name]}\n`).join(""),
+  );
 
   // LAKE_ARTIFACT_CACHE must be off for the warm build and every consumer
   // build: with it on, lake writes `.hash` files beside the shared oleans —

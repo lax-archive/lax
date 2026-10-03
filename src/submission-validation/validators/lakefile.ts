@@ -5,8 +5,8 @@ import {
   type GitRequire,
   type PathRequire,
   type ValidatedLakefile,
-  type ValidationRuntimeIdentity,
 } from "../contracts.js";
+import { LIBRARY_URLS, type LibraryName, type PinnedLibrary } from "../environments.js";
 import type { FindingCollector } from "../findings.js";
 import { validateRepositoryUrl } from "../../shared/validation.js";
 
@@ -23,12 +23,23 @@ export interface LakefileOptions {
   siblings?: boolean;
 }
 
+/**
+ * The one reading of a package's `lakefile.toml`: the whitelist of keys, the
+ * names, and the requires. `libraries` is the environment's pinned set
+ * (environments.ts librariesOf/runtimeLibraries), the key of the libraries
+ * rule: a *required* library (mathlib; LaxCore in a spec-2 row) must be
+ * required directly at its pinned repository and commit with no `subDir`,
+ * an *allowed* one (CSLib) may be, under the same pin check, and a require
+ * naming a library of the set at another repository or revision is a
+ * violation. A require naming a library this module knows but the set does
+ * not pin is refused by name, and every other git require is a submission.
+ */
 export function validateLakefile(
   content: string,
   kind: "concepts" | "proofs",
   expectedName: string,
   where: string,
-  runtime: ValidationRuntimeIdentity,
+  libraries: readonly PinnedLibrary[],
   findings: FindingCollector,
   options: LakefileOptions = {},
 ): ValidatedLakefile | undefined {
@@ -70,7 +81,8 @@ export function validateLakefile(
 
   const gitRequires: GitRequire[] = [];
   const pathRequires: PathRequire[] = [];
-  let mathlib = false;
+  const pinned = new Map(libraries.map((library) => [library.name as string, library]));
+  const requiredLibraries = new Set<LibraryName>();
   let hasConceptPathRequire = false;
   const seenRequires = new Set<string>();
   const requirements = value.require ?? [];
@@ -154,13 +166,25 @@ export function validateLakefile(
         findings.violate("lakefile", `${label}: git and rev are required`);
         return;
       }
-      if (raw.name === "mathlib") {
-        mathlib = true;
-        if (raw.git !== runtime.mathlibRepository)
-          findings.violate("lakefile", `${label}: mathlib repository must be ${runtime.mathlibRepository}`);
-        if (raw.rev !== runtime.mathlibCommit)
-          findings.violate("lakefile", `${label}: mathlib revision must be ${runtime.mathlibCommit}`);
-        if ("subDir" in raw) findings.violate("lakefile", `${label}: mathlib must not specify subDir`);
+      const library = pinned.get(raw.name);
+      if (library !== undefined) {
+        requiredLibraries.add(library.name);
+        const url = library.url();
+        if (raw.git !== url)
+          findings.violate("lakefile", `${label}: ${library.name} repository must be ${url}`);
+        if (raw.rev !== library.commit)
+          findings.violate("lakefile", `${label}: ${library.name} revision must be ${library.commit}`);
+        if ("subDir" in raw) findings.violate("lakefile", `${label}: ${library.name} must not specify subDir`);
+        return;
+      }
+      if (raw.name in LIBRARY_URLS) {
+        // a library name this environment does not pin: never a submission,
+        // so it does not fall through to the submission rules below
+        findings.violate(
+          "lakefile",
+          `${label}: ${raw.name} is not a library of this environment ` +
+            `(its libraries are ${libraries.map((entry) => entry.name).join(", ")})`,
+        );
         return;
       }
       if (!COMMIT.test(raw.rev)) findings.violate("lakefile", `${label}: rev must be a full lowercase commit SHA`);
@@ -182,8 +206,17 @@ export function validateLakefile(
       gitRequires.push({ name: raw.name, git: repository, rev: raw.rev, subDir: raw.subDir });
     });
   }
-  if (!mathlib) findings.violate("lakefile", `${where}: the package must require pinned mathlib directly`);
-  return { packageName: expectedName, gitRequires, hasConceptPathRequire, pathRequires };
+  for (const library of libraries) {
+    if (library.required && !requiredLibraries.has(library.name))
+      findings.violate("lakefile", `${where}: the package must require pinned ${library.name} directly`);
+  }
+  return {
+    packageName: expectedName,
+    libraries: [...requiredLibraries],
+    gitRequires,
+    hasConceptPathRequire,
+    pathRequires,
+  };
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {

@@ -16,6 +16,7 @@ import {
   type ArchiveEnvironment,
   environment as environmentById,
   epoch,
+  libraryPinKey,
 } from "../environments.js";
 import { ELAN_COMMIT } from "../pins.js";
 import { inspectorBinary, inspectorSourceHash } from "./inspector.js";
@@ -90,7 +91,8 @@ export async function ensureValidationHost(
 /**
  * The Actions cache identity of what ensureValidationHost produces for one
  * environment (~/.elan, ~/.lax/warm, ~/.lax/tools): the runner OS, the
- * environment's id, its mathlib commit, and the hash of the inspector sources
+ * environment's id, its library pins (the mathlib commit of a spec-1 row;
+ * every library's of a spec-2 row), and the hash of the inspector sources
  * under its toolchain. Every part derives from the *entry* — the id is a
  * table key by the time it gets here (trust rule 2) — and none of it from the
  * rest of the table, so a monthly admission evicts no other environment's
@@ -109,7 +111,7 @@ export function validationHostCacheKey(environment: ArchiveEnvironment, runnerOs
     HOST_CACHE_SALT,
     runnerOs,
     environment.id,
-    environment.mathlibCommit.slice(0, 12),
+    libraryPinKey(environment),
     inspectorSourceHash(environment),
   ].join("-");
 }

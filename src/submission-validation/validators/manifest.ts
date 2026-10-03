@@ -192,8 +192,15 @@ export function validateManifest(
   }
   const runtime = resolveRuntime(runtimeSource, selected);
 
-  if (specVersion !== undefined && specVersion !== "1")
-    findings.violate("manifest", "manifest.yaml: specVersion must be \"1\"");
+  // The content spec is the environment's (axiomfree-plan.md, "Environment
+  // libraries"): the manifest says "1" or "2", the table row says 1 or 2,
+  // and this is the one place the two representations meet. The archive JSON
+  // schemas' own `specVersion: "1"` is a different version and stays.
+  if (specVersion !== undefined && specVersion !== String(selected.specVersion))
+    findings.violate(
+      "manifest",
+      `manifest.yaml: specVersion must be "${selected.specVersion}" in environment ${selected.id}`,
+    );
   const expectedId = submissionId;
   if (id !== undefined && id !== expectedId)
     findings.violate(

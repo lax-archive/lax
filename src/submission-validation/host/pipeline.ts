@@ -50,7 +50,7 @@ import { joinPaperMarks } from "../paper/join.js";
 import { capturePaperSources, runPaperPhase, type CompiledPaper, type PaperPhaseResult } from "../paper/phase.js";
 import type { WebDeriver } from "../paper/web.js";
 import { emitBuildOutput } from "../phases/emit.js";
-import { judgeInspection } from "../phases/inspect.js";
+import { judgeInspection, libraryRootsOf } from "../phases/inspect.js";
 import { parseInspectorReport } from "../phases/inspect-runner.js";
 import { dependencyClosure, dependencySubDir } from "../phases/provision.js";
 import { runResolution } from "../phases/resolution.js";
@@ -249,7 +249,7 @@ export async function validateSubmissionOnHost(
     const found = new FindingCollector("resolution");
     try {
       siblings = await state.phase("sibling packages", () =>
-        resolveSiblings(state.fetched.submissionRoot, staticCheck.result, runtime, options.local.archive, found));
+        resolveSiblings(state.fetched.submissionRoot, staticCheck.result, environment, runtime, options.local.archive, found));
     } catch (error) {
       return fail("resolution", "siblings", error);
     }
@@ -557,6 +557,7 @@ export async function validateSubmissionOnHost(
               concepts: staticCheck.result.concepts!.lakefile.pathRequires.map((require) => require.name),
               proofs: staticCheck.result.proofs!.lakefile.pathRequires.map((require) => require.name),
             },
+        libraryRootsOf(staticCheck.result),
       ));
     } catch (error) {
       return fail("inspect", "judge", error);

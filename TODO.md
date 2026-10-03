@@ -14,11 +14,14 @@ pinned `LaxCore`, libraries pinned as a set with mathlib and CSLib, Replay
 kept, kernel set a per-environment setting), the design, and six stages
 released to `main` one by one. The spike is done (`spike/axiomfree/REPORT.md`);
 the outside review and the common-sense review sit beside it and are folded
-in; all decisions confirmed. Next: stage 0's remaining half-day
-(header-less Challenge/Solution run; a scratch `LaxCore` to confirm the
-inspector reads the tag as data with initializers disabled), then stage 1
-(`lax-archive/lax-core`, the libraries table and rule, the spec-2 fake
-environment in the e2e).
+in; all decisions confirmed. Stage 1 landed 2026-10-03 (the library at
+`~/git/lax-core`, to be pushed as `lax-archive/lax-core`; the pins, the
+`specVersion`/`libraries` rows, the warm-store set, the libraries rule, the
+spec-2 fake environment in `test/e2e/host-spec2.test.ts` under the
+`v4.35.0-rc3` rehearsal toolchain). Next: stage 2 (the inspector reads
+`LaxCore.laxStatementAttr`'s entries as data, the four fields, the spec-2
+classification and the background-only walk, `telescope` in
+`build-output.json`, spec-1 goldens byte-identical).
 
 ## Sibling drafts (2026-09-19)
 

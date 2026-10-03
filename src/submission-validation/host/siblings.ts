@@ -8,7 +8,12 @@ import {
   type StaticResult,
   type ValidationRuntimeIdentity,
 } from "../contracts.js";
-import { environmentOfPins } from "../environments.js";
+import {
+  type ArchiveEnvironment,
+  environmentOfPins,
+  type PinnedLibrary,
+  runtimeLibraries,
+} from "../environments.js";
 import { FindingCollector } from "../findings.js";
 import { validateLakefile } from "../validators/lakefile.js";
 
@@ -55,11 +60,14 @@ const MAX_SIBLINGS = 200;
 export function resolveSiblings(
   submissionRoot: string,
   staticResult: StaticResult,
+  environment: ArchiveEnvironment,
   runtime: ValidationRuntimeIdentity,
   archive: ArchiveSnapshot,
   findings: FindingCollector,
 ): SiblingClosure {
   const rootReal = fs.realpathSync(submissionRoot);
+  // a sibling's lakefile is held to the same library set as the author's own
+  const libraries = runtimeLibraries(environment, runtime);
   const closure: SiblingClosure = { concepts: [], proofs: [], gitRequires: { concepts: [], proofs: [] } };
   const seedsOf = (kind: "concepts" | "proofs") =>
     (staticResult[kind]?.lakefile.pathRequires ?? []).map((require) => ({
@@ -87,7 +95,7 @@ export function resolveSiblings(
         findings.violate("sibling", `more than ${MAX_SIBLINGS} sibling packages reachable from ${kind}/`);
         break;
       }
-      const sibling = readSibling(next, rootReal, runtime, archive, findings);
+      const sibling = readSibling(next, rootReal, libraries, runtime, archive, findings);
       if (sibling === undefined) continue;
       closure[kind].push(sibling.sibling);
       closure.gitRequires[kind].push(...sibling.gitRequires);
@@ -111,6 +119,7 @@ interface Seed {
 function readSibling(
   seed: Seed,
   rootReal: string,
+  libraries: readonly PinnedLibrary[],
   runtime: ValidationRuntimeIdentity,
   archive: ArchiveSnapshot,
   findings: FindingCollector,
@@ -186,7 +195,7 @@ function readSibling(
   // well-formed. Its own findings are reported under the sibling's label; its
   // warnings (a discouraged proof dependency, say) are the sibling's business.
   const own = new FindingCollector("resolution");
-  const lakefile = validateLakefile(content, kind, seed.name, `${seed.path}/lakefile.toml`, runtime, own, {
+  const lakefile = validateLakefile(content, kind, seed.name, `${seed.path}/lakefile.toml`, libraries, own, {
     siblings: true,
   });
   if (own.failed || lakefile === undefined) {

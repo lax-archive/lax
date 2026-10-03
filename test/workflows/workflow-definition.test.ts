@@ -14,6 +14,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import { SPEC2_TOOLCHAIN } from "../paths.js";
 import {
   CAPTURE_FILENAME,
   GENERATED_BUILD_OUTPUT_FILENAME,
@@ -873,6 +874,44 @@ describe("CI workflow wiring", () => {
     expect(prooftree).toBeGreaterThan(save);
   });
 
+  it("installs the spec-2 rehearsal toolchain for the e2e, outside the shared host store", () => {
+    // axiomfree-plan.md stage 1: the spec-2 e2e runs under the toolchain
+    // test/paths.ts names and skips itself without it, so the check job has
+    // to install exactly that string — after the epoch store is saved (the
+    // store is shared with the trusted validate job and must not grow by a
+    // toolchain it never uses), in a cache of its own, saved before any
+    // fixture code runs, and before `npm test`.
+    const check = requireJob(ciJobs, "check");
+    const runs = check.steps.map((step) => step.run ?? step.uses ?? "");
+    const install = check.steps.findIndex(
+      (step) => step.run === `node scripts/environments/install-toolchain.mjs ${SPEC2_TOOLCHAIN}`,
+    );
+    expect(install).toBeGreaterThanOrEqual(0);
+    const hostSave = check.steps.findIndex(
+      (step) => step.uses?.startsWith("actions/cache/save") === true && step.with?.key === EPOCH_CACHE_KEY,
+    );
+    const test = runs.indexOf("npm test");
+    expect(hostSave).toBeGreaterThanOrEqual(0);
+    expect(install).toBeGreaterThan(hostSave);
+    expect(install).toBeLessThan(test);
+    const dirName = SPEC2_TOOLCHAIN.replace("/", "--").replace(":", "---");
+    const toolchainCache = check.steps.filter(
+      (step) => step.uses?.startsWith("actions/cache/") === true && step.with?.path === `~/.elan/toolchains/${dirName}`,
+    );
+    expect(toolchainCache.map((step) => step.uses?.split("@")[0])).toEqual([
+      "actions/cache/restore",
+      "actions/cache/save",
+    ]);
+    for (const step of toolchainCache) {
+      expect(step.with?.key).toContain(dirName);
+      expect(step.with?.key).not.toBe(EPOCH_CACHE_KEY);
+    }
+    expect(check.steps.indexOf(toolchainCache[0]!)).toBeLessThan(install);
+    const save = check.steps.indexOf(toolchainCache[1]!);
+    expect(save).toBe(install + 1);
+    expect(check.steps[save]?.if).toBe("steps.spec2-toolchain.outputs.cache-hit != 'true'");
+  });
+
   it("guards and caches every admitted environment, on the table and weekly", () => {
     // The check job installs the epoch alone, so between admissions no other
     // admitted environment's inspector is built anywhere — and an environment
@@ -1256,8 +1295,10 @@ function expectEpochHostCache(job: WorkflowJob): void {
   const keyStep = job.steps.findIndex((step) => step.run === CACHE_KEY_STEP);
   expect(keyStep).toBeGreaterThanOrEqual(0);
   expect(job.steps[keyStep]?.id).toBe("host-key");
+  // the host store's cache steps are the ones under its key; the venv and
+  // the spec-2 rehearsal toolchain (check job) have caches of their own
   const hostCache = job.steps.filter(
-    (step) => step.uses?.startsWith("actions/cache/") === true && step.with?.path !== "reflowtex/venv",
+    (step) => step.uses?.startsWith("actions/cache/") === true && step.with?.key === EPOCH_CACHE_KEY,
   );
   expect(hostCache.map((step) => step.uses?.split("@")[0])).toEqual([
     "actions/cache/restore",

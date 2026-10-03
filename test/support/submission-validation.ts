@@ -8,6 +8,7 @@ import type {
   ValidationRuntimeIdentity,
 } from "../../src/submission-validation/contracts.js";
 import { packageNameForSubmission } from "../../src/submission-validation/contracts.js";
+import type { PinnedLibrary } from "../../src/submission-validation/environments.js";
 
 export const REPOSITORY = "https://github.com/alice/monorepo";
 export const COMMIT = "0123456789abcdef0123456789abcdef01234567";
@@ -22,6 +23,13 @@ export const RUNTIME: ValidationRuntimeIdentity = {
   mathlibRepository: "https://github.com/leanprover-community/mathlib4",
   mathlibCommit: "db584cd6d46c92f209a44c0f1c829460d327499d",
 };
+
+/** The pinned library set of RUNTIME's (spec-1) environment: mathlib alone,
+ * at the fixed runtime's pin — what the static phase keys the lakefile rule
+ * by for a run held to RUNTIME (environments.ts runtimeLibraries). */
+export const LIBRARIES: readonly PinnedLibrary[] = [
+  { name: "mathlib", url: () => RUNTIME.mathlibRepository, commit: RUNTIME.mathlibCommit, required: true },
+];
 
 const temporaryDirectories: string[] = [];
 
@@ -153,6 +161,7 @@ export function staticResult(id: string): StaticResult {
     concepts: {
       lakefile: {
         packageName: concepts,
+        libraries: ["mathlib"],
         gitRequires: [],
         hasConceptPathRequire: false,
         pathRequires: [],
@@ -162,6 +171,7 @@ export function staticResult(id: string): StaticResult {
     proofs: {
       lakefile: {
         packageName: proofs,
+        libraries: ["mathlib"],
         gitRequires: [],
         hasConceptPathRequire: true,
         pathRequires: [],

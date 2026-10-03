@@ -17,9 +17,11 @@
 //
 // Test/dev seam: LAX_MATHLIB_URL/LAX_MATHLIB_REV substitute a small local
 // "mathlib" so the fast tests exercise the real warm-store and seeding
-// machinery without downloading gigabytes. Both are read at call time (see
-// mathlibUrl() here and environments() next door), never frozen at import.
-// Never set in production.
+// machinery without downloading gigabytes; LAX_LAXCORE_URL/LAX_LAXCORE_REV
+// and LAX_CSLIB_URL/LAX_CSLIB_REV do the same for the two other libraries a
+// spec-2 environment pins (axiomfree-plan.md, "Environment libraries"). All
+// are read at call time (see the url functions here and environments() next
+// door), never frozen at import. Never set in production.
 
 import type { ValidationRuntimeIdentity } from "./contracts.js";
 import type { ArchiveEnvironment } from "./environments.js";
@@ -30,6 +32,24 @@ import type { ArchiveEnvironment } from "./environments.js";
  * when it is asked for, not when this module happens to be imported. */
 export function mathlibUrl(): string {
   return process.env.LAX_MATHLIB_URL ?? "https://github.com/leanprover-community/mathlib4";
+}
+
+/** The repository of `LaxCore`, the one module every spec-2 environment pins
+ * beside mathlib: the `lax_statement` tag attribute with its validation hook
+ * (axiomfree-plan.md, decision 4). As with mathlib, an environment chooses a
+ * *commit* of this repository and nothing else. */
+export function laxCoreUrl(): string {
+  return process.env.LAX_LAXCORE_URL ?? "https://github.com/lax-archive/lax-core";
+}
+
+/** The repository of CSLib, the Lean computer-science library a spec-2
+ * environment may pin as an *allowed* library. The canonical URL was checked
+ * 2026-10-03 against the repository's own README (`require cslib from git
+ * "https://github.com/leanprover/cslib"`; Lake package name `cslib`, root
+ * module `Cslib`) and against Palomar's challenge-repository allowlist, which
+ * names it `leanprover/cslib`. */
+export function cslibUrl(): string {
+  return process.env.LAX_CSLIB_URL ?? "https://github.com/leanprover/cslib";
 }
 
 /** Commit of leanprover/elan whose `elan-init.sh` installs elan on the VM —
