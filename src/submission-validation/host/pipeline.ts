@@ -51,7 +51,7 @@ import { capturePaperSources, runPaperPhase, type CompiledPaper, type PaperPhase
 import type { WebDeriver } from "../paper/web.js";
 import { emitBuildOutput } from "../phases/emit.js";
 import { judgeInspection, libraryRootsOf } from "../phases/inspect.js";
-import { parseInspectorReport } from "../phases/inspect-runner.js";
+import { inspectorArguments, parseInspectorReport } from "../phases/inspect-runner.js";
 import { dependencyClosure, dependencySubDir } from "../phases/provision.js";
 import { runResolution } from "../phases/resolution.js";
 import { runStaticValidation } from "../phases/static.js";
@@ -517,7 +517,7 @@ export async function validateSubmissionOnHost(
       const cwd = path.join(state.captureRoot, kind, "package");
       const result = await leanEnv.exec(
         inspectorBin,
-        [reportPath, inventory.rootModule, ...inventory.modules],
+        inspectorArguments(state.environment.specVersion, reportPath, inventory),
         cwd,
       );
       if (result.code !== 0) {
@@ -528,7 +528,10 @@ export async function validateSubmissionOnHost(
       const stat = fs.lstatSync(reportPath);
       if (!stat.isFile() || stat.size > state.limits.inspectorReportBytes)
         throw new Error(`${kind} inspector report is missing or oversized`);
-      return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown);
+      return parseInspectorReport(
+        JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown,
+        state.environment.specVersion,
+      );
     };
     let conceptReport;
     let proofReport;
@@ -558,6 +561,7 @@ export async function validateSubmissionOnHost(
               proofs: staticCheck.result.proofs!.lakefile.pathRequires.map((require) => require.name),
             },
         libraryRootsOf(staticCheck.result),
+        state.environment.specVersion,
       ));
     } catch (error) {
       return fail("inspect", "judge", error);

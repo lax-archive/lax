@@ -1,0 +1,8 @@
+name = "goldenspec2"
+defaultTargets = ["Spec2"]
+
+[[lean_lib]]
+name = "LaxCore"
+
+[[lean_lib]]
+name = "Spec2"

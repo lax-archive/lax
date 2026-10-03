@@ -8,8 +8,13 @@ executes no code originating outside its own binary and Lean core (module
 CLI is the sole emitter of violations; parse problems and failed kernel facts
 are reported as facts.
 
-Usage: laxinspector <out.json> <module> [<module>...]
-The module list is the package's file-derived inventory, root included.
+Usage: laxinspector --spec <1|2> <out.json> <module> [<module>...]
+The module list is the package's file-derived inventory, root included. The
+spec version is the content spec of the archive environment the package was
+built in (environments.ts `specVersion`); one inspector source serves both,
+and the spec-1 report is byte-identical to what it was before spec 2 existed
+— the spec-2 facts (`laxStatement`, `isProp`, `levelParams`, `telescope`,
+and the signature/body of tagged definitions) appear only under `--spec 2`.
 -/
 
 open Lean
@@ -316,6 +321,84 @@ def ppType (env : Environment) (e : Expr) : IO String := do
   return fmt.pretty
 
 /-!
+## Spec-2 facts (axiomfree-plan.md, "Inspector")
+
+Under spec 2 a statement is a tagged definition and a proof is a theorem whose
+type is a chain of statement constants, so the report carries four more facts
+per declaration. All of them are syntactic reads of the stored type or of
+persisted extension data: no reduction, no kernel work, no judgment — whether
+a constant in a telescope *is* a statement is the validator's question.
+-/
+
+/-- A universe level, structurally, as a JSON array tagged by its head:
+`["zero"]`, `["succ", l]`, `["max", a, b]`, `["imax", a, b]`, and
+`["param", "u"]` for a universe variable. A level metavariable never survives
+into a stored type; `["mvar"]` keeps the encoding total. The validator's
+universe rule admits `param` alone, so a build output only ever carries
+parameter names. -/
+partial def jsonOfLevel : Level → Json
+  | .zero => Json.arr #[Json.str "zero"]
+  | .succ l => Json.arr #[Json.str "succ", jsonOfLevel l]
+  | .max a b => Json.arr #[Json.str "max", jsonOfLevel a, jsonOfLevel b]
+  | .imax a b => Json.arr #[Json.str "imax", jsonOfLevel a, jsonOfLevel b]
+  | .param n => Json.arr #[Json.str "param", Json.str n.toString]
+  | .mvar _ => Json.arr #[Json.str "mvar"]
+
+/-- `Lean.BinderInfo`'s own constructor names. -/
+def jsonOfBinderInfo : BinderInfo → Json
+  | .default => Json.str "default"
+  | .implicit => Json.str "implicit"
+  | .strictImplicit => Json.str "strictImplicit"
+  | .instImplicit => Json.str "instImplicit"
+
+structure TelescopeBinder where
+  const : Name
+  levels : List Level
+  binder : BinderInfo
+
+/-- The stored type as a chain of `∀`-binders over bare constants ending in a
+bare constant — metadata stripped at every node, nothing reduced — or `none`
+when any domain or the conclusion is anything else. A constant applied to
+arguments is not a bare constant, so `∀ (h : P 1), Q` is `none`, as is a
+type whose conclusion is a `Sort`. The walk is purely syntactic. -/
+partial def telescopeOf (e : Expr) (acc : Array TelescopeBinder := #[]) :
+    Option (Array TelescopeBinder × Name × List Level) :=
+  match e.consumeMData with
+  | .forallE _ d b bi =>
+    match d.consumeMData with
+    | .const n ls => telescopeOf b (acc.push { const := n, levels := ls, binder := bi })
+    | _ => none
+  | .const n ls => some (acc, n, ls)
+  | _ => none
+
+def jsonOfTelescope : Option (Array TelescopeBinder × Name × List Level) → Json
+  | none => Json.null
+  | some (binders, n, ls) =>
+    Json.mkObj
+      [("hypotheses", Json.arr (binders.map fun b => Json.mkObj
+          [("const", Json.str b.const.toString),
+           ("levels", Json.arr (b.levels.toArray.map jsonOfLevel)),
+           ("binder", jsonOfBinderInfo b.binder)])),
+       ("conclusion", Json.mkObj
+          [("const", Json.str n.toString),
+           ("levels", Json.arr (ls.toArray.map jsonOfLevel))])]
+
+/-- The number of leading `∀`-binders of the stored type, metadata stripped:
+what a tagged definition that is not `Prop` is told about (`def P (n : Nat) :
+Prop` is stored as `∀ (n : Nat), Prop`). -/
+partial def leadingBinders (e : Expr) (n : Nat := 0) : Nat :=
+  match e.consumeMData with
+  | .forallE _ _ b _ => leadingBinders b (n + 1)
+  | _ => n
+
+/-- The persistent extension `LaxCore`'s `@[lax_statement]` tag attribute
+persists its tagged names under. It is the `initialize` declaration's name,
+not the attribute's (`registerTagAttribute` passes `decl_name%` as the
+extension's `name`), and it is the one piece of `LaxCore`'s interface the
+archive reads by name — see the library's module docstring. -/
+def laxStatementExtension : Name := `LaxCore.laxStatementAttr
+
+/-!
 ## Shape guards for the persisted extension entries
 
 The three readers below reinterpret raw olean extension entries with
@@ -472,13 +555,41 @@ unsafe def matcherNamesOf (datas : Array ModuleData) : NameSet := Id.run do
           out := out.insert ((privateToUserName? entry.name).getD entry.name)
   return out
 
+-- `laxStatementsOf` casts each entry of the tag attribute's extension to
+-- `Name`. The inspector never imports `LaxCore`, so the extension itself
+-- cannot be guarded; what fixes its entry type is `Lean.TagAttribute`, whose
+-- `ext` field is the `PersistentEnvExtension Name Name NameSet` every tag
+-- attribute is built on.
+run_cmd do
+  ShapeGuard.checkType "laxStatementsOf" `Lean.TagAttribute
+    "Lean.TagAttribute.mk : (explicit attr : Lean.AttributeImpl) -> (explicit ext : (((Lean.PersistentEnvExtension Lean.Name) Lean.Name) Lean.NameSet)) -> Lean.TagAttribute"
+
+/-- The names tagged `@[lax_statement]` in every loaded module, read from the
+raw olean entries as `moduleDocsOf` reads module docs: `LaxCore`'s
+initializer never runs here and the attribute is never registered in this
+process. The olean filter that drops `private` declarations from exported
+entries is a module-system feature, and spec-2 files are header-less, so a
+tagged `private def` *is* in the set; the validator re-judges `private` from
+the name (stage-0 confirmation 2 in spike/axiomfree/REPORT.md). -/
+unsafe def laxStatementsOf (datas : Array ModuleData) : NameSet := Id.run do
+  let mut out : NameSet := {}
+  for data in datas do
+    for (extName, entries) in data.entries do
+      if (privateToUserName? extName).getD extName == laxStatementExtension then
+        for e in entries do
+          out := out.insert (unsafeCast e : Name)
+  return out
+
+def usage : IO UInt32 := do
+  IO.eprintln "usage: laxinspector --spec <1|2> <out.json> <module> [<module>...]"
+  return 1
+
 unsafe def main (args : List String) : IO UInt32 := do
-  let (outPath, mods) ←
+  let (spec, outPath, mods) ←
     match args with
-    | outPath :: mods@(_ :: _) => pure (outPath, mods)
-    | _ =>
-      IO.eprintln "usage: laxinspector <out.json> <module> [<module>...]"
-      return 1
+    | "--spec" :: "1" :: outPath :: mods@(_ :: _) => pure (1, outPath, mods)
+    | "--spec" :: "2" :: outPath :: mods@(_ :: _) => pure (2, outPath, mods)
+    | _ => return (← usage)
   initSearchPath (← findSysroot)
   let modNames := mods.map String.toName
   let imports := modNames.toArray.map fun m => ({ module := m } : Import)
@@ -487,6 +598,9 @@ unsafe def main (args : List String) : IO UInt32 := do
   let allNames := env.header.moduleNames
   let datas := env.header.moduleData
   let matchers := matcherNamesOf datas
+  -- the tag is read only when the environment's spec has it: the spec-1
+  -- report must not change, and reading it is harmless but not free
+  let laxStatements := if spec == 2 then laxStatementsOf datas else {}
   let mut idxMap : Std.HashMap Name Nat := {}
   for i in [0:allNames.size] do
     idxMap := idxMap.insert allNames[i]! i
@@ -592,9 +706,29 @@ unsafe def main (args : List String) : IO UInt32 := do
           if let some om := originModule then
             cf := cf ++ [("originModule", Json.str om.toString)]
           fields := fields ++ [("conclusionFacts", Json.mkObj cf)]
-      if let .axiomInfo _ := ci then
+      let isAxiom := match ci with | .axiomInfo _ => true | _ => false
+      let tagged := spec == 2 && laxStatements.contains declName
+      -- the pretty-printed type: of every axiom (the spec-1 statement) and,
+      -- under spec 2, of every tagged declaration (for the statement's
+      -- signature, and for the finding when it is not `Prop`)
+      if isAxiom || tagged then
         let sig ← ppType env ci.type
         fields := fields ++ [("signature", Json.str sig)]
+      if spec == 2 then
+        let type := ci.type
+        let isProp := match type.consumeMData with
+          | .sort .zero => true
+          | _ => false
+        fields := fields ++ [
+          ("laxStatement", Json.bool tagged),
+          ("isProp", Json.bool isProp),
+          ("levelParams", Json.arr (ci.levelParams.toArray.map fun n => Json.str n.toString)),
+          ("telescope", jsonOfTelescope (telescopeOf type))]
+        if tagged then
+          fields := fields ++ [("binders", toJson (leadingBinders type))]
+          if let .defnInfo v := ci then
+            let body ← ppType env v.value
+            fields := fields ++ [("body", Json.str body)]
       declJsons := declJsons.push (Json.mkObj fields)
 
   let report := Json.mkObj

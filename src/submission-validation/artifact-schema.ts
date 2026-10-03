@@ -13,12 +13,17 @@ import {
   ValidationError,
 } from "../shared/validation.js";
 import { PAPER_CAPS } from "./config.js";
+import { environment as environmentById } from "./environments.js";
 import type {
   AnnotationSection,
+  BinderKind,
   BuildOutputPayload,
   CaptureManifest,
   CapturedFile,
   ConceptEntry,
+  ContentSpecVersion,
+  ProofEntry,
+  ProofTelescope,
   PaperManifest,
   PaperMark,
   PaperMarkPoint,
@@ -286,10 +291,14 @@ function parseBuildOutputPayload(
     : parsePaperOutput(object.paper, manifest.paper!, published);
   const abstract = text(inputs.abstract, "generated abstract", 1024 * 1024, true);
   if (abstract.trim() === "") throw new ValidationError("generated abstract must not be empty");
+  // The content spec decides the entries' shape: a spec-2 record's proofs
+  // carry their telescopes and its statements their bodies, a spec-1 record's
+  // carry neither (parseManifest held the string to the environment's row).
+  const spec: ContentSpecVersion = manifest.specVersion === "2" ? 2 : 1;
   const concepts = boundedArray(object.concepts, "generated concepts", MAX_ENTRIES)
-    .map((entry, index) => parseConcept(entry, index));
+    .map((entry, index) => parseConcept(entry, index, spec));
   const proofs = boundedArray(object.proofs, "generated proofs", MAX_ENTRIES)
-    .map((entry, index) => parseProof(entry, index));
+    .map((entry, index) => parseProof(entry, index, spec));
   requireUnique(concepts.map((entry) => entry.id), "generated concept ids");
   requireUnique(proofs.map((entry) => entry.id), "generated proof ids");
   return {
@@ -492,7 +501,14 @@ function parseManifest(
     ...(value.supersedes === undefined ? [] : ["supersedes"]),
     ...(value.paper === undefined ? [] : ["paper"]),
   ], "generated manifest");
-  if (object.specVersion !== "1" || object.id !== expectedId) {
+  // The manifest's specVersion is the *content* spec — the row's, as the
+  // static phase demanded (validators/manifest.ts) — while the archive
+  // schemas' own `specVersion: "1"` is a different version. The runtime's
+  // environment id is only ever a lookup key here (trust rule 2); the caller
+  // verifies the identity itself against the table.
+  const row = environmentById(runtime.environment);
+  const expectedSpec = String(row?.specVersion ?? 1);
+  if (object.specVersion !== expectedSpec || object.id !== expectedId) {
     throw new ValidationError("generated manifest identity is invalid");
   }
   if (object.leanVersion !== runtime.leanVersion || object.mathlibVersion !== runtime.mathlibCommit) {
@@ -538,7 +554,7 @@ function parseManifest(
     };
   }
   return {
-    specVersion: "1",
+    specVersion: expectedSpec,
     id: expectedId,
     leanVersion: runtime.leanVersion,
     mathlibVersion: runtime.mathlibCommit,
@@ -572,7 +588,7 @@ function parseAuthor(value: unknown, index: number): SubmissionAuthor {
   };
 }
 
-function parseConcept(value: unknown, index: number): ConceptEntry {
+function parseConcept(value: unknown, index: number, spec: ContentSpecVersion): ConceptEntry {
   const label = `generated concept ${index + 1}`;
   if (!isObject(value)) throw new ValidationError(`${label} must be an object`);
   requireExactKeys(value, [
@@ -583,7 +599,7 @@ function parseConcept(value: unknown, index: number): ConceptEntry {
   // A concept may declare any number of statements; the cap is only a
   // trusted-parse bound, not the old one-statement-per-concept rule.
   const statements = boundedArray(value.statements, `${label} statements`, MAX_ENTRIES)
-    .map((entry, statementIndex) => parseStatement(entry, `${label} statement ${statementIndex + 1}`));
+    .map((entry, statementIndex) => parseStatement(entry, `${label} statement ${statementIndex + 1}`, spec));
   return {
     id: identifier(value.id, `${label} id`, 2_048),
     path: relativeFile(value.path, `${label} path`),
@@ -598,10 +614,13 @@ function parseConcept(value: unknown, index: number): ConceptEntry {
   };
 }
 
-function parseStatement(value: unknown, label: string): StatementEntry {
+function parseStatement(value: unknown, label: string, spec: ContentSpecVersion): StatementEntry {
   if (!isObject(value)) throw new ValidationError(`${label} must be an object`);
   requireExactKeys(value, [
-    "id", "signature",
+    "id",
+    ...(spec === 2 ? ["levelParams"] : []),
+    "signature",
+    ...(spec === 2 ? ["body"] : []),
     ...(value.startLine === undefined ? [] : ["startLine"]),
     ...(value.endLine === undefined ? [] : ["endLine"]),
     ...(value.doc === undefined ? [] : ["doc"]),
@@ -613,27 +632,92 @@ function parseStatement(value: unknown, label: string): StatementEntry {
   }
   return {
     id: identifier(value.id, `${label} id`, 2_048),
+    ...(spec === 2 ? { levelParams: levelParameters(value.levelParams, `${label} levelParams`) } : {}),
     signature: nonemptyText(value.signature, `${label} signature`, 64 * 1024, true),
+    ...(spec === 2 ? { body: text(value.body, `${label} body`, 4 * 1024 * 1024, true) } : {}),
     ...(startLine === undefined ? {} : { startLine }),
     ...(endLine === undefined ? {} : { endLine }),
     ...(value.doc === undefined ? {} : { doc: text(value.doc, `${label} doc`, 1024 * 1024, true) }),
   };
 }
 
-function parseProof(value: unknown, index: number): BuildOutputPayload["proofs"][number] {
+function parseProof(value: unknown, index: number, spec: ContentSpecVersion): BuildOutputPayload["proofs"][number] {
   const label = `generated proof ${index + 1}`;
   if (!isObject(value)) throw new ValidationError(`${label} must be an object`);
   requireExactKeys(value, [
-    "id", "path", "conclusion", "assumptions", "description",
+    "id", "path",
+    ...(spec === 2 ? ["levelParams", "telescope"] : []),
+    "conclusion", "assumptions", "description",
     ...(value.sections === undefined ? [] : ["sections"]),
   ], label);
+  const conclusion = identifier(value.conclusion, `${label} conclusion`, 2_048);
+  const assumptions = stringArray(value.assumptions, `${label} assumptions`, MAX_ENTRIES, 2_048);
+  let spec2: Pick<ProofEntry, "levelParams" | "telescope"> = {};
+  if (spec === 2) {
+    const levelParams = levelParameters(value.levelParams, `${label} levelParams`);
+    const telescope = parseTelescope(value.telescope, `${label} telescope`, new Set(levelParams));
+    // `conclusion` and `assumptions` are derived from the telescope (the
+    // draft spec, "Proofs"): a record whose copies disagree is corrupt
+    if (telescope.conclusion.statement !== conclusion)
+      throw new ValidationError(`${label} conclusion does not match its telescope`);
+    const derived = [...new Set(telescope.hypotheses.map((hypothesis) => hypothesis.statement))].sort();
+    if (JSON.stringify(derived) !== JSON.stringify([...assumptions].sort()))
+      throw new ValidationError(`${label} assumptions do not match its telescope`);
+    spec2 = { levelParams, telescope };
+  }
   return {
     id: identifier(value.id, `${label} id`, 2_048),
     path: relativeFile(value.path, `${label} path`),
-    conclusion: identifier(value.conclusion, `${label} conclusion`, 2_048),
-    assumptions: stringArray(value.assumptions, `${label} assumptions`, MAX_ENTRIES, 2_048),
+    ...spec2,
+    conclusion,
+    assumptions,
     description: text(value.description, `${label} description`, 1024 * 1024, true),
     ...(value.sections === undefined ? {} : { sections: parseSections(value.sections, label) }),
+  };
+}
+
+/** Universe parameter names: identifiers, unique, bounded. */
+function levelParameters(value: unknown, label: string): string[] {
+  return stringArray(value, label, 1_000, 256).map((name, index) => identifier(name, `${label}[${index}]`, 256));
+}
+
+const BINDER_KINDS: readonly BinderKind[] = ["default", "implicit", "strictImplicit", "instImplicit"];
+
+/** A recorded proof telescope (contracts.ts ProofTelescope): every level a
+ * parameter of the proof, the conclusion's pairwise distinct — the universe
+ * rule the validator applied, repeated here fail-closed because stage 3's
+ * certificate generator writes Lean from exactly these names. */
+function parseTelescope(value: unknown, label: string, levelParams: Set<string>): ProofTelescope {
+  if (!isObject(value)) throw new ValidationError(`${label} must be an object`);
+  requireExactKeys(value, ["hypotheses", "conclusion"], label);
+  const levels = (raw: unknown, where: string): string[] =>
+    boundedArray(raw, `${where} levels`, 1_000).map((level, index) => {
+      const name = identifier(level, `${where} levels[${index}]`, 256);
+      if (!levelParams.has(name)) throw new ValidationError(`${where} level ${name} is not a universe parameter of the proof`);
+      return name;
+    });
+  const hypotheses = boundedArray(value.hypotheses, `${label} hypotheses`, MAX_ENTRIES).map((entry, index) => {
+    const where = `${label} hypothesis ${index + 1}`;
+    if (!isObject(entry)) throw new ValidationError(`${where} must be an object`);
+    requireExactKeys(entry, ["statement", "levels", "binder"], where);
+    if (!BINDER_KINDS.includes(entry.binder as BinderKind)) throw new ValidationError(`${where} has an unknown binder kind`);
+    return {
+      statement: identifier(entry.statement, `${where} statement`, 2_048),
+      levels: levels(entry.levels, where),
+      binder: entry.binder as BinderKind,
+    };
+  });
+  const conclusion = value.conclusion;
+  if (!isObject(conclusion)) throw new ValidationError(`${label} conclusion must be an object`);
+  requireExactKeys(conclusion, ["statement", "levels"], `${label} conclusion`);
+  const conclusionLevels = levels(conclusion.levels, `${label} conclusion`);
+  requireUnique(conclusionLevels, `${label} conclusion levels`);
+  return {
+    hypotheses,
+    conclusion: {
+      statement: identifier(conclusion.statement, `${label} conclusion statement`, 2_048),
+      levels: conclusionLevels,
+    },
   };
 }
 

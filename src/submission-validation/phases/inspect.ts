@@ -1,11 +1,11 @@
 import type {
   AnnotationSection,
   ConceptEntry,
+  ContentSpecVersion,
   InspectionResult,
   InspectorDeclaration,
   InspectorReport,
   ModuleInventory,
-  ParsedDoc,
   ProofEntry,
   ResolutionResult,
   StaticResult,
@@ -14,17 +14,31 @@ import type {
 import { LIBRARY_ROOT_MODULES } from "../environments.js";
 import { FindingCollector } from "../findings.js";
 import { leanFacts } from "../lean-facts.js";
+import {
+  BACKGROUND_AXIOMS,
+  checkFrontmatter,
+  checkNamespace,
+  list,
+  scalar,
+  shortName,
+  splitSections,
+  type ClassificationInput,
+  type Classifier,
+  type SiblingPackages,
+} from "./inspect-common.js";
+import { classifySpec2 } from "./inspect-spec2.js";
 
-const BACKGROUND_AXIOMS = new Set(leanFacts().backgroundAxioms);
+export type { SiblingPackages } from "./inspect-common.js";
+
 const IMPORT_PREFIXES = leanFacts().coreImportRoots;
 
-/** Sibling package names a nonstrict local build admits per package
- * (host/siblings.ts): imports from them are declared, and a sibling concept
- * package's axioms are admissible statements. Empty in trusted validation. */
-export interface SiblingPackages {
-  concepts: string[];
-  proofs: string[];
-}
+/** The content rules by spec: what a statement and a proof are. The
+ * module-level rules above the declarations (root module, imports, concept
+ * annotations) and the helper warning are the same under both. */
+const CLASSIFIERS: Readonly<Record<ContentSpecVersion, Classifier>> = {
+  1: classifySpec1,
+  2: classifySpec2,
+};
 
 /** The root modules of the environment libraries each package requires
  * (contracts.ts ValidatedLakefile.libraries, through
@@ -53,6 +67,9 @@ export function judgeInspection(
   scope: ValidationScope = "both",
   siblings: SiblingPackages = { concepts: [], proofs: [] },
   libraryRoots: LibraryRoots = { concepts: [], proofs: [] },
+  /** The content spec of the run's environment (environments.ts), which the
+   * static phase proved the manifest names; spec 1 unless said otherwise. */
+  specVersion: ContentSpecVersion = 1,
 ): { result: InspectionResult; findings: FindingCollector } {
   const findings = new FindingCollector("inspect");
   const conceptDeclarations = uniqueDeclarations(conceptReport.declarations);
@@ -126,8 +143,30 @@ export function judgeInspection(
     byModule.set(module.name, entry);
   }
 
+  const proofs = CLASSIFIERS[specVersion]({
+    conceptDeclarations,
+    proofDeclarations,
+    byModule,
+    proofInventory: scope === "concepts" ? undefined : proofInventory,
+    resolution,
+    siblings,
+    findings,
+  });
+  if (scope !== "concepts") warnAboutUnusedLemmas(proofDeclarations, proofs, findings);
+  concepts.sort((a, b) => a.id.localeCompare(b.id));
+  proofs.sort((a, b) => a.id.localeCompare(b.id));
+  return { result: { concepts, proofs }, findings };
+}
+
+/**
+ * The spec-1 content rules: a statement is an axiom of a concept module, a
+ * proof is a theorem whose docstring frontmatter names its `conclusion`, and
+ * its assumptions are the statements in its axiom set.
+ */
+function classifySpec1(input: ClassificationInput): ProofEntry[] {
+  const { findings, byModule, resolution, siblings, proofInventory } = input;
   const ownStatements = new Set<string>();
-  for (const declaration of conceptDeclarations) {
+  for (const declaration of input.conceptDeclarations) {
     checkNamespace(declaration, declaration.module, "concept", findings);
     const allowed = new Set(BACKGROUND_AXIOMS);
     if (declaration.kind === "axiom") allowed.add(declaration.name);
@@ -140,12 +179,9 @@ export function judgeInspection(
       const entry = byModule.get(declaration.module);
       if (entry !== undefined) {
         ownStatements.add(declaration.name);
-        const short = declaration.name.startsWith(`${declaration.module}.`)
-          ? declaration.name.slice(declaration.module.length + 1)
-          : declaration.name;
         entry.statements.push({
           id: declaration.name,
-          signature: `${short} : ${declaration.signature ?? ""}`,
+          signature: `${shortName(declaration)} : ${declaration.signature ?? ""}`,
           ...(declaration.doc?.description ? { doc: declaration.doc.description } : {}),
           ...(declaration.startLine === undefined ? {} : { startLine: declaration.startLine }),
           ...(declaration.endLine === undefined ? {} : { endLine: declaration.endLine }),
@@ -179,7 +215,7 @@ export function judgeInspection(
   const admissibleStatement = (name: string): boolean =>
     ownStatements.has(name) || upstreamStatements.has(name) || siblingConcepts.has(name.split(".")[0]!);
   const proofs: ProofEntry[] = [];
-  for (const declaration of proofDeclarations) {
+  for (const declaration of input.proofDeclarations) {
     if (proofInventory === undefined) break;
     checkNamespace(declaration, proofInventory.packageName, "proof", findings);
     for (const axiom of declaration.axioms)
@@ -230,10 +266,7 @@ export function judgeInspection(
       ...(body.sections === undefined ? {} : { sections: body.sections }),
     });
   }
-  if (scope !== "concepts") warnAboutUnusedLemmas(proofDeclarations, proofs, findings);
-  concepts.sort((a, b) => a.id.localeCompare(b.id));
-  proofs.sort((a, b) => a.id.localeCompare(b.id));
-  return { result: { concepts, proofs }, findings };
+  return proofs;
 }
 
 /**
@@ -341,75 +374,3 @@ function checkImports(
   }
 }
 
-function checkNamespace(
-  declaration: InspectorDeclaration,
-  prefix: string,
-  label: string,
-  findings: FindingCollector,
-): void {
-  const name = declaration.userName;
-  if (name !== undefined && name !== prefix && !name.startsWith(`${prefix}.`))
-    findings.violate("namespace", `${label} declaration ${name} does not carry namespace ${prefix}`);
-}
-
-function checkFrontmatter(
-  doc: ParsedDoc,
-  where: string,
-  scalarKeys: string[],
-  listKeys: string[],
-  findings: FindingCollector,
-): void {
-  if (doc.error) findings.violate("frontmatter", `${where}: ${doc.error}`);
-  const seen = new Set<string>();
-  for (const [key] of [...doc.scalars, ...doc.lists]) {
-    if (seen.has(key)) findings.violate("frontmatter", `${where}: duplicate key ${key}`);
-    seen.add(key);
-  }
-  for (const [key] of doc.scalars) if (!scalarKeys.includes(key)) findings.violate("frontmatter", `${where}: unrecognized scalar ${key}`);
-  for (const [key] of doc.lists) if (!listKeys.includes(key)) findings.violate("frontmatter", `${where}: unrecognized list ${key}`);
-}
-
-function splitSections(
-  body: string,
-  where: string,
-  findings: FindingCollector,
-): { description: string; sections?: AnnotationSection[] } {
-  const segments: Array<{ title?: string; lines: string[] }> = [{ lines: [] }];
-  let fence: string | undefined;
-  for (const line of body.split("\n")) {
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
-    if (fenceMatch !== null) {
-      if (fence === undefined) fence = fenceMatch[1]!;
-      else if (fenceMatch[1]![0] === fence[0] && fenceMatch[1]!.length >= fence.length) fence = undefined;
-      segments.at(-1)!.lines.push(line);
-      continue;
-    }
-    const heading = fence === undefined ? /^# +(\S.*?)\s*$/u.exec(line) : null;
-    if (heading !== null) segments.push({ title: heading[1]!, lines: [] });
-    else segments.at(-1)!.lines.push(line);
-  }
-  if (segments.length === 1) return { description: body };
-  const leading = segments[0]!.lines.join("\n").trim();
-  const named = segments.slice(1).map((segment) => ({ title: segment.title!, markdown: segment.lines.join("\n").trim() }));
-  const seen = new Set<string>();
-  for (const section of named) {
-    const key = section.title.toLowerCase();
-    if (seen.has(key)) findings.violate("annotation", `${where}: duplicate section ${section.title}`);
-    seen.add(key);
-  }
-  const description = named.find((section) => section.title.toLowerCase() === "description");
-  if (leading !== "" && description?.markdown) findings.violate("annotation", `${where}: description is provided twice`);
-  const sections = named.filter((section) => section !== description);
-  return {
-    description: leading || description?.markdown || "",
-    ...(sections.length === 0 ? {} : { sections }),
-  };
-}
-
-function scalar(doc: ParsedDoc, key: string): string | undefined {
-  return doc.scalars.find(([name]) => name === key)?.[1];
-}
-
-function list(doc: ParsedDoc, key: string): string[] | undefined {
-  return doc.lists.find(([name]) => name === key)?.[1];
-}

@@ -2,16 +2,31 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type {
+  BinderKind,
   ConclusionFacts,
+  ContentSpecVersion,
   InspectorDeclaration,
   InspectorModule,
   InspectorReport,
+  InspectorTelescope,
+  LevelExpr,
   ModuleInventory,
   ParsedDoc,
   ResolutionResult,
 } from "../contracts.js";
 import type { ValidationRunner } from "../sandbox/container.js";
 import { containerBoundaryFailure, infrastructureFailure } from "../failures.js";
+
+/** The inspector's argument list: the spec version first, then the output
+ * path, then the package's inventory with the root first. One place for both
+ * pipelines (the host one execs the binary with exactly this). */
+export function inspectorArguments(
+  specVersion: ContentSpecVersion,
+  reportPath: string,
+  inventory: ModuleInventory,
+): string[] {
+  return ["--spec", String(specVersion), reportPath, inventory.rootModule, ...inventory.modules];
+}
 
 export async function runInspector(
   kind: "concepts" | "proofs",
@@ -22,6 +37,7 @@ export async function runInspector(
   dependencyRoot: string,
   runner: ValidationRunner,
   limits: ValidationLimits,
+  specVersion: ContentSpecVersion,
 ): Promise<InspectorReport> {
   const containerRoot = `/capture/${kind}/package`;
   const outputDir = path.join(jobDir, "checks", `inspect-${kind}`);
@@ -37,7 +53,7 @@ export async function runInspector(
     dependencyLibs: resolution.all.map(
       (dependency) => `/deps/${dependency.submissionId}/${dependency.kind}/lib`,
     ),
-    args: ["/out/report.json", inventory.rootModule, ...inventory.modules],
+    args: inspectorArguments(specVersion, "/out/report.json", inventory),
   };
   fs.writeFileSync(path.join(outputDir, "plan.json"), `${JSON.stringify(plan)}\n`, { mode: 0o600 });
   const result = await runner.run({
@@ -72,7 +88,7 @@ export async function runInspector(
     throw infrastructureFailure(`${kind} inspector report is missing or oversized`);
   }
   try {
-    return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown);
+    return parseInspectorReport(JSON.parse(fs.readFileSync(reportPath, "utf8")) as unknown, specVersion);
   } catch (error) {
     throw infrastructureFailure(
       `could not read the ${kind} inspector report: ${error instanceof Error ? error.message : String(error)}`,
@@ -81,8 +97,10 @@ export async function runInspector(
 }
 
 /** Parse and bound an untrusted inspector report; shared with the host
- * pipeline, which invokes the inspector binary directly. */
-export function parseInspectorReport(value: unknown): InspectorReport {
+ * pipeline, which invokes the inspector binary directly. The report is held
+ * to the spec it was asked for: the four spec-2 facts on every declaration
+ * of a spec-2 report, none of them in a spec-1 one. */
+export function parseInspectorReport(value: unknown, specVersion: ContentSpecVersion = 1): InspectorReport {
   const report = record(value, "inspector report");
   exactKeys(report, ["modules", "declarations"], "inspector report");
   if (!Array.isArray(report.modules) || report.modules.length > 100_000)
@@ -91,9 +109,12 @@ export function parseInspectorReport(value: unknown): InspectorReport {
     throw new Error("inspector declarations must be a bounded array");
   return {
     modules: report.modules.map(parseModule),
-    declarations: report.declarations.map(parseDeclaration),
+    declarations: report.declarations.map((entry, index) => parseDeclaration(entry, index, specVersion)),
   };
 }
+
+const SPEC2_FACTS = ["laxStatement", "isProp", "levelParams", "telescope"] as const;
+const BINDER_KINDS: readonly BinderKind[] = ["default", "implicit", "strictImplicit", "instImplicit"];
 
 function parseModule(value: unknown, index: number): InspectorModule {
   const item = record(value, `inspector module ${index}`);
@@ -106,14 +127,16 @@ function parseModule(value: unknown, index: number): InspectorModule {
   };
 }
 
-function parseDeclaration(value: unknown, index: number): InspectorDeclaration {
+function parseDeclaration(value: unknown, index: number, specVersion: ContentSpecVersion): InspectorDeclaration {
   const item = record(value, `inspector declaration ${index}`);
+  const label = `inspector declaration ${index}`;
   const allowed = [
     "name", "kind", "module", "axioms", "usedConstants", "userName", "doc", "conclusionFacts",
     "signature", "startLine", "endLine",
+    ...(specVersion === 2 ? [...SPEC2_FACTS, "binders", "body"] : []),
   ];
   for (const key of Object.keys(item))
-    if (!allowed.includes(key)) throw new Error(`inspector declaration ${index} has unknown key ${key}`);
+    if (!allowed.includes(key)) throw new Error(`${label} has unknown key ${key}`);
   const declaration: InspectorDeclaration = {
     name: text(item.name, "declaration name"),
     kind: text(item.kind, "declaration kind"),
@@ -127,7 +150,76 @@ function parseDeclaration(value: unknown, index: number): InspectorDeclaration {
   if (item.signature !== undefined) declaration.signature = text(item.signature, "declaration signature", 4 * 1024 * 1024);
   if (item.startLine !== undefined) declaration.startLine = natural(item.startLine, "declaration startLine");
   if (item.endLine !== undefined) declaration.endLine = natural(item.endLine, "declaration endLine");
+  if (specVersion === 2) {
+    for (const key of SPEC2_FACTS)
+      if (!Object.hasOwn(item, key)) throw new Error(`${label} lacks the spec-2 fact ${key}`);
+    if (typeof item.laxStatement !== "boolean") throw new Error(`${label} laxStatement must be boolean`);
+    if (typeof item.isProp !== "boolean") throw new Error(`${label} isProp must be boolean`);
+    declaration.laxStatement = item.laxStatement;
+    declaration.isProp = item.isProp;
+    declaration.levelParams = array(item.levelParams, "declaration levelParams", 1_000).map((name) =>
+      text(name, "declaration level parameter"));
+    declaration.telescope = item.telescope === null ? null : parseTelescope(item.telescope, label);
+    if (item.binders !== undefined) declaration.binders = natural(item.binders, "declaration binders");
+    if (item.body !== undefined) declaration.body = text(item.body, "declaration body", 4 * 1024 * 1024);
+  }
   return declaration;
+}
+
+function parseTelescope(value: unknown, label: string): InspectorTelescope {
+  const item = record(value, `${label} telescope`);
+  exactKeys(item, ["hypotheses", "conclusion"], `${label} telescope`);
+  const hypotheses = array(item.hypotheses, `${label} telescope hypotheses`, 10_000).map((entry, index) => {
+    const binder = record(entry, `${label} telescope hypothesis ${index}`);
+    exactKeys(binder, ["const", "levels", "binder"], `${label} telescope hypothesis ${index}`);
+    if (!BINDER_KINDS.includes(binder.binder as BinderKind))
+      throw new Error(`${label} telescope hypothesis ${index} has an unknown binder kind`);
+    return {
+      const: text(binder.const, "telescope constant"),
+      levels: parseLevels(binder.levels, `${label} telescope hypothesis ${index}`),
+      binder: binder.binder as BinderKind,
+    };
+  });
+  const conclusion = record(item.conclusion, `${label} telescope conclusion`);
+  exactKeys(conclusion, ["const", "levels"], `${label} telescope conclusion`);
+  return {
+    hypotheses,
+    conclusion: {
+      const: text(conclusion.const, "telescope constant"),
+      levels: parseLevels(conclusion.levels, `${label} telescope conclusion`),
+    },
+  };
+}
+
+function parseLevels(value: unknown, label: string): LevelExpr[] {
+  return array(value, `${label} levels`, 1_000).map((level) => parseLevel(level, label, 0));
+}
+
+/** The inspector's level encoding (contracts.ts LevelExpr), checked
+ * structurally and depth-bounded: a stored type never nests levels deeply,
+ * and an untrusted report must not make the parser recurse without bound. */
+function parseLevel(value: unknown, label: string, depth: number): LevelExpr {
+  if (depth > 64) throw new Error(`${label} level is nested too deeply`);
+  const parts = array(value, `${label} level`, 3);
+  const head = parts[0];
+  switch (head) {
+    case "zero":
+    case "mvar":
+      if (parts.length !== 1) throw new Error(`${label} level ${head} takes no arguments`);
+      return [head];
+    case "succ":
+      if (parts.length !== 2) throw new Error(`${label} level succ takes one argument`);
+      return ["succ", parseLevel(parts[1], label, depth + 1)];
+    case "max":
+    case "imax":
+      if (parts.length !== 3) throw new Error(`${label} level ${head} takes two arguments`);
+      return [head, parseLevel(parts[1], label, depth + 1), parseLevel(parts[2], label, depth + 1)];
+    case "param":
+      if (parts.length !== 2) throw new Error(`${label} level param takes a name`);
+      return ["param", text(parts[1], `${label} level parameter`)];
+    default:
+      throw new Error(`${label} level has an unknown head`);
+  }
 }
 
 function parseDoc(value: unknown, index = 0): ParsedDoc {

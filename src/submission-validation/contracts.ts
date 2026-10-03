@@ -336,12 +336,65 @@ export function parseCaptureBlobReference(
   return match === null ? undefined : { repository: match[1]!, digest: match[2]! };
 }
 
+/** The content spec of an archive environment (environments.ts): what a
+ * statement and a proof *are*. The archive JSON schemas keep their own
+ * `specVersion: "1"`; this is the number the row carries and the manifest
+ * repeats as a string. */
+export type ContentSpecVersion = 1 | 2;
+
 export interface StatementEntry {
   id: string;
   signature: string;
+  /** Spec 2 only: the statement's universe parameters, in declaration
+   * order (`[]` for a monomorphic one). Absent from a spec-1 record. */
+  levelParams?: string[];
+  /** Spec 2 only: the tagged definition's body, pretty-printed with core
+   * notation by the inspector. Absent from a spec-1 record. */
+  body?: string;
   startLine?: number;
   endLine?: number;
   doc?: string;
+}
+
+/**
+ * A universe level as the inspector reports it (lean/inspector/Main.lean
+ * `jsonOfLevel`): a tagged array, so a level is matched structurally rather
+ * than parsed from text. `mvar` never occurs in a stored type and is kept
+ * only so the encoding is total.
+ */
+export type LevelExpr =
+  | ["zero"]
+  | ["succ", LevelExpr]
+  | ["max", LevelExpr, LevelExpr]
+  | ["imax", LevelExpr, LevelExpr]
+  | ["param", string]
+  | ["mvar"];
+
+/** `Lean.BinderInfo`'s constructor names. */
+export type BinderKind = "default" | "implicit" | "strictImplicit" | "instImplicit";
+
+/**
+ * The inspector's syntactic read of a stored type that is a chain of
+ * `∀`-binders over bare constants ending in a bare constant: a fact, not a
+ * judgment — whether the constants are statements is the validator's
+ * question (phases/inspect-spec2.ts).
+ */
+export interface InspectorTelescope {
+  hypotheses: Array<{ const: string; levels: LevelExpr[]; binder: BinderKind }>;
+  conclusion: { const: string; levels: LevelExpr[] };
+}
+
+/**
+ * A proof's telescope as `build-output.json` records it (spec 2): the same
+ * chain once the validator has judged every constant a statement and every
+ * level a universe parameter of the proof, so levels are parameter names.
+ * Hypotheses keep binder order and duplicates; `ProofEntry.conclusion` and
+ * `assumptions` are derived from it. Stage 3's certificate generator applies
+ * the proof with `@` in exactly this order.
+ */
+export interface ProofTelescope {
+  hypotheses: Array<{ statement: string; levels: string[]; binder: BinderKind }>;
+  conclusion: { statement: string; levels: string[] };
 }
 
 export interface AnnotationSection {
@@ -365,6 +418,11 @@ export interface ConceptEntry {
 export interface ProofEntry {
   id: string;
   path: string;
+  /** Spec 2 only: the proof's universe parameters, in declaration order. */
+  levelParams?: string[];
+  /** Spec 2 only: the proof's type as a chain of statements; see
+   * ProofTelescope. Absent from a spec-1 record. */
+  telescope?: ProofTelescope;
   conclusion: string;
   assumptions: string[];
   description: string;
@@ -406,9 +464,27 @@ export interface InspectorDeclaration {
   userName?: string;
   doc?: ParsedDoc;
   conclusionFacts?: ConclusionFacts;
+  /** Pretty-printed type: of every axiom, and under spec 2 of every tagged
+   * declaration. */
   signature?: string;
   startLine?: number;
   endLine?: number;
+  /** The four spec-2 facts (lean/inspector/Main.lean, "Spec-2 facts"):
+   * present on every declaration of a `--spec 2` report, absent from a
+   * spec-1 one — parseInspectorReport holds the report to that. */
+  /** The name is among the exported entries of `LaxCore.laxStatementAttr`. */
+  laxStatement?: boolean;
+  /** The stored type, metadata stripped, is literally `Sort 0`. */
+  isProp?: boolean;
+  /** Universe parameter names in declaration order. */
+  levelParams?: string[];
+  /** The stored type as a chain of constants, or null. */
+  telescope?: InspectorTelescope | null;
+  /** Tagged declarations only: the number of leading `∀`-binders of the
+   * stored type, for the "takes binders" finding. */
+  binders?: number;
+  /** Tagged definitions only: the pretty-printed body. */
+  body?: string;
 }
 
 export interface InspectorReport {

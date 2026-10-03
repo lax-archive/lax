@@ -234,7 +234,23 @@ record depends on are trusted as today.
    universe level, `AimpC`, parameterised def with the marker, marker in a
    proof package, frontmatter on a helper, unused `axiom`, sorry through a
    helper); the walk with the background-only set; `telescope` in
-   `build-output.json`; spec-1 goldens byte-identical. Release.
+   `build-output.json`; spec-1 goldens byte-identical. Release. **Landed
+   2026-10-03** (code; the release is Jan's). Deviations: the inspector
+   takes `--spec <1|2>` and emits the four facts only under `--spec 2`
+   (the report shape is unversioned, so gating keeps the spec-1 golden
+   byte-identical rather than regenerating it); a tagged declaration also
+   reports `binders` (leading `∀` count) and `signature`, so the "takes
+   binders — quantify inside" finding needs no second walk; the spec-2
+   golden (`test/fixtures/inspector-golden-spec2/`) runs over a hook-less
+   twin of LaxCore so the shapes the real hook refuses are facts in the
+   report; the e2e negative is a private proof-shaped theorem plus a
+   concrete universe level (both fail in Inspect) and the tagged private
+   def is shown to die in Compile under the real hook — the transitively
+   reachable statement has its table-test case and awaits stage 3's
+   multi-record rehearsal for an e2e; the trusted artifact parser
+   (`artifact-schema.ts`) now holds a manifest's `specVersion` to its
+   environment row's and a spec-2 record's entries to the telescope
+   shape, which stage 1 had left at `"1"`.
 3. **Certify.** The generator (golden files), the two-container layout in
    the runner, the capture-store push, the digest in `build-output.json`,
    the same path in local `lax build`; negative bundles that must fail *in

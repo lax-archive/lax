@@ -312,8 +312,9 @@ async function validatePaperWithCleanLean(paper: {
           // report into its output mount for the host to read back.
           const out = mountedAt(invocation, "/out");
           const plan = JSON.parse(fs.readFileSync(path.join(out, "plan.json"), "utf8")) as { args: string[] };
+          // the inventory follows `--spec <n> <report path>` (inspectorArguments)
           const modules = plan.args
-            .slice(1)
+            .slice(plan.args.indexOf("/out/report.json") + 1)
             .map((name) => ({ name, imports: [], moduleDocs: [], declCount: 0 }));
           fs.writeFileSync(path.join(out, "report.json"), JSON.stringify({ modules, declarations: [] }));
           return done;

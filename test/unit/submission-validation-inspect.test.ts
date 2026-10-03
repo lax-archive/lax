@@ -603,6 +603,7 @@ describe("inspector report size bound", () => {
       path.join(jobDir, "deps"),
       inspectorWriting(bytes),
       { ...DEFAULT_LIMITS, inspectorReportBytes },
+      1,
     );
   }
 

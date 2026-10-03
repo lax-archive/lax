@@ -18,10 +18,16 @@ in; all decisions confirmed. Stage 1 landed 2026-10-03 (the library at
 `~/git/lax-core`, to be pushed as `lax-archive/lax-core`; the pins, the
 `specVersion`/`libraries` rows, the warm-store set, the libraries rule, the
 spec-2 fake environment in `test/e2e/host-spec2.test.ts` under the
-`v4.35.0-rc3` rehearsal toolchain). Next: stage 2 (the inspector reads
-`LaxCore.laxStatementAttr`'s entries as data, the four fields, the spec-2
-classification and the background-only walk, `telescope` in
-`build-output.json`, spec-1 goldens byte-identical).
+`v4.35.0-rc3` rehearsal toolchain). Stage 2 landed 2026-10-03 (the
+inspector's `--spec 2` facts read from `LaxCore.laxStatementAttr`'s
+entries, the spec-2 classification in `phases/inspect-spec2.ts`, the
+background-only walk, `telescope`/`levelParams` in `build-output.json`,
+the spec-2 golden, spec-1 goldens byte-identical). Next: stage 3 (the
+certificate generator from the recorded telescopes, the two-container
+Certify layout in the runner, the capture-store push and the
+`certificate` block, the comparator negatives with their phase asserted,
+the docker smoke and the scratch-repo rehearsal — which also owes the
+transitively-reachable-statement e2e stage 2 only table-tested).
 
 ## Sibling drafts (2026-09-19)
 

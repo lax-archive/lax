@@ -26,7 +26,7 @@ import {
   submittedSourceFailure,
 } from "./failures.js";
 import { commitTimestamp, laxmarkDirectory } from "./host/paper.js";
-import { epoch, resolveRuntime, type RuntimeSource } from "./environments.js";
+import { epoch, resolveRuntime, type ArchiveEnvironment, type RuntimeSource } from "./environments.js";
 import { warmDir } from "./host/warmstore.js";
 import { FindingCollector } from "./findings.js";
 import type { ValidationOutcome } from "./outputs.js";
@@ -125,6 +125,8 @@ interface PaperRun extends PaperPhaseResult {
 interface PreparedValidation extends ReportState {
   jobDir: string;
   options: ValidationOptions;
+  /** The environment the manifest selected (the static phase's answer). */
+  environment: ArchiveEnvironment;
   limits: ValidationLimits;
   runner: ValidationRunner;
   scope: ValidationScope;
@@ -324,6 +326,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       state.dependencyRoot,
       state.runner,
       state.limits,
+      state.environment.specVersion,
     ));
     proofReport = state.scope === "concepts" ? undefined : await state.phase("inspect proofs", () => runInspector(
       "proofs",
@@ -334,6 +337,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       state.dependencyRoot,
       state.runner,
       state.limits,
+      state.environment.specVersion,
     ));
   } catch (error) {
     return fail(state, "inspect", "inspector", error);
@@ -349,6 +353,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       state.scope,
       undefined,
       libraryRootsOf(state.staticResult),
+      state.environment.specVersion,
     ));
   } catch (error) {
     return fail(state, "inspect", "judge", error);
@@ -618,6 +623,7 @@ async function prepareValidation(
       ...base(),
       jobDir,
       options,
+      environment,
       limits,
       runner,
       scope,

@@ -6,9 +6,10 @@
 // forgets LaxCore has to fail the libraries rule before anything is built.
 //
 // Skips itself where the rehearsal toolchain is not installed; ci.yml installs
-// it (test/paths.ts SPEC2_TOOLCHAIN). Nothing here classifies statements:
-// that is stage 2's inspector work, and the concept module below is a
-// spec-1-shaped module that merely carries the attribute.
+// it (test/paths.ts SPEC2_TOOLCHAIN). Stage 2 added the content rules: the
+// inspector reads the tag from the real oleans, the validator classifies
+// statements and proofs, and `build-output.json` records telescopes — the
+// second block below proves that whole path through the host pipeline.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -91,6 +92,9 @@ end Lax35Proofs
       expect(report.ok).toBe(true);
       expect(report.runtime.environment).toBe(SPEC2.id);
       expect(report.runtime.leanToolchain).toBe(SPEC2.leanToolchain);
+      // the tagged def is a statement and the theorem over it is the edge {} → ZeroEq
+      expect(report.buildOutput!.concepts[0]!.statements.map((statement) => statement.id)).toEqual(["Lax35.Zero.ZeroEq"]);
+      expect(report.buildOutput!.proofs.map((proof) => [proof.conclusion, proof.assumptions])).toEqual([["Lax35.Zero.ZeroEq", []]]);
 
       // the warm store of the row holds the whole set, built, and sealed
       const warm = fs.realpathSync(warmDir(environment, sharedWarmBase()));
@@ -141,6 +145,209 @@ end Lax35Proofs
       expect(fs.existsSync(path.join(root, "concepts", "lake-manifest.json"))).toBe(false);
     });
   });
+
+  it("classifies a two-package spec-2 submission and records telescopes in build-output.json", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const root = makeHostSubmission(
+        "lax-38",
+        {
+          "concepts/Lax38.lean": "import Lax38.Order\n",
+          "concepts/Lax38/Order.lean": `import LaxCore
+
+/-!
+---
+title: Order facts
+type: theorem
+---
+Two statements and an auxiliary.
+-/
+
+namespace Lax38.Order
+
+/-- every natural has a strict successor -/
+@[lax_statement] def HasSucc : Prop := ∀ n : Nat, ∃ m, n < m
+
+/-- reflexivity, universe-polymorphic -/
+@[lax_statement] def Refl.{u} : Prop := ∀ (α : Sort u) (a : α), a = a
+
+/-- an auxiliary: a Prop-valued definition without the marker -/
+def IsSmall (n : Nat) : Prop := n < 10
+
+end Lax38.Order
+`,
+          "proofs/Lax38Proofs.lean": "import Lax38Proofs.Basic\n",
+          "proofs/Lax38Proofs/Basic.lean": `import Lax38.Order
+
+namespace Lax38Proofs
+
+/-- a helper -/
+theorem lt_succ (n : Nat) : n < n + 1 := Nat.lt_succ_self n
+
+/-- unconditional -/
+theorem hasSucc : Lax38.Order.HasSucc := fun n => ⟨n + 1, lt_succ n⟩
+
+/--
+conditional, universe-polymorphic
+
+# Strategy
+
+Ignore the hypothesis.
+-/
+theorem refl_of_hasSucc.{u} (_h : Lax38.Order.HasSucc) : Lax38.Order.Refl.{u} := fun _ _ => rfl
+
+end Lax38Proofs
+`,
+        },
+        undefined,
+        { environment },
+      );
+      const report = await buildOnHost(root, { id: "lax-38" });
+      expect(messages(report)).toBe("");
+      expect(report.ok).toBe(true);
+      expect(report.warnings).toEqual([]);
+      const out = report.buildOutput!;
+      expect(out.inputs.manifest.specVersion).toBe("2");
+      expect(out.concepts).toHaveLength(1);
+      expect(out.concepts[0]!.mathlibImports).toEqual([]);
+      expect(out.concepts[0]!.statements).toEqual([
+        {
+          id: "Lax38.Order.HasSucc",
+          levelParams: [],
+          signature: "HasSucc : Prop",
+          body: "∀ (n : Nat), Exists fun m => instLTNat.lt n m",
+          doc: "every natural has a strict successor",
+          startLine: 13,
+          endLine: 14,
+        },
+        {
+          id: "Lax38.Order.Refl",
+          levelParams: ["u"],
+          signature: "Refl.{u} : Prop",
+          body: "∀ (α : Sort u) (a : α), Eq a a",
+          doc: "reflexivity, universe-polymorphic",
+          startLine: 16,
+          endLine: 17,
+        },
+      ]);
+      expect(out.proofs).toEqual([
+        {
+          id: "Lax38Proofs.hasSucc",
+          path: "proofs/Lax38Proofs/Basic.lean",
+          levelParams: [],
+          telescope: { hypotheses: [], conclusion: { statement: "Lax38.Order.HasSucc", levels: [] } },
+          conclusion: "Lax38.Order.HasSucc",
+          assumptions: [],
+          description: "unconditional",
+        },
+        {
+          id: "Lax38Proofs.refl_of_hasSucc",
+          path: "proofs/Lax38Proofs/Basic.lean",
+          levelParams: ["u"],
+          telescope: {
+            hypotheses: [{ statement: "Lax38.Order.HasSucc", levels: [], binder: "default" }],
+            conclusion: { statement: "Lax38.Order.Refl", levels: ["u"] },
+          },
+          conclusion: "Lax38.Order.Refl",
+          assumptions: ["Lax38.Order.HasSucc"],
+          description: "conditional, universe-polymorphic",
+          sections: [{ title: "Strategy", markdown: "Ignore the hypothesis." }],
+        },
+      ]);
+      // and the entries carry their keys in the documented order, which is
+      // what the CLI serialises into the author's build-output.json
+      expect(Object.keys(out.proofs[1]!)).toEqual(["id", "path", "levelParams", "telescope", "conclusion", "assumptions", "description", "sections"]);
+      expect(Object.keys(out.concepts[0]!.statements[1]!)).toEqual(["id", "levelParams", "signature", "body", "doc", "startLine", "endLine"]);
+    });
+  }, 600_000);
+
+  it("fails in Inspect on a private proof-shaped theorem and a concrete universe level", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const root = makeHostSubmission(
+        "lax-39",
+        {
+          "concepts/Lax39.lean": "import Lax39.Order\n",
+          "concepts/Lax39/Order.lean": `import LaxCore
+
+/-!
+---
+title: Order facts
+type: theorem
+---
+One polymorphic statement.
+-/
+
+namespace Lax39.Order
+
+@[lax_statement] def Refl.{u} : Prop := ∀ (α : Sort u) (a : α), a = a
+
+end Lax39.Order
+`,
+          "proofs/Lax39Proofs.lean": "import Lax39Proofs.Basic\n",
+          "proofs/Lax39Proofs/Basic.lean": `import Lax39.Order
+
+namespace Lax39Proofs
+
+private theorem hidden.{u} : Lax39.Order.Refl.{u} := fun _ _ => rfl
+
+theorem special : Lax39.Order.Refl.{0} := fun _ _ => rfl
+
+end Lax39Proofs
+`,
+        },
+        undefined,
+        { environment },
+      );
+      const report = await buildOnHost(root, { id: "lax-39" });
+      expect(report.ok).toBe(false);
+      expect(rules(report)).toEqual(new Set(["proof"]));
+      expect(report.violations.every((violation) => violation.phase === "inspect")).toBe(true);
+      expect(messages(report)).toContain(
+        "private theorem Lax39Proofs.hidden has the shape of a proof ({} → Lax39.Order.Refl); the archive's certificate must name it from another module — drop `private`",
+      );
+      expect(messages(report)).toContain(
+        "theorem Lax39Proofs.special instantiates Lax39.Order.Refl at universe level `0`; every level argument of a statement in a proof's type must be a universe parameter of the proof",
+      );
+      expect(report.buildOutput).toBeUndefined();
+    });
+  }, 600_000);
+
+  it("a tagged private def never reaches Inspect: LaxCore's hook refuses it at compile time", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const root = makeHostSubmission(
+        "lax-40",
+        {
+          "concepts/Lax40.lean": "import Lax40.Hidden\n",
+          "concepts/Lax40/Hidden.lean": `import LaxCore
+
+/-!
+---
+title: A hidden statement
+type: theorem
+---
+The hook's private rule.
+-/
+
+namespace Lax40.Hidden
+
+@[lax_statement] private def Secret : Prop := True
+
+end Lax40.Hidden
+`,
+        },
+        undefined,
+        { environment },
+      );
+      const report = await buildOnHost(root, { id: "lax-40" });
+      expect(report.ok).toBe(false);
+      expect(report.violations.map((violation) => violation.phase)).toEqual(["compile-concepts"]);
+      expect(messages(report)).toContain(
+        "invalid `@[lax_statement]` on `Lax40.Hidden.Secret`: a statement cannot be `private`",
+      );
+    });
+  }, 600_000);
 
   it("refuses a spec-1 manifest in the spec-2 row", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
