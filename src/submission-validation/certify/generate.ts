@@ -128,11 +128,10 @@ export function proofPackagesOf(proofs: readonly CertifiedProof[]): string[] {
 
 const SUBSCRIPT_DIGITS = ["₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉"];
 
-function hypothesisName(index: number): string {
-  return `h${String(index + 1).split("").map((digit) => SUBSCRIPT_DIGITS[Number(digit)]).join("")}`;
-}
-
-function universes(levels: readonly string[]): string {
+/** `.{u, v}` for a level list, empty for none; every level is a parameter
+ * name (never a concrete level — the universe rule) and goes through
+ * `leanName`. */
+export function universes(levels: readonly string[]): string {
   return levels.length === 0 ? "" : `.{${levels.map(leanName).join(", ")}}`;
 }
 
@@ -161,22 +160,53 @@ export function rootName(canonical: string): string {
   return `_root_.${leanName(canonical)}`;
 }
 
+/**
+ * A certificate theorem as the generator states it: its canonical name
+ * (`Cert.<proof-id>` for an edge, `Cert.<statement-id>` for a relative
+ * certificate — the two cannot collide, statement ids live in concept
+ * namespaces and proof ids under `…Proofs`), its universe parameters, and
+ * the chain it states. An edge's is the proof's own; a relative
+ * certificate's is the implied edge `{given statements} → statement`.
+ */
+export interface CertificateTheorem {
+  name: string;
+  levelParams: string[];
+  telescope: ProofTelescope;
+}
+
+/** The theorem an edge states: the proof's chain under `Cert.<proof-id>`. */
+export function edgeTheorem(proof: CertifiedProof): CertificateTheorem {
+  return { name: theoremNameOf(proof.id), levelParams: proof.levelParams, telescope: proof.telescope };
+}
+
+/** The name of the i-th hypothesis of a certificate theorem: `h₁`, `h₂`, … */
+export function hypothesisName(index: number): string {
+  return `h${String(index + 1).split("").map((digit) => SUBSCRIPT_DIGITS[Number(digit)]).join("")}`;
+}
+
 /** One theorem, statement only; `body` discharges it. An instance binder
  * over a statement — a `Prop` definition is no class — is refused by
  * Lean's binder-annotation check, which the proof package itself must have
  * switched off to declare it; the certificate copies the binder kind, so it
- * switches the check off for that theorem too. */
-function theorem(proof: CertifiedProof, body: string): string {
-  const name = leanName(theoremNameOf(proof.id)) + universes(proof.levelParams);
+ * switches the check off for that theorem too. A body spanning several
+ * lines (a composed relative certificate) goes under `:=` on its own lines;
+ * a one-line body stays beside it, as every edge's does. */
+export function theoremText(statement: CertificateTheorem, body: string): string {
+  const name = leanName(statement.name) + universes(statement.levelParams);
   const conclusion =
-    rootName(proof.telescope.conclusion.statement) + universes(proof.telescope.conclusion.levels);
-  const guard = proof.telescope.hypotheses.some((hypothesis) => hypothesis.binder === "instImplicit")
+    rootName(statement.telescope.conclusion.statement) + universes(statement.telescope.conclusion.levels);
+  const guard = statement.telescope.hypotheses.some((hypothesis) => hypothesis.binder === "instImplicit")
     ? "set_option checkBinderAnnotations false in\n"
     : "";
-  if (proof.telescope.hypotheses.length === 0) return `${guard}theorem ${name} : ${conclusion} := ${body}\n`;
-  const binders = proof.telescope.hypotheses.map((hypothesis, index) =>
+  const discharge = body.includes("\n") ? `:=\n${body}` : `:= ${body}`;
+  if (statement.telescope.hypotheses.length === 0) return `${guard}theorem ${name} : ${conclusion} ${discharge}\n`;
+  const binders = statement.telescope.hypotheses.map((hypothesis, index) =>
     `    ${binder(hypothesis.binder, hypothesisName(index), rootName(hypothesis.statement) + universes(hypothesis.levels))}\n`);
-  return `${guard}theorem ${name}\n${binders.join("")}    : ${conclusion} := ${body}\n`;
+  return `${guard}theorem ${name}\n${binders.join("")}    : ${conclusion} ${discharge}\n`;
+}
+
+function theorem(proof: CertifiedProof, body: string): string {
+  return theoremText(edgeTheorem(proof), body);
 }
 
 function imports(modules: readonly string[]): string {
@@ -214,15 +244,53 @@ export function solutionText(proofs: readonly CertifiedProof[]): string {
   );
 }
 
+/**
+ * The three content files of a *relative* certificate (axiomfree-plan.md,
+ * "CLI, authoring, website"; the draft spec's "Relative certificates"): one
+ * theorem `Cert.<statement-id>` stating the implied edge `{given} →
+ * statement`, discharged in the Solution by `body` — the proofs of the
+ * witness forest applied to one another (certify/compose.ts). The Challenge
+ * imports the concept packages the theorem names; the Solution the proof
+ * packages the body applies. Same headers, same escaping, same configuration
+ * shape as a record's bundle, so a reader reruns both the same way.
+ */
+export function relativeCertificateFiles(input: {
+  theorem: CertificateTheorem;
+  body: string;
+  conceptPackages: readonly string[];
+  proofPackages: readonly string[];
+}): Pick<Record<BundleFile, string>, "Challenge.lean" | "Solution.lean" | "comparator.json"> {
+  const concepts = [...new Set(input.conceptPackages)].sort();
+  const proofs = [...new Set(input.proofPackages)].sort();
+  return {
+    "Challenge.lean":
+      "-- The certificate challenge: one statement proven relative to the given ones, stated over\n" +
+      "-- the concept packages alone. Generated by lax; `lake comparator` holds the Solution to it.\n" +
+      imports(concepts) +
+      `\n${theoremText(input.theorem, "sorry")}`,
+    "Solution.lean":
+      "-- The certificate solution: the Challenge's theorem, discharged by the archive's proofs\n" +
+      "-- applied along the proof network's witness forest. Generated by lax.\n" +
+      imports(proofs) +
+      `\n${theoremText(input.theorem, input.body)}`,
+    "comparator.json": comparatorConfigFor([input.theorem.name]),
+  };
+}
+
 /** `comparator.json`: what `lake comparator` reads. `definition_names` is
  * always empty — a spec-2 certificate has no definition holes — and the
  * permitted axioms are the background three (lean-facts.ts). */
 export function comparatorConfigText(proofs: readonly CertifiedProof[]): string {
+  return comparatorConfigFor(theoremNamesOf(proofs));
+}
+
+/** The configuration for any list of certificate theorems, in the order given. */
+export function comparatorConfigFor(theoremNames: readonly string[]): string {
   return `${JSON.stringify(
     {
       challenge_module: CHALLENGE_MODULE,
       solution_module: SOLUTION_MODULE,
-      theorem_names: theoremNamesOf(proofs),
+      theorem_names: [...theoremNames],
       definition_names: [],
       permitted_axioms: [...leanFacts().backgroundAxioms],
     },

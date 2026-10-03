@@ -16,6 +16,15 @@
 // already in the right environment and already says what it replaces. Ports
 // flow bottom-up exactly as the chain workflow does, so a dependency with no
 // port yet is left pinned where it is, named, and reported.
+//
+// A port into a spec-2 environment (axiomfree-plan.md, stage 4) is guided a
+// step further, still without touching a proof: the lakefiles gain the row's
+// other required libraries (`LaxCore`), every concept module that declares a
+// statement gains `import LaxCore`, and the report prints, per statement of
+// the record, the `@[lax_statement] def … : Prop := …` the author writes in
+// the axiom's place — or why that one needs a hand rewrite — and names the
+// proofs whose types become statement chains. The first `lax build` then
+// names everything left behind.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -24,7 +33,7 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { isObject, normalizeSubmissionId } from "../shared/validation.js";
 import { submissionIdForPackage } from "../submission-validation/contracts.js";
-import type { ArchiveEnvironment } from "../submission-validation/environments.js";
+import { librariesOf, type ArchiveEnvironment, type PinnedLibrary } from "../submission-validation/environments.js";
 import { databaseDirectory, tryRefreshDatabase } from "./database.js";
 import { diskCostLines, requestedEnvironment } from "./environments.js";
 import { setManifestEnvironment, setManifestSupersedes } from "./manifest.js";
@@ -48,6 +57,20 @@ interface PortRecord {
   environment?: string;
   /** The registered submission this one replaces, from its build output. */
   supersedes?: string;
+  /** The statements the record declares, with the inspector's signature and
+   * the module declaring each: what a spec-2 port rewrites by hand. */
+  statements: PortStatement[];
+  /** The proofs, as conclusion and assumptions: what becomes a chain. */
+  proofs: Array<{ id: string; conclusion: string; assumptions: string[] }>;
+}
+
+interface PortStatement {
+  id: string;
+  /** `name binders? : type`, as the inspector pretty-prints an axiom. */
+  signature: string;
+  /** The declaring concept module, relative to the submission root. */
+  path?: string;
+  startLine?: number;
 }
 
 export async function portSubmission(
@@ -99,6 +122,7 @@ export async function portSubmission(
     // rewrite along with the rest.
     rekeySubmission(root, id, newId);
     repointPins(root, target);
+    if (target.specVersion === 2) addLaxCoreImports(root, rekeyed(record, id, newId));
     repointed = repointRequires(root, archive, target);
     setManifestEnvironment(root, target);
     setManifestSupersedes(root, id);
@@ -127,13 +151,112 @@ export async function portSubmission(
     );
   }
   for (const problem of repointed.unreadable) notes.add(problem);
-  notes.add(
-    "The Lean is not ported: only the pins, the id, and the requires are.",
-    `Fix the sources, then ${ui.cmd("lax build")} and ${ui.cmd("lax submit")} as usual.`,
-  );
+  if (target.specVersion === 2) {
+    for (const line of spec2Guidance(rekeyed(record, id, newId), target)) ui.line(line);
+    notes.add(
+      "The Lean is not ported: only the pins, the id, the requires, and `import LaxCore` are.",
+      "Write the statements above in the axioms' place, make each proof's type its chain of",
+      `statements, drop the proofs' frontmatter, then ${ui.cmd("lax build")} and ${ui.cmd("lax submit")} as usual.`,
+    );
+  } else {
+    notes.add(
+      "The Lean is not ported: only the pins, the id, and the requires are.",
+      `Fix the sources, then ${ui.cmd("lax build")} and ${ui.cmd("lax submit")} as usual.`,
+    );
+  }
   notes.print();
   ui.done();
   return 0;
+}
+
+/** The record's statement paths under the new id: the rekey renamed the
+ * package directories, so the modules are found and named where they are now. */
+function rekeyed(record: PortRecord, id: string, newId: string): PortRecord {
+  const from = `concepts/Lax${id.slice("lax-".length)}`;
+  const to = `concepts/Lax${newId.slice("lax-".length)}`;
+  return {
+    ...record,
+    statements: record.statements.map((statement) =>
+      statement.path !== undefined && (statement.path === `${from}.lean` || statement.path.startsWith(`${from}/`))
+        ? { ...statement, path: `${to}${statement.path.slice(from.length)}` }
+        : statement,
+    ),
+  };
+}
+
+/**
+ * What the author writes for each statement of a spec-1 record in a spec-2
+ * environment: an axiom whose pretty-printed signature is `Name : type` —
+ * no binders before the colon, no universe parameters on the name — becomes
+ * `@[lax_statement] def Name : Prop := type` verbatim; anything else is named
+ * with the reason it needs a hand rewrite (binders move inside with `∀`;
+ * universe parameters stay on the definition and bind the proofs to the
+ * universe rule). The signature is the inspector's text, read as text — no
+ * Lean name is parsed here — so a statement whose signature this reader
+ * cannot split is listed without a rewrite.
+ */
+export function spec2Guidance(record: PortRecord, target: ArchiveEnvironment): string[] {
+  const lines: string[] = [];
+  if (record.statements.length === 0 && record.proofs.length === 0) return lines;
+  lines.push("", ui.bold(`${target.id} follows spec 2: statements are tagged definitions, proofs are theorems over them.`));
+  if (record.statements.length > 0) {
+    lines.push("", `${ui.plural(record.statements.length, "statement")} to write in the axioms' place:`);
+    for (const statement of record.statements) {
+      const where = statement.path === undefined ? "" : ui.dim(`  ${statement.path}${statement.startLine === undefined ? "" : `:${statement.startLine}`}`);
+      lines.push("", `  ${statement.id}${where}`);
+      for (const line of statementRewrite(statement)) lines.push(`    ${line}`);
+    }
+  }
+  if (record.proofs.length > 0) {
+    lines.push("", `${ui.plural(record.proofs.length, "proof")} whose type becomes a chain of statements (hypotheses, then the conclusion):`);
+    for (const proof of record.proofs) {
+      const hypotheses = proof.assumptions.map((assumption, index) => `(h${index + 1} : ${assumption}) `).join("");
+      lines.push(`  ${proof.id}  ${ui.dim(`theorem … ${hypotheses}: ${proof.conclusion}`)}`);
+    }
+  }
+  return lines;
+}
+
+/** The rewrite of one statement, or the reason there is none to copy. */
+function statementRewrite(statement: PortStatement): string[] {
+  const colon = statement.signature.indexOf(" : ");
+  if (colon < 0) return [ui.dim("the signature could not be split into a name and a type; rewrite it by hand")];
+  const head = statement.signature.slice(0, colon).trim();
+  const type = statement.signature.slice(colon + " : ".length).trim();
+  const short = statement.id.split(".").at(-1) ?? statement.id;
+  const headName = head.split(/[\s.{(\[⦃]/u)[0] ?? head;
+  const universes = head.includes(".{");
+  const binders = /[\s([{⦃]/u.test(head.replace(/\.\{[^}]*\}/u, "").trim());
+  if (headName !== short) return [ui.dim(`the signature names ${headName}, not ${short}; rewrite it by hand`)];
+  if (universes && binders)
+    return [ui.dim("takes binders and universe parameters: quantify the binders inside with `∀` and keep the universe parameters on the definition")];
+  if (binders) return [ui.dim("takes binders: quantify them inside the body with `∀`, as in `def X : Prop := ∀ (n : ℕ), …`")];
+  if (universes)
+    return [ui.dim(`has universe parameters: write \`@[lax_statement] def ${head} : Prop := …\` and keep every proof over it universe-polymorphic (spec 2, the universe rule)`)];
+  return type.includes("\n")
+    ? [`@[lax_statement] def ${short} : Prop :=`, ...type.split("\n").map((line) => `  ${line}`)]
+    : [`@[lax_statement] def ${short} : Prop := ${type}`];
+}
+
+/** `import LaxCore` at the top of every concept module that declares a
+ * statement: the attribute lives there. Idempotent, and never touches a
+ * module the record does not name. */
+function addLaxCoreImports(root: string, record: PortRecord): void {
+  const modules = new Set(record.statements.flatMap((statement) => (statement.path === undefined ? [] : [statement.path])));
+  for (const relative of modules) {
+    const filename = path.join(root, relative);
+    if (!fs.existsSync(filename)) continue;
+    const content = fs.readFileSync(filename, "utf8");
+    if (/^import LaxCore\s*$/mu.test(content)) continue;
+    const lines = content.split("\n");
+    let last = -1;
+    for (let index = 0; index < lines.length; index += 1) {
+      if (/^import\s/u.test(lines[index]!)) last = index;
+      else if (last >= 0 && lines[index]!.trim() !== "") break;
+    }
+    lines.splice(last + 1, 0, "import LaxCore");
+    fs.writeFileSync(filename, lines.join("\n"));
+  }
 }
 
 /** Check out the record's exact published commit and keep the submission
@@ -173,18 +296,35 @@ function fetchSource(
 }
 
 /** The environment's pins where a submission carries them outside the
- * manifest: both `lean-toolchain` files and both lakefiles' mathlib `rev`. */
+ * manifest: both `lean-toolchain` files and both lakefiles' library `rev`s —
+ * mathlib's rewritten, every other required library of the row (`LaxCore`
+ * in a spec-2 row) rewritten where present and added where not. */
 function repointPins(root: string, target: ArchiveEnvironment): void {
   for (const kind of ["concepts", "proofs"] as const) {
     fs.writeFileSync(path.join(root, kind, "lean-toolchain"), `${target.leanToolchain}\n`);
     const lakefile = path.join(root, kind, "lakefile.toml");
-    const content = fs.readFileSync(lakefile, "utf8");
-    const rewritten = editRequire(content, "mathlib", { rev: target.mathlibCommit });
-    if (rewritten === undefined) {
-      throw new Error(`${kind}/lakefile.toml has no mathlib require this command can rewrite`);
+    let content = fs.readFileSync(lakefile, "utf8");
+    for (const library of librariesOf(target).filter((candidate) => candidate.required)) {
+      const rewritten = editRequire(content, library.name, { rev: library.commit });
+      if (rewritten !== undefined) content = rewritten;
+      else if (library.name === "mathlib") throw new Error(`${kind}/lakefile.toml has no mathlib require this command can rewrite`);
+      else content = addRequire(content, library);
     }
-    fs.writeFileSync(lakefile, rewritten);
+    fs.writeFileSync(lakefile, content);
   }
+}
+
+/** A library require inserted before the first `[[lean_lib]]`, or appended;
+ * the rest of the file is left byte for byte. */
+export function addRequire(content: string, library: PinnedLibrary): string {
+  const block =
+    `[[require]]\nname = ${JSON.stringify(library.name)}\ngit = ${JSON.stringify(library.url())}\n` +
+    `rev = ${JSON.stringify(library.commit)}\n\n`;
+  const lines = content.split("\n");
+  const target = lines.findIndex((line) => /^\s*\[\[\s*lean_lib\s*\]\]/u.test(line));
+  if (target < 0) return `${content}${content.endsWith("\n") ? "" : "\n"}\n${block}`.replace(/\n\n$/u, "\n");
+  lines.splice(target, 0, ...block.slice(0, -1).split("\n"));
+  return lines.join("\n");
 }
 
 interface RepointResult {
@@ -362,9 +502,33 @@ function readArchive(database: string): Map<string, PortRecord> {
     const output = readJson(path.join(database, entry.name, "build-output.json"));
     const manifest = isObject(output) && isObject(output.inputs) ? output.inputs.manifest : undefined;
     const source = isObject(record.source) ? record.source : undefined;
+    const statements: PortStatement[] = [];
+    for (const concept of isObject(output) && Array.isArray(output.concepts) ? output.concepts : []) {
+      if (!isObject(concept) || !Array.isArray(concept.statements)) continue;
+      for (const statement of concept.statements) {
+        if (!isObject(statement) || typeof statement.id !== "string" || typeof statement.signature !== "string") continue;
+        statements.push({
+          id: statement.id,
+          signature: statement.signature,
+          ...(typeof concept.path === "string" ? { path: concept.path } : {}),
+          ...(typeof statement.startLine === "number" ? { startLine: statement.startLine } : {}),
+        });
+      }
+    }
+    const proofs = (isObject(output) && Array.isArray(output.proofs) ? output.proofs : []).flatMap((proof) =>
+      isObject(proof) && typeof proof.id === "string" && typeof proof.conclusion === "string"
+        ? [{
+            id: proof.id,
+            conclusion: proof.conclusion,
+            assumptions: Array.isArray(proof.assumptions) ? proof.assumptions.filter((entry): entry is string => typeof entry === "string") : [],
+          }]
+        : [],
+    );
     archive.set(entry.name, {
       id: entry.name,
       state: record.state,
+      statements,
+      proofs,
       ...(source !== undefined &&
       typeof source.repository === "string" &&
       typeof source.commit === "string" &&

@@ -162,13 +162,16 @@ export function clearInitialOwners(folder: string): void {
 }
 
 /**
- * Repin a folder to an archive environment: the manifest's two version fields
- * become the entry's, and nothing else in the document moves. `lax port` is
+ * Repin a folder to an archive environment: the manifest's content spec and
+ * two version fields become the entry's, and nothing else in the document moves. `lax port` is
  * the only writer — an ordinary folder gets its pins from the scaffold and
  * never changes environment, because a submission has exactly one for life.
  */
 export function setManifestEnvironment(folder: string, environment: ArchiveEnvironment): void {
   updateDocument(folder, (document) => {
+    // the content spec is the row's (environments.ts): a port into a spec-2
+    // environment declares spec 2, which its first build then holds it to
+    document.set("specVersion", String(environment.specVersion));
     document.set("leanVersion", environment.id);
     document.set("mathlibVersion", environment.mathlibCommit);
   });

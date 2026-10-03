@@ -1,0 +1,24 @@
+name = "Lax123456"
+defaultTargets = ["Lax123456"]
+
+[leanOptions]
+autoImplicit = false
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+[[require]]
+name = "LaxCore"
+git = "https://github.com/lax-archive/lax-core"
+rev = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+# cslib is allowed in this environment; uncomment to require it:
+# [[require]]
+# name = "cslib"
+# git = "https://github.com/leanprover/cslib"
+# rev = "cccccccccccccccccccccccccccccccccccccccc"
+
+[[lean_lib]]
+name = "Lax123456"

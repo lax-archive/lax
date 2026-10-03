@@ -353,6 +353,13 @@ export async function doctor(opts: { dry?: boolean; env?: string } = {}): Promis
   steps.add("archive", "Archive");
   steps.add("mathlib", "Mathlib");
   steps.add("environments", "Environments");
+  // A spec-2 environment is judged by its toolchain's `lake comparator`
+  // (axiomfree-plan.md, decision 5): the comparator, the sandbox it builds
+  // in, and the external kernels `--paranoid` runs get a row each — reported,
+  // never installed, since they ship inside the toolchain (and bubblewrap
+  // is the distribution's). A spec-1 environment has none of this.
+  const certification = environment.specVersion === 2 ? certificationRows(environment) : [];
+  for (const row of certification) steps.add(row.key, row.label);
   steps.add("disk", "Disk");
   // The registry is known before any probing starts, so every submission gets
   // its row up front, under the id the author calls it by.
@@ -380,6 +387,7 @@ export async function doctor(opts: { dry?: boolean; env?: string } = {}): Promis
     // installing it would have reported the half-built directory elan is in
     // the middle of creating.
     const toolchain = toolchainCheck(environment);
+    for (const row of certification) settle(row.key, await row.check());
     // Every link runs — each one is what proves the link above it worked —
     // but the report stops at the first that broke: with no elan, "no elan
     // to provide it" and "the toolchain is not installed yet" are the same
@@ -954,6 +962,77 @@ function toolchainCheck(environment: ArchiveEnvironment): Check {
         detail: `${toolchainVersion(environment)} is not installed yet`,
         fix: ["elan installs it automatically on the first `lax build`"],
       };
+}
+
+/**
+ * The rows of a spec-2 environment's judge: `lake comparator` in its
+ * toolchain, bubblewrap on this machine, and one row per external kernel
+ * `--paranoid` runs (lean-facts.ts paranoidKernels), each a binary bundled
+ * in `<toolchain>/bin`. Declared up front like every other row, probed once
+ * the toolchain row has settled, since they read the same directory.
+ */
+function certificationRows(
+  environment: ArchiveEnvironment,
+): Array<{ key: string; label: string; check: () => Promise<Check> }> {
+  const bin = toolchainBinDir(environment);
+  const notInstalled = (label: string): Check => ({
+    label,
+    status: "warn",
+    detail: `${toolchainVersion(environment)} is not installed yet`,
+    fix: ["elan installs it automatically on the first `lax build`"],
+  });
+  return [
+    {
+      key: "comparator",
+      label: "Comparator",
+      check: async () => {
+        const lake = path.join(bin, "lake");
+        if (!fs.existsSync(lake)) return notInstalled("Comparator");
+        const probe = await run(lake, ["comparator", "--help"], os.tmpdir(), { env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` } });
+        return probe.code === 0
+          ? { label: "Comparator", status: "ok", detail: `lake comparator · ${toolchainVersion(environment)}`, internal: lake }
+          : {
+              label: "Comparator",
+              status: "fail",
+              detail: `${toolchainVersion(environment)} has no lake comparator`,
+              fix: [
+                `a spec-2 environment needs a toolchain that bundles it; ${environment.leanToolchain} should — ` +
+                  `reinstall it with \`lax doctor --env ${environment.id}\``,
+              ],
+            };
+      },
+    },
+    {
+      key: "sandbox",
+      label: "Sandbox",
+      check: async () => {
+        const version = await toolVersionAsync("bwrap");
+        return version === undefined
+          ? {
+              label: "Sandbox",
+              status: "warn",
+              detail: "bubblewrap not found",
+              fix: ["install bubblewrap (`bwrap`): `lake comparator` builds inside it, so `lax certify --run` needs it"],
+            }
+          : { label: "Sandbox", status: "ok", detail: version.trim(), fact: version.trim() };
+      },
+    },
+    ...leanFacts(environment).paranoidKernels.map((kernel) => ({
+      key: `kernel:${kernel}`,
+      label: kernel,
+      check: async (): Promise<Check> => {
+        if (!fs.existsSync(path.join(bin, "lean"))) return notInstalled(kernel);
+        return fs.existsSync(path.join(bin, kernel))
+          ? { label: kernel, status: "ok", detail: "bundled with the toolchain", internal: path.join(bin, kernel) }
+          : {
+              label: kernel,
+              status: "warn",
+              detail: "not in the toolchain",
+              fix: ["`lake comparator --paranoid` would fail without it; Lean's own kernel still judges"],
+            };
+      },
+    })),
+  ];
 }
 
 /**

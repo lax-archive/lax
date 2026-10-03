@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { portSubmission } from "../../src/cli/port.js";
 import { scaffoldSubmission } from "../../src/cli/scaffold.js";
 import * as ui from "../../src/cli/ui.js";
-import { epoch } from "../../src/submission-validation/environments.js";
+import { environment, epoch, librariesOf } from "../../src/submission-validation/environments.js";
 import { withTestEnvironmentsAsync } from "../support/environments.js";
 import { removeTree } from "../support/tmp.js";
 
@@ -181,6 +181,83 @@ describe("lax port", () => {
     expect(output).toContain("The Lean is not ported: only the pins, the id, and the requires are.");
     // The git history of the source repository is not the new submission's.
     expect(fs.existsSync(path.join(destination, ".git"))).toBe(false);
+  });
+
+  it("guides a port into a spec-2 environment: library requires, `import LaxCore`, and the statements to write", async () => {
+    const SPEC2 = {
+      id: "v4.98.0",
+      leanToolchain: "leanprover/lean4:v4.98.0",
+      mathlibCommit: "d".repeat(40),
+      specVersion: 2 as const,
+      libraries: [{ name: "LaxCore" as const, commit: "e".repeat(40) }],
+    };
+    const source = publish("lax-100009");
+    // the record's statements, as the inspector signs them: one plain, one
+    // with binders, one universe-polymorphic; and one conditional proof
+    fs.writeFileSync(
+      path.join(home, "lax-database", "lax-100009", "build-output.json"),
+      JSON.stringify({
+        id: "lax-100009",
+        inputs: { manifest: { leanVersion: epoch().id } },
+        concepts: [
+          {
+            path: "concepts/Lax100009/Primes.lean",
+            statements: [
+              { id: "Lax100009.Primes.ExistsPrimeDivisor", signature: "ExistsPrimeDivisor : ∀ (n : ℕ), 1 < n → ∃ p, Nat.Prime p ∧ p ∣ n", startLine: 12 },
+              { id: "Lax100009.Primes.Bounded", signature: "Bounded (k : ℕ) : ∀ (n : ℕ), n < k", startLine: 15 },
+              { id: "Lax100009.Primes.Refl", signature: "Refl.{u} : ∀ (α : Sort u) (a : α), a = a", startLine: 18 },
+            ],
+          },
+        ],
+        proofs: [
+          { id: "Lax100009Proofs.euclid", conclusion: "Lax100009.Primes.ExistsPrimeDivisor", assumptions: ["Lax100009.Primes.Bounded"] },
+        ],
+      }),
+    );
+    // the concept module in the published source, with its import block
+    fs.mkdirSync(path.join(source.repository, "concepts", "Lax100009"), { recursive: true });
+    fs.writeFileSync(path.join(source.repository, "concepts", "Lax100009", "Primes.lean"), "import Mathlib.Data.Nat.Prime.Defs\n\nnamespace Lax100009.Primes\naxiom ExistsPrimeDivisor : True\nend Lax100009.Primes\n");
+    git(["add", "-A"], source.repository);
+    git(["commit", "--quiet", "-m", "concepts"], source.repository);
+    const commit = git(["rev-parse", "HEAD"], source.repository);
+    const record = JSON.parse(fs.readFileSync(path.join(home, "lax-database", "lax-100009", "record.json"), "utf8")) as { source: { commit: string } };
+    record.source.commit = commit;
+    fs.writeFileSync(path.join(home, "lax-database", "lax-100009", "record.json"), JSON.stringify(record));
+    const destination = path.join(home, "ported-spec2");
+    const log = quiet();
+
+    // a spec-2 row's mathlib pin goes through the seam like every library's
+    // (environments.ts resolveRow), so the expected rev is the resolved row's
+    const { code, mathlibCommit, laxCoreCommit } = await withTestEnvironmentsAsync([SPEC2], async () => ({
+      code: await portSubmission("lax-100009", destination, { env: SPEC2.id }),
+      mathlibCommit: environment(SPEC2.id)!.mathlibCommit,
+      laxCoreCommit: librariesOf(environment(SPEC2.id)!).find((library) => library.name === "LaxCore")!.commit,
+    }));
+
+    expect(code).toBe(0);
+    const manifest = fs.readFileSync(path.join(destination, "manifest.yaml"), "utf8");
+    expect(manifest).toContain('specVersion: "2"');
+    expect(manifest).toContain(`leanVersion: "${SPEC2.id}"`);
+    expect(manifest).toContain(`mathlibVersion: "${mathlibCommit}"`);
+    for (const kind of ["concepts", "proofs"]) {
+      const lakefile = fs.readFileSync(path.join(destination, kind, "lakefile.toml"), "utf8");
+      expect(lakefile).toContain(`rev = "${mathlibCommit}"`);
+      // LaxCore inserted before the library target, at the row's pin
+      expect(lakefile).toContain(`[[require]]\nname = "LaxCore"\ngit = "${process.env.LAX_LAXCORE_URL}"\nrev = "${laxCoreCommit}"\n\n[[lean_lib]]`);
+    }
+    const id = /^id: (lax-[1-9][0-9]{5})$/mu.exec(manifest)![1]!;
+    const module = fs.readFileSync(path.join(destination, "concepts", `Lax${id.slice(4)}`, "Primes.lean"), "utf8");
+    expect(module.startsWith("import Mathlib.Data.Nat.Prime.Defs\nimport LaxCore\n\n")).toBe(true);
+    const output = printed(log);
+    expect(output).toContain(`${SPEC2.id} follows spec 2: statements are tagged definitions, proofs are theorems over them.`);
+    expect(output).toContain("3 statements to write in the axioms' place:");
+    expect(output).toContain("@[lax_statement] def ExistsPrimeDivisor : Prop := ∀ (n : ℕ), 1 < n → ∃ p, Nat.Prime p ∧ p ∣ n");
+    expect(output).toContain("takes binders: quantify them inside the body with `∀`");
+    expect(output).toContain("has universe parameters: write `@[lax_statement] def Refl.{u} : Prop := …`");
+    expect(output).toContain(`concepts/Lax${id.slice(4)}/Primes.lean:12`);
+    expect(output).toContain("1 proof whose type becomes a chain of statements");
+    expect(output).toContain("theorem … (h1 : Lax100009.Primes.Bounded) : Lax100009.Primes.ExistsPrimeDivisor");
+    expect(output).toContain("The Lean is not ported: only the pins, the id, the requires, and `import LaxCore` are.");
   });
 
   it("refuses a record that is already in the target environment", async () => {

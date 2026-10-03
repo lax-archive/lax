@@ -12,11 +12,16 @@
 // second block below proves that whole path through the host pipeline.
 
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { certify } from "../../src/cli/certify.js";
+import { scaffoldSubmission } from "../../src/cli/scaffold.js";
+import * as ui from "../../src/cli/ui.js";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
-import { readBundle } from "../../src/submission-validation/certify/bundle.js";
+import { readBundle, sealBundle } from "../../src/submission-validation/certify/bundle.js";
+import { BUNDLE_FILES, type BundleFile } from "../../src/submission-validation/certify/generate.js";
 import {
   GIT_SHIM,
   challengeProjectFiles,
@@ -53,6 +58,20 @@ const UPSTREAM_REPOSITORY = "https://github.com/lax-e2e/spec2-upstream";
 /** The lax-38 build the later tests reuse: its root, its job directory
  * (the certify project and bundle stay there), and its report. */
 let lax38: { root: string; jobDir: string; report: HostValidationReport } | undefined;
+
+/** The registered source of lax-41, the chain test's dependent, once the
+ * `lax certify` test has published it beside lax-38. */
+const DOWNSTREAM_REPOSITORY = "https://github.com/lax-e2e/spec2-downstream";
+let lax41: { root: string } | undefined;
+
+/** Point git at a local checkout for a registered record's URL, for the
+ * length of the process: how lake fetches a bundle's git requires here. */
+function rewriteUrl(repository: string, checkout: string): void {
+  const index = Number(process.env.GIT_CONFIG_COUNT ?? "0");
+  process.env[`GIT_CONFIG_KEY_${index}`] = `url.file://${checkout}.insteadOf`;
+  process.env[`GIT_CONFIG_VALUE_${index}`] = repository;
+  process.env.GIT_CONFIG_COUNT = String(index + 1);
+}
 
 // the fixture LaxCore seam is set by test/setup-env.ts for fast runs only;
 // a LAX_E2E run keeps the real pins and has no spec-2 row to rehearse
@@ -827,6 +846,7 @@ end Lax41Proofs
         // the dependency was reached where the proofs build cloned it
         expect(fs.readlinkSync(path.join(jobDir, "certify", "project", "packages", "Lax38")))
           .toBe(fs.realpathSync(path.join(root, "proofs", ".lake", "packages", "Lax38", "concepts")));
+        lax41 = { root };
       } finally {
         delete process.env.LAX_CAPTURE_REGISTRY_URL;
         for (const key of rewrites) delete process.env[key];
@@ -834,6 +854,155 @@ end Lax41Proofs
         if (process.env.GIT_CONFIG_COUNT === "0") delete process.env.GIT_CONFIG_COUNT;
         await ghcr.close();
       }
+    });
+  }, 600_000);
+
+  // Stage 4: `lax certify` over the two records as a reader holds them —
+  // lax-38 and lax-41 published to the fake registry and written into a
+  // local archive copy — then the bundles judged by the real comparator.
+  it("lax certify regenerates, fetches, and composes bundles the real comparator accepts", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      expect(lax38).toBeDefined();
+      expect(lax41, "the chain test above must have run").toBeDefined();
+      const ghcr = await startFakeGhcr();
+      process.env.LAX_CAPTURE_REGISTRY_URL = ghcr.url;
+      const home = process.env.LAX_HOME!;
+      const database = path.join(home, "lax-database");
+      const logged: string[] = [];
+      const spies = [
+        vi.spyOn(console, "log").mockImplementation((line: unknown) => { logged.push(String(line)); }),
+        vi.spyOn(process.stderr, "write").mockImplementation((line: unknown) => { logged.push(String(line)); return true; }),
+      ];
+      ui.configure({ color: false });
+      const configCount = process.env.GIT_CONFIG_COUNT;
+      const configKeys = Object.keys(process.env).filter((key) => /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/u.test(key));
+      try {
+        rewriteUrl(UPSTREAM_REPOSITORY, lax38!.root);
+        rewriteUrl(DOWNSTREAM_REPOSITORY, lax41!.root);
+        // both records in the local copy, in the shape the publisher writes,
+        // the certificate layer pushed and bound into each record
+        const upstream = await publishLocalCapture("lax-38", lax38!.root, UPSTREAM_REPOSITORY);
+        const downstream = await publishLocalCapture("lax-41", lax41!.root, DOWNSTREAM_REPOSITORY, archiveWith(upstream));
+        expect(upstream.certificateBlob).toBeDefined();
+        const archive = archiveWith(upstream, downstream);
+        fs.mkdirSync(path.join(database, ".git"), { recursive: true });
+        for (const id of ["lax-38", "lax-41"]) fs.cpSync(path.join(archive.root, id), path.join(database, id), { recursive: true });
+        const bundleIn = (directory: string): Record<BundleFile, string> =>
+          Object.fromEntries(BUNDLE_FILES.map((name) => [name, fs.readFileSync(path.join(directory, name), "utf8")])) as Record<BundleFile, string>;
+        const out = tmpDir("lax-certify-");
+
+        // the record's bundle, regenerated: the same bytes the local build
+        // sealed, except that the lakefile and manifest now carry the
+        // records' git sources in place of this machine's paths
+        const regenerated = path.join(out, "lax-41");
+        expect(await certify("lax-41", { out: regenerated })).toBe(0);
+        const files = bundleIn(regenerated);
+        expect(files["Challenge.lean"]).toBe(downstream.report.buildOutput!.certificate!.challenge);
+        expect(files["lakefile.toml"]).toContain(`name = "Lax38"\ngit = "${UPSTREAM_REPOSITORY}"\nrev = "${upstream.source.commit}"\nsubDir = "concepts"`);
+        expect(files["lakefile.toml"]).toContain(`name = "Lax41Proofs"\ngit = "${DOWNSTREAM_REPOSITORY}"`);
+        expect(fs.readFileSync(path.join(regenerated, "lean-toolchain"), "utf8")).toBe(`${SPEC2.leanToolchain}\n`);
+        expect(logged.join("\n")).toContain("Regenerated the bundle");
+        expect(logged.join("\n")).toContain("lake comparator --config comparator.json");
+
+        // the stored bundle, fetched by digest from the registry
+        const fetched = path.join(out, "lax-38-fetched");
+        expect(await certify("lax-38", { out: fetched, fetch: true })).toBe(0);
+        const storedTar = fs.readFileSync(path.join(lax38!.jobDir, "certify", "certificate.tar"));
+        expect(readBundle(storedTar).get("Challenge.lean")).toBe(fs.readFileSync(path.join(fetched, "Challenge.lean"), "utf8"));
+        expect(sealBundle(bundleIn(fetched)).digest).toBe(upstream.report.buildOutput!.certificate!.bundle.digest);
+
+        // the relative certificate: Downstream outright, through lax-38's proof
+        const composed = path.join(out, "downstream");
+        expect(await certify("Lax41.Chain.Downstream", { out: composed })).toBe(0);
+        const relative = bundleIn(composed);
+        expect(relative["Challenge.lean"]).toContain("import Lax41\n\ntheorem Cert.Lax41.Chain.Downstream : _root_.Lax41.Chain.Downstream := sorry\n");
+        expect(relative["Solution.lean"]).toContain(
+          "import Lax38Proofs\nimport Lax41Proofs\n\n" +
+            "theorem Cert.Lax41.Chain.Downstream : _root_.Lax41.Chain.Downstream := " +
+            "@_root_.Lax41Proofs.downstream (@_root_.Lax38Proofs.hasSucc)\n",
+        );
+        // and relative to lax-38's statement: the per-submit edge under the statement's name
+        const hypothetical = path.join(out, "downstream-relative");
+        expect(await certify("Lax41.Chain.Downstream", { out: hypothetical, relativeTo: ["Lax38.Order.HasSucc"] })).toBe(0);
+        expect(bundleIn(hypothetical)["Solution.lean"]).toContain(
+          "theorem Cert.Lax41.Chain.Downstream\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax41.Chain.Downstream := @_root_.Lax41Proofs.downstream h₁\n",
+        );
+
+        // ── the real comparator over the written bundles ──────────────
+        // Each folder is the five files a reader has: lake resolves the git
+        // requires (the fixture repositories, through the url rewrites),
+        // builds mathlib, LaxCore and the packages from source, and judges.
+        // First without the sandbox — the fixture repositories are local
+        // paths bubblewrap may not see — labelled as such; then the CLI's
+        // own `--run`, sandboxed, over the materialised folder.
+        const lake = lakeBinary(environment);
+        const judgeUnsandboxed = async (directory: string, label: string) => {
+          const started = performance.now();
+          const result = await run(lake, ["comparator", "--config", "comparator.json", "--inadvisably-no-sandbox"], directory, {
+            env: { LAKE_ARTIFACT_CACHE: "false", LEAN_NUM_THREADS: "2", PATH: lakePathEnv(environment) },
+          });
+          console.info(`[certify timing] lax certify bundle ${label}, comparator WITHOUT sandbox (fixture repositories are local paths): ${Math.round(performance.now() - started)} ms, exit ${result.code}`);
+          expect(result.output, result.output).toContain("Your solution is okay!");
+          expect(interpretComparatorRun(result)).toEqual({ kind: "certified" });
+        };
+        await judgeUnsandboxed(regenerated, "lax-41 (regenerated)");
+        await judgeUnsandboxed(composed, "Lax41.Chain.Downstream (composed)");
+        await judgeUnsandboxed(hypothetical, "Lax41.Chain.Downstream relative to HasSucc");
+
+        // the sandboxed rerun through the CLI, where bubblewrap can create
+        // a user namespace (the spike's host sandbox); elsewhere it is
+        // reported and skipped, never faked
+        let sandbox = false;
+        try {
+          execFileSync("bwrap", ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--unshare-user", "--die-with-parent", "--", "/bin/true"], { stdio: "ignore" });
+          sandbox = true;
+        } catch {
+          console.info("[certify] bubblewrap cannot create a user namespace here; the sandboxed `lax certify --run` is not exercised");
+        }
+        if (sandbox) {
+          const started = performance.now();
+          logged.length = 0;
+          const code = await certify("Lax41.Chain.Downstream", { out: composed, run: true });
+          console.info(`[certify timing] lax certify --run (sandboxed, folder materialised): ${Math.round(performance.now() - started)} ms, exit ${code}\n${logged.join("\n")}`);
+          expect(code).toBe(0);
+          expect(logged.join("\n")).toContain("Lax41.Chain.Downstream is certified: lake comparator --config comparator.json accepted the Solution.");
+        }
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+        delete process.env.LAX_CAPTURE_REGISTRY_URL;
+        for (const key of Object.keys(process.env).filter((candidate) => /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/u.test(candidate) && !configKeys.includes(candidate))) delete process.env[key];
+        if (configCount === undefined) delete process.env.GIT_CONFIG_COUNT;
+        else process.env.GIT_CONFIG_COUNT = configCount;
+        await ghcr.close();
+      }
+    });
+  }, 900_000);
+
+  it("builds the spec-2 scaffold `lax init --env` writes, with its edge", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const root = tmpDir("lax-scaffold-");
+      scaffoldSubmission(root, "lax-123457", "Scaffold", environment);
+      const report = await buildOnHost(root, { id: "lax-123457" });
+      expect(messages(report)).toBe("");
+      expect(report.ok).toBe(true);
+      const out = report.buildOutput!;
+      expect(out.concepts[0]!.statements.map((statement) => statement.id)).toEqual(["Lax123457.Basic.AddZero", "Lax123457.Basic.ZeroAddZero"]);
+      expect(out.proofs.map((proof) => [proof.id, proof.assumptions, proof.conclusion])).toEqual([
+        ["Lax123457Proofs.addZero", [], "Lax123457.Basic.AddZero"],
+        ["Lax123457Proofs.zeroAddZero", ["Lax123457.Basic.AddZero"], "Lax123457.Basic.ZeroAddZero"],
+      ]);
+      expect(out.certificate!.challenge).toContain("theorem Cert.Lax123457Proofs.zeroAddZero\n    (h₁ : _root_.Lax123457.Basic.AddZero)\n    : _root_.Lax123457.Basic.ZeroAddZero := sorry");
+      // the recipe in the comment is live Lean: uncommented, it is one more edge
+      const proofs = path.join(root, "proofs", "Lax123457Proofs", "Basic.lean");
+      const source = fs.readFileSync(proofs, "utf8");
+      const recipe = /\/-\nSeveral proofs sharing hypotheses[\s\S]*?\n\n([\s\S]*?)\n-\/\n/u.exec(source);
+      expect(recipe).not.toBeNull();
+      fs.writeFileSync(proofs, source.replace(recipe![0], recipe![1]!.split("\n").map((line) => line.replace(/^ {2}/u, "")).join("\n") + "\n\n"));
+      const again = await buildOnHost(root, { id: "lax-123457" });
+      expect(messages(again)).toBe("");
+      expect(again.buildOutput!.proofs.map((proof) => [proof.id, proof.assumptions])).toContainEqual(["Lax123457Proofs.zeroAddZero'", ["Lax123457.Basic.AddZero"]]);
     });
   }, 600_000);
 

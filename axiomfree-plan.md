@@ -349,6 +349,39 @@ record depends on are trusted as today.
    the warm-manifest pin (TODO.md).
 4. **CLI.** `lax certify` with relative certificates, `lax doctor`,
    `lax init --env` for spec-2 rows, the instructions section. Release.
+   **Landed 2026-10-04** (code: `src/cli/certify.ts`,
+   `certify/compose.ts`, the generalised `theoremText` in
+   `certify/generate.ts`; the release is Jan's). Deviations: a record
+   target **regenerates by default** and fetches with `--fetch` (the
+   draft left it open), and the bundle goes to `./certificate-<target>`
+   rather than under `~/.lax/certificates/` (that directory is the fetch
+   cache); the relative theorem is `Cert.<statement-id>` as the draft
+   spelled it, with `_root_.` on every reference and the given statements
+   as explicit hypotheses in `--relative-to` order, each at the one
+   universe instance the composition demands (two instances, or an unused
+   polymorphic given, are refused rather than guessed, as is a witness
+   with a universe parameter its conclusion does not determine); the
+   regenerated `lake-manifest.json` comes from the **local** warm
+   workspace's locked manifest, so regeneration needs the environment
+   provisioned (`lax doctor --env`) while `--fetch` does not, and the
+   regenerated digest is reported against the record's rather than
+   required to match (only the Challenge must); `--run` is the plain
+   `lake comparator --config comparator.json` in the folder, sandboxed,
+   with git and `bwrap` checked first and no unsandboxed mode; `lax
+   doctor` shows the comparator, the sandbox, and the kernel rows only
+   for a spec-2 environment (a spec-1 toolchain bundles none, and the
+   epoch's report must not gain five notes); the spec-2 scaffold declares
+   **two** statements, one proven outright and one from the other,
+   because a hypothesis-style proof over a single statement is a
+   self-edge; `lax print spec --env` prints `spec_v2_draft.md` for a
+   spec-2 row with a one-line banner on stderr, stdout staying the
+   document; `lax port --env <spec-2>` adds the row's required library
+   requires and `import LaxCore` to the statement-declaring modules and
+   prints the `@[lax_statement] def` per statement (binders or universe
+   parameters get a note instead), proofs untouched. The e2e judges the
+   written bundles with the real comparator unsandboxed first (the fixture
+   repositories are local paths bubblewrap cannot clone) and then runs
+   the CLI's sandboxed `--run` over the materialised folder.
 5. **Website.** `specVersion` plumbing, telescopes on proof cards, the
    certified mark with the collapsed Challenge, the trust note. Renderer
    release; re-pin. **Landed 2026-10-04** on lax-website branch

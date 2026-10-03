@@ -223,6 +223,7 @@ lax build submission
 lax build submission --nonstrict   # iterate against sibling drafts (see below)
 lax serve submission
 lax generate-prooftree lax-N
+lax certify lax-N               # a rerunnable `lake comparator` bundle (spec-2 records); --run judges it
 git commit && git push
 lax submit submission
 lax owners submission --new-list alice bob
@@ -428,6 +429,21 @@ pin and is named ("port lax-M first"), so ports flow bottom-up exactly as the
 chain workflow does. It is scaffolding only: no Lean is ported, and `lax build`
 and `lax submit` are the author's next steps. It refuses a record already in
 the target environment.
+
+`lax certify <target>` writes a `lake comparator` certificate from the local
+archive copy, for spec-2 environments: a record id regenerates the record's
+bundle from its stored telescopes (the `Challenge.lean` must equal the stored
+one byte for byte; `--fetch` pulls the stored bundle by digest instead), a
+proof id is one edge, and a statement id is a *relative certificate* — the
+implied edge `{--relative-to statements} → statement`, discharged by the
+archive's proofs composed along the proof network's witness forest, under
+the theorem name `Cert.<statement-id>`. The five files plus `lean-toolchain`
+land in `--out` (default `./certificate-<target>`); the command prints the
+`lake comparator --config comparator.json` line, or runs it with `--run`
+(`--paranoid` adds the toolchain's bundled kernels) inside the tool's own
+bubblewrap sandbox — git and `bwrap` must be on PATH, and no unsandboxed
+mode is offered. `lax doctor --env <spec-2 id>` reports the comparator, the
+sandbox, and each bundled kernel.
 
 `lax generate-prooftree lax-N` reads the local Archive database, selects one
 recursively grounded proof for each reachable statement when possible, and

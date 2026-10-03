@@ -28,11 +28,27 @@ runner, the local host run, the comparator verdict in one place, the
 certificate layer in the capture store, the `certificate` block and the
 spec-2 record shape of `recorded-shape.ts`) and was hardened 2026-10-04
 after the outside review (`spike/axiomfree/codex-review-stages1-3-20261003.md`;
-all seven "fix now" findings and the cheap "later" items — see the stage
-line in `axiomfree-plan.md`). Next: stage 4 (`lax certify` with relative
-certificates over the stored bundle and telescopes, `lax doctor`'s kernel
-report, `lax init --env` for spec-2 rows, the instructions section). Jan's
-items before stage 3 ships:
+all seven "fix now" findings and the cheap "later" items — the judge is now
+a third container over two frozen exports; see the stage line in
+`axiomfree-plan.md`). Stage 4 landed 2026-10-04 (`lax certify` — record,
+edge, and relative certificates composed along `selectProofTree`'s witness
+forest, `--fetch`, the sandboxed `--run`; `lax doctor`'s
+comparator/sandbox/kernel rows for a spec-2 row; `lax init --env`
+scaffolding the spec-2 shape; `lax print spec --env`; the guided spec-2
+`lax port`; the instructions section). Stage 5 landed 2026-10-04 on
+lax-website branch `axiomfree` (not merged, not released). Next: stage 6
+(Jan: merge and release the renderer and re-pin it; admit `v4.35.0` at
+spec 2 once the mathlib tag exists, epoch flip, close `v4.33.0`, the Lax17
+hand-port, the production round trip with a `--paranoid` rerun on a
+machine that never ran lax, the spec reconciliation of `spec_v2_draft.md`
+— it still describes two containers, and lacks `solutionExportSha256` and
+`_root_.`). Stage-4 items for Jan: the sandboxed `lax certify --run`
+against a *real* record (the e2e exercises it over local fixture
+repositories only after the folder is materialised unsandboxed, because
+bubblewrap cannot see them; whether Lake's sandbox clones from GitHub and
+pulls mathlib's artifact cache is the rehearsal's question); `lax certify`
+of a Lax17-sized relative certificate (the composed Solution of a
+28-hypothesis chain). Jan's items before stage 3 ships:
 
 - **Docker smoke of Certify, again**: the 2026-10-03 run covered the
   two-container layout; the three-container one (A exports the Challenge, B

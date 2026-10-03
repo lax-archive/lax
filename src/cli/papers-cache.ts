@@ -4,7 +4,9 @@
 // resolves them through `~/.lax/papers/<digest>.pdf` and
 // `~/.lax/bundles/<digest>.tar`, filled on demand with the same anonymous
 // pull the sandbox's download-capture tool and the website's papers:fetch
-// use. Everything downloaded is verified against the recorded digest before
+// use. A spec-2 record's certificate bundle (axiomfree-plan.md, "Certify"
+// 4) is a third such blob, `~/.lax/certificates/<digest>.tar`, which
+// `lax certify --fetch` resolves the same way. Everything downloaded is verified against the recorded digest before
 // it enters the cache, and every failure — offline, a refusal, tampered
 // bytes — resolves to `undefined` so the preview renders the page without
 // that file instead of dying: local previews degrade, they never block.
@@ -37,7 +39,7 @@ function registryOrigin(): string {
   return value === undefined ? REGISTRY : new URL(value).origin;
 }
 
-export type PaperBlobKind = "paper" | "bundle";
+export type PaperBlobKind = "paper" | "bundle" | "certificate";
 
 export function paperCachePath(digest: string): string {
   return blobCachePath("paper", digest);
@@ -47,11 +49,20 @@ export function bundleCachePath(digest: string): string {
   return blobCachePath("bundle", digest);
 }
 
+export function certificateCachePath(digest: string): string {
+  return blobCachePath("certificate", digest);
+}
+
 function blobCachePath(kind: PaperBlobKind, digest: string): string {
   if (!/^[0-9a-f]{64}$/u.test(digest)) throw new Error(`${kind} digest is not sha256 hex`);
-  return kind === "paper"
-    ? path.join(laxHome(), "papers", `${digest}.pdf`)
-    : path.join(laxHome(), "bundles", `${digest}.tar`);
+  switch (kind) {
+    case "paper":
+      return path.join(laxHome(), "papers", `${digest}.pdf`);
+    case "bundle":
+      return path.join(laxHome(), "bundles", `${digest}.tar`);
+    case "certificate":
+      return path.join(laxHome(), "certificates", `${digest}.tar`);
+  }
 }
 
 /**
@@ -87,8 +98,8 @@ export async function ensureCachedPaperBlob(
     if (kind === "paper" && bytes.subarray(0, 5).toString("latin1") !== "%PDF-") {
       throw new Error("downloaded paper is not a PDF");
     }
-    if (kind === "bundle" && bytes.subarray(257, 262).toString("latin1") !== "ustar") {
-      throw new Error("downloaded bundle is not a ustar archive");
+    if (kind !== "paper" && bytes.subarray(257, 262).toString("latin1") !== "ustar") {
+      throw new Error(`downloaded ${kind} is not a ustar archive`);
     }
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const temporary = `${file}.${process.pid}.part`;
@@ -97,7 +108,7 @@ export async function ensureCachedPaperBlob(
     return file;
   } catch (error) {
     ui.verbose(
-      `could not fetch the ${kind === "paper" ? "paper" : "web bundle"} ` +
+      `could not fetch the ${kind === "paper" ? "paper" : kind === "bundle" ? "web bundle" : "certificate bundle"} ` +
         `${digest.slice(0, 12)}: ${error instanceof Error ? error.message : String(error)}`,
     );
     return undefined;

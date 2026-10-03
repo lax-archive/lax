@@ -23,6 +23,7 @@ import { serveWebsite } from "./website.js";
 import { checkForCliUpdate } from "./update-check.js";
 import { generateProofTree } from "./prooftree.js";
 import { portSubmission } from "./port.js";
+import { certify } from "./certify.js";
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 // The background release probe caches its result in ~/.lax/update-check.json,
@@ -56,6 +57,7 @@ const overview = (): string => `
 
   Also
     lax owners · lax delete · lax port · lax sync · lax update
+    lax certify · lax generate-prooftree
     lax login · lax logout
     lax print spec · lax print instructions
 
@@ -248,6 +250,28 @@ program
   );
 
 program
+  .command("certify")
+  .argument("<target>", "a record id (lax-N), a proof id, or a statement id")
+  .option("--relative-to <statements...>", "statements a statement target is proven relative to (its hypotheses)")
+  .option("--out <folder>", "where the bundle goes (defaults to ./certificate-<target>)")
+  .option("--fetch", "pull a record's stored bundle by its digest instead of regenerating it")
+  .option("--run", "run `lake comparator` over the bundle, in its sandbox")
+  .option("--paranoid", "with --run: also the toolchain's bundled external kernels")
+  .description("write a rerunnable `lake comparator` certificate from the archive: a record's bundle, one edge, or a statement proven relative to others")
+  .action(
+    run((target: string, options: { relativeTo?: string[]; out?: string; fetch?: boolean; run?: boolean; paranoid?: boolean }) => {
+      if (options.paranoid === true && options.run !== true) throw new Error("--paranoid applies to --run");
+      return certify(target, {
+        relativeTo: options.relativeTo,
+        out: options.out,
+        fetch: options.fetch,
+        run: options.run,
+        paranoid: options.paranoid,
+      });
+    }),
+  );
+
+program
   .command("doctor")
   .option("--dry", "report only: install nothing, refresh nothing, write nothing")
   .option("--env <id>", "check a supported environment (default: v4.33.0; v4.30.0 for existing work)")
@@ -286,8 +310,9 @@ program
 const print = program.command("print").description("print a bundled document");
 print
   .command("spec")
-  .description("the specification this CLI enforces")
-  .action(() => { printSpec(); });
+  .option("--env <id>", "the environment whose specification to print (default: v4.33.0)")
+  .description("the specification this CLI enforces in an environment")
+  .action((options: { env?: string }) => { printSpec({ env: options.env }); });
 print
   .command("instructions")
   .description("how to drive lax when formalizing a result")

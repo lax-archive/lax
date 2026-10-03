@@ -12,7 +12,7 @@ describe("CLI compatibility surface", () => {
     const { version } = JSON.parse(
       fs.readFileSync(path.join(root, "package.json"), "utf8"),
     ) as { version: string };
-    expect(cli(["--version"])).toEqual({ code: 0, output: `${version}\n` });
+    expect(cli(["--version"])).toMatchObject({ code: 0, output: `${version}\n` });
   });
 
   it("opens with the commands in the order an author meets them", () => {
@@ -142,12 +142,38 @@ describe("CLI compatibility surface", () => {
     }
   });
 
+  it("offers `lax certify` with its three targets and the sandboxed rerun", () => {
+    const help = cli(["certify", "--help"]);
+    expect(help.code).toBe(0);
+    expect(help.output).toContain("<target>");
+    expect(help.output).toContain("--relative-to <statements...>");
+    expect(help.output).toContain("--out <folder>");
+    expect(help.output).toContain("--fetch");
+    expect(help.output).toContain("--run");
+    expect(help.output).toContain("--paranoid");
+    expect(help.output).not.toContain("inadvisably");
+    const stray = cli(["certify", "lax-42", "--paranoid"]);
+    expect(stray.code).toBe(1);
+    expect(stray.output).toContain("--paranoid applies to --run");
+    expect(cli(["--help"]).output).toContain("lax certify · lax generate-prooftree");
+  });
+
   it("prints the bundled documents verbatim, for an agent to read", () => {
     // spec.md is Jan's document; the test asks only that it prints, not
     // what it says.
     const spec = cli(["print", "spec"]);
     expect(spec.code).toBe(0);
     expect(spec.output.length).toBeGreaterThan(0);
+    // `--env` picks the specification governing an environment: the epoch's
+    // is spec.md itself, a spec-2 row's the draft, announced on stderr only
+    expect(cli(["print", "spec", "--env", "v4.33.0"]).output).toBe(spec.output);
+    const draft = cli(["print", "spec", "--env", "v4.99.0"], {
+      LAX_TEST_ENVIRONMENTS: JSON.stringify([{ id: "v4.99.0", specVersion: 2, libraries: [{ name: "LaxCore", commit: "b".repeat(40) }] }]),
+    });
+    expect(draft.code).toBe(0);
+    expect(draft.stdout).toBe(fs.readFileSync(path.join(root, "spec_v2_draft.md"), "utf8"));
+    expect(draft.stderr).toBe("# v4.99.0 follows spec 2; this is its draft specification, normative once reconciled into spec.md\n");
+    expect(cli(["print", "spec", "--env", "v9.9.9"]).code).toBe(1);
 
     const instructions = cli(["print", "instructions"]);
     expect(instructions.code).toBe(0);
@@ -198,7 +224,7 @@ describe("CLI compatibility surface", () => {
 function cli(
   args: string[],
   extraEnvironment: Record<string, string> = {},
-): { code: number; output: string } {
+): { code: number; output: string; stdout: string; stderr: string } {
   const result = spawnSync(
     process.execPath,
     ["--import", "tsx", "src/cli/main.ts", ...args],
@@ -217,5 +243,7 @@ function cli(
   return {
     code: result.status ?? 1,
     output: `${result.stdout}${result.stderr}`,
+    stdout: result.stdout,
+    stderr: result.stderr,
   };
 }

@@ -780,6 +780,61 @@ describe("lax doctor", () => {
     expect(lines.some((line) => line.includes(`Installed: ${epoch().id}.`))).toBe(true);
   });
 
+  it("reports a spec-2 environment's judge: the comparator, the sandbox, and a row per bundled kernel", async () => {
+    // A spec-2 row under a toolchain that bundles the comparator and three of
+    // the five external kernels, on a machine with bubblewrap: a row each,
+    // the missing kernels as notes rather than problems, nothing installed.
+    const SPEC2 = { id: "v4.99.0", leanToolchain: "leanprover/lean4:v4.99.0", specVersion: 2 as const, libraries: [{ name: "LaxCore" as const, commit: "b".repeat(40) }] };
+    const mangled = SPEC2.leanToolchain.replace("/", "--").replace(":", "---");
+    const bin = path.join(home, "elan", "toolchains", mangled, "bin");
+    fs.mkdirSync(path.join(home, "elan", "bin"), { recursive: true });
+    fs.writeFileSync(path.join(home, "elan", "bin", "elan"), `#!/bin/sh\necho "elan 4.0.0"\n`, { mode: 0o755 });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "lean"), "");
+    fs.writeFileSync(
+      path.join(bin, "lake"),
+      `#!/bin/sh\ncase "$1" in comparator) exit 0 ;; esac\necho "Lake version 5.0.0 (Lean version 4.99.0)"\n`,
+      { mode: 0o755 },
+    );
+    for (const kernel of ["leanchecker-paranoid", "lean4lean", "nanoda"]) fs.writeFileSync(path.join(bin, kernel), "");
+    const fake = path.join(home, "bin");
+    fs.mkdirSync(fake);
+    fs.writeFileSync(path.join(fake, "bwrap"), "#!/bin/sh\necho 'bubblewrap 0.9.0'\n", { mode: 0o755 });
+    process.env.PATH = `${fake}${path.delimiter}${process.env.PATH ?? ""}`;
+    fs.mkdirSync(path.join(home, "lax-database", ".git"), { recursive: true });
+    const { log } = quiet();
+
+    const code = await withTestEnvironmentsAsync([SPEC2], () => doctor({ dry: true, env: SPEC2.id }));
+
+    const lines = printed(log);
+    expect(row(lines, "Comparator")).toContain("✓ Comparator          lake comparator · v4.99.0");
+    expect(row(lines, "Sandbox")).toContain("✓ Sandbox             bubblewrap 0.9.0");
+    for (const kernel of ["leanchecker-paranoid", "lean4lean", "nanoda"]) {
+      expect(row(lines, kernel)).toContain(`✓ ${kernel}`);
+      expect(row(lines, kernel)).toContain("bundled with the toolchain");
+    }
+    for (const kernel of ["con-leche", "con-ron"]) {
+      expect(row(lines, kernel)).toContain(`! ${kernel}`);
+      expect(row(lines, kernel)).toContain("not in the toolchain");
+    }
+    expect(lines.some((line) => line.includes("lake comparator --paranoid would fail without it"))).toBe(true);
+    // the rows sit between the environment rows and Disk, in declaration order
+    const order = ["Comparator", "Sandbox", "leanchecker-paranoid", "lean4lean", "nanoda", "con-leche", "con-ron", "Disk"]
+      .map((label) => lines.findIndex((line) => line === row(lines, label)))
+      .filter((index) => index >= 0);
+    expect([...order].sort((x, y) => x - y)).toEqual(order);
+    // notes, not problems: the kernels are reported, never installed (the
+    // exit code is the whole report's — offline, the account row fails)
+    expect(typeof code).toBe("number");
+    expect(lines.some((line) => /^ {2}✗ (?:con-leche|con-ron|Comparator|Sandbox)/u.test(line))).toBe(false);
+
+    // a spec-1 environment has no judge and shows none of this
+    vi.restoreAllMocks();
+    const { log: plain } = quiet();
+    await doctor({ dry: true });
+    expect(printed(plain).some((line) => /Comparator|Sandbox|lean4lean/u.test(line))).toBe(false);
+  });
+
   it("refuses an --env the table does not admit, before it probes anything", async () => {
     await expect(doctor({ env: "v9.9.9" })).rejects.toThrow(
       /v9\.9\.9 is not an archive environment/u,

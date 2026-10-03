@@ -26,6 +26,8 @@ export interface PublishedUpstream {
   source: { repository: string; commit: string; folder: string };
   report: ValidationReport;
   published: PublishedCapture;
+  /** The certificate layer's address, when the build certified (spec 2). */
+  certificateBlob?: string;
 }
 
 /** Build `root` on the host, seal and push its capture to the fake registry,
@@ -69,6 +71,9 @@ export async function publishLocalCapture(
   const store = new GhcrCaptureStore("fake-registry-credential", CAPTURES_REPOSITORY);
   const source = report.request.source;
   const references = manifest.references;
+  // a spec-2 build's certificate bundle rides as a further layer, as the
+  // trusted publisher pushes it (certify/host.ts leaves it in the job dir)
+  const certificate = report.buildOutput.certificate;
   const promoted = await store.promote(
     id,
     source,
@@ -76,7 +81,9 @@ export async function publishLocalCapture(
     tarPath,
     undefined,
     undefined,
-    undefined,
+    certificate === undefined
+      ? undefined
+      : { bundlePath: path.join(jobDir, "certify", "certificate.tar"), digest: certificate.bundle.digest },
     references === undefined
       ? undefined
       : { tarPath: path.join(jobDir, REFERENCES_FILENAME), digest: references.digest, bytes: references.bytes },
@@ -87,7 +94,13 @@ export async function publishLocalCapture(
       ? {}
       : { references: { ...references, registryBlob: promoted.referencesBlob } }),
   };
-  return { id, source, report, published };
+  return {
+    id,
+    source,
+    report,
+    published,
+    ...(promoted.certificateBlob === undefined ? {} : { certificateBlob: promoted.certificateBlob }),
+  };
 }
 
 /** Write the `record.json` + `build-output.json` pair for a published
@@ -110,13 +123,23 @@ export function registerUpstream(
     }),
   );
   // the record's own shape: a spec-2 upstream stores no derivable field
-  // (recorded-shape.ts), exactly as the trusted publisher writes it
+  // (recorded-shape.ts), exactly as the trusted publisher writes it — with
+  // the certificate layer's address bound in, as the publisher binds it
+  const output = upstream.report.buildOutput!;
+  const certificate =
+    output.certificate === undefined || upstream.certificateBlob === undefined
+      ? output.certificate
+      : { ...output.certificate, bundle: { ...output.certificate.bundle, registryBlob: upstream.certificateBlob } };
   fs.writeFileSync(
     path.join(directory, "build-output.json"),
     JSON.stringify({
       id: upstream.id,
       specVersion: "1",
-      ...recordedBuildOutput({ ...upstream.report.buildOutput!, capture: upstream.published }),
+      ...recordedBuildOutput({
+        ...output,
+        capture: upstream.published,
+        ...(certificate === undefined ? {} : { certificate }),
+      }),
     }),
   );
 }

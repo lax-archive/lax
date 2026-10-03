@@ -13,7 +13,8 @@
     "assets",
     "src/submission-validation/lean",
     "spec.md",
-    "spec_conceptdialect.md"
+    "spec_conceptdialect.md",
+    "spec_v2_draft.md"
   ],
   "scripts": {
     "build": "node --eval \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
