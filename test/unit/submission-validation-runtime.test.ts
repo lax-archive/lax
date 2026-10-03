@@ -520,6 +520,30 @@ describe("validation runtime boundaries retained from main", () => {
     ).rejects.toThrow("container mount target contains a Docker option delimiter");
   });
 
+  it("gives a judge container the toolchain and the tools alone: no warm store, no inspector", async () => {
+    const source = temporary("lax-container-judge-");
+    const record = path.join(temporary("lax-container-bin-"), "arguments.txt");
+    installDockerRecorder(record);
+    const layout = fakeLayout();
+    const runner = new ContainerRunner(epoch(), RUNTIME, { ...DEFAULT_LIMITS, minFreeDiskBytes: 0 }, source, undefined, layout);
+    const result = await runner.run({
+      label: "certify-judge",
+      runtime: "judge",
+      args: ["node", "/opt/lax/bin/run-certify.mjs", "/out/plan.json"],
+      mounts: [{ source, target: "/cert/project" }],
+      timeoutMs: 5_000,
+      maxOutputBytes: 64 * 1024,
+    });
+    expect(result.code).toBe(0);
+    const binds = fs.readFileSync(record, "utf8").trim().split("\n").filter((argument) => argument.startsWith("type=bind"));
+    expect(binds).toEqual([
+      `type=bind,src=${path.resolve(layout.toolchainDir)},dst=/opt/lax/toolchain,readonly`,
+      `type=bind,src=${path.resolve(layout.toolsDir)},dst=/opt/lax/bin,readonly`,
+      `type=bind,src=${path.resolve(source)},dst=/cert/project,readonly`,
+    ]);
+    expect(binds.some((bind) => bind.includes("/opt/lax/warm") || bind.includes("/opt/lax/inspector"))).toBe(false);
+  });
+
   it("runs a foreign image bare: verified first, no Lean mounts, the image's own PATH", async () => {
     const source = temporary("lax-container-paper-");
     const record = path.join(temporary("lax-container-bin-"), "arguments.txt");

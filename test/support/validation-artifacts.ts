@@ -157,6 +157,7 @@ export function spec2Artifacts(id = "lax-42"): SuccessfulValidationArtifacts {
     kernels: ["lean"],
     bundle: { formatVersion: 1, digest: "c".repeat(64) },
     challengeExportSha256: "e".repeat(64),
+    solutionExportSha256: "d".repeat(64),
     challenge: challengeText(proofs.map(certifiedProof)),
   };
   // a spec-2 capture is summarised beside its inventory (seal.ts): the tar's

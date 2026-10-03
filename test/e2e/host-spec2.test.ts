@@ -18,12 +18,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
 import { readBundle } from "../../src/submission-validation/certify/bundle.js";
 import {
+  GIT_SHIM,
   challengeProjectFiles,
   planCertificate,
   projectLibDir,
   solutionProjectFiles,
   stageOwnPackage,
   warmLibDirs,
+  writeJudgeProject,
   writeRunProject,
   type CertifyRecord,
 } from "../../src/submission-validation/certify/project.js";
@@ -201,6 +203,9 @@ namespace Lax38.Order
 /-- an auxiliary: a Prop-valued definition without the marker -/
 def IsSmall (n : Nat) : Prop := n < 10
 
+/-- a name Lean cannot read unquoted, over a universe it cannot either -/
+@[lax_statement] def «定理».{«λ»} : Prop := ∀ (α : Sort «λ») (a : α), a = a
+
 end Lax38.Order
 `,
           "proofs/Lax38Proofs.lean": "import Lax38Proofs.Basic\n",
@@ -223,6 +228,9 @@ Ignore the hypothesis.
 -/
 theorem refl_of_hasSucc.{u} (_h : Lax38.Order.HasSucc) : Lax38.Order.Refl.{u} := fun _ _ => rfl
 
+/-- quoted all the way: the proof, its universe, the statement -/
+theorem «证明».{«λ»} (_h : Lax38.Order.HasSucc) : Lax38.Order.«定理».{«λ»} := fun _ _ => rfl
+
 end Lax38Proofs
 `,
         },
@@ -238,30 +246,40 @@ end Lax38Proofs
       expect(report.warnings).toEqual([]);
       const out = report.buildOutput!;
       // Stage 3: the record is certified end to end on the host — the same
-      // generator and the same two commands as the archive's containers.
+      // generator and the same three steps as the archive's containers.
       const certificate = out.certificate!;
       expect(certificate).toMatchObject({
         judge: { toolchain: SPEC2.leanToolchain, comparatorExitCode: 0 },
         kernels: ["lean"],
         bundle: { formatVersion: 1, digest: expect.stringMatching(/^[0-9a-f]{64}$/u) },
         challengeExportSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        solutionExportSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
       });
+      expect(Object.keys(certificate)).toEqual(["judge", "kernels", "bundle", "challengeExportSha256", "solutionExportSha256", "challenge"]);
       expect(certificate.challenge).toBe(
         fs.readFileSync(path.join(jobDir, "certify", "project", "Challenge.lean"), "utf8"),
       );
       expect(certificate.challenge).toContain("import Lax38\n");
       expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := sorry");
       expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.refl_of_hasSucc.{u}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{u} := sorry");
+      // the quoted names, as the inspector reported them unescaped and the
+      // generator re-quoted them — and Lean elaborated and the comparator
+      // accepted them, since the whole build passed
+      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.«证明».{«λ»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.«定理».{«λ»} := sorry");
       expect(certificate.challenge).not.toContain("Lax38Proofs.hasSucc h");
       console.log(`[certify timing] lax-38 whole build incl. certification: ${Math.round(performance.now() - started)} ms`);
-      // the bundle sealed what ran, and the export's digest is the file's
+      // the bundle sealed what ran, and the exports' digests are the files'
       const tar = fs.readFileSync(path.join(jobDir, "certify", "certificate.tar"));
       expect(createHash("sha256").update(tar).digest("hex")).toBe(certificate.bundle.digest);
       const members = readBundle(tar);
       expect([...members.keys()]).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
       expect(members.get("lakefile.toml")).toContain('path = "packages/Lax38Proofs"');
+      expect(members.get("Solution.lean")).toContain("@_root_.Lax38Proofs.«证明».{«λ»} h₁");
       expect(createHash("sha256").update(fs.readFileSync(path.join(jobDir, "certify", "challenge.export"))).digest("hex"))
         .toBe(certificate.challengeExportSha256);
+      expect(createHash("sha256").update(fs.readFileSync(path.join(jobDir, "certify", "solution.export"))).digest("hex"))
+        .toBe(certificate.solutionExportSha256);
+      expect(certificate.solutionExportSha256).not.toBe(certificate.challengeExportSha256);
       // what the local build-output.json would store: the record's shape
       const stored = recordedBuildOutput(out) as Record<string, any>;
       expect(stored.proofs[0]).not.toHaveProperty("conclusion");
@@ -273,9 +291,9 @@ end Lax38Proofs
       const referencesTar = fs.readFileSync(path.join(jobDir, "references.tar"));
       expect(createHash("sha256").update(referencesTar).digest("hex")).toBe(stored.capture.references.digest);
       expect(referencesTar.length).toBe(stored.capture.references.bytes);
-      // in the capture inventory's own order (seal.ts walks a directory before its sibling files)
+      // in byte order of the member names (seal.ts), never the walk's locale order
       const referenceMembers = [...readBundle(referencesTar).keys()];
-      expect(referenceMembers).toEqual(["./concepts/lib/Lax38/Order.ilean", "./concepts/lib/Lax38.ilean", "./concepts/package/Lax38/Order.lean", "./concepts/package/Lax38.lean"]);
+      expect(referenceMembers).toEqual(["./concepts/lib/Lax38.ilean", "./concepts/lib/Lax38/Order.ilean", "./concepts/package/Lax38.lean", "./concepts/package/Lax38/Order.lean"]);
       expect(readBundle(referencesTar).get("./concepts/package/Lax38/Order.lean")).toBe(out.concepts[0]!.sourceText);
       expect(out.inputs.manifest.specVersion).toBe("2");
       expect(out.concepts).toHaveLength(1);
@@ -298,6 +316,15 @@ end Lax38Proofs
           doc: "reflexivity, universe-polymorphic",
           startLine: 16,
           endLine: 17,
+        },
+        {
+          id: "Lax38.Order.定理",
+          levelParams: ["λ"],
+          signature: "«定理».{«λ»} : Prop",
+          body: "∀ (α : Sort «λ») (a : α), Eq a a",
+          doc: "a name Lean cannot read unquoted, over a universe it cannot either",
+          startLine: 22,
+          endLine: 23,
         },
       ]);
       expect(out.proofs).toEqual([
@@ -322,6 +349,18 @@ end Lax38Proofs
           assumptions: ["Lax38.Order.HasSucc"],
           description: "conditional, universe-polymorphic",
           sections: [{ title: "Strategy", markdown: "Ignore the hypothesis." }],
+        },
+        {
+          id: "Lax38Proofs.证明",
+          path: "proofs/Lax38Proofs/Basic.lean",
+          levelParams: ["λ"],
+          telescope: {
+            hypotheses: [{ statement: "Lax38.Order.HasSucc", levels: [], binder: "default" }],
+            conclusion: { statement: "Lax38.Order.定理", levels: ["λ"] },
+          },
+          conclusion: "Lax38.Order.定理",
+          assumptions: ["Lax38.Order.HasSucc"],
+          description: "quoted all the way: the proof, its universe, the statement",
         },
       ]);
       // and the entries carry their keys in the documented order; the CLI
@@ -427,11 +466,13 @@ end Lax43Proofs
   // The archive's own layout, rehearsed without docker: the submission's
   // captures staged as Lake path dependencies (certify/project.ts
   // stageOwnPackage), the two run projects with path-entry manifests and
-  // warm-store overrides, and the in-container tool
-  // (sandbox/tools/run-certify.mjs) driven twice with host paths in place of
-  // the mount points — `lake build Challenge` plus `leanexport` over a
-  // composed LEAN_PATH, then `lake comparator --challenge-from-export`.
-  it("rehearses the two-container layout over the staged captures with the real tool script", async () => {
+  // warm-store overrides, the judge's project (the bundle verbatim) with its
+  // read-only shim, and the in-container tool (sandbox/tools/run-certify.mjs)
+  // driven three times with host paths in place of the mount points —
+  // `lake build Challenge` plus `leanexport` over a composed LEAN_PATH, the
+  // same for `Solution`, then `lake comparator` over both exports with the
+  // project and the shim directory made read-only for the run.
+  it("rehearses the three-container layout over the staged captures with the real tool script", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;
       expect(lax38).toBeDefined();
@@ -481,7 +522,7 @@ end Lax43Proofs
       const exportPath = path.join(challengeDir, "challenge.export");
       const planA = path.join(challengeDir, "plan.json");
       fs.writeFileSync(planA, JSON.stringify({
-        tool: "challenge",
+        tool: "export",
         project: challengeProject,
         module: "Challenge",
         targets: plan.exportTargets,
@@ -501,9 +542,10 @@ end Lax43Proofs
       expect(exported).toContain('"str":"Cert"');
       expect(exported).toContain('"str":"hasSucc"');
       expect(exported).toContain('"str":"refl_of_hasSucc"');
+      expect(exported).toContain('"str":"证明"');
       expect(exported).toMatch(/"thm":/u);
 
-      // B
+      // B: the Solution, built and exported by the same rule
       const solutionDir = path.join(root, "solution");
       const solutionProject = path.join(solutionDir, "project");
       writeRunProject(solutionProject, path.join(solutionDir, "build", ".lake"), solutionProjectFiles(plan, record, gitSources), {
@@ -516,30 +558,191 @@ end Lax43Proofs
       seedOverrides(warm, path.join(solutionDir, "build"));
       fs.rmdirSync(path.join(solutionProject, ".lake"));
       fs.symlinkSync(path.join(solutionDir, "build", ".lake"), path.join(solutionProject, ".lake"));
-      fs.chmodSync(exportPath, 0o444);
+      const solutionExport = path.join(solutionDir, "solution.export");
       const planB = path.join(solutionDir, "plan.json");
       fs.writeFileSync(planB, JSON.stringify({
-        tool: "comparator",
+        tool: "export",
         project: solutionProject,
-        config: "comparator.json",
-        challengeExport: exportPath,
-        paranoid: false,
+        module: "Solution",
+        targets: plan.exportTargets,
+        leanPath: [projectLibDir(solutionProject), concepts.libDir, proofs.libDir, ...warmLibDirs(warmPackages, warm)],
+        output: solutionExport,
         toolchainBin,
         home: path.join(root, "home"),
       }));
-      const judged = await runTool(planB, "B (comparator)");
-      expect(judged.output, judged.output).toContain("Your solution is okay!");
-      expect(interpretComparatorRun(judged)).toEqual({ kind: "certified" });
+      const builtB = await runTool(planB, "B (build + export)");
+      expect(builtB.output, builtB.output).not.toContain("error:");
+      expect(builtB.code).toBe(0);
+      expect(fs.readFileSync(solutionExport, "utf8")).toContain('"str":"Cert"');
       // the lakefile B ran kept the bundle's git requires; the manifest's
       // path entries did the redirecting, as a submission build's do
       expect(fs.readFileSync(path.join(solutionProject, "lakefile.toml"), "utf8")).toContain(`git = "${lax38!.report.request.source.repository}"`);
       // the capture root was never written to
       expect(fs.existsSync(path.join(captureRoot, "concepts", "package", ".lake"))).toBe(false);
-      // and the paranoid set runs through the same tool when asked
-      fs.writeFileSync(planB, JSON.stringify({ ...JSON.parse(fs.readFileSync(planB, "utf8")), paranoid: true }));
-      const paranoid = await runTool(planB, "B (comparator --paranoid)");
-      expect(paranoid.output, paranoid.output).toContain("Your solution is okay!");
-      expect(paranoid.output).toContain("lean4lean kernel accepts the solution");
+
+      // C: the judge over the two exports, in the bundle's own project —
+      // the project, the shim directory and both exports read-only for the
+      // run, so a comparator that wrote anywhere but its temp dir would fail
+      const judgeDir = path.join(root, "judge");
+      const judge = writeJudgeProject(judgeDir, plan.bundle);
+      expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+      expect(fs.readFileSync(path.join(judge.shimsDir, "git"), "utf8")).toBe(GIT_SHIM);
+      fs.chmodSync(exportPath, 0o444);
+      fs.chmodSync(solutionExport, 0o444);
+      fs.chmodSync(judge.projectDir, 0o555);
+      fs.chmodSync(judge.shimsDir, 0o555);
+      const planC = path.join(judgeDir, "plan.json");
+      const judgePlan = {
+        tool: "comparator",
+        project: judge.projectDir,
+        config: "comparator.json",
+        challengeExport: exportPath,
+        solutionExport,
+        shims: judge.shimsDir,
+        paranoid: false,
+        toolchainBin,
+        home: path.join(root, "home"),
+      };
+      try {
+        fs.writeFileSync(planC, JSON.stringify(judgePlan));
+        const judged = await runTool(planC, "C (comparator over both exports)");
+        expect(judged.output, judged.output).toContain("Your solution is okay!");
+        // nothing was built or resolved: the comparator went straight to the comparison
+        expect(judged.output).not.toContain("Building");
+        expect(judged.output).not.toContain("Resolving");
+        expect(interpretComparatorRun(judged)).toEqual({ kind: "certified" });
+        expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+        // and the paranoid set runs through the same tool when asked
+        fs.writeFileSync(planC, JSON.stringify({ ...judgePlan, paranoid: true }));
+        const paranoid = await runTool(planC, "C (comparator --paranoid)");
+        expect(paranoid.output, paranoid.output).toContain("Your solution is okay!");
+        expect(paranoid.output).toContain("lean4lean kernel accepts the solution");
+        // the git shim is what `which git` finds, and it refuses to run
+        const probe = await run(path.join(judge.shimsDir, "git"), ["status"], root, {});
+        expect(probe.code).toBe(1);
+        expect(probe.output).toContain("git is not available inside the validation sandbox");
+      } finally {
+        fs.chmodSync(judge.projectDir, 0o755);
+        fs.chmodSync(judge.shimsDir, 0o755);
+      }
+    });
+  }, 600_000);
+
+  // Finding 6 of the stage-3 review: a nonstrict build's sibling concept
+  // package is a local package source the certificate plan must accept — a
+  // path require inside the generated project — so a proof that assumes a
+  // sibling's statement reaches certification on the host.
+  it("certifies, under --nonstrict, a proof over a sibling checkout's statement with a local plan", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const base = tmpDir("lax-spec2-siblings-");
+      const sibling = makeHostSubmission(
+        "lax-44",
+        {
+          "concepts/Lax44.lean": "import Lax44.Claim\n",
+          "concepts/Lax44/Claim.lean": `import LaxCore
+
+/-!
+---
+title: A sibling's claim
+type: theorem
+---
+One statement, in a draft beside the dependent.
+-/
+
+namespace Lax44.Claim
+
+@[lax_statement] def Holds : Prop := ∀ n : Nat, n = n
+
+end Lax44.Claim
+`,
+        },
+        base,
+        { environment },
+      );
+      const dependent = makeHostSubmission(
+        "lax-45",
+        {
+          "concepts/Lax45.lean": "import Lax45.Chain\n",
+          "concepts/Lax45/Chain.lean": `import LaxCore
+
+/-!
+---
+title: Chain over a sibling
+type: theorem
+---
+A statement proven from the sibling's.
+-/
+
+namespace Lax45.Chain
+
+@[lax_statement] def Downstream : Prop := ∀ n : Nat, n = n
+
+end Lax45.Chain
+`,
+          "proofs/Lax45Proofs.lean": "import Lax45Proofs.Basic\n",
+          "proofs/Lax45Proofs/Basic.lean": `import Lax45.Chain
+import Lax44.Claim
+
+namespace Lax45Proofs
+
+/-- the downstream statement, from the sibling's -/
+theorem downstream (h : Lax44.Claim.Holds) : Lax45.Chain.Downstream := h
+
+end Lax45Proofs
+`,
+        },
+        base,
+        { environment },
+      );
+      fs.appendFileSync(
+        path.join(dependent, "proofs", "lakefile.toml"),
+        '\n[[require]]\nname = "Lax44"\npath = "../../lax-44/concepts"\n',
+      );
+      const strict = await buildOnHost(dependent, { id: "lax-45" });
+      expect(strict.ok).toBe(false);
+      expect(strict.buildOutput).toBeUndefined();
+
+      const jobDir = path.join(tmpDir("lax-45-job-"), "work");
+      const report = await buildOnHost(dependent, { id: "lax-45", nonstrict: true, jobDir });
+      expect(messages(report)).toBe("");
+      expect(report.ok).toBe(true);
+      expect(report.siblings).toEqual(["Lax44"]);
+      const certificate = report.buildOutput!.certificate!;
+      expect(certificate.challenge).toContain("import Lax44\nimport Lax45\n");
+      expect(certificate.challenge).toContain(
+        "theorem Cert.Lax45Proofs.downstream\n    (h₁ : _root_.Lax44.Claim.Holds)\n    : _root_.Lax45.Chain.Downstream := sorry",
+      );
+      // the local plan: the sibling is a path require of the generated
+      // project, reached through a link at the sibling's own checkout
+      const members = readBundle(fs.readFileSync(path.join(jobDir, "certify", "certificate.tar")));
+      expect(members.get("lakefile.toml")).toContain('name = "Lax44"\npath = "packages/Lax44"');
+      expect(members.get("lakefile.toml")).not.toContain("lax-44/concepts");
+      expect(fs.readlinkSync(path.join(jobDir, "certify", "project", "packages", "Lax44")))
+        .toBe(fs.realpathSync(path.join(sibling, "concepts")));
+      // and the plan itself says it is local
+      const plan = planCertificate({
+        proofs: report.buildOutput!.proofs,
+        ownConcepts: "Lax45",
+        ownProofs: "Lax45Proofs",
+        source: report.request.source,
+        environment,
+        resolution: { concepts: [], proofs: [], all: [] },
+        warmPackages: [],
+        local: { directConcepts: ["Lax44"], packages: [{ name: "Lax44", kind: "concepts", dir: path.join(sibling, "concepts") }] },
+      })!;
+      expect(plan.kind).toBe("local");
+      expect(plan.referencedLocal).toEqual(["Lax44"]);
+      expect(plan.gitSources.has("Lax44")).toBe(false);
+      expect(() => planCertificate({
+        proofs: report.buildOutput!.proofs,
+        ownConcepts: "Lax45",
+        ownProofs: "Lax45Proofs",
+        source: report.request.source,
+        environment,
+        resolution: { concepts: [], proofs: [], all: [] },
+        warmPackages: [],
+      })).toThrow("does not require directly");
     });
   }, 600_000);
 

@@ -98,35 +98,68 @@ export function run(
 /**
  * Run a command with its stdout streamed to `outFile` and only its stderr
  * captured as the transcript — for a tool whose stdout *is* its product and
- * is far too large to hold (the Challenge export of certify/host.ts, tens of
- * MB of NDJSON). No echo, no timeout: the callers' phases bound it.
+ * is far too large to hold (the exports of certify/host.ts, tens of MB of
+ * NDJSON). No echo. `timeoutMs` works as in `run` (the whole process group,
+ * code 124); the certificate's callers pass one, since the exporter's own
+ * runtime is the cone's size and nothing else bounds it.
  */
 export function runToFile(
   cmd: string,
   args: string[],
   cwd: string,
   outFile: string,
-  opts: { env?: Record<string, string>; maxOutputBytes?: number } = {},
+  opts: { env?: Record<string, string>; maxOutputBytes?: number; timeoutMs?: number } = {},
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const descriptor = fs.openSync(outFile, "w");
-    const child = spawn(cmd, args, {
-      cwd,
-      stdio: ["ignore", descriptor, "pipe"],
-      env: opts.env ? { ...process.env, ...opts.env } : undefined,
-    });
+    // a spawn failure emits `error` and then `close`: the descriptor is
+    // closed by whichever comes first and never twice
+    let closed = false;
+    const closeOnce = (): void => {
+      if (closed) return;
+      closed = true;
+      fs.closeSync(descriptor);
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(cmd, args, {
+        cwd,
+        stdio: ["ignore", descriptor, "pipe"],
+        env: opts.env ? { ...process.env, ...opts.env } : undefined,
+        detached: opts.timeoutMs !== undefined,
+      });
+    } catch (error) {
+      closeOnce();
+      reject(error);
+      return;
+    }
     let output = "";
+    let timedOut = false;
+    const timer =
+      opts.timeoutMs !== undefined
+        ? setTimeout(() => {
+            timedOut = true;
+            try {
+              process.kill(-child.pid!, "SIGKILL");
+            } catch {
+              child.kill("SIGKILL");
+            }
+          }, opts.timeoutMs)
+        : undefined;
     child.stderr?.on("data", (data: Buffer) => {
       if (opts.maxOutputBytes !== undefined && output.length >= opts.maxOutputBytes) return;
       output += data.toString();
     });
     child.on("error", (error) => {
-      fs.closeSync(descriptor);
+      if (timer !== undefined) clearTimeout(timer);
+      closeOnce();
       reject(error);
     });
     child.on("close", (code) => {
-      fs.closeSync(descriptor);
-      resolve({ code: code ?? 1, output });
+      if (timer !== undefined) clearTimeout(timer);
+      closeOnce();
+      if (timedOut) output += `\n[killed after ${Math.round(opts.timeoutMs! / 1000)}s timeout]\n`;
+      resolve({ code: timedOut ? 124 : (code ?? 1), output });
     });
   });
 }

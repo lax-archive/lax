@@ -1,21 +1,32 @@
-// The trusted Certify phase (axiomfree-plan.md, "Certify" 2–3; the draft
-// spec's "Two containers"): two runs in the existing docker runner under the
-// existing env allowlist and limits.
+// The trusted Certify phase (axiomfree-plan.md, "Certify" 2–3, hardened
+// 2026-10-04 after spike/axiomfree/codex-review-stages1-3-20261003.md
+// finding 1): three runs in the existing docker runner under the existing
+// env allowlist and limits.
 //
 //   A  mounts the warm store, the record's own concept capture and the
-//      materialised dependency captures read-only, and the Challenge half of
-//      the generated project (read-only except its `.lake`); builds
+//      concept closure's materialised captures read-only, and the Challenge
+//      half of the generated project (read-only except its `.lake`); builds
 //      `Challenge` and exports it with the toolchain's `leanexport` to
-//      `challenge.export`. Nothing of the proof package is mounted.
-//   B  mounts the same plus the proof capture and the whole project, with
-//      `challenge.export` read-only, and runs `lake comparator
-//      --challenge-from-export … --inadvisably-no-sandbox`, with `--paranoid`
-//      when the environment's kernel setting says so.
+//      `challenge.export`. Nothing of any proof package is mounted.
+//   B  mounts the same plus the proof capture and the whole project, builds
+//      `Solution` and exports it the same way to `solution.export`. B is the
+//      only container that executes the proof package's code (its
+//      initializers run during the build), and it is torn down before C.
+//   C  the judge: a fresh container with the bundle's five files read-only,
+//      both exports read-only, the toolchain, the tools, and a read-only
+//      `git` shim — no capture, no warm store, no `/deps`, nothing writable
+//      but `/out` and the noexec `/tmp` — running `lake comparator
+//      --challenge-from-export … --solution-from-export …
+//      --inadvisably-no-sandbox [--paranoid]`. With both exports supplied the
+//      comparator builds nothing and resolves nothing (Lake/CLI/Check.lean
+//      runComparator); it parses the two exports, compares the theorems, and
+//      runs the kernels over the Solution export.
 //
-// The container is the sandbox: B holds no token, and nothing B writes is
-// read by anything but the verdict parser (certify/verdict.ts). A, which
-// never sees the proof package, is what produced the export B judges — the
-// Solution build cannot touch the Challenge export or the toolchain.
+// The container is the sandbox: no run holds a token, and nothing B writes
+// reaches C — B's writable mounts are its own `.lake` and `/out`, C mounts
+// neither, and the file C reads from B's `/out` is bind-mounted alone, so a
+// `which` planted beside it is invisible. C's PATH has no writable entry at
+// all, which is what makes `which leanchecker` resolve to the toolchain's.
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -26,16 +37,22 @@ import { containerBoundaryFailure, infrastructureFailure, type PipelineFailure }
 import { seedOverrides } from "../host/warmstore.js";
 import type { ContainerMount, ValidationRunner } from "../sandbox/container.js";
 import { sealBundle } from "./bundle.js";
+import { LeanNameError } from "./lean-name.js";
 import {
   CERTIFY_PATHS,
   CHALLENGE_MODULE,
+  SOLUTION_MODULE,
   challengeProjectFiles,
+  dependencyLibDir,
+  dependencyMounts,
+  dependencyPackageDir,
   kernelsOf,
   planCertificate,
   projectLibDir,
   solutionProjectFiles,
   stageOwnPackage,
   warmLibDirs,
+  writeJudgeProject,
   writeRunProject,
   type CertifyPlan,
   type CertifyRecord,
@@ -90,7 +107,6 @@ function prepareRun(
     mounts: [
       { source: projectDir, target: CERTIFY_PATHS.project },
       { source: path.join(buildDir, ".lake"), target: `${CERTIFY_PATHS.project}/.lake`, writable: true },
-      ...(fs.existsSync(input.dependencyRoot) ? [{ source: input.dependencyRoot, target: CERTIFY_PATHS.deps }] : []),
       { source: outDir, target: CERTIFY_PATHS.out, writable: true },
     ],
   };
@@ -118,11 +134,47 @@ function boundary(result: { code: number; output: string; timedOut: boolean }, w
   return containerBoundaryFailure(result, `${what} exceeded its time limit`, `${what} exceeded its memory limit`);
 }
 
+/** The export a container wrote, held to being a plain non-empty file —
+ * never a symlink the build left pointing elsewhere — and digested. */
+function exportedFile(filename: string, what: string): { exportPath: string; sha256: string } {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(filename);
+  } catch {
+    throw infrastructureFailure(`the ${what} export was not produced`);
+  }
+  if (!stat.isFile()) throw infrastructureFailure(`the ${what} export is not a regular file`);
+  if (stat.size === 0) throw infrastructureFailure(`the ${what} export is empty`);
+  return { exportPath: filename, sha256: sha256File(filename) };
+}
+
+/** A generated name the escaper cannot write is the record's problem to
+ * read, on the `certify` phase, before anything runs. */
+export function nameViolation(error: unknown): CertifyResult | undefined {
+  if (!(error instanceof LeanNameError)) return undefined;
+  return {
+    kind: "violation",
+    rule: "name",
+    message:
+      `${error.message}; the certificate names every statement and proof as a Lean identifier, and this ` +
+      "component cannot be written as one — rename the declaration",
+  };
+}
+
 export async function certifyInContainer(input: CertifyPhaseInput): Promise<CertifyResult> {
-  const plan = planCertificate(input.record);
+  let plan: CertifyPlan | undefined;
+  try {
+    plan = planCertificate(input.record);
+  } catch (error) {
+    const violation = nameViolation(error);
+    if (violation !== undefined) return violation;
+    throw error;
+  }
   if (plan === undefined) return { kind: "nothing" };
+  if (plan.kind !== "publishable") throw new Error("the trusted Certify phase was handed a local plan");
   const root = path.join(input.jobDir, "certify");
   const gitSources = requireSources(plan, input.record);
+  const leanThreads = { LEAN_NUM_THREADS: String(input.limits.leanThreads) };
 
   // ── A: the Challenge, over the concept packages alone ──────────────────
   const challenge = await input.phase("certify challenge", async () => {
@@ -134,17 +186,13 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
       challengeProjectFiles(plan, input.record, gitSources),
       [
         { name: input.record.ownConcepts, dir: `${CERTIFY_PATHS.own}/concepts/package` },
-        ...plan.challengeClosure.map((dependency) => ({
-          name: dependency.packageName,
-          dir: `${CERTIFY_PATHS.deps}/${dependency.submissionId}/${dependency.kind}/package`,
-        })),
+        ...plan.challengeClosure.map((dependency) => ({ name: dependency.packageName, dir: dependencyPackageDir(dependency) })),
       ],
     );
-    const exportPath = path.join(run.outDir, "challenge.export");
     fs.writeFileSync(
       path.join(run.outDir, "plan.json"),
       `${JSON.stringify({
-        tool: "challenge",
+        tool: "export",
         project: CERTIFY_PATHS.project,
         module: CHALLENGE_MODULE,
         targets: plan.exportTargets,
@@ -153,7 +201,7 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
         leanPath: [
           projectLibDir(CERTIFY_PATHS.project),
           `${CERTIFY_PATHS.own}/concepts/lib`,
-          ...plan.challengeClosure.map((dependency) => `${CERTIFY_PATHS.deps}/${dependency.submissionId}/${dependency.kind}/lib`),
+          ...plan.challengeClosure.map(dependencyLibDir),
           ...warmLibDirs(input.record.warmPackages, RUNTIME_PATHS.warmWorkspace),
         ],
         output: `${CERTIFY_PATHS.out}/challenge.export`,
@@ -163,8 +211,8 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
     const result = await input.runner.run({
       label: "certify-challenge",
       args: ["node", "/opt/lax/bin/run-certify.mjs", `${CERTIFY_PATHS.out}/plan.json`],
-      mounts: [...run.mounts, ...ownMounts("concepts", concepts)],
-      env: { LEAN_NUM_THREADS: String(input.limits.leanThreads) },
+      mounts: [...run.mounts, ...ownMounts("concepts", concepts), ...dependencyMounts(input.dependencyRoot, plan.challengeClosure)],
+      env: leanThreads,
       timeoutMs: input.limits.checkTimeoutMs,
       maxOutputBytes: input.limits.maxOutputBytes,
     });
@@ -181,19 +229,12 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
           result.output.trim(),
       };
     }
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(exportPath);
-    } catch {
-      throw infrastructureFailure("the Challenge export was not produced");
-    }
-    if (!stat.isFile() || stat.size === 0) throw infrastructureFailure("the Challenge export is empty");
-    return { kind: "exported" as const, exportPath, sha256: sha256File(exportPath) };
+    return { kind: "exported" as const, ...exportedFile(path.join(run.outDir, "challenge.export"), "Challenge") };
   });
   if (challenge.kind === "violation") return challenge;
 
-  // ── B: the Solution, judged against the export ─────────────────────────
-  const verdict = await input.phase("certify solution", async () => {
+  // ── B: the Solution, built over the proof package and exported ─────────
+  const solution = await input.phase("certify solution", async () => {
     const concepts = stageOwnPackage(input.captureRoot, "concepts", path.join(root, "own-solution"), (tree) =>
       `${CERTIFY_PATHS.own}/concepts/${tree}`);
     const proofs = stageOwnPackage(input.captureRoot, "proofs", path.join(root, "own-solution"), (tree) =>
@@ -205,20 +246,24 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
       [
         { name: input.record.ownConcepts, dir: `${CERTIFY_PATHS.own}/concepts/package` },
         { name: input.record.ownProofs, dir: `${CERTIFY_PATHS.own}/proofs/package` },
-        ...plan.solutionClosure.map((dependency) => ({
-          name: dependency.packageName,
-          dir: `${CERTIFY_PATHS.deps}/${dependency.submissionId}/${dependency.kind}/package`,
-        })),
+        ...plan.solutionClosure.map((dependency) => ({ name: dependency.packageName, dir: dependencyPackageDir(dependency) })),
       ],
     );
     fs.writeFileSync(
       path.join(run.outDir, "plan.json"),
       `${JSON.stringify({
-        tool: "comparator",
+        tool: "export",
         project: CERTIFY_PATHS.project,
-        config: "comparator.json",
-        challengeExport: CERTIFY_PATHS.challengeExport,
-        paranoid: input.limits.certificationKernels === "paranoid",
+        module: SOLUTION_MODULE,
+        targets: plan.exportTargets,
+        leanPath: [
+          projectLibDir(CERTIFY_PATHS.project),
+          `${CERTIFY_PATHS.own}/concepts/lib`,
+          `${CERTIFY_PATHS.own}/proofs/lib`,
+          ...plan.solutionClosure.map(dependencyLibDir),
+          ...warmLibDirs(input.record.warmPackages, RUNTIME_PATHS.warmWorkspace),
+        ],
+        output: `${CERTIFY_PATHS.out}/solution.export`,
       })}\n`,
       { mode: 0o600 },
     );
@@ -229,10 +274,61 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
         ...run.mounts,
         ...ownMounts("concepts", concepts),
         ...ownMounts("proofs", proofs),
-        // read-only: the Solution build cannot touch what it is judged against
-        { source: challenge.exportPath, target: CERTIFY_PATHS.challengeExport },
+        ...dependencyMounts(input.dependencyRoot, plan.solutionClosure),
       ],
-      env: { LEAN_NUM_THREADS: String(input.limits.leanThreads) },
+      env: leanThreads,
+      timeoutMs: input.limits.checkTimeoutMs,
+      maxOutputBytes: input.limits.maxOutputBytes,
+    });
+    if (result.code !== 0) {
+      const failure = boundary(result, "building the certificate Solution");
+      if (failure !== undefined) throw failure;
+      return {
+        kind: "violation" as const,
+        rule: "solution-build",
+        message:
+          "the generated Solution did not elaborate — the certificate lax wrote from the proofs' telescopes does " +
+          "not apply the proofs the way Lean reads them, so lax's generator and classifier disagree with Lean; " +
+          "please report it as a lax bug, quoting this message. The transcript:\n" +
+          result.output.trim(),
+      };
+    }
+    return { kind: "exported" as const, ...exportedFile(path.join(run.outDir, "solution.export"), "Solution") };
+  });
+  if (solution.kind === "violation") return solution;
+
+  // ── C: the judge, over the two frozen exports ──────────────────────────
+  const verdict = await input.phase("certify judge", async () => {
+    const judge = writeJudgeProject(path.join(root, "judge"), plan.bundle);
+    const outDir = path.join(root, "judge", "out");
+    fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(outDir, "plan.json"),
+      `${JSON.stringify({
+        tool: "comparator",
+        project: CERTIFY_PATHS.project,
+        config: "comparator.json",
+        challengeExport: CERTIFY_PATHS.challengeExport,
+        solutionExport: CERTIFY_PATHS.solutionExport,
+        shims: CERTIFY_PATHS.shims,
+        paranoid: input.limits.certificationKernels === "paranoid",
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const result = await input.runner.run({
+      label: "certify-judge",
+      runtime: "judge",
+      args: ["node", "/opt/lax/bin/run-certify.mjs", `${CERTIFY_PATHS.out}/plan.json`],
+      mounts: [
+        { source: judge.projectDir, target: CERTIFY_PATHS.project },
+        { source: judge.shimsDir, target: CERTIFY_PATHS.shims },
+        // read-only, each file alone: the judge sees the bytes, not the
+        // directories the builds wrote them into
+        { source: challenge.exportPath, target: CERTIFY_PATHS.challengeExport },
+        { source: solution.exportPath, target: CERTIFY_PATHS.solutionExport },
+        { source: outDir, target: CERTIFY_PATHS.out, writable: true },
+      ],
+      env: leanThreads,
       timeoutMs: input.limits.checkTimeoutMs,
       maxOutputBytes: input.limits.maxOutputBytes,
     });
@@ -254,6 +350,7 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
       kernels: kernelsOf(input.limits.certificationKernels, input.record.environment),
       bundle: { formatVersion: 1, digest: sealed.digest },
       challengeExportSha256: challenge.sha256,
+      solutionExportSha256: solution.sha256,
       challenge: plan.bundle["Challenge.lean"],
     },
   };

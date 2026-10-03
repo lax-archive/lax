@@ -1,11 +1,11 @@
 // What both Certify paths share above the generator: which packages a
-// record's certificate involves and where each comes from, the three
-// projects written from the generated files (the bundle a reader reruns, the
-// Challenge half container A builds, the whole container B judges), the
-// staging of the submission's own captures as Lake path dependencies, and
-// the in-container layout. The trusted phase (phase.ts) and the local host
-// run (host.ts) differ only in where the packages are found and how the two
-// commands execute.
+// record's certificate involves and where each comes from, the projects
+// written from the generated files (the bundle a reader reruns — and the
+// judge judges — the Challenge half container A builds, the whole container B
+// builds the Solution from), the staging of the submission's own captures as
+// Lake path dependencies, and the in-container layout. The trusted phase
+// (phase.ts) and the local host run (host.ts) differ only in where the
+// packages are found and how the three commands execute.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -21,9 +21,11 @@ import { librariesOf } from "../environments.js";
 import { leanFacts } from "../lean-facts.js";
 import { manifestText, type SeededDependency } from "../host/warmstore.js";
 import { dependencySubDir } from "../phases/provision.js";
+import type { ContainerMount } from "../sandbox/container.js";
 import {
   BUNDLE_FILES,
   CHALLENGE_MODULE,
+  SOLUTION_MODULE,
   challengeText,
   certifiedProof,
   comparatorConfigText,
@@ -42,18 +44,30 @@ import {
 /**
  * The stable in-container paths of the Certify mounts, beside RUNTIME_PATHS
  * (config.ts). Container A sees `project` (its Challenge half, read-only
- * except `.lake`), `own/concepts/*`, `deps`, and `out`; container B sees the
- * whole project, both own packages, `deps`, the Challenge export read-only
- * at `challengeExport`, and `out`. Nothing of the proof package is ever
- * mounted into A.
+ * except `.lake`), `own/concepts/*`, the concept closure under `deps`, and
+ * `out`; container B sees the whole project the same way, both own
+ * packages, the solution closure under `deps`, and `out`; container C — the
+ * judge — sees the bundle at `project` read-only, both exports read-only,
+ * the read-only `shims`, and `out`, and nothing else: no capture, no warm
+ * store, no `deps`. Nothing of any proof package is ever mounted into A.
  */
 export const CERTIFY_PATHS = {
   project: "/cert/project",
   own: "/cert/own",
   deps: "/deps",
   challengeExport: "/cert/challenge.export",
+  solutionExport: "/cert/solution.export",
+  shims: "/cert/shims",
   out: "/out",
 } as const;
+
+/** A sibling package a nonstrict local build built in place (host/siblings.ts). */
+export interface LocalPackage {
+  name: string;
+  kind: "concepts" | "proofs";
+  /** absolute package directory on this machine */
+  dir: string;
+}
 
 /** The record's certifiable content: its proofs, both own packages, and
  * where the record itself lives. */
@@ -66,45 +80,72 @@ export interface CertifyRecord {
   resolution: ResolutionResult;
   /** The warm workspace's locked entries (host/warmstore.ts). */
   warmPackages: readonly Record<string, unknown>[];
+  /**
+   * Local (`lax build --nonstrict`) builds only: the sibling packages built
+   * in place — the whole closure lake needs in the manifest, and which of
+   * them the proof package requires directly, whose statements the edges may
+   * name (phases/inspect-spec2.ts admits exactly those). A plan over a record
+   * with siblings is local: its bundle has path requires and its digest means
+   * nothing outside this machine. The trusted path never sets this.
+   */
+  local?: {
+    directConcepts: readonly string[];
+    packages: readonly LocalPackage[];
+  };
 }
 
-/** Everything the generator and the two runs read from a record. */
+/** Everything the generator and the three runs read from a record. */
 export interface CertifyPlan {
+  /** A publishable plan has git requires only; a local one has path requires
+   * to sibling packages and is never published. */
+  kind: "publishable" | "local";
   proofs: CertifiedProof[];
   theoremNames: string[];
-  /** The exporter's declaration list for the Challenge: what the comparator
+  /** The exporter's declaration list for both exports: what the comparator
    * itself would export (lean-facts.ts comparatorExportTargets). */
   exportTargets: string[];
-  /** The concept packages the edges name, other than the record's own. */
+  /** The archive-resolved concept packages the edges name, other than the
+   * record's own. */
   referenced: ResolvedDependency[];
+  /** The sibling concept packages the edges name (local plans only). */
+  referencedLocal: string[];
   /** Every dependency the Challenge half's workspace needs: the own concept
    * package's closure and the referenced packages' closures. */
   challengeClosure: ResolvedDependency[];
   /** Every dependency the whole project's workspace needs. */
   solutionClosure: ResolvedDependency[];
+  /** Every package the bundle's manifest lists beyond the libraries, in
+   * manifest order: the own two, the solution closure, then the siblings. */
+  manifestPackages: CertifyPackage[];
   /** The git source of every package the bundle names — both own packages
    * and the whole closure — for a run that keeps the bundle's requires and
-   * redirects them through its manifest. */
+   * redirects them through its manifest. Siblings have none. */
   gitSources: ReadonlyMap<string, { git: string; rev: string; subDir: string }>;
-  /** The bundle: what a reader reruns, with git requires at the records'
-   * source triples. */
+  /** The bundle: what a reader reruns and the judge judges, with git
+   * requires at the records' source triples. */
   bundle: Record<BundleFile, string>;
+}
+
+/** Code-point order: the one ordering every path regenerating a bundle
+ * agrees on (`localeCompare` depends on the process's locale data). */
+export function byName<T extends { name: string }>(a: T, b: T): number {
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
 /** The dependencies reachable from `start` through the resolved graph, by
  * package name — the same walk as phases/provision.ts dependencyClosure. */
 function closure(start: readonly string[], resolution: ResolutionResult): ResolvedDependency[] {
-  const byName = new Map(resolution.all.map((dependency) => [dependency.packageName, dependency]));
+  const byPackage = new Map(resolution.all.map((dependency) => [dependency.packageName, dependency]));
   const result = new Map<string, ResolvedDependency>();
   const visit = (name: string): void => {
-    const dependency = byName.get(name);
+    const dependency = byPackage.get(name);
     if (dependency === undefined || result.has(name)) return;
     result.set(name, dependency);
     dependency.requiredPackages.forEach(visit);
     if (dependency.kind === "proofs") visit(name.slice(0, -"Proofs".length));
   };
   start.forEach(visit);
-  return [...result.values()].sort((a, b) => a.packageName.localeCompare(b.packageName));
+  return [...result.values()].sort((a, b) => (a.packageName < b.packageName ? -1 : a.packageName > b.packageName ? 1 : 0));
 }
 
 function gitSource(dependency: ResolvedDependency): CertifyPackage {
@@ -129,9 +170,22 @@ function ownGitSource(name: string, source: SourceLocation, kind: "concepts" | "
   };
 }
 
+/** The in-project path a local package is required at: a symlink the host
+ * run makes under the generated project (host.ts). */
+export function localPackagePath(name: string): string {
+  return `packages/${name}`;
+}
+
+function localSource(name: string): CertifyPackage {
+  return { name, source: { path: localPackagePath(name) } };
+}
+
 /**
  * The plan for a record, or undefined when it has no proofs: nothing to
- * certify, nothing runs, and the record carries no `certificate`.
+ * certify, nothing runs, and the record carries no `certificate`. Throws
+ * when the proofs name a package the record does not require directly (the
+ * classifier admitted only direct requires, so that is a lax bug) and, from
+ * the generator, a LeanNameError for a name it cannot write.
  */
 export function planCertificate(record: CertifyRecord): CertifyPlan | undefined {
   if (record.proofs.length === 0) return undefined;
@@ -144,13 +198,16 @@ export function planCertificate(record: CertifyRecord): CertifyPlan | undefined 
       .filter((dependency) => dependency.kind === "concepts")
       .map((dependency) => [dependency.packageName, dependency]),
   );
+  const local = record.local;
+  const localDirect = new Set(local?.directConcepts ?? []);
   const referenced: ResolvedDependency[] = [];
+  const referencedLocal: string[] = [];
   for (const name of conceptPackagesOf(proofs)) {
     if (name === record.ownConcepts) continue;
     const dependency = direct.get(name);
-    if (dependency === undefined)
-      throw new Error(`the proofs name statements of ${name}, which the proof package does not require directly`);
-    referenced.push(dependency);
+    if (dependency !== undefined) referenced.push(dependency);
+    else if (localDirect.has(name) && local?.packages.some((pkg) => pkg.name === name && pkg.kind === "concepts")) referencedLocal.push(name);
+    else throw new Error(`the proofs name statements of ${name}, which the proof package does not require directly`);
   }
   const challengeClosure = closure(
     [...record.resolution.concepts.map((dependency) => dependency.packageName), ...referenced.map((dependency) => dependency.packageName)],
@@ -165,10 +222,12 @@ export function planCertificate(record: CertifyRecord): CertifyPlan | undefined 
   const ownProofs = ownGitSource(record.ownProofs, record.source, "proofs");
   const theoremNames = theoremNamesOf(proofs);
   const facts = leanFacts(record.environment);
+  const localPackages = [...(local?.packages ?? [])].sort(byName).map((pkg) => localSource(pkg.name));
+  const manifestPackages = [ownConcepts, ownProofs, ...solutionClosure.map(gitSource), ...localPackages];
   const gitSources = new Map<string, { git: string; rev: string; subDir: string }>();
-  for (const pkg of [ownConcepts, ownProofs, ...solutionClosure.map(gitSource)])
-    if ("git" in pkg.source) gitSources.set(pkg.name, pkg.source);
+  for (const pkg of manifestPackages) if ("git" in pkg.source) gitSources.set(pkg.name, pkg.source);
   return {
+    kind: localPackages.length === 0 ? "publishable" : "local",
     proofs,
     theoremNames,
     exportTargets: [
@@ -178,18 +237,21 @@ export function planCertificate(record: CertifyRecord): CertifyPlan | undefined 
       ...facts.comparatorExportTargets.slice(4),
     ],
     referenced,
+    referencedLocal,
     challengeClosure,
     solutionClosure,
+    manifestPackages,
     gitSources,
     bundle: {
       "Challenge.lean": challengeText(proofs),
       "Solution.lean": solutionText(proofs),
       "comparator.json": comparatorConfigText(proofs),
-      "lakefile.toml": lakefileText(libraries, [ownConcepts, ...referenced.map(gitSource), ownProofs], "bundle"),
-      "lake-manifest.json": manifestText(
-        record.warmPackages,
-        manifestDependencies([ownConcepts, ownProofs, ...solutionClosure.map(gitSource)]),
+      "lakefile.toml": lakefileText(
+        libraries,
+        [ownConcepts, ...referenced.map(gitSource), ...referencedLocal.map(localSource), ownProofs],
+        "bundle",
       ),
+      "lake-manifest.json": manifestText(record.warmPackages, manifestDependencies(manifestPackages)),
     },
   };
 }
@@ -223,6 +285,30 @@ export function writeRunProject(
   fs.mkdirSync(path.join(projectDir, ".lake"), { recursive: true, mode: 0o700 });
 }
 
+/**
+ * The judge's project: the bundle's five files verbatim, read-only, with
+ * no `.lake` — `lake comparator` given both exports loads no workspace,
+ * resolves nothing, builds nothing, and writes nothing (Lake/CLI/Check.lean
+ * runComparator: `needsProject` is false when both `--*-from-export` files
+ * are supplied), so the judge judges exactly the bytes the record publishes.
+ * Beside it the read-only `shims` directory: a `git` that fails loudly,
+ * because `mkContext` probes PATH for `git` and `env` with `which` before
+ * anything else, sandbox or not, and the stock image has no git.
+ */
+export function writeJudgeProject(root: string, bundle: Readonly<Record<BundleFile, string>>): { projectDir: string; shimsDir: string } {
+  const projectDir = path.join(root, "project");
+  const shimsDir = path.join(root, "shims");
+  fs.mkdirSync(projectDir, { recursive: true, mode: 0o755 });
+  fs.mkdirSync(shimsDir, { recursive: true, mode: 0o755 });
+  for (const name of BUNDLE_FILES) fs.writeFileSync(path.join(projectDir, name), bundle[name], { mode: 0o444 });
+  fs.writeFileSync(path.join(shimsDir, "git"), GIT_SHIM, { mode: 0o555 });
+  return { projectDir, shimsDir };
+}
+
+/** The failing `git` the judge's PATH offers to `lake comparator`'s probe. */
+export const GIT_SHIM =
+  '#!/bin/sh\necho "lax: git is not available inside the validation sandbox (invoked as: git $*)" >&2\nexit 1\n';
+
 /** The files container A builds: the Challenge half, no proof require. */
 export function challengeProjectFiles(
   plan: CertifyPlan,
@@ -233,7 +319,7 @@ export function challengeProjectFiles(
     "Challenge.lean": plan.bundle["Challenge.lean"],
     "lakefile.toml": lakefileText(
       librariesOf(record.environment),
-      [record.ownConcepts, ...plan.referenced.map((dependency) => dependency.packageName)].map((name) => ({
+      [record.ownConcepts, ...plan.referenced.map((dependency) => dependency.packageName), ...plan.referencedLocal].map((name) => ({
         name,
         source: requireSource(name),
       })),
@@ -242,8 +328,8 @@ export function challengeProjectFiles(
   };
 }
 
-/** The files container B (and a local run) judges: the whole bundle, with
- * the requires pointed where this run finds the packages. */
+/** The files container B (and a local run) builds the Solution from: the
+ * whole bundle, with the requires pointed where this run finds the packages. */
 export function solutionProjectFiles(
   plan: CertifyPlan,
   record: CertifyRecord,
@@ -255,9 +341,12 @@ export function solutionProjectFiles(
     "comparator.json": plan.bundle["comparator.json"],
     "lakefile.toml": lakefileText(
       librariesOf(record.environment),
-      [record.ownConcepts, ...plan.referenced.map((dependency) => dependency.packageName), record.ownProofs].map(
-        (name) => ({ name, source: requireSource(name) }),
-      ),
+      [
+        record.ownConcepts,
+        ...plan.referenced.map((dependency) => dependency.packageName),
+        ...plan.referencedLocal,
+        record.ownProofs,
+      ].map((name) => ({ name, source: requireSource(name) })),
       "bundle",
     ),
   };
@@ -302,6 +391,39 @@ export function stageOwnPackage(
   };
 }
 
+/**
+ * The mounts of exactly these materialised dependency captures, one subtree
+ * per dependency at its kind — `<root>/<id>/<kind>/{package,lib,ir}` at
+ * `/deps/<id>/<kind>/…`, where the capture's own build links point
+ * (captures/materialize.ts makeCapturedPackagesUsable). A record required as
+ * a concept package contributes its concept subtree alone: its proof
+ * subtree, which the same capture carries, is mounted nowhere.
+ */
+export function dependencyMounts(dependencyRoot: string, closure: readonly ResolvedDependency[]): ContainerMount[] {
+  const mounts: ContainerMount[] = [];
+  for (const dependency of closure) {
+    const source = path.join(dependencyRoot, dependency.submissionId, dependency.kind);
+    const target = `${CERTIFY_PATHS.deps}/${dependency.submissionId}/${dependency.kind}`;
+    for (const tree of ["package", "lib"] as const) {
+      if (!fs.existsSync(path.join(source, tree)))
+        throw new Error(`dependency capture ${dependency.submissionId} has no ${dependency.kind}/${tree} tree`);
+      mounts.push({ source: path.join(source, tree), target: `${target}/${tree}` });
+    }
+    if (fs.existsSync(path.join(source, "ir"))) mounts.push({ source: path.join(source, "ir"), target: `${target}/ir` });
+  }
+  return mounts;
+}
+
+/** The in-container package directory of a dependency in a closure. */
+export function dependencyPackageDir(dependency: ResolvedDependency): string {
+  return `${CERTIFY_PATHS.deps}/${dependency.submissionId}/${dependency.kind}/package`;
+}
+
+/** The in-container lib directory of a dependency in a closure. */
+export function dependencyLibDir(dependency: ResolvedDependency): string {
+  return `${CERTIFY_PATHS.deps}/${dependency.submissionId}/${dependency.kind}/lib`;
+}
+
 /** The lib directories of the warm store's packages, under `warmRoot`
  * (the in-container mount or the host path), for the composed LEAN_PATH. */
 export function warmLibDirs(warmPackages: readonly Record<string, unknown>[], warmRoot: string): string[] {
@@ -313,10 +435,10 @@ export function warmLibDirs(warmPackages: readonly Record<string, unknown>[], wa
     .map((name) => path.posix.join(warmRoot, ...facts.lakePackagesDir, name, ...facts.lakeLibDir));
 }
 
-/** The project's own build tree, where `lake build Challenge` leaves the
- * Challenge olean: the first entry of the exporter's LEAN_PATH. */
+/** The project's own build tree, where `lake build` leaves the Challenge and
+ * Solution oleans: the first entry of the exporter's LEAN_PATH. */
 export function projectLibDir(projectDir: string): string {
   return path.posix.join(projectDir, ...leanFacts().lakeLibDir);
 }
 
-export { CHALLENGE_MODULE };
+export { CHALLENGE_MODULE, SOLUTION_MODULE };

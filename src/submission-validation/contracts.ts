@@ -563,15 +563,21 @@ export interface CertificateJudge {
  * runs nothing and carries no key). The edges are not stored: they are the
  * proofs' telescopes, and `challenge` — `Challenge.lean` verbatim, the one
  * artifact that states in Lean exactly what was certified — is held to the
- * generator's regeneration from those telescopes by the trusted parser.
- * `challengeExportSha256` is the sha256 of the Challenge export container A
- * produced (tens of MB, never kept; a rerun compares digests).
+ * generator's regeneration from those telescopes by the trusted parser,
+ * which also regenerates and re-seals the whole bundle and holds the
+ * published tar to it byte for byte (certify/verify-bundle.ts).
+ * `challengeExportSha256` and `solutionExportSha256` are the sha256 of the
+ * two exports the judge read (tens of MB, never kept), computed by the host
+ * over the files it bind-mounted into the judge: host-recorded provenance a
+ * rerun of the bundle can compare its own exports against, not something the
+ * publisher can verify — it has no toolchain and no exports.
  */
 export interface CertificateOutput {
   judge: CertificateJudge;
   kernels: CertificationKernel[];
   bundle: CertificateBundle;
   challengeExportSha256: string;
+  solutionExportSha256: string;
   challenge: string;
 }
 

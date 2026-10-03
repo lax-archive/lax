@@ -19,8 +19,9 @@ export interface LeanEnv {
   leancheckerBin: string;
   /** run a binary with the composed LEAN_PATH from the given directory */
   exec: (bin: string, args: string[], cwd: string) => Promise<RunResult>;
-  /** the same, with stdout streamed to a file (the exporter's product) */
-  execToFile: (bin: string, args: string[], cwd: string, outFile: string) => Promise<RunResult>;
+  /** the same, with stdout streamed to a file (the exporter's product);
+   * `timeoutMs` kills the process group and answers 124, as `run` does */
+  execToFile: (bin: string, args: string[], cwd: string, outFile: string, opts?: { timeoutMs?: number }) => Promise<RunResult>;
 }
 
 export function elanHome(): string {
@@ -91,7 +92,7 @@ export function hostLeanEnv(
   return {
     leancheckerBin: leancheckerBin(environment),
     exec: (bin, args, cwd) => run(bin, args, cwd, { env }),
-    execToFile: (bin, args, cwd, outFile) => runToFile(bin, args, cwd, outFile, { env }),
+    execToFile: (bin, args, cwd, outFile, opts = {}) => runToFile(bin, args, cwd, outFile, { env, ...opts }),
   };
 }
 

@@ -449,8 +449,10 @@ function fixtures(): SmokeFixture[] {
     // Stage 3's Certify in the real containers (axiomfree-plan.md): a spec-2
     // submission with an unconditional and a conditional proof runs through
     // container A (the Challenge built and exported without the proof
-    // package) and container B (`lake comparator --challenge-from-export`
-    // over the proof capture), and the build output carries the certificate.
+    // package), container B (the Solution built and exported over the proof
+    // capture), and container C (`lake comparator` over both exports, with
+    // nothing of the builds mounted), and the build output carries the
+    // certificate.
     // Only selectable in a spec-2 environment, which the real table does not
     // have yet: inject the rehearsal row with the real mathlib at its tag and
     // the fixture LaxCore (a `file://` repository is fine — the warm store is
@@ -480,6 +482,25 @@ function fixtures(): SmokeFixture[] {
             const bundlePath = (report as { certificateBundlePath?: string }).certificateBundlePath;
             assert(bundlePath !== undefined && bundlePath.startsWith(jobRoot), "the bundle did not come out of the job directory");
             assert.equal(createHash("sha256").update(fs.readFileSync(bundlePath)).digest("hex"), certificate.bundle.digest);
+            // both exports were produced and digested, and the judge read them
+            // from the single-file mounts beside the bundle's own project
+            assert.match(certificate.challengeExportSha256, /^[0-9a-f]{64}$/u);
+            assert.match(certificate.solutionExportSha256, /^[0-9a-f]{64}$/u);
+            assert.notEqual(certificate.challengeExportSha256, certificate.solutionExportSha256);
+            const certifyDir = path.dirname(bundlePath);
+            const judgePlan = JSON.parse(fs.readFileSync(path.join(certifyDir, "judge", "out", "plan.json"), "utf8")) as Record<string, unknown>;
+            assert.equal(judgePlan.tool, "comparator");
+            assert.equal(judgePlan.solutionExport, "/cert/solution.export");
+            assert.equal(judgePlan.challengeExport, "/cert/challenge.export");
+            assert.deepEqual(fs.readdirSync(path.join(certifyDir, "judge", "project")).sort(), ["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+            assert.equal(
+              createHash("sha256").update(fs.readFileSync(path.join(certifyDir, "challenge", "out", "challenge.export"))).digest("hex"),
+              certificate.challengeExportSha256,
+            );
+            assert.equal(
+              createHash("sha256").update(fs.readFileSync(path.join(certifyDir, "solution", "out", "solution.export"))).digest("hex"),
+              certificate.solutionExportSha256,
+            );
             // the recorded shape: telescopes only, no capture pins
             const stored = recordedBuildOutput(report.buildOutput!) as Record<string, any>;
             assert.equal("conclusion" in stored.proofs[0], false);

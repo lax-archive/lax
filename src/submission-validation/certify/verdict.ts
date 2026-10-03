@@ -1,18 +1,23 @@
 // The one reading of `lake comparator`'s exit code and transcript
 // (history/audit-20260903.md: a rule lives at its boundary, not at the call
-// sites). Both paths — the trusted container B and the local host run —
+// sites). Both paths — the trusted judge container C and the local host run —
 // hand their result here and act on the verdict; neither inspects the
 // transcript itself.
 //
 // `lake comparator` (Lake/CLI/Check.lean, v4.35.0-rc3): exit 0 is the
 // verdict; exit 1 is a rejection — a statement mismatch, an illegal axiom, a
-// kernel rejection, or a build that did not succeed (`Child exited with 1`
-// after the Lean errors) — reported as one `error: …` line on stderr; exit 2
-// is "could not start": no manifest, no export file, no configuration, no
-// bubblewrap. The validator has already accepted every proof the Challenge
-// states, so an exit 1 is lax and the toolchain disagreeing: a violation on
-// the `certify` phase that names the edge and says so, so a fixture dying in
-// elaboration is noticed as such and never passes as a content verdict.
+// kernel rejection, or, when the comparator builds itself, a build that did
+// not succeed (`Child exited with 1` after the Lean errors) — reported as
+// one `error: …` line on stderr; exit 2 is "could not start": no manifest, no
+// export file, no configuration, no bubblewrap. Both lax paths hand the
+// comparator two finished exports, so it builds nothing and the Solution's
+// own build failure is the phase's `solution-build` violation before the
+// judge ever runs; the `Child exited` shape stays readable here for a
+// comparator driven by hand. The validator has already accepted every proof
+// the Challenge states, so an exit 1 is lax and the toolchain disagreeing: a
+// violation on the `certify` phase that names the edge and says so, so a
+// fixture dying in elaboration is noticed as such and never passes as a
+// content verdict.
 
 import { infrastructureFailure, type PipelineFailure } from "../failures.js";
 

@@ -594,6 +594,20 @@ export async function validateSubmissionOnHost(
           environment: state.environment,
           resolution: resolution.result,
           warmPackages: readWarmManifestPackages(warm),
+          // nonstrict: the siblings built in place are local package
+          // sources — the whole closure for the manifest, and the proof
+          // package's own direct path requires for the statements the edges
+          // may name, exactly what judgeInspection admitted above
+          ...(siblings === undefined
+            ? {}
+            : {
+                local: {
+                  directConcepts: staticCheck.result.proofs!.lakefile.pathRequires
+                    .map((require) => require.name)
+                    .filter((name) => !name.endsWith("Proofs")),
+                  packages: [...new Map([...siblings.concepts, ...siblings.proofs].map((sibling) => [sibling.name, sibling])).values()],
+                },
+              }),
         },
         jobDir,
         submissionRoot: state.fetched.submissionRoot,
@@ -601,7 +615,6 @@ export async function validateSubmissionOnHost(
         limits: state.limits,
         echo,
         dependencyLibs: dependencyLibDirs("proofs"),
-        ...(siblings === undefined ? {} : { siblings }),
         phase: state.phase,
       }));
     } catch (error) {

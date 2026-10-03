@@ -1,17 +1,33 @@
-// Runs one half of Certify (axiomfree-plan.md, "Certify" 2–3) inside the
-// sandbox, from a plan the phase wrote:
+// Runs one of Certify's three steps (axiomfree-plan.md, "Certify" 2–3;
+// certify/phase.ts) inside the sandbox, from a plan the phase wrote:
 //
-//   { tool: "challenge", project, module, targets, leanPath, output }
-//     container A: `lake build <module>` in the generated project, then the
-//     toolchain's own `leanexport <module> -- <targets…>` over a LEAN_PATH the
-//     phase composed (the project's build tree, the concept captures, the
-//     warm store — never `lake env`), its stdout streamed to `output`.
-//   { tool: "comparator", project, config, challengeExport, paranoid }
-//     container B: `lake comparator --config <config> --challenge-from-export
-//     <challengeExport> --inadvisably-no-sandbox [--paranoid]` in the
-//     generated project. The container is the sandbox; the comparator's own
-//     bubblewrap is off. Its exit code is this process's exit code, and its
-//     transcript is passed through for the phase's verdict parser.
+//   { tool: "export", project, module, targets, leanPath, output }
+//     containers A and B: `lake build <module>` in the generated project
+//     (`Challenge` over the concept packages, `Solution` over the proof
+//     package too), then the toolchain's own `leanexport <module> --
+//     <targets…>` over a LEAN_PATH the phase composed (the project's build
+//     tree, the captures, the warm store — never `lake env`), its stdout
+//     streamed to `output`. One rule for both exports, so the judge compares
+//     two files made the same way.
+//   { tool: "comparator", project, config, challengeExport, solutionExport, shims, paranoid }
+//     container C, the judge: `lake comparator --config <config>
+//     --challenge-from-export <challengeExport> --solution-from-export
+//     <solutionExport> --inadvisably-no-sandbox [--paranoid]` in the
+//     bundle's project. With both exports supplied the comparator builds and
+//     resolves nothing (Lake/CLI/Check.lean runComparator); the container is
+//     the sandbox and the comparator's own bubblewrap is off. Its exit code
+//     is this process's exit code, and its transcript is passed through for
+//     the phase's verdict parser.
+//
+// `lake comparator` probes PATH for `git` and `env` with `which` before it
+// does anything, sandbox or not (Check.lean mkContext), and resolves every
+// kernel through `which` too (runExternalKernel). The stock image has no
+// git, so the host prepares a read-only `shims` directory holding a `git`
+// that fails loudly and the judge puts it first on PATH. Nothing on that
+// PATH is writable — the shim mount, the toolchain, and the image's own
+// directories are all read-only — which is what keeps a planted `which` out
+// of the judge: the review's finding 1 was a writable shim directory the
+// Solution build could reach.
 //
 // `toolchainBin` and `home` in the plan default to the container's stable
 // mount points (RUNTIME_PATHS in ../../config.ts — this script runs inside
@@ -60,7 +76,7 @@ function run(cmd, args, env, stdout = "inherit") {
   return result.status ?? 1;
 }
 
-if (plan.tool === "challenge") {
+if (plan.tool === "export") {
   if (
     typeof plan.module !== "string" ||
     !Array.isArray(plan.targets) ||
@@ -85,33 +101,31 @@ if (plan.tool === "challenge") {
 }
 
 if (plan.tool === "comparator") {
-  if (typeof plan.config !== "string" || typeof plan.challengeExport !== "string") process.exit(2);
-  // `lake comparator` probes PATH for `git` before it does anything, sandbox
-  // or not (Lake/CLI/Check.lean mkContext, via `which git`); the stock image
-  // has none, and a complete manifest means nothing here may fetch. A shim
-  // that fails loudly satisfies the probe and turns any real git call into a
-  // failed run. It lives under the project's writable `.lake` bind mount, not
-  // under /tmp: docker mounts `--tmpfs` with `noexec` by default, so `which`
-  // rejects an executable there (found by the 2026-10-03 docker smoke; the
-  // host e2e never saw it because a host /tmp allows exec).
-  const shims = path.join(plan.project, ".lake", "lax-certify-shims");
-  fs.mkdirSync(shims, { recursive: true });
-  const shim = path.join(shims, "git");
-  fs.writeFileSync(
-    shim,
-    '#!/bin/sh\necho "lax: git is not available inside the validation sandbox (invoked as: git $*)" >&2\nexit 1\n',
-    { mode: 0o755 },
-  );
+  if (
+    typeof plan.config !== "string" ||
+    typeof plan.challengeExport !== "string" ||
+    typeof plan.solutionExport !== "string" ||
+    typeof plan.shims !== "string" ||
+    !path.isAbsolute(plan.shims)
+  ) process.exit(2);
+  // the shim is the host's, read-only; this tool writes nothing on PATH
+  try {
+    fs.accessSync(path.join(plan.shims, "git"), fs.constants.X_OK);
+  } catch {
+    process.stderr.write(`comparator: no executable git shim at ${plan.shims}\n`);
+    process.exit(2);
+  }
   const code = run(
     path.join(toolchainBin, "lake"),
     [
       "comparator",
       "--config", plan.config,
       "--challenge-from-export", plan.challengeExport,
+      "--solution-from-export", plan.solutionExport,
       "--inadvisably-no-sandbox",
       ...(plan.paranoid === true ? ["--paranoid"] : []),
     ],
-    { ...baseEnv, PATH: `${shims}:${toolchainBin}:${process.env.PATH ?? "/usr/bin:/bin"}` },
+    { ...baseEnv, PATH: `${plan.shims}:${toolchainBin}:${process.env.PATH ?? "/usr/bin:/bin"}` },
   );
   process.exit(code);
 }

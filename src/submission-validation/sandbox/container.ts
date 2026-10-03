@@ -36,6 +36,15 @@ export interface ContainerInvocation {
    * have passed verifyImage() first.
    */
   image?: ContainerImage;
+  /**
+   * Which of the Lean runtime mounts the container gets. `"lean"` (the
+   * default) is every one of them — toolchain, warm workspace, tools,
+   * inspector. `"judge"` is the toolchain and the tools alone: the
+   * certificate judge (certify/phase.ts container C) reads two frozen
+   * exports and runs kernels over them; it needs no library, no inspector,
+   * and nothing a build ever touched. Ignored for a foreign `image`.
+   */
+  runtime?: "lean" | "judge";
   timeoutMs: number;
   maxOutputBytes: number;
 }
@@ -153,7 +162,13 @@ export class ContainerRunner implements ValidationRunner {
   /** The read-only mounts that stand in for the deleted custom image's baked
    * filesystem — added to every invocation, exactly as the image contents
    * used to be present in every container. */
-  private runtimeMounts(layout: RuntimeLayout): ContainerMount[] {
+  private runtimeMounts(layout: RuntimeLayout, runtime: "lean" | "judge"): ContainerMount[] {
+    if (runtime === "judge") {
+      return [
+        { source: layout.toolchainDir, target: RUNTIME_PATHS.toolchain },
+        { source: layout.toolsDir, target: RUNTIME_PATHS.tools },
+      ];
+    }
     return [
       { source: layout.toolchainDir, target: RUNTIME_PATHS.toolchain },
       { source: layout.warmDir, target: RUNTIME_PATHS.warmWorkspace },
@@ -176,7 +191,7 @@ export class ContainerRunner implements ValidationRunner {
       if (layout === undefined) {
         throw new Error("validation runtime layout is unavailable; verifyRuntime() must succeed first");
       }
-      runtimeMounts = this.runtimeMounts(layout);
+      runtimeMounts = this.runtimeMounts(layout, invocation.runtime ?? "lean");
     }
     assertWorkspaceWithinLimit(this.workspaceRoot, this.limits);
     const name = `lax-validation-${safeLabel(invocation.label)}-${randomUUID().slice(0, 12)}`;
