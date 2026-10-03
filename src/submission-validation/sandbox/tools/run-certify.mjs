@@ -22,7 +22,6 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 const [planPath] = process.argv.slice(2);
@@ -88,10 +87,15 @@ if (plan.tool === "challenge") {
 if (plan.tool === "comparator") {
   if (typeof plan.config !== "string" || typeof plan.challengeExport !== "string") process.exit(2);
   // `lake comparator` probes PATH for `git` before it does anything, sandbox
-  // or not (Lake/CLI/Check.lean mkContext); the stock image has none, and a
-  // complete manifest means nothing here may fetch. A shim that fails loudly
-  // satisfies the probe and turns any real git call into a failed run.
-  const shims = fs.mkdtempSync(path.join(os.tmpdir(), "lax-certify-shims-"));
+  // or not (Lake/CLI/Check.lean mkContext, via `which git`); the stock image
+  // has none, and a complete manifest means nothing here may fetch. A shim
+  // that fails loudly satisfies the probe and turns any real git call into a
+  // failed run. It lives under the project's writable `.lake` bind mount, not
+  // under /tmp: docker mounts `--tmpfs` with `noexec` by default, so `which`
+  // rejects an executable there (found by the 2026-10-03 docker smoke; the
+  // host e2e never saw it because a host /tmp allows exec).
+  const shims = path.join(plan.project, ".lake", "lax-certify-shims");
+  fs.mkdirSync(shims, { recursive: true });
   const shim = path.join(shims, "git");
   fs.writeFileSync(
     shim,

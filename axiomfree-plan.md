@@ -263,8 +263,11 @@ record depends on are trusted as today.
    `src/submission-validation/certify/` — `generate.ts`, `lean-name.ts`,
    `bundle.ts`, `project.ts`, `phase.ts`, `host.ts`, `verdict.ts` — plus
    `sandbox/tools/run-certify.mjs` and `recorded-shape.ts`; the docker
-   smoke's `spec2-certify` case and the scratch-repo rehearsal are Jan's,
-   neither was run, and the release is Jan's). Deviations: the record
+   smoke's `spec2-certify` case ran the same night against the real
+   mathlib at rc3 and passed after one fix — docker mounts `--tmpfs` with
+   `noexec`, so the comparator's `git` shim moved from /tmp to the
+   project's writable `.lake` mount; container B certifies in 6.7 s — the
+   scratch-repo rehearsal and the release are Jan's). Deviations: the record
    shapes follow the build-output investigation
    (`spike/axiomfree/build-output-investigation-20261003.md`) rather than
    this plan's point 4 — `certificate` is `{ judge, kernels, bundle,

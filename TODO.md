@@ -32,13 +32,12 @@ certify` with relative certificates over the stored bundle and
 telescopes, `lax doctor`'s kernel report, `lax init --env` for spec-2
 rows, the instructions section). Jan's items before stage 3 ships:
 
-- **Docker smoke of Certify** (not run): `LAX_SMOKE_CASE=spec2-certify npm
-  run smoke:submission-validation` with the spec-2 row injected — the
-  recipe is in `test/smoke/submission-validation.ts` beside the fixture.
-  What it proves that the host rehearsal could not: the stock image's
-  `which`/`env` for the comparator's probes, the `git` shim on its PATH,
-  the file bind mount of `challenge.export`, and the staged own-capture
-  layout under the real `--read-only` container.
+- **Docker smoke of Certify**: ran and passed 2026-10-03 night
+  (`LAX_SMOKE_CASE=spec2-certify npm run smoke:submission-validation` with
+  the spec-2 row injected — recipe in `test/smoke/submission-validation.ts`;
+  one fix: the `git` shim now lives under the project's `.lake` mount
+  because docker's `--tmpfs` is `noexec`). The smoke needs the real mathlib
+  warm store for rc3 (`~/.lax/warm/v4.35.0-…`, built on first run, ~6 min).
 - **Scratch-repo rehearsal** (`scripts/rehearsal/`) for the Actions-side
   change: `certificate.tar` in the validate artifact and
   `VALIDATION_CERTIFICATE_PATH` in both publish steps, the certificate
