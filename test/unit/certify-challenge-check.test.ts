@@ -28,12 +28,12 @@ const EDGE: ProofEntry = {
 /** The built theorem exactly as the edge states it. */
 function built(overrides: Partial<InspectorDeclaration> = {}): InspectorDeclaration {
   return {
-    name: "Cert.Lax1Proofs.euclid",
+    name: "Lax1Proofs.euclid",
     kind: "theorem",
     module: "Challenge",
     axioms: ["sorryAx"],
     usedConstants: [],
-    userName: "Cert.Lax1Proofs.euclid",
+    userName: "Lax1Proofs.euclid",
     origin: { kind: "authored" },
     laxStatement: false,
     isProp: false,
@@ -160,7 +160,7 @@ describe("the Challenge held to the telescope", () => {
     it(`refuses ${name}`, () => {
       const result = checkChallengeReport(report(declaration), [EDGE]);
       expect(result).toMatchObject({ kind: "violation", intent: "translation", rule: "challenge-mismatch" });
-      expect(result!.message).toContain("Cert.Lax1Proofs.euclid states the edge {Lax7.Primes.ExistsPrimeDivisor, Lax1.Infinite.Poly.{u}} → Lax1.Infinite.InfinitelyManyPrimes.{u}.{u} in the record but");
+      expect(result!.message).toContain("Lax1Proofs.euclid states the edge {Lax7.Primes.ExistsPrimeDivisor, Lax1.Infinite.Poly.{u}} → Lax1.Infinite.InfinitelyManyPrimes.{u}.{u} in the record but");
       expect(result!.message).toContain(detail);
     });
   }
@@ -174,6 +174,6 @@ describe("the Challenge held to the telescope", () => {
   it("checks every edge, in id order, and reports the first disagreement", () => {
     const second: ProofEntry = { ...EDGE, id: "Lax1Proofs.another", conclusion: "Lax1.Infinite.InfinitelyManyPrimes" };
     const result = checkChallengeReport(report(built()), [EDGE, second]);
-    expect(result!.message).toContain("Cert.Lax1Proofs.another states the edge");
+    expect(result!.message).toContain("Lax1Proofs.another states the edge");
   });
 });

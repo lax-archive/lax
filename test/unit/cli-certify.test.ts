@@ -15,7 +15,7 @@ import { certify } from "../../src/cli/certify.js";
 import * as ui from "../../src/cli/ui.js";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
 import { readBundle, sealBundle } from "../../src/submission-validation/certify/bundle.js";
-import { BUNDLE_FILES, challengeText, certifiedProof, type BundleFile } from "../../src/submission-validation/certify/generate.js";
+import { BUNDLE_FILES, challengeText, certifiedProof, type RelativeBundle } from "../../src/submission-validation/certify/generate.js";
 import type { ProofEntry } from "../../src/submission-validation/contracts.js";
 import { environment as environmentById, epoch } from "../../src/submission-validation/environments.js";
 import { warmDir } from "../../src/submission-validation/host/warmstore.js";
@@ -216,8 +216,12 @@ function seedWarmStore(): void {
   fs.writeFileSync(path.join(warm, ".lax-warm-ok"), "");
 }
 
-function bundleIn(directory: string): Record<BundleFile, string> {
-  return Object.fromEntries(BUNDLE_FILES.map((name) => [name, fs.readFileSync(path.join(directory, name), "utf8")])) as Record<BundleFile, string>;
+/** The bundle files a folder holds: a record's four, or a relative
+ * certificate's five (typed as the larger shape for the tests' reads). */
+function bundleIn(directory: string): RelativeBundle {
+  return Object.fromEntries(
+    BUNDLE_FILES.filter((name) => fs.existsSync(path.join(directory, name))).map((name) => [name, fs.readFileSync(path.join(directory, name), "utf8")]),
+  ) as RelativeBundle;
 }
 
 /** A toolchain directory with a `lake` that answers `comparator` as scripted,
@@ -252,7 +256,12 @@ describe("lax certify", () => {
     expect(code).toBe(0);
     const files = bundleIn(out);
     expect(files["Challenge.lean"]).toBe(challengeText([certifiedProof(EUCLID)]));
-    expect(files["Solution.lean"]).toContain("@_root_.Lax42Proofs.euclid.{«u»} h₁");
+    // no Solution: the proof package is the solution module, its proof the theorem
+    expect(Object.keys(files)).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+    expect(files["Challenge.lean"]).toContain("theorem Lax42Proofs.euclid.{«u»}\n");
+    expect(JSON.parse(files["comparator.json"])).toMatchObject({ solution_module: "Lax42Proofs", theorem_names: ["Lax42Proofs.euclid"] });
+    expect(files["lakefile.toml"]).toContain('defaultTargets = ["Challenge"]');
+    expect(files["lakefile.toml"]).not.toContain('name = "Solution"');
     expect(files["lakefile.toml"]).toContain('name = "LaxCore"');
     expect(files["lakefile.toml"]).toContain(`name = "Lax42"\ngit = "https://github.com/alice/primes"\nrev = "${"42".padStart(40, "0")}"\nsubDir = "concepts"`);
     expect(files["lakefile.toml"]).toContain('name = "Lax42Proofs"\ngit = "https://github.com/alice/primes"');
@@ -291,7 +300,7 @@ describe("lax certify", () => {
       repository: "https://github.com/alice/primes",
       statements: [{ id: "Lax42.Primes.ExistsPrimeDivisor", levelParams: [] }, { id: "Lax42.Primes.InfinitelyManyPrimes", levelParams: ["u"] }],
       proofs: [EUCLID],
-      certificate: { challenge: "theorem Cert.Lax42Proofs.euclid : True := sorry\n" },
+      certificate: { challenge: "theorem Lax42Proofs.euclid : True := sorry\n" },
     });
     quiet();
     await expect(withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out: path.join(work, "c") }))).rejects.toThrow(
@@ -331,7 +340,7 @@ describe("lax certify", () => {
     expect(fs.existsSync(path.join(home, "certificates", `${sealed.digest}.tar`))).toBe(true);
 
     // tampered: the registry answers other bytes under the recorded digest
-    const tampered = sealBundle({ ...bundleIn(regenerated), "Solution.lean": "-- not the solution\n" });
+    const tampered = sealBundle({ ...bundleIn(regenerated), "comparator.json": "{}\n" });
     ghcr.state.blobs.set(`sha256:${tampered.digest}`, sealed.tar);
     stored(tampered.digest);
     quiet();
@@ -345,7 +354,7 @@ describe("lax certify", () => {
       repository: "https://github.com/alice/primes",
       statements: [{ id: "Lax42.Primes.ExistsPrimeDivisor", levelParams: [] }, { id: "Lax42.Primes.InfinitelyManyPrimes", levelParams: ["u"] }],
       proofs: [EUCLID],
-      certificate: { digest: tampered.digest, registryBlob: `ghcr.io/${CAPTURES_REPOSITORY}@sha256:${tampered.digest}`, challenge: "theorem Cert.Lax42Proofs.euclid : True := sorry\n" },
+      certificate: { digest: tampered.digest, registryBlob: `ghcr.io/${CAPTURES_REPOSITORY}@sha256:${tampered.digest}`, challenge: "theorem Lax42Proofs.euclid : True := sorry\n" },
     });
     await expect(withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out: path.join(work, "tampered2"), fetch: true }))).rejects.toThrow(
       /fetched bundle's Challenge\.lean is not the one lax-42's record stores/u,
@@ -362,8 +371,9 @@ describe("lax certify", () => {
 
     const files = bundleIn(out);
     expect(files["Challenge.lean"]).toContain("import Lax42\n");
-    expect(files["Challenge.lean"]).toContain("theorem Cert.Lax261Proofs.existsPrimeDivisor : _root_.Lax42.Primes.ExistsPrimeDivisor := sorry");
-    expect(files["Solution.lean"]).toContain("import Lax261Proofs\n");
+    expect(files["Challenge.lean"]).toContain("theorem Lax261Proofs.existsPrimeDivisor : _root_.Lax42.Primes.ExistsPrimeDivisor := sorry");
+    expect(files["Solution.lean"]).toBeUndefined();
+    expect(JSON.parse(files["comparator.json"])).toMatchObject({ solution_module: "Lax261Proofs", theorem_names: ["Lax261Proofs.existsPrimeDivisor"] });
     expect(files["lakefile.toml"]).toContain('name = "Lax261"\n');
     expect(files["lakefile.toml"]).toContain('name = "Lax42"\n');
     expect(files["lakefile.toml"]).toContain('name = "Lax261Proofs"\n');
@@ -405,6 +415,15 @@ describe("lax certify", () => {
     );
     expect(relativeFiles["Solution.lean"]).toContain(":= @_root_.Lax42Proofs.euclid.{«u»} h₁\n");
     expect(relativeFiles["Solution.lean"]).not.toContain("Lax261Proofs");
+    expect(JSON.parse(relativeFiles["comparator.json"])).toMatchObject({ solution_module: "Solution" });
+    expect(relativeFiles["lakefile.toml"]).toContain('defaultTargets = ["Challenge", "Solution"]');
+
+    // the folder reused for the record: the relative Solution.lean goes, so
+    // the folder holds exactly the record's four files
+    quiet();
+    expect(await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out: relative }))).toBe(0);
+    expect(fs.existsSync(path.join(relative, "Solution.lean"))).toBe(false);
+    expect(Object.keys(bundleIn(relative))).toHaveLength(4);
   });
 
   it("refuses what it cannot certify, in the author's words", async () => {
@@ -456,7 +475,7 @@ describe("lax certify", () => {
     const output = printed(log);
     expect(output).toContain("✓ Certified");
     expect(output).toContain(`${TOOLCHAIN} · kernels: lean`);
-    expect(output).toContain("lax-42 is certified: lake comparator --config comparator.json accepted the Solution.");
+    expect(output).toContain("lax-42 is certified: lake comparator --config comparator.json accepted it.");
 
     expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toBe("comparator --config comparator.json\n");
 
@@ -486,7 +505,7 @@ describe("lax certify", () => {
       /needs a tool it cannot find:\nbwrap — `lake comparator` builds inside a bubblewrap sandbox/u,
     );
     // the bundle was still written: the author can run it elsewhere
-    expect(readBundle(sealBundle(bundleIn(out)).tar).size).toBe(5);
+    expect(readBundle(sealBundle(bundleIn(out)).tar).size).toBe(4);
   });
 
   it("names a cache-only fetch failure when the registry is unreachable", async () => {

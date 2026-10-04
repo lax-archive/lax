@@ -1,6 +1,6 @@
 // Emitting a Lean name into generated source. Every name the certificate
 // generator writes — statement constants, proof constants, universe
-// parameters, package root modules, the `Cert.…` theorem names, and the
+// parameters, package root modules, the certificate theorem names, and the
 // names handed to `leanexport` and `lake comparator`, which read Lean's name
 // syntax too — goes through `leanName`.
 //

@@ -1,5 +1,5 @@
 name = "LaxCertificate"
-defaultTargets = ["Challenge", "Solution"]
+defaultTargets = ["Challenge"]
 
 [[require]]
 name = "mathlib"
@@ -25,6 +25,3 @@ subDir = "proofs"
 
 [[lean_lib]]
 name = "Challenge"
-
-[[lean_lib]]
-name = "Solution"

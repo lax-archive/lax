@@ -3,22 +3,23 @@
 // check of spike/axiomfree/codex-review-intents-20261004.md): after container
 // A builds the Challenge, the inspector reads the built module — extensions
 // disabled, as every inspection runs — and the host compares what each
-// `Cert.<proof-id>` theorem *elaborated to* with what the record says the
-// edge is. The generated text names the edge; a global `macro_rules` in any
-// package the Challenge imports can rewrite that text's meaning before Lean
-// stores it (a `macro_rules` for `theorem` turned `theorem Cert.p : 1 = 2 :=
-// sorry` into `Cert.p : True`, axiom-free, with Challenge and Solution
-// agreeing). The comparator then holds the Solution to the Challenge, so
-// holding the Challenge to the telescope holds the whole certificate to the
-// archive's reading. Structured data on both sides, never a text diff.
+// certificate theorem (named after its proof) *elaborated to* with what the
+// record says the edge is. The generated text names the edge; a global
+// `macro_rules` in any package the Challenge imports can rewrite that text's
+// meaning before Lean stores it (a `macro_rules` for `theorem` turned
+// `theorem Cert.p : 1 = 2 := sorry` into `Cert.p : True`, axiom-free, with
+// Challenge and Solution agreeing). The comparator then holds the proof
+// package to the Challenge, so holding the Challenge to the telescope holds
+// the whole certificate to the archive's reading. Structured data on both
+// sides, never a text diff.
 //
-// The Solution is not read the same way: the comparator's type comparison
-// holds every Solution theorem to its Challenge theorem, which this check
-// has just held to the telescope, so the Solution is held transitively.
+// The proof package is not read again here: the comparator's type
+// comparison holds every proof to its Challenge theorem, which this check
+// has just held to the telescope, so the proof is held transitively.
 
 import type { InspectorDeclaration, InspectorLink, InspectorReport, InspectorTelescope, LevelExpr, ProofEntry, ProofTelescope } from "../contracts.js";
 import { renderLevel } from "../phases/inspect-spec2.js";
-import { CHALLENGE_MODULE, certifiedProof, orderedProofs, theoremNameOf } from "./generate.js";
+import { CHALLENGE_MODULE, certifiedProof, orderedProofs } from "./generate.js";
 
 export interface ChallengeMismatch {
   kind: "violation";
@@ -32,7 +33,7 @@ export interface ChallengeMismatch {
  * against the record's telescopes: the same statement constants with the
  * same universe instances in the same binder positions, the same
  * conclusion, the same level parameters (binder kinds are not part of an
- * edge: the Solution applies the proof with `@`). The first
+ * edge: the comparator's `Expr.eqv` ignores them). The first
  * disagreement is the violation; `undefined` means the Challenge states
  * exactly the record's edges.
  */
@@ -41,7 +42,7 @@ export function checkChallengeReport(report: InspectorReport, proofs: readonly P
   for (const declaration of report.declarations)
     if (declaration.module === CHALLENGE_MODULE && !built.has(declaration.name)) built.set(declaration.name, declaration);
   for (const proof of orderedProofs(proofs.map(certifiedProof))) {
-    const name = theoremNameOf(proof.id);
+    const name = proof.id;
     const declaration = built.get(name);
     const recorded = { levelParams: proof.levelParams, telescope: proof.telescope };
     if (declaration === undefined) return mismatch(name, recorded, "is not declared in the built Challenge");

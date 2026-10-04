@@ -1,8 +1,8 @@
 {
   "challenge_module": "Challenge",
-  "solution_module": "Solution",
+  "solution_module": "Lax7Proofs",
   "theorem_names": [
-    "Cert.Lax7Proofs.«theorem».good?"
+    "Lax7Proofs.«theorem».good?"
   ],
   "definition_names": [],
   "permitted_axioms": [

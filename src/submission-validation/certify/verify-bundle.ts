@@ -1,12 +1,12 @@
 // The trusted publisher's reading of a certificate bundle (codex review
 // 2026-10-03, finding 2): the published tar is not "some bytes with the
 // recorded digest" but the regeneration, from the record's own stored data,
-// of the five files `lake comparator` judged — re-sealed and held to the tar
+// of the four files `lake comparator` judged — re-sealed and held to the tar
 // byte for byte, and to `certificate.bundle.digest`. Credential-free, run
 // before any token is minted (workflows/submission.ts readSuccessfulArtifacts).
 //
 // What is regenerated from what:
-//   Challenge.lean, Solution.lean, comparator.json   the proofs' telescopes
+//   Challenge.lean, comparator.json                 the proofs' telescopes
 //   lakefile.toml                                   the environment's library pins,
 //                                                   the record's own source triple,
 //                                                   the dependency records' triples
@@ -31,7 +31,7 @@ import { packageNameForSubmission } from "../contracts.js";
 import type { ArchiveEnvironment } from "../environments.js";
 import { librariesOf } from "../environments.js";
 import { readBundle, sealBundle } from "./bundle.js";
-import { BUNDLE_FILES } from "./generate.js";
+import { RECORD_BUNDLE_FILES } from "./generate.js";
 import { LeanNameError } from "./lean-name.js";
 import { planCertificate } from "./project.js";
 
@@ -126,7 +126,7 @@ function warmEntries(manifestText: string, skip: number, environment: ArchiveEnv
 
 /**
  * Hold a published certificate bundle to the record it belongs to: the tar
- * must be, byte for byte, the sealing of the five files the generator writes
+ * must be, byte for byte, the sealing of the four files the generator writes
  * for the record's proofs, packages, and environment, and its digest the
  * recorded one. Throws a ValidationError naming the first disagreement.
  */
@@ -138,8 +138,8 @@ export function verifyCertificateBundle(tar: Buffer, input: BundleProvenance): v
     refuse((error as Error).message);
   }
   const names = [...members.keys()];
-  if (names.length !== BUNDLE_FILES.length || names.some((name, index) => name !== BUNDLE_FILES[index]))
-    refuse(`the tar holds ${names.join(", ") || "nothing"}; a bundle holds exactly ${BUNDLE_FILES.join(", ")}`);
+  if (names.length !== RECORD_BUNDLE_FILES.length || names.some((name, index) => name !== RECORD_BUNDLE_FILES[index]))
+    refuse(`the tar holds ${names.join(", ") || "nothing"}; a record's bundle holds exactly ${RECORD_BUNDLE_FILES.join(", ")}`);
   const ownConcepts = packageNameForSubmission(input.id);
   const ownProofs = `${ownConcepts}Proofs`;
   const dependencies = [...input.dependencies];
@@ -163,7 +163,7 @@ export function verifyCertificateBundle(tar: Buffer, input: BundleProvenance): v
     throw error;
   }
   if (plan === undefined) refuse("the record has no proofs, so no bundle");
-  for (const name of BUNDLE_FILES) {
+  for (const name of RECORD_BUNDLE_FILES) {
     if (members.get(name) !== plan.bundle[name]) refuse(`${name} is not the generator's regeneration from the record`);
   }
   if (input.certificate.challenge !== plan.bundle["Challenge.lean"]) refuse("the recorded Challenge is not the bundle's");

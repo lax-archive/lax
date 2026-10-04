@@ -1,6 +1,6 @@
 // The publisher's reading of a certificate bundle (certify/verify-bundle.ts;
 // codex review 2026-10-03, finding 2): the published tar must be the
-// regeneration, from the record's own data, of the five files the judge
+// regeneration, from the record's own data, of the four files the judge
 // judged — not merely some bytes with the recorded digest. The forgeries
 // here are coherent: every digest is updated to match the swapped bytes, and
 // a telescope is edited together with its regenerated Challenge.
@@ -10,7 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readBundle, sealBundle, sealTar } from "../../src/submission-validation/certify/bundle.js";
 import { planCertificate, type CertifyRecord } from "../../src/submission-validation/certify/project.js";
-import { BUNDLE_FILES, challengeText, certifiedProof } from "../../src/submission-validation/certify/generate.js";
+import { RECORD_BUNDLE_FILES, challengeText, certifiedProof } from "../../src/submission-validation/certify/generate.js";
 import { verifyCertificateBundle, type BundleProvenance } from "../../src/submission-validation/certify/verify-bundle.js";
 import type { ProofEntry, ResolvedDependency } from "../../src/submission-validation/contracts.js";
 import { environment as environmentById, librariesOf } from "../../src/submission-validation/environments.js";
@@ -181,7 +181,7 @@ describe("the publisher's reading of a certificate bundle", () => {
       })).toThrow("lake-manifest.json is not the generator's regeneration");
       // the lakefile alone: a bundle whose manifest agrees but whose lakefile does not
       const members = readBundle(tar);
-      const edited = sealTar(BUNDLE_FILES.map((name) => ({
+      const edited = sealTar(RECORD_BUNDLE_FILES.map((name) => ({
         name,
         content: Buffer.from(name === "lakefile.toml" ? members.get(name)!.replace('subDir = "concepts"', 'subDir = "elsewhere"') : members.get(name)!, "utf8"),
       })));
@@ -224,7 +224,12 @@ describe("the publisher's reading of a certificate bundle", () => {
   it("refuses a tar with the wrong members or a damaged structure", () => {
     withTestEnvironments([spec2TestEnvironment()], () => {
       const { tar, provenance } = produced();
-      // a sixth member
+      // a Solution.lean beside the four: a relative certificate's shape, never a record's
+      const members = readBundle(tar);
+      const relative = sealBundle({ ...(Object.fromEntries(members) as Record<(typeof RECORD_BUNDLE_FILES)[number], string>), "Solution.lean": "-- a wrapper\n" });
+      expect(() => verifyCertificateBundle(relative.tar, { ...provenance, certificate: { ...provenance.certificate, bundle: { formatVersion: 1, digest: relative.digest } } }))
+        .toThrow("a record's bundle holds exactly Challenge.lean, comparator.json, lake-manifest.json, lakefile.toml");
+      // a fifth member
       const extra = Buffer.concat([tar.subarray(0, tar.length - 10_240), tar.subarray(0, 1024), tar.subarray(tar.length - 10_240)]);
       expect(() => verifyCertificateBundle(extra, provenance)).toThrow("certificate bundle:");
       // a header byte flipped

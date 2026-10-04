@@ -2,18 +2,19 @@
 // certify/phase.ts) inside the sandbox, from a plan the phase wrote:
 //
 //   { tool: "build", project, module }
-//     containers A1 and B1: `lake build <module>` in the generated project
-//     (`Challenge` over the concept packages, `Solution` over the proof
-//     package too). This is the step that runs candidate code — every module
-//     initializer of every package the module imports — so it is given a
-//     writable `.lake` and nothing else writable; the plan is read from a
+//     container A1: `lake build Challenge` in the generated project, over the
+//     concept packages. This is the step that runs candidate code — every
+//     module initializer of every package the module imports — so it is given
+//     a writable `.lake` and nothing else writable; the plan is read from a
 //     read-only mount.
 //   { tool: "export", project, module, targets, leanPath, output, inspect? }
 //   { tool: "export", project, targets, leanPath, exports: [{ module, output }…] }
-//     containers A2 and B2: over the build tree of A1/B1 mounted
-//     *read-only*, the toolchain's own `leanexport <module> -- <targets…>`
-//     over a LEAN_PATH the phase composed (the project's build tree, the
-//     captures, the warm store — never `lake env`), its stdout streamed to
+//     containers A2 and B: the toolchain's own `leanexport <module> --
+//     <targets…>` — A2 over A1's build tree mounted *read-only*, B over the
+//     proof package's capture alone (`<ProofsRoot>`; `project` is then only
+//     the working directory) — over a LEAN_PATH the phase composed (the
+//     project's build tree, the captures, the warm store — never `lake
+//     env`), its stdout streamed to
 //     `output`; with `inspect: { report }` (A2) the inspector then reads the
 //     built module over the same LEAN_PATH and writes its report there, for
 //     the host to hold each certificate theorem's elaborated type to the
@@ -21,7 +22,7 @@
 //     candidate code: `leanexport` imports with `loadExts := false`
 //     (LeanExport.lean:16, `importModules imports {}`; Environment.lean:2404
 //     finalizes extensions only under that flag) and so does the inspector.
-//     `/out` is the only writable mount, and nothing that ran in A1/B1 is
+//     `/out` is the only writable mount, and nothing that ran in A1 is
 //     alive here — which is what makes the export bytes the tool's and not
 //     a lingering build process's (fable review 2026-10-04, finding 1.1).
 //     One rule for both exports, so the judge compares two files made the

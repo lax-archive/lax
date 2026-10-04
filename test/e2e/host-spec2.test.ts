@@ -22,13 +22,12 @@ import * as ui from "../../src/cli/ui.js";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
 import { readBundle, sealBundle } from "../../src/submission-validation/certify/bundle.js";
 import { checkChallengeReport } from "../../src/submission-validation/certify/challenge-check.js";
-import { BUNDLE_FILES, type BundleFile } from "../../src/submission-validation/certify/generate.js";
+import { BUNDLE_FILES, type RelativeBundle } from "../../src/submission-validation/certify/generate.js";
 import {
   GIT_SHIM,
   challengeProjectFiles,
   planCertificate,
   projectLibDir,
-  solutionProjectFiles,
   stageOwnPackage,
   warmLibDirs,
   writeJudgeProject,
@@ -460,7 +459,9 @@ end Lax38Proofs
       expect(report.warnings).toEqual([]);
       const out = report.buildOutput!;
       // Stage 3: the record is certified end to end on the host — the same
-      // generator and the same three steps as the archive's containers.
+      // generator and the same steps as the archive's containers: the
+      // Challenge built and exported, the proof package exported as built,
+      // the comparator over both.
       const certificate = out.certificate!;
       expect(certificate).toMatchObject({
         // a local run proves no runner: no self-test; the digests are the
@@ -476,25 +477,30 @@ end Lax38Proofs
         fs.readFileSync(path.join(jobDir, "certify", "project", "Challenge.lean"), "utf8"),
       );
       expect(certificate.challenge).toContain("import Lax38\n");
-      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := sorry");
-      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.refl_of_hasSucc.{«u»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{«u»} := sorry");
+      // each theorem named after its proof: the comparator looks it up in
+      // the proof package's own export (ultracode review C1)
+      expect(certificate.challenge).toContain("theorem Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := sorry");
+      expect(certificate.challenge).toContain("theorem Lax38Proofs.refl_of_hasSucc.{«u»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{«u»} := sorry");
       // the keyword names, as Lean's escaped printer reported them bare and
       // the generator quoted them — and Lean elaborated and the comparator
       // accepted them, since the whole build passed
-      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.reflexive?.{«fun»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.«at».{«fun»} := sorry");
+      expect(certificate.challenge).toContain("theorem Lax38Proofs.reflexive?.{«fun»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.«at».{«fun»} := sorry");
       // a binder kind is not part of the edge: the implicit hypothesis is an
-      // explicit one in the Challenge, and the Solution applies the proof with `@`
-      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.refl_of_implicit.{«u»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{«u»} := sorry");
+      // explicit one in the Challenge, and the comparator's `Expr.eqv`
+      // ignores binder kinds, so the proof itself matches it
+      expect(certificate.challenge).toContain("theorem Lax38Proofs.refl_of_implicit.{«u»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{«u»} := sorry");
       expect(certificate.challenge).not.toContain("Lax38Proofs.hasSucc h");
       console.log(`[certify timing] lax-38 whole build incl. certification: ${Math.round(performance.now() - started)} ms`);
       // the bundle sealed what ran, and the exports' digests are the files'
       const tar = fs.readFileSync(path.join(jobDir, "certify", "certificate.tar"));
       expect(createHash("sha256").update(tar).digest("hex")).toBe(certificate.bundle.digest);
       const members = readBundle(tar);
-      expect([...members.keys()]).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+      expect([...members.keys()]).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
       expect(members.get("lakefile.toml")).toContain('path = "packages/Lax38Proofs"');
-      expect(members.get("Solution.lean")).toContain("@_root_.Lax38Proofs.reflexive?.{«fun»} h₁");
-      expect(members.get("Solution.lean")).toContain("@_root_.Lax38Proofs.refl_of_implicit.{«u»} h₁");
+      expect(JSON.parse(members.get("comparator.json")!)).toMatchObject({
+        solution_module: "Lax38Proofs",
+        theorem_names: ["Lax38Proofs.hasSucc", "Lax38Proofs.refl_of_hasSucc", "Lax38Proofs.refl_of_implicit", "Lax38Proofs.reflexive?"],
+      });
       expect(createHash("sha256").update(fs.readFileSync(path.join(jobDir, "certify", "challenge.export"))).digest("hex"))
         .toBe(certificate.challengeExportSha256);
       expect(createHash("sha256").update(fs.readFileSync(path.join(jobDir, "certify", "solution.export"))).digest("hex"))
@@ -606,26 +612,39 @@ end Lax38Proofs
   }, 600_000);
 
   // The negatives that must fail *in the comparator*: the real
-  // `lake comparator` over the project the lax-38 run left behind, each
-  // Solution hand-edited one way, each verdict read by the one parser the
-  // phase uses. A sorry smuggled through a helper never gets this far — the
-  // inspector's axiom walk (phases/inspect-spec2.ts) refuses it in Inspect,
-  // which the last case shows — so the comparator's own refusals are driven
+  // `lake comparator` over the project the lax-38 run left behind, its
+  // Challenge export fixed and the solution module swapped for a
+  // hand-written stand-in for the proof package — a module declaring the
+  // proof's own name `Lax38Proofs.hasSucc` one wrong way — built by the
+  // comparator itself, each verdict read by the one parser the phase uses.
+  // The unchanged case judges the proof package as the record names it, a
+  // dependency of the project the comparator builds as the solution module.
+  // A sorry smuggled through a helper never gets this far — the inspector's
+  // axiom walk (phases/inspect-spec2.ts) refuses it in Inspect, which the
+  // last case shows — so the comparator's own refusals are driven
   // directly, exactly as the plan asks: "each asserting the phase so a
   // fixture that dies in elaboration is noticed".
-  it("refuses, in the comparator, a sorry, a weakened conclusion, an extra hypothesis, a definition as target, and a Solution that does not elaborate", async () => {
+  it("refuses, in the comparator, a sorry, a weakened conclusion, an extra hypothesis, a definition, and a solution module that does not build", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;
       expect(lax38, "the lax-38 build above must have run").toBeDefined();
       const project = path.join(lax38!.jobDir, "certify", "project");
       const exportPath = path.join(lax38!.jobDir, "certify", "challenge.export");
-      const solution = fs.readFileSync(path.join(project, "Solution.lean"), "utf8");
-      const judge = async (edited: string, label: string) => {
-        fs.writeFileSync(path.join(project, "Solution.lean"), edited);
+      const lakefile = fs.readFileSync(path.join(project, "lakefile.toml"), "utf8");
+      const config = JSON.parse(fs.readFileSync(path.join(project, "comparator.json"), "utf8")) as Record<string, unknown>;
+      expect(config.solution_module).toBe("Lax38Proofs");
+      const judge = async (standIn: string | undefined, label: string) => {
+        let configFile = "comparator.json";
+        if (standIn !== undefined) {
+          fs.writeFileSync(path.join(project, "StandIn.lean"), `import Lax38\n\n${standIn}\n`);
+          fs.writeFileSync(path.join(project, "lakefile.toml"), `${lakefile}\n[[lean_lib]]\nname = "StandIn"\n`);
+          fs.writeFileSync(path.join(project, "stand-in.json"), JSON.stringify({ ...config, solution_module: "StandIn", theorem_names: ["Lax38Proofs.hasSucc"] }));
+          configFile = "stand-in.json";
+        }
         const started = performance.now();
         const result = await run(
           lakeBinary(environment),
-          ["comparator", "--config", "comparator.json", "--challenge-from-export", exportPath, "--inadvisably-no-sandbox"],
+          ["comparator", "--config", configFile, "--challenge-from-export", exportPath, "--inadvisably-no-sandbox"],
           project,
           { env: { LAKE_ARTIFACT_CACHE: "false", LEAN_NUM_THREADS: "2", PATH: lakePathEnv(environment) } },
         );
@@ -633,23 +652,27 @@ end Lax38Proofs
         return interpretComparatorRun(result);
       };
       try {
-        expect(await judge(solution, "unchanged")).toEqual({ kind: "certified" });
-        const hasSucc = "theorem Cert.Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := @_root_.Lax38Proofs.hasSucc";
-        expect(solution).toContain(hasSucc);
-        expect(await judge(solution.replace(hasSucc, "theorem Cert.Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := sorry"), "sorry"))
+        expect(await judge(undefined, "the proof package")).toEqual({ kind: "certified" });
+        // a stand-in that states the proof right is accepted too: the name
+        // and the type are the comparison, the package is not
+        expect(await judge("theorem Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := fun n => ⟨n + 1, Nat.lt_succ_self n⟩", "a faithful stand-in"))
+          .toEqual({ kind: "certified" });
+        expect(await judge("theorem Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := sorry", "sorry"))
           .toMatchObject({ kind: "violation", rule: "illegal-axiom", message: expect.stringContaining("sorryAx") });
-        expect(await judge(solution.replace(hasSucc, "theorem Cert.Lax38Proofs.hasSucc : True := trivial"), "weakened conclusion"))
-          .toMatchObject({ kind: "violation", rule: "statement-mismatch", message: expect.stringContaining("Cert.Lax38Proofs.hasSucc") });
-        expect(await judge(solution.replace(hasSucc, "theorem Cert.Lax38Proofs.hasSucc (h : _root_.Lax38.Order.HasSucc) : _root_.Lax38.Order.HasSucc := h"), "extra hypothesis"))
+        expect(await judge("theorem Lax38Proofs.hasSucc : True := trivial", "weakened conclusion"))
+          .toMatchObject({ kind: "violation", rule: "statement-mismatch", message: expect.stringContaining("Lax38Proofs.hasSucc") });
+        expect(await judge("theorem Lax38Proofs.hasSucc (h : _root_.Lax38.Order.HasSucc) : _root_.Lax38.Order.HasSucc := h", "extra hypothesis"))
           .toMatchObject({ kind: "violation", rule: "statement-mismatch" });
-        expect(await judge(solution.replace(hasSucc, "def Cert.Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := @_root_.Lax38Proofs.hasSucc"), "definition as target"))
+        expect(await judge("def Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := fun n => ⟨n + 1, Nat.lt_succ_self n⟩", "definition as target"))
           .toMatchObject({ kind: "violation", rule: "not-a-theorem" });
-        const broken = await judge(solution.replace("@_root_.Lax38Proofs.hasSucc", "@_root_.Lax38Proofs.noSuchProof"), "does not elaborate");
-        expect(broken).toMatchObject({ kind: "violation", rule: "solution-build" });
-        expect((broken as { message: string }).message).toContain("did not elaborate");
+        const broken = await judge("theorem Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := noSuchProof", "does not build");
+        expect(broken).toMatchObject({ kind: "violation", rule: "comparator-build", intent: "translation" });
+        expect((broken as { message: string }).message).toContain("could not build");
         expect((broken as { message: string }).message).toContain("noSuchProof");
       } finally {
-        fs.writeFileSync(path.join(project, "Solution.lean"), solution);
+        fs.writeFileSync(path.join(project, "lakefile.toml"), lakefile);
+        fs.rmSync(path.join(project, "StandIn.lean"), { force: true });
+        fs.rmSync(path.join(project, "stand-in.json"), { force: true });
       }
 
       // and the one the walk catches first: a proof whose body rests on a
@@ -697,16 +720,123 @@ end Lax43Proofs
     });
   }, 600_000);
 
+  // The comparator judges the author's constant itself (ultracode review
+  // C1), so every way Lean lets an author state a proof's type must still
+  // be `Expr.eqv` to the generated `(hᵢ : Sᵢ)` theorem: binders from
+  // `variable`/`include`, implicit and instance-implicit binders (`Expr.eqv`
+  // ignores binder names and kinds), universe-polymorphic proofs with
+  // several parameters, and a stored type carrying mdata (`no_index`).
+  // The last is accepted, not refused: the exporter drops every `mdata`
+  // node unless asked for `--export-mdata` (LeanExport/Basic.lean
+  // `removeMData`), on the comparator's own exports as on lax's, and the
+  // inspector's telescope reading consumes it the same way — verified on
+  // v4.35.0-rc3 before the review's "fails safe" reading was written down.
+  it("certifies the proof package's own constants: variable/include, implicit and instance binders, universe polymorphism, mdata", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const root = makeHostSubmission(
+        "lax-49",
+        {
+          "concepts/Lax49.lean": "import Lax49.Facts\n",
+          "concepts/Lax49/Facts.lean": `import LaxCore
+
+/-!
+---
+title: Binder facts
+type: theorem
+---
+Statements for the binder shapes of proofs.
+-/
+
+namespace Lax49.Facts
+
+/-- truth -/
+@[lax_statement] def A : Prop := True
+
+/-- a second truth -/
+@[lax_statement] def B : Prop := 1 = 1
+
+/-- every natural is itself -/
+@[lax_statement] def C : Prop := ∀ n : Nat, n = n
+
+/-- reflexivity at a universe -/
+@[lax_statement] def P.{u} : Prop := ∀ (α : Sort u) (a : α), a = a
+
+/-- inhabitation is preserved -/
+@[lax_statement] def Q.{u} : Prop := ∀ α : Sort u, Nonempty α → Nonempty α
+
+end Lax49.Facts
+`,
+          "proofs/Lax49Proofs.lean": "import Lax49Proofs.Basic\n",
+          "proofs/Lax49Proofs/Basic.lean": `import Lax49.Facts
+
+namespace Lax49Proofs
+
+open Lax49.Facts
+
+variable (_ha : A) (_hb : B)
+
+include _ha _hb in
+/-- both hypotheses through \`variable\` and \`include\` -/
+theorem viaVariables : C := fun _ => rfl
+
+/-- an implicit hypothesis -/
+theorem viaImplicit {_h : A} : C := fun _ => rfl
+
+set_option checkBinderAnnotations false in
+/-- an instance-implicit hypothesis on a statement that is no class -/
+theorem viaInstance [_h : A] (_h' : B) : C := fun _ => rfl
+
+/-- universe-polymorphic, two parameters, the first in a hypothesis only -/
+theorem poly.{u, v} (_h : P.{u}) (_h' : P.{v}) : Q.{v} := fun _ x => x
+
+/-- the stored conclusion carries mdata -/
+theorem viaNoIndex (_h : A) : no_index C := fun _ => rfl
+
+end Lax49Proofs
+`,
+        },
+        undefined,
+        { environment },
+      );
+      const report = await buildOnHost(root, { id: "lax-49" });
+      expect(messages(report)).toBe("");
+      expect(report.ok).toBe(true);
+      const out = report.buildOutput!;
+      expect(out.proofs.map((proof) => [proof.id, proof.levelParams])).toEqual([
+        ["Lax49Proofs.poly", ["u", "v"]],
+        ["Lax49Proofs.viaImplicit", []],
+        ["Lax49Proofs.viaInstance", []],
+        ["Lax49Proofs.viaNoIndex", []],
+        ["Lax49Proofs.viaVariables", []],
+      ]);
+      const challenge = out.certificate!.challenge;
+      expect(challenge).toContain(
+        "theorem Lax49Proofs.viaVariables\n    (h₁ : _root_.Lax49.Facts.A)\n    (h₂ : _root_.Lax49.Facts.B)\n    : _root_.Lax49.Facts.C := sorry",
+      );
+      expect(challenge).toContain("theorem Lax49Proofs.viaImplicit\n    (h₁ : _root_.Lax49.Facts.A)\n    : _root_.Lax49.Facts.C := sorry");
+      expect(challenge).toContain(
+        "theorem Lax49Proofs.viaInstance\n    (h₁ : _root_.Lax49.Facts.A)\n    (h₂ : _root_.Lax49.Facts.B)\n    : _root_.Lax49.Facts.C := sorry",
+      );
+      expect(challenge).toContain(
+        "theorem Lax49Proofs.poly.{«u», «v»}\n    (h₁ : _root_.Lax49.Facts.P.{«u»})\n    (h₂ : _root_.Lax49.Facts.P.{«v»})\n    : _root_.Lax49.Facts.Q.{«v»} := sorry",
+      );
+      expect(challenge).toContain("theorem Lax49Proofs.viaNoIndex\n    (h₁ : _root_.Lax49.Facts.A)\n    : _root_.Lax49.Facts.C := sorry");
+      expect(challenge).not.toContain("no_index");
+    });
+  }, 600_000);
+
   // The archive's own layout, rehearsed without docker: the submission's
-  // captures staged as Lake path dependencies (certify/project.ts
-  // stageOwnPackage), the two run projects with path-entry manifests and
-  // warm-store overrides, the judge's project (the bundle verbatim) with its
-  // read-only shim, and the in-container tool (sandbox/tools/run-certify.mjs)
-  // driven three times with host paths in place of the mount points —
-  // `lake build Challenge` plus `leanexport` over a composed LEAN_PATH, the
-  // same for `Solution`, then `lake comparator` over both exports with the
+  // concept capture staged as a Lake path dependency (certify/project.ts
+  // stageOwnPackage), the Challenge's run project with a path-entry manifest
+  // and warm-store overrides, the judge's project (the bundle verbatim) with
+  // its read-only shim, and the in-container tool
+  // (sandbox/tools/run-certify.mjs) driven with host paths in place of the
+  // mount points — `lake build Challenge` plus `leanexport` over a composed
+  // LEAN_PATH, `leanexport` of the proof package's root over its capture's
+  // lib tree alone, then `lake comparator` over both exports with the
   // project and the shim directory made read-only for the run.
-  it("rehearses the three-container layout over the staged captures with the real tool script", async () => {
+  it("rehearses the four-container layout over the staged captures with the real tool script", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;
       expect(lax38).toBeDefined();
@@ -728,7 +858,6 @@ end Lax43Proofs
       const toolchainBin = toolchainBinDir(environment);
       const own = path.join(root, "own");
       const concepts = stageOwnPackage(captureRoot, "concepts", own, (tree) => path.join(captureRoot, "concepts", tree));
-      const proofs = stageOwnPackage(captureRoot, "proofs", own, (tree) => path.join(captureRoot, "proofs", tree));
       expect(fs.readlinkSync(path.join(concepts.packageDir, ".lake", "build", "lib", "lean"))).toBe(path.join(captureRoot, "concepts", "lib"));
       const gitSources = (name: string) => plan.gitSources.get(name)!;
       const runTool = async (planFile: string, label: string) => {
@@ -785,65 +914,52 @@ end Lax43Proofs
       // the Challenge held to the telescope: the real inspector's reading of
       // the real build states exactly the record's edges
       const challengeReport = parseInspectorReport(JSON.parse(fs.readFileSync(path.join(challengeDir, "challenge-report.json"), "utf8")) as unknown, 2);
-      expect(challengeReport.declarations.filter((declaration) => declaration.name.startsWith("Cert.")).map((declaration) => declaration.name).sort())
-        .toEqual(record.proofs.map((proof) => `Cert.${proof.id}`).sort());
+      expect(challengeReport.declarations.filter((declaration) => declaration.module === "Challenge").map((declaration) => declaration.name).sort())
+        .toEqual(record.proofs.map((proof) => proof.id).sort());
       expect(checkChallengeReport(challengeReport, record.proofs)).toBeUndefined();
       expect(fs.readFileSync(exportPath, "utf8").startsWith('{"meta"')).toBe(true);
       // the export (lean4export 3.1.0 NDJSON, names hash-consed per
       // component) carries the certificate theorems as `thm` records
       const exported = fs.readFileSync(exportPath, "utf8");
-      expect(exported).toContain('"str":"Cert"');
+      expect(exported).toContain('"str":"Lax38Proofs"');
       expect(exported).toContain('"str":"hasSucc"');
       expect(exported).toContain('"str":"refl_of_hasSucc"');
       expect(exported).toContain('"str":"reflexive?"');
       expect(exported).toMatch(/"thm":/u);
 
-      // B: the Solution, built and exported by the same rule
+      // B: the proof package's root, exported by the same rule over its
+      // capture's lib tree — no project, no build, nothing of the package
+      // run: the oleans Compile left are the solution
       const solutionDir = path.join(root, "solution");
-      const solutionProject = path.join(solutionDir, "project");
-      writeRunProject(solutionProject, path.join(solutionDir, "build", ".lake"), solutionProjectFiles(plan, record, gitSources), {
-        warm: warmPackages,
-        deps: [
-          { name: "Lax38", dir: concepts.packageDir },
-          { name: "Lax38Proofs", dir: proofs.packageDir },
-        ],
-      });
-      seedOverrides(warm, path.join(solutionDir, "build"));
-      fs.rmdirSync(path.join(solutionProject, ".lake"));
-      fs.symlinkSync(path.join(solutionDir, "build", ".lake"), path.join(solutionProject, ".lake"));
+      fs.mkdirSync(solutionDir, { recursive: true });
       const solutionExport = path.join(solutionDir, "solution.export");
-      const planB1 = path.join(solutionDir, "build-plan.json");
-      fs.writeFileSync(planB1, JSON.stringify({ tool: "build", project: solutionProject, module: "Solution", toolchainBin, home: path.join(root, "home") }));
-      const builtB1 = await runTool(planB1, "B1 (build)");
-      expect(builtB1.output, builtB1.output).not.toContain("error:");
-      expect(builtB1.code).toBe(0);
       const planB = path.join(solutionDir, "plan.json");
       fs.writeFileSync(planB, JSON.stringify({
         tool: "export",
-        project: solutionProject,
-        module: "Solution",
+        project: solutionDir,
+        module: plan.solutionModule,
         targets: plan.exportTargets,
-        leanPath: [projectLibDir(solutionProject), concepts.libDir, proofs.libDir, ...warmLibDirs(warmPackages, warm)],
+        leanPath: [path.join(captureRoot, "proofs", "lib"), concepts.libDir, ...warmLibDirs(warmPackages, warm)],
         output: solutionExport,
         toolchainBin,
         home: path.join(root, "home"),
       }));
-      const builtB = await runTool(planB, "B2 (export)");
+      expect(plan.solutionModule).toBe("Lax38Proofs");
+      const builtB = await runTool(planB, "B (export of the proof package)");
       expect(builtB.output, builtB.output).not.toContain("error:");
       expect(builtB.code).toBe(0);
-      expect(fs.readFileSync(solutionExport, "utf8")).toContain('"str":"Cert"');
-      // the lakefile B ran kept the bundle's git requires; the manifest's
-      // path entries did the redirecting, as a submission build's do
-      expect(fs.readFileSync(path.join(solutionProject, "lakefile.toml"), "utf8")).toContain(`git = "${lax38!.report.request.source.repository}"`);
+      expect(builtB.output).not.toContain("Building");
+      expect(fs.readFileSync(solutionExport, "utf8")).toContain('"str":"refl_of_implicit"');
       // the capture root was never written to
       expect(fs.existsSync(path.join(captureRoot, "concepts", "package", ".lake"))).toBe(false);
+      expect(fs.readdirSync(solutionDir).sort()).toEqual(["plan.json", "solution.export"]);
 
       // C: the judge over the two exports, in the bundle's own project —
       // the project, the shim directory and both exports read-only for the
       // run, so a comparator that wrote anywhere but its temp dir would fail
       const judgeDir = path.join(root, "judge");
       const judge = writeJudgeProject(judgeDir, plan.bundle);
-      expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+      expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
       expect(fs.readFileSync(path.join(judge.shimsDir, "git"), "utf8")).toBe(GIT_SHIM);
       fs.chmodSync(exportPath, 0o444);
       fs.chmodSync(solutionExport, 0o444);
@@ -869,7 +985,7 @@ end Lax43Proofs
         expect(judged.output).not.toContain("Building");
         expect(judged.output).not.toContain("Resolving");
         expect(interpretComparatorRun(judged)).toEqual({ kind: "certified" });
-        expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+        expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
         // and the paranoid set runs through the same tool when asked
         fs.writeFileSync(planC, JSON.stringify({ ...judgePlan, paranoid: true }));
         const paranoid = await runTool(planC, "C (comparator --paranoid)");
@@ -1054,7 +1170,7 @@ end Lax45Proofs
       const certificate = report.buildOutput!.certificate!;
       expect(certificate.challenge).toContain("import Lax44\nimport Lax45\n");
       expect(certificate.challenge).toContain(
-        "theorem Cert.Lax45Proofs.downstream\n    (h₁ : _root_.Lax44.Claim.Holds)\n    : _root_.Lax45.Chain.Downstream := sorry",
+        "theorem Lax45Proofs.downstream\n    (h₁ : _root_.Lax44.Claim.Holds)\n    : _root_.Lax45.Chain.Downstream := sorry",
       );
       // the local plan: the sibling is a path require of the generated
       // project, reached through a link at the sibling's own checkout
@@ -1162,10 +1278,10 @@ end Lax41Proofs
         const certificate = report.buildOutput!.certificate!;
         expect(certificate.challenge).toContain("import Lax38\nimport Lax41\n");
         expect(certificate.challenge).toContain(
-          "theorem Cert.Lax41Proofs.downstream\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax41.Chain.Downstream := sorry",
+          "theorem Lax41Proofs.downstream\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax41.Chain.Downstream := sorry",
         );
         const members = readBundle(fs.readFileSync(path.join(jobDir, "certify", "certificate.tar")));
-        expect(members.get("Solution.lean")).toContain("@_root_.Lax41Proofs.downstream h₁");
+        expect(members.has("Solution.lean")).toBe(false);
         expect(members.get("lakefile.toml")).toContain('path = "packages/Lax38"');
         // the dependency was reached where the proofs build cloned it
         expect(fs.readlinkSync(path.join(jobDir, "certify", "project", "packages", "Lax38")))
@@ -1212,8 +1328,11 @@ end Lax41Proofs
         const archive = archiveWith(upstream, downstream);
         fs.mkdirSync(path.join(database, ".git"), { recursive: true });
         for (const id of ["lax-38", "lax-41"]) fs.cpSync(path.join(archive.root, id), path.join(database, id), { recursive: true });
-        const bundleIn = (directory: string): Record<BundleFile, string> =>
-          Object.fromEntries(BUNDLE_FILES.map((name) => [name, fs.readFileSync(path.join(directory, name), "utf8")])) as Record<BundleFile, string>;
+        // the files a folder holds: a record's four, a relative certificate's five
+        const bundleIn = (directory: string): RelativeBundle =>
+          Object.fromEntries(
+            BUNDLE_FILES.filter((name) => fs.existsSync(path.join(directory, name))).map((name) => [name, fs.readFileSync(path.join(directory, name), "utf8")]),
+          ) as RelativeBundle;
         const out = tmpDir("lax-certify-");
 
         // the record's bundle, regenerated: the same bytes the local build
@@ -1223,6 +1342,10 @@ end Lax41Proofs
         expect(await certify("lax-41", { out: regenerated })).toBe(0);
         const files = bundleIn(regenerated);
         expect(files["Challenge.lean"]).toBe(downstream.report.buildOutput!.certificate!.challenge);
+        // the solution module is the proof package, a git require the
+        // comparator builds as a dependency
+        expect(files["Solution.lean"]).toBeUndefined();
+        expect(JSON.parse(files["comparator.json"])).toMatchObject({ solution_module: "Lax41Proofs", theorem_names: ["Lax41Proofs.downstream"] });
         expect(files["lakefile.toml"]).toContain(`name = "Lax38"\ngit = "${UPSTREAM_REPOSITORY}"\nrev = "${upstream.source.commit}"\nsubDir = "concepts"`);
         expect(files["lakefile.toml"]).toContain(`name = "Lax41Proofs"\ngit = "${DOWNSTREAM_REPOSITORY}"`);
         expect(fs.readFileSync(path.join(regenerated, "lean-toolchain"), "utf8")).toBe(`${SPEC2.leanToolchain}\n`);
@@ -1254,7 +1377,7 @@ end Lax41Proofs
         );
 
         // ── the real comparator over the written bundles ──────────────
-        // Each folder is the five files a reader has: lake resolves the git
+        // Each folder is the files a reader has: lake resolves the git
         // requires (the fixture repositories, through the url rewrites),
         // builds mathlib, LaxCore and the packages from source, and judges.
         // First without the sandbox — the fixture repositories are local
@@ -1290,7 +1413,16 @@ end Lax41Proofs
           const code = await certify("Lax41.Chain.Downstream", { out: composed, run: true });
           console.info(`[certify timing] lax certify --run (sandboxed, folder materialised): ${Math.round(performance.now() - started)} ms, exit ${code}\n${logged.join("\n")}`);
           expect(code).toBe(0);
-          expect(logged.join("\n")).toContain("Lax41.Chain.Downstream is certified: lake comparator --config comparator.json accepted the Solution.");
+          expect(logged.join("\n")).toContain("Lax41.Chain.Downstream is certified: lake comparator --config comparator.json accepted it.");
+          // and the record's own bundle, sandboxed: the comparator builds the
+          // proof package — a git dependency of the bundle — as the solution
+          // module inside bubblewrap
+          logged.length = 0;
+          const recordStarted = performance.now();
+          const recordCode = await certify("lax-41", { out: regenerated, run: true });
+          console.info(`[certify timing] lax certify lax-41 --run (sandboxed): ${Math.round(performance.now() - recordStarted)} ms, exit ${recordCode}\n${logged.join("\n")}`);
+          expect(recordCode).toBe(0);
+          expect(logged.join("\n")).toContain("lax-41 is certified: lake comparator --config comparator.json accepted it.");
         }
       } finally {
         for (const spy of spies) spy.mockRestore();
@@ -1317,7 +1449,7 @@ end Lax41Proofs
         ["Lax123457Proofs.addZero", [], "Lax123457.Basic.AddZero"],
         ["Lax123457Proofs.zeroAddZero", ["Lax123457.Basic.AddZero"], "Lax123457.Basic.ZeroAddZero"],
       ]);
-      expect(out.certificate!.challenge).toContain("theorem Cert.Lax123457Proofs.zeroAddZero\n    (h₁ : _root_.Lax123457.Basic.AddZero)\n    : _root_.Lax123457.Basic.ZeroAddZero := sorry");
+      expect(out.certificate!.challenge).toContain("theorem Lax123457Proofs.zeroAddZero\n    (h₁ : _root_.Lax123457.Basic.AddZero)\n    : _root_.Lax123457.Basic.ZeroAddZero := sorry");
       // the recipe in the comment is live Lean: uncommented, it is one more edge
       const proofs = path.join(root, "proofs", "Lax123457Proofs", "Basic.lean");
       const source = fs.readFileSync(proofs, "utf8");

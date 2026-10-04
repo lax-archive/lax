@@ -17,10 +17,10 @@ describe("the comparator verdict", () => {
   it("names the theorem whose statement differs", () => {
     const verdict = interpretComparatorRun({
       code: 1,
-      output: transcript("Resolving dependencies", "error: Challenge and solution theorem statement do not match: 'Cert.Lax38Proofs.hasSucc'"),
+      output: transcript("Resolving dependencies", "error: Challenge and solution theorem statement do not match: 'Lax38Proofs.hasSucc'"),
     });
     expect(verdict).toMatchObject({ kind: "violation", rule: "statement-mismatch", intent: "judge" });
-    expect((verdict as { message: string }).message).toContain("Cert.Lax38Proofs.hasSucc");
+    expect((verdict as { message: string }).message).toContain("Lax38Proofs.hasSucc");
     expect((verdict as { message: string }).message).toContain("report it as a lax bug");
   });
 
@@ -33,7 +33,7 @@ describe("the comparator verdict", () => {
     })).toMatchObject({ kind: "violation", rule: "constant-mismatch", message: expect.stringContaining("Lax38.Order.HasSucc") });
     expect(interpretComparatorRun({
       code: 1,
-      output: transcript("error: Challenge and solution constant kind don't match: 'Cert.Lax38Proofs.hasSucc'"),
+      output: transcript("error: Challenge and solution constant kind don't match: 'Lax38Proofs.hasSucc'"),
     })).toMatchObject({ kind: "violation", rule: "not-a-theorem" });
     expect(interpretComparatorRun({ code: 1, output: transcript("error: Solution constant is not a theorem: 'Cert.X.y'") }))
       .toMatchObject({ kind: "violation", rule: "not-a-theorem" });
@@ -92,10 +92,10 @@ describe("the comparator verdict", () => {
     const child = interpretComparatorRun({ code: 1, output: transcript("error: Child exited with 134") });
     expect(child.kind).toBe("failure");
     if (child.kind === "failure") expect(child.failure.message).toContain("crash or a kill");
-    expect(interpretComparatorRun({ code: 1, output: transcript("error: Child exited with 1") })).toMatchObject({ kind: "violation", rule: "solution-build" });
+    expect(interpretComparatorRun({ code: 1, output: transcript("error: Child exited with 1") })).toMatchObject({ kind: "violation", rule: "comparator-build" });
   });
 
-  it("tells a Solution that did not elaborate apart, quoting Lean", () => {
+  it("tells a module the comparator could not build apart, quoting Lean, as the translation's question", () => {
     const verdict = interpretComparatorRun({
       code: 1,
       output: transcript(
@@ -110,9 +110,10 @@ describe("the comparator verdict", () => {
         "error: Child exited with 1",
       ),
     });
-    expect(verdict).toMatchObject({ kind: "violation", rule: "solution-build" });
+    // a reader's source-mode rerun: the archive's own judge builds nothing
+    expect(verdict).toMatchObject({ kind: "violation", rule: "comparator-build", intent: "translation" });
     const message = (verdict as { message: string }).message;
-    expect(message).toContain("the generated Solution did not elaborate");
+    expect(message).toContain("could not build the Challenge or the solution module");
     expect(message).toContain("lax bug");
     expect(message).toContain("Solution.lean:6:60: Type mismatch");
   });

@@ -450,10 +450,10 @@ function fixtures(): SmokeFixture[] {
     // Stage 3's Certify in the real containers (axiomfree-plan.md): a spec-2
     // submission with an unconditional and a conditional proof runs through
     // containers A1/A2 (the Challenge built without the proof package, then
-    // exported and inspected over the read-only build tree), B1/B2 (the
-    // Solution built over the proof capture, then exported), and C (`lake
-    // comparator` over both exports, with nothing of the builds mounted),
-    // and the build output carries the certificate.
+    // exported and inspected over the read-only build tree), B (the proof
+    // package's root exported over its capture's lib tree, nothing built),
+    // and C (`lake comparator` over both exports, with nothing of the builds
+    // mounted), and the build output carries the certificate.
     // Only selectable in a spec-2 environment, which the real table does not
     // have yet: inject the rehearsal row with the real mathlib at its tag and
     // the fixture LaxCore (a `file://` repository is fine — the warm store is
@@ -484,7 +484,8 @@ function fixtures(): SmokeFixture[] {
             assert.deepEqual(certificate.judge.selfTest, { passed: true, probes: [...SELF_TEST_PROBES] });
             for (const tool of JUDGE_TOOLS) assert.match(certificate.judge.tools[tool], /^[0-9a-f]{64}$/u, tool);
             assert.equal(certificate.judge.tools.lake, createHash("sha256").update(fs.readFileSync(path.join(toolchainBinDir(environment), "lake"))).digest("hex"));
-            assert(certificate.challenge.includes("theorem Cert.Lax47Proofs.step"), certificate.challenge);
+            // the Challenge theorem is the proof's own name (ultracode review C1)
+            assert(certificate.challenge.includes("theorem Lax47Proofs.step"), certificate.challenge);
             const bundlePath = (report as { certificateBundlePath?: string }).certificateBundlePath;
             assert(bundlePath !== undefined && bundlePath.startsWith(jobRoot), "the bundle did not come out of the job directory");
             assert.equal(createHash("sha256").update(fs.readFileSync(bundlePath)).digest("hex"), certificate.bundle.digest);
@@ -494,10 +495,12 @@ function fixtures(): SmokeFixture[] {
             assert.match(certificate.solutionExportSha256, /^[0-9a-f]{64}$/u);
             assert.notEqual(certificate.challengeExportSha256, certificate.solutionExportSha256);
             const certifyDir = path.dirname(bundlePath);
-            // the build steps read a plan of their own, from a read-only
-            // mount, and the export steps' plans ask for no build
-            for (const [side, module] of [["challenge", "Challenge"], ["solution", "Solution"]] as const) {
-              assert.deepEqual(JSON.parse(fs.readFileSync(path.join(certifyDir, side, "plan", "plan.json"), "utf8")), { tool: "build", project: "/cert/project", module });
+            // the one build step reads a plan of its own, from a read-only
+            // mount; the export steps' plans ask for no build, and B's exports
+            // the proof package's root, with no build step before it
+            assert.deepEqual(JSON.parse(fs.readFileSync(path.join(certifyDir, "challenge", "plan", "plan.json"), "utf8")), { tool: "build", project: "/cert/project", module: "Challenge" });
+            assert.equal(fs.existsSync(path.join(certifyDir, "solution", "plan")), false);
+            for (const [side, module] of [["challenge", "Challenge"], ["solution", "Lax47Proofs"]] as const) {
               const exportPlan = JSON.parse(fs.readFileSync(path.join(certifyDir, side, "out", "plan.json"), "utf8")) as Record<string, unknown>;
               assert.equal(exportPlan.tool, "export");
               assert.equal(exportPlan.module, module);
@@ -512,7 +515,8 @@ function fixtures(): SmokeFixture[] {
             assert.equal(judgePlan.tool, "comparator");
             assert.equal(judgePlan.solutionExport, "/cert/solution.export");
             assert.equal(judgePlan.challengeExport, "/cert/challenge.export");
-            assert.deepEqual(fs.readdirSync(path.join(certifyDir, "judge", "project")).sort(), ["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+            assert.deepEqual(fs.readdirSync(path.join(certifyDir, "judge", "project")).sort(), ["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+            assert.equal(JSON.parse(fs.readFileSync(path.join(certifyDir, "judge", "project", "comparator.json"), "utf8")).solution_module, "Lax47Proofs");
             assert.equal(
               createHash("sha256").update(fs.readFileSync(path.join(certifyDir, "challenge", "out", "challenge.export"))).digest("hex"),
               certificate.challengeExportSha256,

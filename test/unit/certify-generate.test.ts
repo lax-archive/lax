@@ -1,5 +1,5 @@
 // The certificate generator (axiomfree-plan.md, "Certify" 1; stage 3's
-// goldens): the five files for an unconditional proof, a conditional one
+// goldens): a record bundle's four files for an unconditional proof, a conditional one
 // with a duplicated hypothesis, a polymorphic one, handwritten names with
 // keyword components and Lean's less common identifier characters, and a
 // polymorphic proof of the spec-2 inspector golden exactly as the inspector
@@ -13,18 +13,18 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { readBundle, sealBundle, sealTar } from "../../src/submission-validation/certify/bundle.js";
 import {
-  BUNDLE_FILES,
+  RECORD_BUNDLE_FILES,
+  bundleMembers,
   challengeText,
   comparatorConfigText,
   conceptPackagesOf,
   edgesOf,
   lakefileText,
   manifestDependencies,
-  solutionText,
   theoremNamesOf,
   universes,
-  type BundleFile,
   type CertifiedProof,
+  type RecordBundle,
 } from "../../src/submission-validation/certify/generate.js";
 import { leanLevel, leanName, LeanNameError } from "../../src/submission-validation/certify/lean-name.js";
 import { manifestText } from "../../src/submission-validation/host/warmstore.js";
@@ -83,7 +83,8 @@ const CASES: Record<string, CertifiedProof[]> = {
   // proof `polyProof.{w}` of the spec-2 golden fixture, taken from the real
   // report (test/fixtures/inspector-golden-spec2/expected.json), so the
   // generator's input is the inspector's output and not a handwritten guess
-  // at it
+  // at it (the golden's proof lives beside its statement in one package,
+  // which no record may do: the files are compared as text, never built)
   inspected: [inspectedProof("Spec2.Basic.polyProof")],
 };
 
@@ -114,7 +115,7 @@ function inspectedProof(name: string): CertifiedProof {
   };
 }
 
-function generate(proofs: CertifiedProof[]): Record<BundleFile, string> {
+function generate(proofs: CertifiedProof[]): RecordBundle {
   const concepts = conceptPackagesOf(proofs);
   const packages = [
     ...concepts.map((name) => ({ name, source: { git: `https://github.com/alice/${name.toLowerCase()}`, rev: "c".repeat(40), subDir: "concepts" } })),
@@ -122,9 +123,8 @@ function generate(proofs: CertifiedProof[]): Record<BundleFile, string> {
   ];
   return {
     "Challenge.lean": challengeText(proofs),
-    "Solution.lean": solutionText(proofs),
     "comparator.json": comparatorConfigText(proofs),
-    "lakefile.toml": lakefileText(LIBRARIES, packages, "bundle"),
+    "lakefile.toml": lakefileText(LIBRARIES, packages, "record"),
     "lake-manifest.json": manifestText(WARM_PACKAGES, manifestDependencies(packages)),
   };
 }
@@ -133,7 +133,7 @@ describe("the certificate generator", () => {
   for (const [name, proofs] of Object.entries(CASES)) {
     it(`writes the ${name} case as its golden files`, () => {
       const generated = generate(proofs);
-      for (const file of BUNDLE_FILES) {
+      for (const file of RECORD_BUNDLE_FILES) {
         const golden = path.join(FIXTURES, name, file);
         if (process.env.LAX_UPDATE_GOLDEN === "1") {
           fs.mkdirSync(path.dirname(golden), { recursive: true });
@@ -148,17 +148,19 @@ describe("the certificate generator", () => {
     const proofs = CASES.conditional!;
     const reversed = [...proofs].reverse();
     expect(challengeText(reversed)).toBe(challengeText(proofs));
-    expect(solutionText(reversed)).toBe(solutionText(proofs));
     expect(comparatorConfigText(reversed)).toBe(comparatorConfigText(proofs));
-    expect(theoremNamesOf(reversed)).toEqual(["Cert.Lax261Proofs.aux", "Cert.Lax261Proofs.euclid"]);
+    // each Challenge theorem is the proof's own name, and the solution module
+    // the proof package's root (ultracode review C1)
+    expect(theoremNamesOf(reversed)).toEqual(["Lax261Proofs.aux", "Lax261Proofs.euclid"]);
+    expect(JSON.parse(comparatorConfigText(proofs))).toMatchObject({ challenge_module: "Challenge", solution_module: "Lax261Proofs" });
     // the Challenge imports exactly the concept packages the edges name
     expect(conceptPackagesOf(proofs)).toEqual(["Lax261", "Lax42"]);
     expect(challengeText(proofs)).not.toMatch(/^import .*Proofs/mu);
-    expect(solutionText(proofs)).toMatch(/^import Lax261Proofs$/mu);
+    // proofs of two packages have no one solution module
+    expect(() => comparatorConfigText([...proofs, { ...CASES.unconditional![0]! }])).toThrow("one proof package");
     // the edges, derived: duplicates kept in binder order
     expect(edgesOf(proofs)[1]).toEqual({
       proof: "Lax261Proofs.euclid",
-      theorem: "Cert.Lax261Proofs.euclid",
       hypotheses: ["Lax42.Primes.ExistsPrimeDivisor", "Lax261.Infinite.Auxiliary", "Lax42.Primes.ExistsPrimeDivisor", "Lax261.Infinite.Auxiliary"],
       conclusion: "Lax261.Infinite.InfinitelyManyPrimes",
     });
@@ -203,15 +205,30 @@ describe("the certificate generator", () => {
     }
   });
 
-  it("seals the five files into a ustar archive that reads back", () => {
+  it("seals a record's four files into a ustar archive that reads back", () => {
     const files = generate(CASES.conditional!);
     const sealed = sealBundle(files);
     expect(sealed.tar.length % 10_240).toBe(0);
     expect(sealed.digest).toMatch(/^[0-9a-f]{64}$/u);
     expect(sealBundle(files).digest).toBe(sealed.digest);
     expect(Object.fromEntries(readBundle(sealed.tar))).toEqual(files);
+    expect([...readBundle(sealed.tar).keys()]).toEqual([...RECORD_BUNDLE_FILES]);
     // a byte of difference is a different bundle
-    expect(sealBundle({ ...files, "Solution.lean": `${files["Solution.lean"]}\n` }).digest).not.toBe(sealed.digest);
+    expect(sealBundle({ ...files, "Challenge.lean": `${files["Challenge.lean"]}\n` }).digest).not.toBe(sealed.digest);
+  });
+
+  it("knows two bundle shapes, differing by the relative certificate's Solution.lean alone", () => {
+    const files = generate(CASES.conditional!);
+    const relative = { ...files, "Solution.lean": "-- solution\n" };
+    expect(bundleMembers(relative).map((member) => member.name)).toEqual([
+      "Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml",
+    ]);
+    expect([...readBundle(sealBundle(relative).tar).keys()]).toHaveLength(5);
+    // any other set is neither shape
+    const { ["comparator.json"]: _dropped, ...partial } = files;
+    expect(() => bundleMembers(partial)).toThrow("a bundle holds");
+    const { ["lakefile.toml"]: _lakefile, ...noLakefile } = relative;
+    expect(() => bundleMembers(noLakefile)).toThrow("a bundle holds");
   });
 
   it("reads back only a well-formed archive: checksums, member types, unique names, termination, no trailing data", () => {

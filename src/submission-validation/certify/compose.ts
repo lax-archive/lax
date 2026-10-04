@@ -16,7 +16,7 @@
 // rejection of an ill-typed composition is the test that the rule is right.
 
 import type { CertifiedProof, CertificateTheorem } from "./generate.js";
-import { packageOf, rootName, universes } from "./generate.js";
+import { RELATIVE_THEOREM_PREFIX, packageOf, rootName, universes } from "./generate.js";
 
 /** A statement as the composition needs it: its id and universe parameters. */
 export interface StatementRef {
@@ -150,7 +150,7 @@ export function composeRelativeCertificate(input: ComposeInput): ComposedCertifi
 
   return {
     theorem: {
-      name: `Cert.${input.target.id}`,
+      name: `${RELATIVE_THEOREM_PREFIX}.${input.target.id}`,
       levelParams: input.target.levelParams,
       telescope: {
         hypotheses,

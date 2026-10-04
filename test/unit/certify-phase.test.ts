@@ -2,10 +2,11 @@
 // the judge self-test first (certify/self-test.ts: a build, one export step,
 // three judge runs, a confinement probe — each wrong answer an
 // infrastructure failure, never a violation), then
-// the five-container sequence (build and export per side, then the judge),
-// the mounts — the proof capture absent from A1/A2, only the concept
-// closure's subtrees under A1's `/deps`, the export steps over a read-only
-// build tree with `/out` their only writable mount, nothing writable in the
+// the four-container sequence (the Challenge's build and export, the proof
+// package's export, then the judge), the mounts — the proof capture absent
+// from A1/A2, only the concept closure's subtrees under A1's `/deps`, A2 over
+// a read-only build tree and B over lib trees alone, each with `/out` its
+// only writable mount, nothing writable in the
 // judge but `/out`, no capture and no path a hostile build could have written
 // to — the plans the in-container tool reads, and the exit codes: 0
 // certifies and seals the bundle, the exit-1 shapes are `certify`
@@ -75,12 +76,12 @@ function challengeReportFor(proofs: ProofEntry[]): InspectorReport {
   return {
     modules: [{ name: "Challenge", imports: ["Lax1", "Lax7"], moduleDocs: [], declCount: proofs.length, globalSyntax: [] }],
     declarations: proofs.map((proof) => ({
-      name: `Cert.${proof.id}`,
+      name: proof.id,
       kind: "theorem",
       module: "Challenge",
       axioms: ["sorryAx"],
       usedConstants: [],
-      userName: `Cert.${proof.id}`,
+      userName: proof.id,
       origin: { kind: "authored" },
       laxStatement: false,
       isProp: false,
@@ -102,15 +103,11 @@ function challengeReportFor(proofs: ProofEntry[]): InspectorReport {
 interface Scenario {
   challenge?: ContainerResult;
   challengeExport?: ContainerResult;
-  solution?: ContainerResult;
   solutionExport?: ContainerResult;
   judge?: ContainerResult;
   /** What A's inspector reported over the built Challenge; the record's own
    * edges unless said otherwise, or no report at all. */
   challengeReport?: InspectorReport | "missing";
-  /** B1 behaves like a hostile proof-package initializer: it plants an
-   * executable `which` into every writable mount it is given. */
-  hostileSolution?: boolean;
   /** A1 behaves like a hostile concept-package initializer that outlives
    * the build: it leaves a marker in every writable mount, and the harness
    * then checks that no later container can reach any of them writable. */
@@ -143,7 +140,7 @@ const SELF_TEST_LABELS = [
   "certify-self-test-judge-kernel-rejects-forged",
   "certify-self-test-probe",
 ];
-const RECORD_LABELS = ["certify-challenge-build", "certify-challenge-export", "certify-solution-build", "certify-solution-export", "certify-judge"];
+const RECORD_LABELS = ["certify-challenge-build", "certify-challenge-export", "certify-solution-export", "certify-judge"];
 
 /** A Solution export the way lean4export writes it, reduced to what the
  * forgery reads: the name table and the theorem record. */
@@ -255,11 +252,6 @@ function harness(scenario: Scenario = {}): {
         }
         return result;
       }
-      if (invocation.label === "certify-solution-build") {
-        if (out !== undefined) throw new Error("a build step has an /out mount");
-        if (scenario.hostileSolution === true) plant();
-        return scenario.solution ?? { code: 0, output: "", timedOut: false };
-      }
       if (invocation.label === "certify-solution-export") {
         if (out === undefined) throw new Error("no /out mount");
         const result = scenario.solutionExport ?? { code: 0, output: "", timedOut: false };
@@ -301,7 +293,7 @@ function harness(scenario: Scenario = {}): {
   };
 }
 
-/** The record's five runs, after the self-test's six. */
+/** The record's four runs, after the self-test's six. */
 const recordRuns = (invocations: ContainerInvocation[]) => invocations.slice(SELF_TEST_LABELS.length);
 
 const mountsOf = (invocation: ContainerInvocation) => invocation.mounts ?? [];
@@ -333,7 +325,7 @@ describe("the trusted Certify phase", () => {
     const { input, invocations } = harness({ challengeReport: rewritten });
     const result = await certifyInContainer(input);
     expect(result).toMatchObject({ kind: "violation", rule: "challenge-mismatch", intent: "translation" });
-    expect((result as { message: string }).message).toContain("Cert.Lax1Proofs.euclid states the edge {Lax7.Primes.ExistsPrimeDivisor} → Lax1.Infinite.InfinitelyManyPrimes in the record but elaborated to {} → True");
+    expect((result as { message: string }).message).toContain("theorem Lax1Proofs.euclid states the edge {Lax7.Primes.ExistsPrimeDivisor} → Lax1.Infinite.InfinitelyManyPrimes in the record but elaborated to {} → True");
     expect(invocations.map((invocation) => invocation.label)).toEqual([...SELF_TEST_LABELS, "certify-challenge-build", "certify-challenge-export"]);
   });
 
@@ -353,12 +345,12 @@ describe("the trusted Certify phase", () => {
     expect(invocations).toEqual([]);
   });
 
-  it("builds the Challenge without the proof package, exports both sides over read-only build trees, then judges both exports in a clean container", async () => {
+  it("builds the Challenge without the proof package, exports it over a read-only build tree and the proof package over its capture, then judges both exports in a clean container", async () => {
     const { input, invocations, jobDir } = harness();
     const result = await certifyInContainer(input);
     expect(invocations.map((invocation) => invocation.label)).toEqual([...SELF_TEST_LABELS, ...RECORD_LABELS]);
-    const [build, challenge, solutionBuild, solution, judge] =
-      recordRuns(invocations) as [ContainerInvocation, ContainerInvocation, ContainerInvocation, ContainerInvocation, ContainerInvocation];
+    const [build, challenge, solution, judge] =
+      recordRuns(invocations) as [ContainerInvocation, ContainerInvocation, ContainerInvocation, ContainerInvocation];
 
     // A1: the concept capture, the concept closure's subtrees, the Challenge
     // half of the project read-only with a writable `.lake`, the plan
@@ -434,7 +426,9 @@ describe("the trusted Certify phase", () => {
       // and the inspector over the built Challenge, for the telescope check
       inspect: { report: `${CERTIFY_PATHS.out}/challenge-report.json` },
     });
-    expect(planA.targets).toEqual(expect.arrayContaining(["Quot.sound", "Cert.Lax1Proofs.euclid", "propext", "Nat.add", "outParam"]));
+    // the Challenge theorem is the proof's own name
+    expect(planA.targets).toEqual(expect.arrayContaining(["Quot.sound", "Lax1Proofs.euclid", "propext", "Nat.add", "outParam"]));
+    expect(fs.readFileSync(path.join(projectA, "Challenge.lean"), "utf8")).toContain("theorem Lax1Proofs.euclid\n    (h₁ : _root_.Lax7.Primes.ExistsPrimeDivisor)\n");
     expect(planA.leanPath).toEqual([
       `${CERTIFY_PATHS.project}/.lake/build/lib/lean`,
       `${CERTIFY_PATHS.own}/concepts/lib`,
@@ -443,41 +437,27 @@ describe("the trusted Certify phase", () => {
       "/opt/lax/warm/.lake/packages/mathlib/.lake/build/lib/lean",
     ]);
 
-    // B1: everything A1 had plus the proof capture and the whole project;
-    // B2: the export by A2's rule, for the Solution; no Challenge export in sight
-    const targetsB = mountsOf(solutionBuild).map((mount) => mount.target);
-    expect(targetsB).toEqual(expect.arrayContaining([
-      `${CERTIFY_PATHS.own}/proofs/package`,
-      `${CERTIFY_PATHS.own}/proofs/lib`,
-      `${CERTIFY_PATHS.deps}/lax-7/concepts/package`,
-      CERTIFY_PATHS.plan,
-    ]));
-    expect(targetsB).not.toContain(CERTIFY_PATHS.challengeExport);
-    expect(targetsB).not.toContain(CERTIFY_PATHS.out);
-    expect(writableTargets(solutionBuild)).toEqual([`${CERTIFY_PATHS.project}/.lake`]);
-    expect(solutionBuild.runtime).toBeUndefined();
-    const projectB = mountsOf(solutionBuild).find((mount) => mount.target === CERTIFY_PATHS.project)!.source;
-    expect(fs.readdirSync(projectB).sort()).toEqual([".lake", "Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
-    const manifestB = JSON.parse(fs.readFileSync(path.join(projectB, "lake-manifest.json"), "utf8")) as { packages: Array<{ name: string; dir?: string }> };
-    expect(manifestB.packages.map((pkg) => pkg.name)).toEqual(["Lax1", "Lax1Proofs", "Lax7", "mathlib", "LaxCore"]);
+    // B: no project, no build, no package dir — the lib trees of the proof
+    // capture, the record's concepts and the solution closure, read-only,
+    // `/out` the only writable mount; the proof package's root exported by
+    // A2's rule (ultracode review C1)
     expect(mountsOf(solution).map((mount) => mount.target).sort()).toEqual([
-      `${CERTIFY_PATHS.project}`,
-      `${CERTIFY_PATHS.project}/.lake`,
       `${CERTIFY_PATHS.own}/concepts/lib`,
       `${CERTIFY_PATHS.own}/proofs/lib`,
       `${CERTIFY_PATHS.deps}/lax-7/concepts/lib`,
       CERTIFY_PATHS.out,
     ].sort());
     expect(writableTargets(solution)).toEqual([CERTIFY_PATHS.out]);
+    expect(solution.runtime).toBeUndefined();
+    expect(mountsOf(solution).find((mount) => mount.target === `${CERTIFY_PATHS.own}/proofs/lib`)!.source).toBe(path.join(jobDir, "capture", "proofs", "lib"));
     const outB = mountsOf(solution).find((mount) => mount.target === CERTIFY_PATHS.out)!.source;
     const planB = JSON.parse(fs.readFileSync(path.join(outB, "plan.json"), "utf8")) as Record<string, unknown>;
-    expect(planB).toMatchObject({ tool: "export", project: CERTIFY_PATHS.project, module: "Solution", output: `${CERTIFY_PATHS.out}/solution.export` });
+    expect(planB).toMatchObject({ tool: "export", project: CERTIFY_PATHS.out, module: "Lax1Proofs", output: `${CERTIFY_PATHS.out}/solution.export` });
     expect(planB.inspect).toBeUndefined();
     expect(planB.targets).toEqual(planA.targets);
     expect(planB.leanPath).toEqual([
-      `${CERTIFY_PATHS.project}/.lake/build/lib/lean`,
-      `${CERTIFY_PATHS.own}/concepts/lib`,
       `${CERTIFY_PATHS.own}/proofs/lib`,
+      `${CERTIFY_PATHS.own}/concepts/lib`,
       `${CERTIFY_PATHS.deps}/lax-7/concepts/lib`,
       "/opt/lax/warm/.lake/packages/LaxCore/.lake/build/lib/lean",
       "/opt/lax/warm/.lake/packages/mathlib/.lake/build/lib/lean",
@@ -509,7 +489,12 @@ describe("the trusted Certify phase", () => {
     expect(solutionExport.source).toBe(path.join(outB, "solution.export"));
     expect(fs.statSync(solutionExport.source).isFile()).toBe(true);
     const projectC = mountsOf(judge).find((mount) => mount.target === CERTIFY_PATHS.project)!.source;
-    expect(fs.readdirSync(projectC).sort()).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+    expect(fs.readdirSync(projectC).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+    expect(JSON.parse(fs.readFileSync(path.join(projectC, "comparator.json"), "utf8"))).toMatchObject({
+      challenge_module: "Challenge",
+      solution_module: "Lax1Proofs",
+      theorem_names: ["Lax1Proofs.euclid"],
+    });
     // the judge's project is the bundle itself: git requires, no path entries
     expect(fs.readFileSync(path.join(projectC, "lakefile.toml"), "utf8")).toContain('git = "https://github.com/alice/primes"');
     expect(fs.readFileSync(path.join(projectC, "lake-manifest.json"), "utf8")).not.toContain('"type": "path"');
@@ -534,7 +519,7 @@ describe("the trusted Certify phase", () => {
     const tar = fs.readFileSync(result.bundlePath);
     expect(createHash("sha256").update(tar).digest("hex")).toBe(result.certificate.bundle.digest);
     const members = readBundle(tar);
-    expect([...members.keys()]).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+    expect([...members.keys()]).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
     expect(members.get("Challenge.lean")).toBe(result.certificate.challenge);
     expect(members.get("lakefile.toml")).toContain('git = "https://github.com/alice/primes"');
     // and the judge judged exactly the bundle's files
@@ -552,28 +537,29 @@ describe("the trusted Certify phase", () => {
       solutionExportSha256: createHash("sha256").update('{"meta":{"solution":true}}\n').digest("hex"),
       challenge: result.certificate.challenge,
     });
-    expect(result.certificate.challenge).toContain("theorem Cert.Lax1Proofs.euclid");
+    expect(result.certificate.challenge).toContain("theorem Lax1Proofs.euclid");
   });
 
   it("gives no later container a writable path a hostile build wrote, and the export steps no writable path but /out", async () => {
-    // A1 and B1 are where candidate code runs; each plants a `which` in
-    // every writable mount it is given — its `.lake`, the only one. The
-    // export steps mount that `.lake` again, read-only, and the judge not
-    // at all (fable review 2026-10-04, finding 1.1).
-    const { input, invocations, planted } = harness({ hostileChallenge: true, hostileSolution: true });
+    // A1 is where candidate code runs; it plants a `which` in every
+    // writable mount it is given — its `.lake`, the only one. The export
+    // step mounts that `.lake` again, read-only, and B and the judge not at
+    // all (fable review 2026-10-04, finding 1.1).
+    const { input, invocations, planted } = harness({ hostileChallenge: true });
     const result = await certifyInContainer(input);
     expect(result.kind).toBe("certified");
-    expect(planted).toHaveLength(2);
+    expect(planted).toHaveLength(1);
     const builds = recordRuns(invocations).filter((invocation) => invocation.label.endsWith("-build"));
+    expect(builds.map((build) => build.label)).toEqual(["certify-challenge-build"]);
     const written = builds.flatMap((build) => mountsOf(build).filter((mount) => mount.writable === true).map((mount) => fs.realpathSync(mount.source)));
-    expect(written).toHaveLength(2);
+    expect(written).toHaveLength(1);
     for (const later of invocations.filter((invocation) => !invocation.label.endsWith("-build"))) {
       for (const mount of mountsOf(later)) {
         const source = fs.realpathSync(mount.source);
         const underWritten = written.some((directory) => source === directory || source.startsWith(`${directory}${path.sep}`));
         // a build tree reaches its own export step, read-only; nothing else
         if (underWritten) {
-          expect(later.label.endsWith("-export"), `${later.label} mounts ${source}`).toBe(true);
+          expect(later.label, `${later.label} mounts ${source}`).toBe("certify-challenge-export");
           expect(mount.writable, `${later.label} mounts ${source} writable`).toBeUndefined();
         }
         // and no file the judge can see is a planted `which`
@@ -611,14 +597,12 @@ describe("the trusted Certify phase", () => {
       },
     });
     expect(result.kind).toBe("certified");
-    const [build, challenge, solutionBuild, solution] = recordRuns(invocations) as [ContainerInvocation, ContainerInvocation, ContainerInvocation, ContainerInvocation];
+    const [build, challenge, solution] = recordRuns(invocations) as [ContainerInvocation, ContainerInvocation, ContainerInvocation];
     for (const invocation of [build, challenge])
       expect(mountsOf(invocation).map((mount) => mount.target).some((target) => target.includes("proofs"))).toBe(false);
-    expect(mountsOf(solutionBuild).map((mount) => mount.target)).toEqual(expect.arrayContaining([
-      `${CERTIFY_PATHS.deps}/lax-7/proofs/package`,
-      `${CERTIFY_PATHS.deps}/lax-7/proofs/lib`,
-    ]));
+    // B reads the dependency's proof oleans, and never its package dir
     expect(mountsOf(solution).map((mount) => mount.target)).toContain(`${CERTIFY_PATHS.deps}/lax-7/proofs/lib`);
+    expect(mountsOf(solution).map((mount) => mount.target).some((target) => target.endsWith("/package"))).toBe(false);
   });
 
   it("proves the judge first: the self-test's six runs precede the record's, through the judge runtime, with the record's mount discipline", async () => {
@@ -714,36 +698,25 @@ describe("the trusted Certify phase", () => {
   it("runs the paranoid kernel set when the environment's setting says so", async () => {
     const { input, invocations } = harness();
     const result = await certifyInContainer({ ...input, limits: { ...DEFAULT_LIMITS, certificationKernels: "paranoid" } });
-    const outC = mountsOf(recordRuns(invocations)[4]!).find((mount) => mount.target === CERTIFY_PATHS.out)!.source;
+    const outC = mountsOf(recordRuns(invocations)[3]!).find((mount) => mount.target === CERTIFY_PATHS.out)!.source;
     expect(JSON.parse(fs.readFileSync(path.join(outC, "plan.json"), "utf8"))).toMatchObject({ paranoid: true });
     expect(result.kind === "certified" && result.certificate.kernels).toEqual(["lean", "leanchecker-paranoid", "lean4lean", "nanoda", "con-leche", "con-ron"]);
   });
 
   it("turns the comparator's exit-1 shapes into certify violations and stops before any bundle", async () => {
     for (const [output, rule] of [
-      ["error: Challenge and solution theorem statement do not match: 'Cert.Lax1Proofs.euclid'", "statement-mismatch"],
+      ["error: Challenge and solution theorem statement do not match: 'Lax1Proofs.euclid'", "statement-mismatch"],
       ["error: Illegal axiom detected: 'sorryAx'", "illegal-axiom"],
       ["error: Const does not match between challenge and target 'Lax7.Primes.ExistsPrimeDivisor'", "constant-mismatch"],
-      ["error: Challenge and solution constant kind don't match: 'Cert.Lax1Proofs.euclid'", "not-a-theorem"],
+      ["error: Challenge and solution constant kind don't match: 'Lax1Proofs.euclid'", "not-a-theorem"],
       ["Lean default kernel rejected the solution\nerror: Lean default exited with 1", "kernel-rejected"],
     ] as const) {
       const { input, invocations, jobDir } = harness({ judge: { code: 1, output: `${output}\n`, timedOut: false } });
       const result = await certifyInContainer(input);
       expect(result, output).toMatchObject({ kind: "violation", rule, intent: "judge" });
-      expect(recordRuns(invocations)).toHaveLength(5);
+      expect(recordRuns(invocations)).toHaveLength(4);
       expect(fs.existsSync(path.join(jobDir, "certify", "certificate.tar"))).toBe(false);
     }
-  });
-
-  it("reports a Solution that did not build as the judge's no, from B1, and never exports or judges", async () => {
-    const { input, invocations } = harness({
-      solution: { code: 1, output: "error: Solution.lean:5:0: unknown identifier 'Lax1Proofs.euclid'\nerror: build failed\n", timedOut: false },
-    });
-    const result = await certifyInContainer(input);
-    expect(result).toMatchObject({ kind: "violation", rule: "solution-build", intent: "judge", message: expect.stringContaining("unknown identifier") });
-    // not a lax bug by default: only if the package builds cleanly on its own
-    expect((result as { message: string }).message).toContain("if your proof package builds cleanly with `lax build`, report it as a lax bug");
-    expect(invocations.map((invocation) => invocation.label)).toEqual([...SELF_TEST_LABELS, "certify-challenge-build", "certify-challenge-export", "certify-solution-build"]);
   });
 
   it("reports a Challenge that did not build as a lax bug, and never exports it or runs B", async () => {
@@ -760,10 +733,12 @@ describe("the trusted Certify phase", () => {
   it("treats an exporter or inspector that refused a built module, and any tool killed by a signal, as the archive's failure", async () => {
     await expect(certifyInContainer(harness({ challengeExport: { code: 1, output: "leanexport: cannot decode target\n", timedOut: false } }).input))
       .rejects.toMatchObject({ kind: "infrastructure", message: expect.stringContaining("exporting the certificate Challenge failed") });
-    await expect(certifyInContainer(harness({ solutionExport: { code: 2, output: "", timedOut: false } }).input))
-      .rejects.toMatchObject({ kind: "infrastructure", message: expect.stringContaining("exporting the certificate Solution failed") });
+    // the proof package's export refused: its oleans compiled and were
+    // inspected, so the exporter is the archive's — never a violation
+    await expect(certifyInContainer(harness({ solutionExport: { code: 1, output: "leanexport: unknown module\n", timedOut: false } }).input))
+      .rejects.toMatchObject({ kind: "infrastructure", message: expect.stringContaining("exporting the proof package Lax1Proofs failed") });
     // 3 is the tool script's "terminated by a signal" — never a verdict
-    for (const step of ["challenge", "challengeExport", "solution", "solutionExport", "judge"] as const) {
+    for (const step of ["challenge", "challengeExport", "solutionExport", "judge"] as const) {
       await expect(certifyInContainer(harness({ [step]: { code: 3, output: "build: lean terminated by SIGSEGV\n", timedOut: false } }).input))
         .rejects.toMatchObject({ kind: "infrastructure" });
     }
@@ -778,12 +753,12 @@ describe("the trusted Certify phase", () => {
         proofs: [{ ...PROOFS[0]!, id: "Lax1Proofs.«x»", telescope: PROOFS[0]!.telescope }],
       },
     });
-    expect(result).toMatchObject({ kind: "violation", rule: "name", intent: "translation", message: expect.stringContaining('"Cert.Lax1Proofs.«x»"') });
+    expect(result).toMatchObject({ kind: "violation", rule: "name", intent: "translation", message: expect.stringContaining('"Lax1Proofs.«x»"') });
     expect(invocations).toEqual([]);
   });
 
   it("refuses an export B left as a symlink", async () => {
-    const { input } = harness({ solution: { code: 0, output: "", timedOut: false } });
+    const { input } = harness();
     const runner = input.runner;
     input.runner = {
       ...runner,
@@ -806,7 +781,7 @@ describe("the trusted Certify phase", () => {
     }).input)).rejects.toMatchObject({ name: "PipelineFailure", kind: "infrastructure", message: expect.stringContaining("needs `git`") });
     await expect(certifyInContainer(harness({ judge: { code: 137, output: "", timedOut: false } }).input))
       .rejects.toMatchObject({ kind: "resource-limit" });
-    await expect(certifyInContainer(harness({ solution: { code: 137, output: "", timedOut: false } }).input))
+    await expect(certifyInContainer(harness({ solutionExport: { code: 137, output: "", timedOut: false } }).input))
       .rejects.toMatchObject({ kind: "resource-limit" });
     await expect(certifyInContainer(harness({ challenge: { code: 124, output: "", timedOut: true } }).input))
       .rejects.toMatchObject({ kind: "resource-limit" });

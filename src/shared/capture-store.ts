@@ -35,11 +35,11 @@ export const PAPER_MEDIA_TYPE = "application/vnd.lax.paper.v1+pdf";
  * download, push-before-CAS and retry idempotency inherited unchanged. */
 export const PAPER_WEB_MEDIA_TYPE = "application/vnd.lax.paper-web.v1+tar";
 /** The certificate bundle, a further layer of the same artifact manifest
- * (axiomfree-plan.md, "Certify" 4): the five generated files
+ * (axiomfree-plan.md, "Certify" 4): the four generated files
  * `lake comparator` judged, a few KB, fetched by its digest for a rerun. */
 export const CERTIFICATE_MEDIA_TYPE = "application/vnd.lax.certificate.v1+tar";
 const MAX_PAPER_BYTES = 25 * 1024 * 1024;
-/** Generous for five text files: the estimate for the largest live record
+/** Generous for a few text files: the estimate for the largest live record
  * is 34 KB of Challenge; the cap only bounds what the publisher streams. */
 const MAX_CERTIFICATE_BYTES = 16 * 1024 * 1024;
 /** The bundle cap (PAPER_CAPS.webBundleBytes and the schema parser agree). */

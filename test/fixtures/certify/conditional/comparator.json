@@ -1,9 +1,9 @@
 {
   "challenge_module": "Challenge",
-  "solution_module": "Solution",
+  "solution_module": "Lax261Proofs",
   "theorem_names": [
-    "Cert.Lax261Proofs.aux",
-    "Cert.Lax261Proofs.euclid"
+    "Lax261Proofs.aux",
+    "Lax261Proofs.euclid"
   ],
   "definition_names": [],
   "permitted_axioms": [

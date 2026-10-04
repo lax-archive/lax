@@ -159,10 +159,11 @@ namespace, which two records cannot both carry.
 
 **Certificates.** Beside Replay, the archive judges every spec-2 record with
 the toolchain's `lake comparator`: from your proofs it generates a
-`Challenge.lean` stating each edge over the concept packages alone, a
-`Solution.lean` discharging each by your proof, and a configuration
-permitting only the three background axioms; the comparator must accept the
-Solution with Lean's kernel. `lax build` runs the same Certify phase on your
+`Challenge.lean` stating each edge over the concept packages alone, as a
+theorem named after your proof, and a configuration naming your proof
+package as the solution and permitting only the three background axioms;
+the comparator holds each of your proofs to its Challenge theorem —
+binder names and kinds do not matter — and Lean's kernel must accept it. `lax build` runs the same Certify phase on your
 machine and prints its verdict under *certificate*; the local run is
 informational — the archive certifies again on submit, and that run is the
 one recorded. A refusal there, on a build the other phases accepted, is a

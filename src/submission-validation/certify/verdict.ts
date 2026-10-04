@@ -9,11 +9,12 @@
 // kernel rejection, or, when the comparator builds itself, a build that did
 // not succeed (`Child exited with 1` after the Lean errors) — reported as
 // one `error: …` line on stderr; exit 2 is "could not start": no manifest, no
-// export file, no configuration, no bubblewrap. Both lax paths hand the
-// comparator two finished exports, so it builds nothing and the Solution's
-// own build failure is the phase's `solution-build` violation before the
-// judge ever runs; the `Child exited` shape stays readable here for a
-// comparator driven by hand. The validator has already accepted every proof
+// export file, no configuration, no bubblewrap. The comparator's "solution"
+// is the solution module: a record's proof package itself, or a relative
+// certificate's composed `Solution`. Both archive paths hand the comparator
+// two finished exports, so it builds nothing there; the `Child exited`
+// shape is a comparator building the modules itself — a reader's `lax
+// certify --run`, or by hand. The validator has already accepted every proof
 // the Challenge states, so an exit 1 is lax and the toolchain disagreeing: a
 // violation on the `certify` phase that names the edge and says so, so a
 // fixture dying in elaboration is noticed as such and never passes as a
@@ -82,7 +83,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
       rule: "statement-mismatch",
       message:
         `certificate theorem ${match[1]} does not state the same proposition in the Challenge (over the concept ` +
-        `packages alone) and in the Solution (over the proof package): \`${last}\`; ${REPORT}`,
+        `packages alone) and in the solution module (the proof package, or a relative certificate's Solution): \`${last}\`; ${REPORT}`,
     };
   }
   if (
@@ -93,7 +94,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
       kind: "violation",
       intent: "judge",
       rule: "not-a-theorem",
-      message: `certificate theorem ${match[1]} is not a theorem in the Solution: \`${last}\`; ${REPORT}`,
+      message: `certificate theorem ${match[1]} is not a theorem in the solution module: \`${last}\`; ${REPORT}`,
     };
   }
   if ((match = /^Const not found in (challenge|solution): '(.+)'$/u.exec(last)) !== null) {
@@ -110,7 +111,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
       intent: "judge",
       rule: "constant-mismatch",
       message:
-        `${match[1]} is not the same constant in the Challenge's environment and in the Solution's — a proof ` +
+        `${match[1]} is not the same constant in the Challenge's environment and in the solution module's — a proof ` +
         `package may not redeclare or shadow what the certificate names: \`${last}\`; ${REPORT}`,
     };
   }
@@ -120,13 +121,13 @@ export function interpretComparatorRun(result: { code: number; output: string })
       intent: "judge",
       rule: "illegal-axiom",
       message:
-        `the Solution's proofs rest on the axiom ${match[1]}, which is not one of the background three the ` +
+        `the certified proofs rest on the axiom ${match[1]}, which is not one of the background three the ` +
         `certificate permits: \`${last}\`; ${REPORT}`,
     };
   }
-  // `Child exited with N` is the comparator's own child — the Solution
-  // build or the exporter — and is read before the kernel shapes, which
-  // end the same way (`<kernel> exited with N`).
+  // `Child exited with N` is the comparator's own child — a build of the
+  // Challenge or the solution module, or the exporter — and is read before
+  // the kernel shapes, which end the same way (`<kernel> exited with N`).
   const child = /^Child exited with (\d+)$/u.exec(last);
   if (child !== null) {
     // a child that did not exit 1 did not fail its job, it crashed or was
@@ -140,13 +141,17 @@ export function interpretComparatorRun(result: { code: number; output: string })
       };
     }
     const lean = errors.slice(0, -1);
+    // Every module it builds is lax's text or a package the archive built
+    // and validated: a failure is lax and the reader's checkout disagreeing
+    // with the archive (the translation's question), never a verdict on the
+    // proof — the archive's own judge builds nothing.
     return {
       kind: "violation",
-      intent: "judge",
-      rule: "solution-build",
+      intent: "translation",
+      rule: "comparator-build",
       message:
-        "the generated Solution did not elaborate — the certificate lax wrote from the proofs' telescopes does " +
-        "not apply the proofs the way Lean reads them, so lax's generator and classifier disagree with Lean; " +
+        "`lake comparator` could not build the Challenge or the solution module that the archive built and judged — " +
+        "lax's generated files or this checkout disagree with the archive; " +
         `${REPORT}. Lean said:\n${lean.length > 0 ? lean.map((line) => `error: ${line}`).join("\n") : transcript(result.output)}`,
     };
   }
@@ -186,7 +191,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
         return {
           kind: "failure",
           failure: infrastructureFailure(
-            `kernel disagreement: Lean's kernel accepted the Solution and ${kernel} did not (\`${last}\`); ` +
+            `kernel disagreement: Lean's kernel accepted the solution and ${kernel} did not (\`${last}\`); ` +
               `a maintainer examines this, it is not a verdict on the submission:\n${transcript(result.output)}`,
           ),
         };
@@ -195,7 +200,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
         kind: "violation",
         intent: "judge",
         rule: "kernel-rejected",
-        message: `${kernel}'s kernel rejected the Solution's proofs: \`${last}\`; ${REPORT}`,
+        message: `${kernel}'s kernel rejected the certified proofs: \`${last}\`; ${REPORT}`,
       };
     }
     return {

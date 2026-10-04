@@ -10,8 +10,10 @@
 // the bundle restricted to that one edge. A statement id is a *relative*
 // certificate: the implied edge `{--relative-to statements} → statement`,
 // discharged by the archive's proofs composed along the witness forest
-// `selectProofTree` picks (certify/compose.ts). The five files plus a
-// `lean-toolchain` land in a folder; the command prints the `lake comparator`
+// `selectProofTree` picks (certify/compose.ts). The bundle's files — a
+// record's or a proof's four, a relative certificate's five, the two shapes
+// differing by its `Solution.lean` — plus a `lean-toolchain` land in a
+// folder; the command prints the `lake comparator`
 // line a reader runs there, or runs it with --run — sandboxed, as the tool
 // is: `--inadvisably-no-sandbox` is for lax's own build and is not offered
 // here, because this run is the author's trustworthy rerun.
@@ -30,6 +32,8 @@ import { readBundle, sealBundle } from "../submission-validation/certify/bundle.
 import { CompositionError, composeRelativeCertificate, type StatementRef } from "../submission-validation/certify/compose.js";
 import {
   BUNDLE_FILES,
+  RECORD_BUNDLE_FILES,
+  bundleMembers,
   challengeText,
   certifiedProof,
   comparatorConfigText,
@@ -38,10 +42,10 @@ import {
   manifestDependencies,
   orderedProofs,
   relativeCertificateFiles,
-  solutionText,
-  type BundleFile,
+  type Bundle,
   type CertifiedProof,
   type CertifyPackage,
+  type RecordBundle,
 } from "../submission-validation/certify/generate.js";
 import { kernelsOf } from "../submission-validation/certify/project.js";
 import { interpretComparatorRun, type ComparatorVerdict } from "../submission-validation/certify/verdict.js";
@@ -152,9 +156,14 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     for (const note of prepared.notes) notes.add(...note);
 
     directory = certificateFolder(options.out ?? `certificate-${targetInput}`);
-    for (const name of BUNDLE_FILES) fs.writeFileSync(path.join(directory, name), prepared.files[name], { mode: 0o644 });
+    const members = bundleMembers(prepared.files);
+    // a reused folder may hold the other shape's Solution.lean: gone, so the
+    // folder is exactly this bundle
+    for (const name of BUNDLE_FILES)
+      if (!members.some((member) => member.name === name)) fs.rmSync(path.join(directory, name), { force: true });
+    for (const { name, content } of members) fs.writeFileSync(path.join(directory, name), content, { mode: 0o644 });
     fs.writeFileSync(path.join(directory, "lean-toolchain"), `${prepared.toolchain}\n`, { mode: 0o644 });
-    steps.settle("write", { label: `Wrote ${ui.tilde(directory)}`, detail: "5 files + lean-toolchain" });
+    steps.settle("write", { label: `Wrote ${ui.tilde(directory)}`, detail: `${members.length} files + lean-toolchain` });
 
     if (options.run === true) {
       const workspace = verifyCertificateWorkspace(directory, prepared.files["lake-manifest.json"]);
@@ -191,7 +200,7 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     return 0;
   }
   if (verdict.kind === "certified") {
-    ui.verdict(`${label} is certified: ${command} accepted the Solution.`);
+    ui.verdict(`${label} is certified: ${command} accepted it.`);
     notes.print();
     ui.done();
     return 0;
@@ -208,7 +217,7 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
 }
 
 interface PreparedBundle {
-  files: Record<BundleFile, string>;
+  files: Bundle;
   toolchain: string;
   settled: string;
   detail: string;
@@ -375,14 +384,13 @@ function regenerateBundle(
     proofs: gitSource(record.proofsPackage, records),
   };
   const closure = packageClosure([...record.requiredByProofs, ...record.requiredByConcepts], records);
-  const files: Record<BundleFile, string> = {
+  const files: RecordBundle = {
     "Challenge.lean": challengeText(proofs),
-    "Solution.lean": solutionText(proofs),
     "comparator.json": comparatorConfigText(proofs),
     "lakefile.toml": lakefileText(
       librariesOf(environment),
       [own.concepts, ...referenced.map((name) => gitSource(name, records)), own.proofs],
-      "bundle",
+      "record",
     ),
     "lake-manifest.json": manifestText(
       warm,
@@ -437,9 +445,9 @@ async function fetchStoredBundle(record: IndexedRecord, environment: ArchiveEnvi
   }
   const members = readBundle(fs.readFileSync(file));
   const names = [...members.keys()];
-  if (names.length !== BUNDLE_FILES.length || BUNDLE_FILES.some((name) => !members.has(name)))
-    throw new Error(`the fetched bundle holds ${names.join(", ") || "nothing"}, not the five certificate files`);
-  const files = Object.fromEntries(BUNDLE_FILES.map((name) => [name, members.get(name)!])) as Record<BundleFile, string>;
+  if (names.length !== RECORD_BUNDLE_FILES.length || RECORD_BUNDLE_FILES.some((name) => !members.has(name)))
+    throw new Error(`the fetched bundle holds ${names.join(", ") || "nothing"}, not a record's four certificate files`);
+  const files = Object.fromEntries(RECORD_BUNDLE_FILES.map((name) => [name, members.get(name)!])) as RecordBundle;
   if (files["Challenge.lean"] !== stored.challenge)
     throw new Error(`the fetched bundle's Challenge.lean is not the one ${record.id}'s record stores — the archive's record is inconsistent; report it`);
   return {
@@ -531,7 +539,7 @@ function composeCertificate(
   return {
     files: {
       ...content,
-      "lakefile.toml": lakefileText(librariesOf(environment), packages.map((name) => gitSource(name, records)), "bundle"),
+      "lakefile.toml": lakefileText(librariesOf(environment), packages.map((name) => gitSource(name, records)), "relative"),
       "lake-manifest.json": manifestText(warm, manifestDependencies(closure.map((name) => gitSource(name, records)))),
     },
     toolchain: environment.leanToolchain,
@@ -551,7 +559,7 @@ const RECORD_PACKAGE = /^Lax[0-9]+(?:Proofs)?$/u;
 /**
  * The certificate folder's `.lake` is kept between runs so that mathlib's
  * checkout and cache survive, and `lake comparator` builds the Challenge
- * before the Solution — but a proof package's elaboration-time IO in one
+ * before the solution module — but a proof package's elaboration-time IO in one
  * run can alter a dependency checkout inside `.lake`, and Lake accepts a
  * checkout at the required revision even when it is dirty (pinned
  * `Lake/Load/Materialize.lean`: a warning, not a refusal), so the next run's
@@ -560,7 +568,7 @@ const RECORD_PACKAGE = /^Lax[0-9]+(?:Proofs)?$/u;
  * checkout the bundle's manifest pins is held to its revision and to a
  * clean tree, or the run is refused naming the package; and the record
  * packages' build products — theirs and the certificate project's own —
- * are removed so the Challenge and the Solution are rebuilt from the
+ * are removed so the Challenge and the solution module are rebuilt from the
  * verified sources, while the environment libraries' caches stay. A
  * checkout that does not exist yet is Lake's to clone, as on a first run.
  */

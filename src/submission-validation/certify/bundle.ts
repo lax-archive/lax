@@ -1,4 +1,5 @@
-// The certificate bundle as bytes: the five generated files in one
+// The certificate bundle as bytes: the generated files — a record's four, a
+// relative certificate's five (generate.ts bundleMembers) — in one
 // deterministic ustar archive, written in process. A capture is sealed by
 // the container's `tar` because it is gigabytes; a bundle is a few kilobytes
 // of text, and writing the archive here gives both pipelines — the trusted
@@ -9,7 +10,7 @@
 // blocking — what `tar -xf` and a ustar reader both accept.
 
 import { createHash } from "node:crypto";
-import { BUNDLE_FILES, type BundleFile } from "./generate.js";
+import { bundleMembers, type Bundle } from "./generate.js";
 
 const BLOCK = 512;
 const RECORD = 10_240;
@@ -62,9 +63,10 @@ function headerChecksum(block: Buffer): number {
   return checksum;
 }
 
-/** The archive of these files and its sha256 (bare hex). */
-export function sealBundle(files: Readonly<Record<BundleFile, string>>): { tar: Buffer; digest: string } {
-  return sealTar(BUNDLE_FILES.map((name) => ({ name, content: Buffer.from(files[name], "utf8") })));
+/** The archive of these files and its sha256 (bare hex); a set that is
+ * neither bundle shape is refused. */
+export function sealBundle(files: Readonly<Bundle>): { tar: Buffer; digest: string } {
+  return sealTar(bundleMembers(files).map(({ name, content }) => ({ name, content: Buffer.from(content, "utf8") })));
 }
 
 /**

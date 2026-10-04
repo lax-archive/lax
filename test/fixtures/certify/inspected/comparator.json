@@ -1,8 +1,8 @@
 {
   "challenge_module": "Challenge",
-  "solution_module": "Solution",
+  "solution_module": "Spec2",
   "theorem_names": [
-    "Cert.Spec2.Basic.polyProof"
+    "Spec2.Basic.polyProof"
   ],
   "definition_names": [],
   "permitted_axioms": [

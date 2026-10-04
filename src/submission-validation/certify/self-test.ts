@@ -74,9 +74,7 @@ export function selfTestProjectFiles(): Record<string, string> {
 /** `comparator.json` for the self-test's judge runs: the one theorem, the
  * self-test's module names in place of `Challenge`/`Solution`. */
 export function selfTestComparatorConfig(): string {
-  return comparatorConfigFor([SELF_TEST_THEOREM])
-    .replace(`"challenge_module": "Challenge"`, `"challenge_module": "${SELF_TEST_MODULES.challenge}"`)
-    .replace(`"solution_module": "Solution"`, `"solution_module": "${SELF_TEST_MODULES.solution}"`);
+  return comparatorConfigFor([SELF_TEST_THEOREM], SELF_TEST_MODULES.solution, SELF_TEST_MODULES.challenge);
 }
 
 /** The exporter's target list, composed as `planCertificate` composes the

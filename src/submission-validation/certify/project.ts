@@ -1,11 +1,11 @@
 // What both Certify paths share above the generator: which packages a
 // record's certificate involves and where each comes from, the projects
 // written from the generated files (the bundle a reader reruns — and the
-// judge judges — the Challenge half container A builds, the whole container B
-// builds the Solution from), the staging of the submission's own captures as
-// Lake path dependencies, and the in-container layout. The trusted phase
-// (phase.ts) and the local host run (host.ts) differ only in where the
-// packages are found and how the three commands execute.
+// judge judges — and the Challenge half container A builds), the staging of
+// the submission's own captures as Lake path dependencies, and the
+// in-container layout. The trusted phase (phase.ts) and the local host run
+// (host.ts) differ only in where the packages are found and how the
+// commands execute.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -25,7 +25,7 @@ import type { ContainerMount } from "../sandbox/container.js";
 import {
   BUNDLE_FILES,
   CHALLENGE_MODULE,
-  SOLUTION_MODULE,
+  RECORD_BUNDLE_FILES,
   challengeText,
   certifiedProof,
   comparatorConfigText,
@@ -34,19 +34,19 @@ import {
   manifestDependencies,
   orderedProofs,
   proofPackagesOf,
-  solutionText,
   theoremNamesOf,
   type BundleFile,
   type CertifiedProof,
   type CertifyPackage,
+  type RecordBundle,
 } from "./generate.js";
 
 /**
  * The stable in-container paths of the Certify mounts, beside RUNTIME_PATHS
  * (config.ts). Container A sees `project` (its Challenge half, read-only
  * except `.lake`), `own/concepts/*`, the concept closure under `deps`, and
- * `out`; container B sees the whole project the same way, both own
- * packages, the solution closure under `deps`, and `out`; container C — the
+ * `out`; container B sees the lib trees alone — both own packages' and the
+ * solution closure's under `deps` — read-only, and `out`; container C — the
  * judge — sees the bundle at `project` read-only, both exports read-only,
  * the read-only `shims`, and `out`, and nothing else: no capture, no warm
  * store, no `deps`. Nothing of any proof package is ever mounted into A.
@@ -58,7 +58,7 @@ export const CERTIFY_PATHS = {
   challengeExport: "/cert/challenge.export",
   solutionExport: "/cert/solution.export",
   shims: "/cert/shims",
-  /** The read-only plan of a build step (A1/B1), which has no `/out`. */
+  /** The read-only plan of a build step (A1), which has no `/out`. */
   plan: "/cert/plan",
   out: "/out",
 } as const;
@@ -96,13 +96,17 @@ export interface CertifyRecord {
   };
 }
 
-/** Everything the generator and the three runs read from a record. */
+/** Everything the generator and the runs read from a record. */
 export interface CertifyPlan {
   /** A publishable plan has git requires only; a local one has path requires
    * to sibling packages and is never published. */
   kind: "publishable" | "local";
   proofs: CertifiedProof[];
+  /** The Challenge's theorem names: the proofs' own ids. */
   theoremNames: string[];
+  /** The comparator's solution module: the proof package's root, whose
+   * export carries every proof under its own name. */
+  solutionModule: string;
   /** The exporter's declaration list for both exports: what the comparator
    * itself would export (lean-facts.ts comparatorExportTargets). */
   exportTargets: string[];
@@ -114,7 +118,8 @@ export interface CertifyPlan {
   /** Every dependency the Challenge half's workspace needs: the own concept
    * package's closure and the referenced packages' closures. */
   challengeClosure: ResolvedDependency[];
-  /** Every dependency the whole project's workspace needs. */
+  /** Every dependency the proof package needs: what the bundle's manifest
+   * lists and container B's LEAN_PATH reaches. */
   solutionClosure: ResolvedDependency[];
   /** Every package the bundle's manifest lists beyond the libraries, in
    * manifest order: the own two, the solution closure, then the siblings. */
@@ -124,8 +129,9 @@ export interface CertifyPlan {
    * redirects them through its manifest. Siblings have none. */
   gitSources: ReadonlyMap<string, { git: string; rev: string; subDir: string }>;
   /** The bundle: what a reader reruns and the judge judges, with git
-   * requires at the records' source triples. */
-  bundle: Record<BundleFile, string>;
+   * requires at the records' source triples. A record's has no Solution:
+   * the proof package is the solution module. */
+  bundle: RecordBundle;
 }
 
 /** Code-point order: the one ordering every path regenerating a bundle
@@ -232,6 +238,7 @@ export function planCertificate(record: CertifyRecord): CertifyPlan | undefined 
     kind: localPackages.length === 0 ? "publishable" : "local",
     proofs,
     theoremNames,
+    solutionModule: record.ownProofs,
     exportTargets: [
       ...facts.comparatorExportTargets.slice(0, 4), // the Quot four
       ...theoremNames,
@@ -246,12 +253,11 @@ export function planCertificate(record: CertifyRecord): CertifyPlan | undefined 
     gitSources,
     bundle: {
       "Challenge.lean": challengeText(proofs),
-      "Solution.lean": solutionText(proofs),
       "comparator.json": comparatorConfigText(proofs),
       "lakefile.toml": lakefileText(
         libraries,
         [ownConcepts, ...referenced.map(gitSource), ...referencedLocal.map(localSource), ownProofs],
-        "bundle",
+        "record",
       ),
       "lake-manifest.json": manifestText(record.warmPackages, manifestDependencies(manifestPackages)),
     },
@@ -288,7 +294,7 @@ export function writeRunProject(
 }
 
 /**
- * The judge's project: the bundle's five files verbatim, read-only, with
+ * The judge's project: the bundle's files verbatim, read-only, with
  * no `.lake` — `lake comparator` given both exports loads no workspace,
  * resolves nothing, builds nothing, and writes nothing (Lake/CLI/Check.lean
  * runComparator: `needsProject` is false when both `--*-from-export` files
@@ -297,12 +303,12 @@ export function writeRunProject(
  * because `mkContext` probes PATH for `git` and `env` with `which` before
  * anything else, sandbox or not, and the stock image has no git.
  */
-export function writeJudgeProject(root: string, bundle: Readonly<Record<BundleFile, string>>): { projectDir: string; shimsDir: string } {
+export function writeJudgeProject(root: string, bundle: Readonly<RecordBundle>): { projectDir: string; shimsDir: string } {
   const projectDir = path.join(root, "project");
   const shimsDir = path.join(root, "shims");
   fs.mkdirSync(projectDir, { recursive: true, mode: 0o755 });
   fs.mkdirSync(shimsDir, { recursive: true, mode: 0o755 });
-  for (const name of BUNDLE_FILES) fs.writeFileSync(path.join(projectDir, name), bundle[name], { mode: 0o444 });
+  for (const name of RECORD_BUNDLE_FILES) fs.writeFileSync(path.join(projectDir, name), bundle[name], { mode: 0o444 });
   fs.writeFileSync(path.join(shimsDir, "git"), GIT_SHIM, { mode: 0o555 });
   return { projectDir, shimsDir };
 }
@@ -325,21 +331,21 @@ export function challengeProjectFiles(
         name,
         source: requireSource(name),
       })),
-      "challenge",
+      "record",
     ),
   };
 }
 
-/** The files container B (and a local run) builds the Solution from: the
- * whole bundle, with the requires pointed where this run finds the packages. */
-export function solutionProjectFiles(
+/** The whole bundle with the requires pointed where this run finds the
+ * packages: the local run's project, whose lakefile and manifest its
+ * sealed (local) bundle carries. */
+export function bundleProjectFiles(
   plan: CertifyPlan,
   record: CertifyRecord,
   requireSource: (name: string) => CertifyPackage["source"],
 ): Partial<Record<BundleFile, string>> {
   return {
     "Challenge.lean": plan.bundle["Challenge.lean"],
-    "Solution.lean": plan.bundle["Solution.lean"],
     "comparator.json": plan.bundle["comparator.json"],
     "lakefile.toml": lakefileText(
       librariesOf(record.environment),
@@ -349,7 +355,7 @@ export function solutionProjectFiles(
         ...plan.referencedLocal,
         record.ownProofs,
       ].map((name) => ({ name, source: requireSource(name) })),
-      "bundle",
+      "record",
     ),
   };
 }
@@ -437,10 +443,10 @@ export function warmLibDirs(warmPackages: readonly Record<string, unknown>[], wa
     .map((name) => path.posix.join(warmRoot, ...facts.lakePackagesDir, name, ...facts.lakeLibDir));
 }
 
-/** The project's own build tree, where `lake build` leaves the Challenge and
- * Solution oleans: the first entry of the exporter's LEAN_PATH. */
+/** The project's own build tree, where `lake build` leaves the Challenge
+ * olean: the first entry of the Challenge exporter's LEAN_PATH. */
 export function projectLibDir(projectDir: string): string {
   return path.posix.join(projectDir, ...leanFacts().lakeLibDir);
 }
 
-export { CHALLENGE_MODULE, SOLUTION_MODULE };
+export { CHALLENGE_MODULE };

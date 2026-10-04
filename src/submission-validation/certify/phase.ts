@@ -1,8 +1,9 @@
 // The trusted Certify phase (axiomfree-plan.md, "Certify" 2–3, hardened
 // 2026-10-04 after spike/axiomfree/codex-review-stages1-3-20261003.md
-// finding 1 and again after spike/axiomfree/fable-review-intents-20261004.md
-// finding 1.1): five runs in the existing docker runner under the existing
-// env allowlist and limits, a build and an export per side, then the judge —
+// finding 1, again after spike/axiomfree/fable-review-intents-20261004.md
+// finding 1.1, and after the ultracode review's C1): four runs in the
+// existing docker runner under the existing env allowlist and limits — the
+// Challenge's build and its export, the proof package's export, the judge —
 // preceded by the judge self-test (certify/self-test.ts): before anything of
 // the record is built, the same container shapes build, export and judge
 // three one-line modules lax owns and probe the judge's confinement, and the
@@ -25,24 +26,30 @@
 //      here and no process of A1 is alive here, so the export and the report
 //      are the tools' bytes — "a verifier-owned file no candidate phase can
 //      write to", in Palomar's words.
-//   B1 mounts what A1 had plus the proof capture and the whole project and
-//      runs `lake build Solution`: the only container that executes the
-//      proof package's code.
-//   B2 exports the Solution over B1's read-only build tree, as A2 does.
-//   C  the judge: a fresh container with the bundle's five files read-only,
+//   B  one read-only container over the lib trees alone — the proof
+//      capture's, the record's own concepts', the solution closure's, the
+//      warm store — with `/out` its only writable mount; runs `leanexport
+//      <ProofsRoot>` to `solution.export`, the same rule as A2 (ultracode
+//      review 2026-10-04, C1: there is no generated Solution for a record,
+//      so nothing is built). The comparator looks every Challenge theorem
+//      up by name — the proof's own id — in this export of the author's
+//      package. No candidate code runs anywhere in Certify past A1: the
+//      proof package's code ran in Compile, and `leanexport` imports with
+//      extensions disabled.
+//   C  the judge: a fresh container with the bundle's four files read-only,
 //      both exports read-only, the toolchain, the tools, and a read-only
 //      `git` shim — no capture, no warm store, no `/deps`, nothing writable
 //      but `/out` — running `lake comparator --challenge-from-export …
 //      --solution-from-export … --inadvisably-no-sandbox [--paranoid]`. With
 //      both exports supplied the comparator builds nothing and resolves
 //      nothing (Lake/CLI/Check.lean runComparator); it parses the two
-//      exports, compares the theorems, and runs the kernels over the
-//      Solution export.
+//      exports, compares the theorems, and runs the kernels over the proof
+//      package's export (the comparator's "solution").
 //
 // The container is the sandbox: no run holds a token. Nothing a build writes
-// reaches its export step except the build tree, read-only; nothing B1 or B2
+// reaches its export step except the build tree, read-only; nothing A or B
 // writes reaches C — C mounts neither `.lake` nor `/out` of any earlier run,
-// and the file C reads from B2's `/out` is bind-mounted alone, so a `which`
+// and each file C reads from an `/out` is bind-mounted alone, so a `which`
 // planted beside it is invisible. C's PATH has no writable entry at all —
 // the shim mount, the toolchain, and the image's own directories are all
 // read-only, and `/out` is not on it — which is what makes `which
@@ -66,7 +73,6 @@ import { LeanNameError } from "./lean-name.js";
 import {
   CERTIFY_PATHS,
   CHALLENGE_MODULE,
-  SOLUTION_MODULE,
   challengeProjectFiles,
   dependencyLibDir,
   dependencyMounts,
@@ -74,7 +80,6 @@ import {
   kernelsOf,
   planCertificate,
   projectLibDir,
-  solutionProjectFiles,
   stageOwnPackage,
   warmLibDirs,
   writeJudgeProject,
@@ -116,10 +121,10 @@ function ownMounts(kind: "concepts" | "proofs", staged: StagedOwnPackage): Conta
   ];
 }
 
-/** The lib-dir-only mounts of a staged own package, for an export step:
+/** The lib-dir-only mount of an own package's capture, for an export step:
  * `leanexport` and the inspector read oleans off LEAN_PATH and nothing else. */
-function ownLibMount(kind: "concepts" | "proofs", staged: StagedOwnPackage): ContainerMount[] {
-  return [{ source: staged.libDir, target: `${CERTIFY_PATHS.own}/${kind}/lib` }];
+function ownLibMount(kind: "concepts" | "proofs", captureRoot: string): ContainerMount[] {
+  return [{ source: path.join(captureRoot, kind, "lib"), target: `${CERTIFY_PATHS.own}/${kind}/lib` }];
 }
 
 /** The lib-dir-only mounts of a closure, for an export step. */
@@ -347,7 +352,7 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
     const exported = await input.runner.run({
       label: "certify-challenge-export",
       args: ["node", "/opt/lax/bin/run-certify.mjs", `${CERTIFY_PATHS.out}/plan.json`],
-      mounts: [...run.exportMounts, ...ownLibMount("concepts", concepts), ...dependencyLibMounts(input.dependencyRoot, plan.challengeClosure)],
+      mounts: [...run.exportMounts, ...ownLibMount("concepts", input.captureRoot), ...dependencyLibMounts(input.dependencyRoot, plan.challengeClosure)],
       env: leanThreads,
       timeoutMs: input.limits.checkTimeoutMs,
       maxOutputBytes: input.limits.maxOutputBytes,
@@ -371,66 +376,21 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
   });
   if (challenge.kind === "violation") return challenge;
 
-  // ── B1/B2: the Solution, built over the proof package and exported ─────
+  // ── B: the proof package's export, read-only over the captures ─────────
   const solution = await input.phase("certify solution", async () => {
-    const concepts = stageOwnPackage(input.captureRoot, "concepts", path.join(root, "own-solution"), (tree) =>
-      `${CERTIFY_PATHS.own}/concepts/${tree}`);
-    const proofs = stageOwnPackage(input.captureRoot, "proofs", path.join(root, "own-solution"), (tree) =>
-      `${CERTIFY_PATHS.own}/proofs/${tree}`);
-    const run = prepareRun(
-      path.join(root, "solution"),
-      input,
-      solutionProjectFiles(plan, input.record, gitSources),
-      [
-        { name: input.record.ownConcepts, dir: `${CERTIFY_PATHS.own}/concepts/package` },
-        { name: input.record.ownProofs, dir: `${CERTIFY_PATHS.own}/proofs/package` },
-        ...plan.solutionClosure.map((dependency) => ({ name: dependency.packageName, dir: dependencyPackageDir(dependency) })),
-      ],
-      SOLUTION_MODULE,
-    );
-    // B1: the build — the one container that executes the proof package's code
-    const built = await input.runner.run({
-      label: "certify-solution-build",
-      args: ["node", "/opt/lax/bin/run-certify.mjs", `${CERTIFY_PATHS.plan}/plan.json`],
-      mounts: [
-        ...run.buildMounts,
-        ...ownMounts("concepts", concepts),
-        ...ownMounts("proofs", proofs),
-        ...dependencyMounts(input.dependencyRoot, plan.solutionClosure),
-      ],
-      env: leanThreads,
-      timeoutMs: input.limits.checkTimeoutMs,
-      maxOutputBytes: input.limits.maxOutputBytes,
-    });
-    if (built.code !== 0) {
-      const failure = boundary(built, "building the certificate Solution");
-      if (failure !== undefined) throw failure;
-      if (built.code === 2) throw infrastructureFailure(`the certificate build tool did not start for the Solution:\n${built.output.trim()}`);
-      // the Solution applies the proof: a build failure is the judge's
-      // question answered one step early
-      return {
-        kind: "violation" as const,
-        intent: "judge" as const,
-        rule: "solution-build",
-        message:
-          "the generated Solution did not elaborate — the certificate lax wrote from the proofs' telescopes does " +
-          "not apply the proofs the way Lean reads them; if your proof package builds cleanly with `lax build`, " +
-          "report it as a lax bug, quoting this message. The transcript:\n" +
-          built.output.trim(),
-      };
-    }
-    // B2: the export, over the build tree read-only
+    const outDir = path.join(root, "solution", "out");
+    fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(
-      path.join(run.outDir, "plan.json"),
+      path.join(outDir, "plan.json"),
       `${JSON.stringify({
         tool: "export",
-        project: CERTIFY_PATHS.project,
-        module: SOLUTION_MODULE,
+        // no project: B reads oleans off LEAN_PATH alone, from `/out`
+        project: CERTIFY_PATHS.out,
+        module: plan.solutionModule,
         targets: plan.exportTargets,
         leanPath: [
-          projectLibDir(CERTIFY_PATHS.project),
-          `${CERTIFY_PATHS.own}/concepts/lib`,
           `${CERTIFY_PATHS.own}/proofs/lib`,
+          `${CERTIFY_PATHS.own}/concepts/lib`,
           ...plan.solutionClosure.map(dependencyLibDir),
           ...warmLibDirs(input.record.warmPackages, RUNTIME_PATHS.warmWorkspace),
         ],
@@ -442,23 +402,25 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
       label: "certify-solution-export",
       args: ["node", "/opt/lax/bin/run-certify.mjs", `${CERTIFY_PATHS.out}/plan.json`],
       mounts: [
-        ...run.exportMounts,
-        ...ownLibMount("concepts", concepts),
-        ...ownLibMount("proofs", proofs),
+        ...ownLibMount("proofs", input.captureRoot),
+        ...ownLibMount("concepts", input.captureRoot),
         ...dependencyLibMounts(input.dependencyRoot, plan.solutionClosure),
+        { source: outDir, target: CERTIFY_PATHS.out, writable: true },
       ],
       env: leanThreads,
       timeoutMs: input.limits.checkTimeoutMs,
       maxOutputBytes: input.limits.maxOutputBytes,
     });
     if (exported.code !== 0) {
-      const failure = boundary(exported, "exporting the certificate Solution");
+      const failure = boundary(exported, "exporting the proof package");
       if (failure !== undefined) throw failure;
-      throw infrastructureFailure(`exporting the certificate Solution failed (exit ${exported.code}):\n${exported.output.trim()}`);
+      // the package compiled and was inspected from these very oleans: an
+      // exporter that refuses them is the archive's tooling, never the
+      // author's
+      throw infrastructureFailure(`exporting the proof package ${plan.solutionModule} failed (exit ${exported.code}):\n${exported.output.trim()}`);
     }
-    return { kind: "exported" as const, ...exportedFile(path.join(run.outDir, "solution.export"), "Solution") };
+    return exportedFile(path.join(outDir, "solution.export"), "proof package");
   });
-  if (solution.kind === "violation") return solution;
 
   // ── C: the judge, over the two frozen exports ──────────────────────────
   const verdict = await input.phase("certify judge", async () => {

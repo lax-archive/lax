@@ -61,9 +61,11 @@ of a Lax17-sized relative certificate (the composed Solution of a
   (`LAX_SMOKE_CASE=spec2-certify npm run smoke:submission-validation` with
   the spec-2 row injected — recipe in `test/smoke/submission-validation.ts`).
   The smoke needs the real mathlib warm store for rc3 (`~/.lax/warm/v4.35.0-…`,
-  built on first run, ~6 min). The layout is now five containers (A1/A2,
-  B1/B2, C — fable review finding 1.1): check that the export steps' `.lake`
-  mounts are read-only in `docker inspect`, and settle whether docker adds
+  built on first run, ~6 min). The layout is now four containers (A1/A2,
+  B, C — fable review finding 1.1, then ultracode C1 dropped B1: B exports
+  the proof package's root over its capture's lib tree, nothing built):
+  check that A2's `.lake` mount and B's lib mounts are read-only in `docker
+  inspect`, and settle whether docker adds
   `noexec` to an explicit `--tmpfs=/tmp:rw,nosuid,nodev,size=…` option
   string — commit d5eaa9b found `/tmp` noexec empirically while
   `container.ts` never asks for it; nothing relies on it today
@@ -223,8 +225,8 @@ of a Lax17-sized relative certificate (the composed Solution of a
     manifest binding exports, configuration, tools, and record id is the
     same item.
   - **Reader's checklist on the record page**: what a reader must check
-    beyond Challenge.lean — the Solution's application of the named
-    proof, `comparator.json`'s target list and permitted axioms, the
+    beyond Challenge.lean — `comparator.json`'s solution module (the
+    record's proof package), target list and permitted axioms, the
     statement definitions in the concept source, the lakefile pins and
     toolchain, and the export digests. The website's certificate panel
     should list these with links; the reflowed Challenge alone is a

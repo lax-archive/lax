@@ -1,8 +1,8 @@
 {
   "challenge_module": "Challenge",
-  "solution_module": "Solution",
+  "solution_module": "Lax38Proofs",
   "theorem_names": [
-    "Cert.Lax38Proofs.hasSucc"
+    "Lax38Proofs.hasSucc"
   ],
   "definition_names": [],
   "permitted_axioms": [

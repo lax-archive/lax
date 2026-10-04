@@ -65,7 +65,7 @@ describe("metadata resubmission publisher", () => {
       // what the record stores: telescopes only, no pins, the certificate
       expect(stored.proofs[0]).not.toHaveProperty("conclusion");
       expect(stored.capture).not.toHaveProperty("leanToolchain");
-      expect(stored.certificate.challenge).toContain("theorem Cert.Lax42Proofs.euclid");
+      expect(stored.certificate.challenge).toContain("theorem Lax42Proofs.euclid");
       const harness = metadataHarness(current);
       const result = await harness.publisher.publish(request(current), artifact(current), run);
       expect(result).toMatchObject({ kind: "committed", acceptedTitle: "Better title" });

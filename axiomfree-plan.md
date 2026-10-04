@@ -69,12 +69,14 @@ spec.md: the spec-2 text is a draft Jan reconciles.
     whole-package axiom-free a hard standard). The pipeline has three
     pieces with three questions, and no piece answers another's:
     - *The judge* — containers A, B, C and `lake comparator` — answers
-      **correctness of the Lean theorem**: the Solution theorem has
-      exactly the Challenge's type and the kernel accepts its proof. It is
+      **correctness of the Lean theorem**: the proof package's constant of
+      each Challenge theorem's name (the proof itself, since the ultracode
+      review's C1) has exactly the Challenge's type and the kernel accepts
+      its proof. It is
       the sole source of edge soundness. Nothing else in the pipeline
       contributes to that answer and nothing else may claim to.
     - *The edge translation* — the trusted TypeScript that turns a
-      telescope reading into Challenge and Solution (`certify/generate.ts`
+      telescope reading into the Challenge (`certify/generate.ts`
       and the spec-2 branch of judge inspection) — answers **the theorem
       is the edge**: every constant names a registered statement of a
       package the record requires, the universe rule holds, and the edge
@@ -115,7 +117,12 @@ spec.md: the spec-2 text is a draft Jan reconciles.
       writable tree, A2/B2 are fresh containers that mount that tree
       read-only and run only `leanexport` and the inspector (both import
       with `loadExts := false`, so nothing of a record executes there),
-      writing to the one `/out`. Five docker runs per certification.
+      writing to the one `/out`. Five docker runs per certification —
+      four since the ultracode review's C1 (2026-10-04): the Challenge
+      theorems carry the proofs' own names and the solution module is the
+      proof package root, so there is no Solution to build; B1/B2 became
+      one read-only container B exporting the proof capture, and no
+      record code runs in Certify past A1.
       Palomar's wording: each export is a verifier-owned file no
       candidate phase can write to. *Second Codex review the same day*
       (`spike/axiomfree/codex-review-intents-2-20261004.md`, with every
@@ -325,33 +332,41 @@ existing docker runner with the existing mounts and limits:
    component quoted — never anything else interpolated from a reported
    string): `lakefile.toml` (the libraries at the row's pins; every concept
    and proof package involved at the record's source triple, or the
-   submission's own capture per submit), `lake-manifest.json` (the sandboxed
-   comparator refuses a project without one), `Challenge.lean` (imports
-   concept modules only; per edge `theorem Cert.<proof-id>.{us} (h₁ : S₁)
-   … : C := sorry` with the proof's level parameters), `Solution.lean`
-   (imports proof modules; bodies `@<proof>.{us} h₁ … hₖ` in the proof's
-   own binder order), `comparator.json` (`theorem_names`,
-   `definition_names = []` always, `permitted_axioms` = the background
-   three). Zero edges: nothing runs, the record says "no edges".
+   submission's own capture per submit; one `lean_lib`, `Challenge`),
+   `lake-manifest.json` (the sandboxed comparator refuses a project without
+   one), `Challenge.lean` (imports concept modules only; per edge `theorem
+   <proof-id>.{us} (h₁ : S₁) … : C := sorry` with the proof's level
+   parameters — the proof's own name, which the comparator looks up in the
+   proof package's export and compares with `Expr.eqv`, binder names and
+   kinds ignored), `comparator.json` (`solution_module` = the proof
+   package's root, which imports every module; `theorem_names` = the proof
+   ids, `definition_names = []` always, `permitted_axioms` = the
+   background three). *As executed after the ultracode review's C1
+   (2026-10-04); the `Cert.<proof-id>` wrapper Solution is in git
+   history.* A relative certificate keeps a generated `Solution.lean`
+   (`Cert.<statement-id>`, the composed proofs) and so has five files: the
+   two bundle shapes differ by that one file. Zero edges: nothing runs, the
+   record says "no edges".
 2. Container A mounts the concept captures and the warm store read-only,
    never the proof package, builds the Challenge and exports it with
    `leanexport` to `challenge.export`.
-3. *(As executed after the stages 1–3 review, 2026-10-04; the original
-   two-container step is in git history.)* Container B mounts the proof
-   capture and the whole project, builds the Solution and exports it with
-   the same `leanexport` rule to `solution.export`; it is the only
-   container that executes proof-package code and is torn down first.
-   Container C, the judge, is a fresh container with the bundle's five
-   files and both exports read-only, the toolchain, a read-only `git`
-   shim, and nothing writable but `/out`; it runs `lake comparator
-   --challenge-from-export --solution-from-export --inadvisably-no-sandbox
-   [--paranoid]`, which builds and resolves nothing. The host records both
-   export digests. Exit 0 is the verdict; the comparator's own rejection
-   diagnostics are violations reported by edge; a kernel that failed to
-   run, a launch failure, or an unexplained stop is an infrastructure
-   failure, never a finding against the author (Codex intents review,
-   finding 6); exit 2 is a pipeline failure.
-4. The five generated files are pushed to the capture store
+3. *(As executed after the stages 1–3 review and the ultracode review's
+   C1, 2026-10-04; the earlier container layouts are in git history.)*
+   Container B mounts only lib trees — the proof capture's, the record's
+   own concepts', the solution closure's, the warm store — read-only, and
+   `/out`; it runs `leanexport <ProofsRoot>` by the same rule to
+   `solution.export`. Nothing is built and no record code runs: the oleans
+   Compile captured are the solution. Container C, the judge, is a fresh
+   container with the bundle's four files and both exports read-only, the
+   toolchain, a read-only `git` shim, and nothing writable but `/out`; it
+   runs `lake comparator --challenge-from-export --solution-from-export
+   --inadvisably-no-sandbox [--paranoid]`, which builds and resolves
+   nothing. The host records both export digests. Exit 0 is the verdict;
+   the comparator's own rejection diagnostics are violations reported by
+   edge; a kernel that failed to run, a launch failure, or an unexplained
+   stop is an infrastructure failure, never a finding against the author
+   (Codex intents review, finding 6); exit 2 is a pipeline failure.
+4. The four generated files are pushed to the capture store
    (`capture-store.ts`, digest-addressed, before the database commit that
    references them); `build-output.json` records the bundle digest, the
    kernels that ran, and the generated `Challenge.lean` source verbatim
@@ -826,3 +841,34 @@ stay as historical attestation; `selfTest.passed` stays until I6 changes
 the local `passed: false` shape. lax-website ignores the stored judge
 (its certified mark names the record's environment, `leanVersion`) and
 now requires `solutionExportSha256`.
+
+2026-10-04, ultracode review C1: the record's certificate judges the proof
+package itself. Each Challenge theorem carries its proof's own name (the
+statement references keep `_root_.`), `solution_module` is the proof
+package's root, and B1+B2 are one read-only container B running
+`leanexport <ProofsRoot>` over the proof capture's lib tree with `/out` the
+only writable mount — four runs, no record code past A1. The per-record
+`solutionText`, the `Cert.` naming for edges, and the `solution-build`
+violation are gone; a comparator that builds a module itself (a reader's
+`lax certify --run`) and fails reports `comparator-build`, intent
+`translation`. A relative certificate keeps its generated `Solution.lean`,
+`rootName` and `Cert.<statement-id>`; the bundle shapes differ by that one
+file (`generate.ts bundleMembers`), and the publisher and `lax certify
+--fetch` hold a record's tar to the four. Verified first on v4.35.0-rc3 in
+scratch: a plain `leanexport <ProofsRoot>` matched Challenge theorems for
+`variable`/`include`, implicit and instance-implicit binders, one- and
+two-parameter universe-polymorphic proofs, a nested proof name, and no
+hypotheses; a wrong hypothesis and a swapped level-parameter order were
+refused (`statement do not match`); a source-mode `lake comparator`, in
+bubblewrap, built `solution_module` from a git-dependency package and
+accepted. One claim of the review was wrong: a stored proof type with
+mdata (`no_index C`) is *accepted*, not refused by `Expr.eqv` — the
+exporter drops every `mdata` node unless asked for `--export-mdata`
+(LeanExport/Basic.lean `removeMData`), on the comparator's own exports
+too, and the inspector's telescope reading consumes it the same way.
+Real-Lean coverage: lax-49 in `test/e2e/host-spec2.test.ts` (the five
+shapes above, `no_index` included, certified on the host), the comparator
+negatives driven against a stand-in solution module, the four-container
+layout rehearsal, and the sandboxed `lax certify lax-41 --run`. Docker
+smoke `spec2-certify` green in 45 s (Challenge build 4.3 s + export 3.5 s,
+proof-package export 2.4 s, judge 1.0 s).
