@@ -83,6 +83,20 @@ describe("the trusted parser on a spec-2 record", () => {
     });
   });
 
+  it("refuses a telescope entry that still carries a binder kind", () => {
+    withTestEnvironments([spec2TestEnvironment()], () => {
+      for (const [mutate, expected] of [
+        [(output: Record<string, any>) => { output.proofs[0].telescope.hypotheses[0].binder = "default"; }, "generated proof 1 telescope hypothesis 1 must contain exactly: statement, levels"],
+        [(output: Record<string, any>) => { output.proofs[0].telescope.conclusion.binder = "default"; }, "generated proof 1 telescope conclusion must contain exactly: statement, levels"],
+      ] as const) {
+        const { report, buildOutput } = stored();
+        mutate(buildOutput);
+        mutate(report.buildOutput as Record<string, any>);
+        expect(() => parse(report, buildOutput), expected).toThrow(expected);
+      }
+    });
+  });
+
   it("holds the certificate's Challenge to the generator: a weakened conclusion is refused", () => {
     withTestEnvironments([spec2TestEnvironment()], () => {
       const { report, buildOutput } = stored();

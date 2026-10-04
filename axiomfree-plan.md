@@ -750,4 +750,6 @@ generator states every hypothesis as `(hᵢ : Sᵢ)`, so no Challenge needs
 (the golden keeps `instHyp`). The author guide's instance-binder advice was
 wrong (instance resolution never finds a `Prop` def that is not a class)
 and is gone. This revises the "preserve rather than normalize" resolution
-of Codex-intents finding 7.
+of Codex-intents finding 7. Coverage: both parsers refuse a leftover `binder`
+key (unit), and Lax38's `refl_of_implicit` certifies an implicit-binder
+proof through a generated `(h₁ : …)` Challenge on real Lean (e2e).

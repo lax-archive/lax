@@ -692,10 +692,11 @@ Rules:
 
 - **Binders.** Binder names and binder kinds (explicit, implicit, instance)
   are irrelevant to proof-hood, are not part of an edge, and are not
-  recorded: the generated certificate applies the proof with ``@``. A hypothesis the proof never
-  uses is still an assumption. A section ``variable`` that the elaborator
-  dropped because the body never mentions it is not a binder, and so not an
-  assumption; a conditional proof written with ``variable`` says ``include``.
+  recorded: the generated certificate applies the proof with ``@``. A
+  hypothesis the proof never uses is still an assumption. A section
+  ``variable`` that the elaborator dropped because the body never mentions
+  it is not a binder, and so not an assumption; a conditional proof written
+  with ``variable`` says ``include``.
 
 - **Edges.** A proof is the hyperedge ``{S₁ … Sₖ} → C`` of the proof network.
   Duplicate hypotheses collapse in the edge but keep their positions in the
@@ -1088,11 +1089,11 @@ Each entry of ``proofs``:
 
 ``telescope`` is the proof's type as the inspector read it: the hypotheses
 in binder order, each with its statement constant and level instantiation,
-and the conclusion; binder names and kinds are not recorded. ``conclusion`` and ``assumptions`` are
-derived from it — the conclusion constant, and the hypothesis constants as a
-sorted set without duplicates — so that readers of spec-1 records read spec-2
-records unchanged. Proof entries carry no ``sourceText``: the website lists
-proofs, it does not display their code.
+and the conclusion; binder names and kinds are not recorded. ``conclusion``
+and ``assumptions`` are derived from it — the conclusion constant, and the
+hypothesis constants as a sorted set without duplicates — so that readers of
+spec-1 records read spec-2 records unchanged. Proof entries carry no
+``sourceText``: the website lists proofs, it does not display their code.
 
 > draft note: the plan fixes the telescope's content (ordered binders with
 > constant and levels; the conclusion) and that ``conclusion`` and
@@ -1672,9 +1673,9 @@ contains:
   — when the stored type is a chain of ``∀``-binders over constants ending
   in a constant, the ordered binders, each with the constant's name and its
   level instantiation (not the binder's name or kind), and the conclusion
-  constant with its levels; otherwise ``null``. The telescope is a syntactic walk of the
-  stored type with no reduction and no judgment: whether its constants are
-  statements is the validator's question;
+  constant with its levels; otherwise ``null``. The telescope is a syntactic
+  walk of the stored type with no reduction and no judgment: whether its
+  constants are statements is the validator's question;
 
 - the pretty-printed signatures and bodies of the package's tagged
   definitions.
@@ -1832,8 +1833,8 @@ canonical form is refused before anything is generated (see Namespaces).
    with the hypotheses in the proof's own binder order, every one an
    explicit binder whatever kind the proof declared it with (the Solution
    applies the proof with ``@``, and the kernel ignores binder kinds), and
-   every statement constant instantiated exactly as in the proof's type. The theorem name is ``Cert`` prefixed to the proof's
-   canonical name.
+   every statement constant instantiated exactly as in the proof's type. The
+   theorem name is ``Cert`` prefixed to the proof's canonical name.
 4. ``Solution.lean``: imports the proof modules; the same theorems, each
    discharged by ``@<proof-id>.{<levels>} h₁ … hₖ`` — the proof applied with
    ``@`` so binder info is irrelevant.

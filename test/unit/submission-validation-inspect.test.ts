@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_LIMITS } from "../../src/submission-validation/config.js";
-import { inspectorExitFailure, runInspector } from "../../src/submission-validation/phases/inspect-runner.js";
+import { inspectorExitFailure, parseInspectorReport, runInspector } from "../../src/submission-validation/phases/inspect-runner.js";
 import type {
   ContainerInvocation,
   ContainerResult,
@@ -668,5 +669,32 @@ describe("inspector report size bound", () => {
     // 405 modules, 38k declarations, 396k package-local dependency edges,
     // measured 2026-09-16 (the pretty-printed report was 49,440,510 bytes).
     expect(DEFAULT_LIMITS.inspectorReportBytes).toBeGreaterThanOrEqual(64 * 1024 * 1024);
+  });
+});
+
+describe("inspector report shape", () => {
+  // The spec-2 golden report, as the real inspector writes it; a telescope
+  // entry is exactly a constant and its levels, so a report that still names
+  // a binder kind is refused rather than read past.
+  const golden = (): { declarations: Array<Record<string, any>> } =>
+    JSON.parse(fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "inspector-golden-spec2", "expected.json"), "utf8"));
+  const withTelescope = (report: ReturnType<typeof golden>) => {
+    const index = report.declarations.findIndex((declaration) => declaration.telescope?.hypotheses.length > 0);
+    return { index, telescope: report.declarations[index]!.telescope };
+  };
+
+  it("reads the golden spec-2 report", () => {
+    expect(withTelescope(golden()).index).toBeGreaterThanOrEqual(0);
+    expect(() => parseInspectorReport(golden(), 2)).not.toThrow();
+  });
+
+  it("refuses a telescope entry that still carries a binder kind", () => {
+    const hypothesis = golden();
+    const { index, telescope } = withTelescope(hypothesis);
+    telescope.hypotheses[0].binder = "default";
+    expect(() => parseInspectorReport(hypothesis, 2)).toThrow(`inspector declaration ${index} telescope hypothesis 0 has an invalid shape`);
+    const conclusion = golden();
+    withTelescope(conclusion).telescope.conclusion.binder = "default";
+    expect(() => parseInspectorReport(conclusion, 2)).toThrow(`inspector declaration ${index} telescope conclusion has an invalid shape`);
   });
 });

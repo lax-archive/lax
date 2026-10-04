@@ -124,7 +124,9 @@ theorem corollary_two : Lax261.Infinite.CorollaryTwo := …
 
 Write hypotheses as explicit binders `(h : …)`. Any binder kind counts the
 same, but an instance binder buys nothing: a `Prop` definition is no class,
-so instance resolution never finds it. **Universes:** a statement may have universe parameters
+so instance resolution never finds it.
+
+**Universes.** A statement may have universe parameters
 (`def Refl.{u} : Prop := ∀ (α : Sort u) (a : α), a = a`). A proof over such
 a statement must be universe-polymorphic in the same way — write
 `theorem refl_of.{u} (h : …) : Lax42.Primes.Refl.{u}` with the proof's own
