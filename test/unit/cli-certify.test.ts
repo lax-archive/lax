@@ -327,6 +327,7 @@ describe("lax certify", () => {
     expect(output).toContain("Certificate for lax-42");
     expect(output).toContain("Regenerated the bundle");
     expect(output).toContain("lake comparator --config comparator.json");
+    expect(output).toContain("the bare comparator does not check what the Challenge means");
     // the stored digest is a placeholder, so the note says the bundle is not the archive's
     expect(output).toContain("The regenerated bundle's digest is not the archive's (cccccccccccc).");
     expect(output).toContain("lax certify lax-42 --fetch");
@@ -537,8 +538,8 @@ describe("lax certify", () => {
     const lakeArgs = fs.readFileSync(path.join(home, "lake-args"), "utf8").split("\n");
     expect(lakeArgs.slice(0, 2)).toEqual(["resolve-deps", "build Challenge"]);
     expect(lakeArgs[2]).toMatch(/^comparator --config comparator\.json --challenge-from-export \S+\/challenge\.export$/u);
-    // four sandboxed steps; only resolution has a network, and only the
-    // build has the folder's `.lake` writable
+    // four sandboxed steps; only resolution has a network, and only
+    // resolution and the build have the folder's `.lake` writable
     const sandboxed = fs.readFileSync(path.join(home, "bwrap-args"), "utf8").trim().split("\n");
     expect(sandboxed).toHaveLength(4);
     expect(sandboxed.map((line) => line.includes("--share-net"))).toEqual([true, false, false, false]);

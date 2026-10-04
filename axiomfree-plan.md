@@ -900,8 +900,10 @@ build, the search path composed from the bundle's manifest, never `lake
 env`), holds the report to the theorems, and hands that very export to
 `lake comparator --challenge-from-export`, so the comparator judges the
 Challenge the inspector read and builds only the solution module, after
-both reads. No host tool runs in a tree the sandbox can write (the S1
-rule). Without an inspector (it is compiled on first use) the comparator
+both reads. The hold's own steps run no host tool in a tree the sandbox
+can write; S1 itself is still open — `verifyCertificateWorkspace` runs host
+`git rev-parse`/`git status` in `.lake/packages/*`, which the sandboxed
+build (the hold's and the comparator's) can write. Without an inspector (it is compiled on first use) the comparator
 runs as the bundle's own command and the verdict reads "comparator
 accepted; Challenge meaning not checked", never "certified". Coverage:
 the fake-toolchain unit tests (held, rewritten, unbuildable, no

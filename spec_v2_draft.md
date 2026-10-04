@@ -1946,10 +1946,12 @@ the ``Challenge.lean`` source verbatim (see Archive Database). The publisher
 regenerates the four files from the record's own stored data, re-seals
 them, and holds the published tar to them byte for byte, credential-free,
 before any token is minted. Rerunning a published bundle is ``lax certify
-lax-N --run``, or by hand: fetch the four files by digest, ``lake
-comparator`` in the folder (with its own sandbox, and ``--paranoid`` if
-desired), which builds the Challenge and then the proof package — a git
-dependency of the bundle — as the solution module. ``lax certify --run`` verifies every checkout in its workspace at
+lax-N --run``, the full check. By hand — fetch the four files by digest,
+``lake comparator`` in the folder (with its own sandbox, and
+``--paranoid`` if desired), which builds the Challenge and then the proof
+package — a git dependency of the bundle — as the solution module — is the
+comparator alone: it does not check what the Challenge means, which only
+the hold below does. ``lax certify --run`` verifies every checkout in its workspace at
 the bundle's pinned revision and clean before it runs, and removes the
 record packages' build products, so a previous run's proof build cannot
 feed the next run's Challenge. It then holds the Challenge to the

@@ -241,6 +241,7 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     ui.faint(`In ${ui.tilde(directory)}, with the ${environment.id} toolchain and git on PATH:`);
     ui.verdict(command);
     ui.faint(`or ${ui.cmd(`lax certify ${[targetInput, ...(options.relativeTo ?? []).flatMap((id) => ["--relative-to", id])].join(" ")} --run`)}`);
+    ui.faint("the bare comparator does not check what the Challenge means; --run also holds it to the statements");
     notes.print();
     ui.done();
     return 0;
