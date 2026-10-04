@@ -1,5 +1,11 @@
 # The Concept Dialect
 
+**Status: proposal, not enforced** (marked 2026-10-04). No gate implements
+this dialect: the archive, `lax build`, and `lax submit` accept concept
+packages outside it (notation, any tactic, any attribute), and the rules
+that *are* enforced are the ones in [spec.md](spec.md). Read what follows
+as the design of a future gate, not as a description of today's archive.
+
 This document is a normative companion to [spec.md](spec.md). It specifies
 the **concept dialect**: the subset of Lean that concept packages must be
 written in, and the gate that enforces it. Its purpose is a safety property

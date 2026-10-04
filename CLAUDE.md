@@ -30,8 +30,9 @@ inferring intent from the current code.
 - **spec.md** — the normative starting point. Do **not** edit it unless
   explicitly asked; Jan reconciles it manually (last full reconciliation
   2026-09-14).
-- **spec_conceptdialect.md** — normative companion specifying the concept
-  dialect and its gate; same rule. **spec_conceptdialect_draft.md** is the
+- **spec_conceptdialect.md** — companion specifying the concept dialect and
+  its gate; same rule. Not enforced: no gate implements it (its status
+  header says so, 2026-10-04). **spec_conceptdialect_draft.md** is the
   proposed successor, awaiting Jan's reconciliation.
 - **lax.md** — the high-level vision. Do not edit unless asked.
 - **spec-notes.md** — the living document: deliberate deviations and
