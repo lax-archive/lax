@@ -521,10 +521,11 @@ function fixtures(): SmokeFixture[] {
               createHash("sha256").update(fs.readFileSync(path.join(certifyDir, "solution", "out", "solution.export"))).digest("hex"),
               certificate.solutionExportSha256,
             );
-            // the recorded shape: telescopes only, no capture pins
+            // the recorded shape: telescopes only, no capture pins, no judge toolchain
             const stored = recordedBuildOutput(report.buildOutput!) as Record<string, any>;
             assert.equal("conclusion" in stored.proofs[0], false);
             assert.equal("leanToolchain" in stored.capture, false);
+            assert.deepEqual(Object.keys(stored.certificate.judge), ["selfTest", "tools"]);
           },
         } satisfies SmokeFixture]
       : []),

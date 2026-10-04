@@ -685,7 +685,9 @@ export interface JudgeSelfTest {
 
 /** Who judged the certificate: the toolchain whose `lake comparator` ran, its
  * exit code — recorded only on a pass, so always 0 — the self-test the judge
- * passed first, and the sha256 of each judge binary as installed. */
+ * passed first, and the sha256 of each judge binary as installed. A spec-2
+ * record stores only the last two: the toolchain is the environment row's
+ * and the exit code a constant, so readers fill both (recorded-shape.ts). */
 export interface CertificateJudge {
   toolchain: string;
   comparatorExitCode: 0;

@@ -9,7 +9,7 @@ import {
   parsePublishedBuildOutputPayload,
   parseSuccessfulValidationArtifacts,
 } from "../../src/submission-validation/artifact-schema.js";
-import { recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
+import { expandRecordedBuildOutput, recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
 import { spec2TestEnvironment, withTestEnvironments } from "../support/environments.js";
 import { spec2Artifacts, successfulArtifacts, validationRequest } from "../support/validation-artifacts.js";
 
@@ -39,6 +39,7 @@ describe("the trusted parser on a spec-2 record", () => {
       expect(buildOutput.capture).toMatchObject({ bytes: 3, fileCount: 1, references: { digest: "f".repeat(64), bytes: 10_240 } });
       expect(Object.keys(buildOutput.proofs[0])).toEqual(["id", "path", "levelParams", "telescope", "description"]);
       expect(Object.keys(buildOutput.certificate)).toEqual(["judge", "kernels", "bundle", "challengeExportSha256", "solutionExportSha256", "challenge"]);
+      expect(Object.keys(buildOutput.certificate.judge)).toEqual(["selfTest", "tools"]);
       // and what the code holds again
       const parsed = parse(report, buildOutput);
       // the full payload again — minus the inventory, which only the report
@@ -46,6 +47,9 @@ describe("the trusted parser on a spec-2 record", () => {
       const { files: _files, ...capture } = artifacts.buildOutput.capture;
       expect(parsed.buildOutput).toEqual({ ...artifacts.buildOutput, capture });
       expect(parsed.report.capture).toEqual(artifacts.report.capture);
+      // the lenient readers' inverse fills the judge from the row the same way
+      const expanded = expandRecordedBuildOutput(buildOutput, artifacts.buildOutput.inputs.manifest.id) as Record<string, any>;
+      expect(expanded.certificate).toEqual(artifacts.buildOutput.certificate);
     });
   });
 
@@ -74,6 +78,9 @@ describe("the trusted parser on a spec-2 record", () => {
         [(output: Record<string, any>) => { output.proofs[0].assumptions = []; }, "generated proof 1 must contain exactly"],
         [(output: Record<string, any>) => { output.inputs.manifest.id = "lax-42"; }, "generated manifest must contain exactly"],
         [(output: Record<string, any>) => { output.capture.leanToolchain = "leanprover/lean4:v4.35.0-rc3"; output.capture.mathlibCommit = "3".repeat(40); }, "capture manifest must contain exactly"],
+        // the judge's toolchain is the row's and its exit code a constant
+        [(output: Record<string, any>) => { output.certificate.judge.toolchain = "leanprover/lean4:v4.35.0-rc3"; }, "generated certificate judge must contain exactly"],
+        [(output: Record<string, any>) => { output.certificate.judge.comparatorExitCode = 0; }, "generated certificate judge must contain exactly"],
       ] as const) {
         const { report, buildOutput } = stored();
         mutate(buildOutput);
@@ -130,8 +137,6 @@ describe("the trusted parser on a spec-2 record", () => {
       expect(parse(noProofs.report, noProofs.buildOutput).buildOutput.certificate).toBeUndefined();
 
       for (const [mutate, expected] of [
-        [(c: Record<string, any>) => { c.judge.toolchain = "leanprover/lean4:v4.33.0"; }, "judged by a toolchain other than the environment's"],
-        [(c: Record<string, any>) => { c.judge.comparatorExitCode = 1; }, "comparatorExitCode must be 0"],
         // the judge proved itself first: a local run's `passed: false`, a
         // missing probe, an extra probe, a missing or malformed tool digest
         [(c: Record<string, any>) => { c.judge.selfTest.passed = false; }, "selfTest must have passed"],

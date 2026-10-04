@@ -11,6 +11,8 @@
 //                                               `references` layer instead; nothing restores the list)
 //   inputs.manifest.id                          from the record's own id
 //   paper.folder, paper.main, paper.engine      from `inputs.manifest.paper`
+//   certificate.judge.toolchain                 from the row, like the capture's pins
+//   certificate.judge.comparatorExitCode        always 0: a certificate is recorded only on a pass
 //
 // `recordedBuildOutput` is the one serialization rule — the validate job's
 // outputs, the trusted publisher's record, and the local `lax build` file all
@@ -48,6 +50,13 @@ export function recordedBuildOutput(payload: BuildOutputPayload): Record<string,
     payload.paper === undefined
       ? undefined
       : (({ folder: _folder, main: _main, engine: _engine, ...rest }) => rest)(payload.paper);
+  const certificate =
+    payload.certificate === undefined
+      ? undefined
+      : {
+          ...payload.certificate,
+          judge: (({ toolchain: _toolchain, comparatorExitCode: _exit, ...rest }) => rest)(payload.certificate.judge),
+        };
   return {
     inputs: { manifest, abstract: payload.inputs.abstract },
     requiredByConcepts: payload.requiredByConcepts,
@@ -56,7 +65,7 @@ export function recordedBuildOutput(payload: BuildOutputPayload): Record<string,
     proofs,
     capture,
     ...(paper === undefined ? {} : { paper }),
-    ...(payload.certificate === undefined ? {} : { certificate: payload.certificate }),
+    ...(certificate === undefined ? {} : { certificate }),
   };
 }
 
@@ -77,6 +86,8 @@ export function expandRecordedBuildOutput(
   const capture = isObject(value.capture) ? value.capture : undefined;
   const paperManifest = isObject(manifest.paper) ? manifest.paper : undefined;
   const paper = isObject(value.paper) ? value.paper : undefined;
+  const certificate = isObject(value.certificate) ? value.certificate : undefined;
+  const judge = certificate !== undefined && isObject(certificate.judge) ? certificate.judge : undefined;
   const proofs = Array.isArray(value.proofs)
     ? value.proofs.map((proof) => {
         if (!isObject(proof) || !isObject(proof.telescope)) return proof;
@@ -92,6 +103,9 @@ export function expandRecordedBuildOutput(
       ? {}
       : { capture: { ...capture, leanToolchain: row.leanToolchain, mathlibCommit: row.mathlibCommit } }),
     proofs,
+    ...(certificate === undefined || judge === undefined || row === undefined
+      ? {}
+      : { certificate: { ...certificate, judge: { ...judge, toolchain: row.leanToolchain, comparatorExitCode: 0 } } }),
     ...(paper === undefined || paperManifest === undefined
       ? {}
       : {

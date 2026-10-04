@@ -381,8 +381,10 @@ function configuredKernels(runtime: ValidationRuntimeIdentity): CertificationKer
 
 /**
  * The `certificate` key of a spec-2 build output (contracts.ts
- * CertificateOutput): the judge is this run's toolchain and exit 0, the
- * kernels are exactly the set the environment's setting runs, the bundle is
+ * CertificateOutput), as a record stores it (recorded-shape.ts): the judge
+ * stores no toolchain and no exit code — a stored copy is refused, and the
+ * parsed judge carries the environment's toolchain and exit 0 — the kernels
+ * are exactly the set the environment's setting runs, the bundle is
  * a digest (plus its registry address once published, carrying exactly that
  * digest), the two export digests are well-formed — host-recorded
  * provenance a rerun compares, which no publisher can check — and
@@ -401,12 +403,7 @@ export function parseCertificate(
     ["judge", "kernels", "bundle", "challengeExportSha256", "solutionExportSha256", "challenge"],
     "generated certificate",
   );
-  const judge = exactObject(object.judge, ["toolchain", "comparatorExitCode", "selfTest", "tools"], "generated certificate judge");
-  const toolchain = nonemptyText(judge.toolchain, "generated certificate judge toolchain", 128, false);
-  if (toolchain !== runtime.leanToolchain) {
-    throw new ValidationError("generated certificate was judged by a toolchain other than the environment's");
-  }
-  if (judge.comparatorExitCode !== 0) throw new ValidationError("generated certificate judge comparatorExitCode must be 0");
+  const judge = exactObject(object.judge, ["selfTest", "tools"], "generated certificate judge");
   // the judge proved itself first (certify/self-test.ts): every probe, in
   // order, and a pass — a local run's `passed: false` never publishes
   const selfTest = exactObject(judge.selfTest, ["passed", "probes"], "generated certificate judge selfTest");
@@ -450,7 +447,7 @@ export function parseCertificate(
     throw new ValidationError("generated certificate challenge is not what the generator writes for the record's proofs");
   }
   return {
-    judge: { toolchain, comparatorExitCode: 0, selfTest: { passed: true, probes: [...probes] as SelfTestProbe[] }, tools },
+    judge: { toolchain: runtime.leanToolchain, comparatorExitCode: 0, selfTest: { passed: true, probes: [...probes] as SelfTestProbe[] }, tools },
     kernels,
     bundle: { formatVersion: 1, digest, ...(registryBlob === undefined ? {} : { registryBlob }) },
     challengeExportSha256: sha256(object.challengeExportSha256, "generated certificate challengeExportSha256"),

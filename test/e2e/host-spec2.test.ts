@@ -505,6 +505,7 @@ end Lax38Proofs
       expect(stored.proofs[0]).not.toHaveProperty("conclusion");
       expect(stored.capture).not.toHaveProperty("leanToolchain");
       expect(stored.capture).not.toHaveProperty("files");
+      expect(Object.keys(stored.certificate.judge)).toEqual(["selfTest", "tools"]);
       expect(stored.certificate.challenge).toBe(certificate.challenge);
       // the capture summary and the `references` layer, written beside the capture root
       expect(stored.capture.fileCount).toBe(out.capture.files!.length);

@@ -1111,8 +1111,6 @@ The ``certificate`` block:
 
     {
       "judge": {
-        "toolchain": "leanprover/lean4:v4.35.0",
-        "comparatorExitCode": 0,
         "selfTest": { "passed": true, "probes": ["comparator-accepts", "..."] },
         "tools": { "lake": "<sha256>", "lean": "<sha256>", "leanexport": "...", "leanchecker": "...", "...": "..." }
       },
@@ -1128,12 +1126,14 @@ The ``certificate`` block:
     }
 
 No edge list is stored: the edges are the proofs' telescopes, and every
-reader derives them. ``judge`` names the toolchain whose ``lake comparator``
-ran, its exit code (always 0 on a record), the self-test it passed first
-with every probe in order, and the sha256 of each judge binary as installed
-(``lake``, ``lean``, ``leanexport``, ``leanchecker`` and the five bundled
-checkers); the trusted parser refuses a certificate whose self-test did not
-pass. ``kernels`` names the kernels that accepted the solution in trusted
+reader derives them. ``judge`` records the self-test the judge passed
+first, with every probe in order, and the sha256 of each judge binary as
+installed (``lake``, ``lean``, ``leanexport``, ``leanchecker`` and the five
+bundled checkers); the trusted parser refuses a certificate whose self-test
+did not pass. The judge's toolchain and ``lake comparator``'s exit code are
+not stored: the toolchain is the environment row's, and the exit code is 0
+on every record, since a certificate is recorded only on a pass. Readers
+fill both in, and the trusted parser refuses a stored copy. ``kernels`` names the kernels that accepted the solution in trusted
 validation (``lean`` for Lean's own kernel; ``leanchecker-paranoid``,
 ``lean4lean``, ``nanoda``, ``con-leche``, ``con-ron`` for the bundled
 external checkers). ``bundle`` is the digest reference of the five

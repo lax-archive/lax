@@ -132,7 +132,8 @@ function writeRecord(input: RecordInput): void {
     input.certificate === undefined
       ? undefined
       : {
-          judge: { toolchain: TOOLCHAIN, comparatorExitCode: 0, selfTest: { passed: true, probes: [...SELF_TEST_PROBES] }, tools: fakeToolDigests() },
+          // the stored shape: the judge's toolchain is the row's, filled on read
+          judge: { selfTest: { passed: true, probes: [...SELF_TEST_PROBES] }, tools: fakeToolDigests() },
           kernels: ["lean"],
           bundle: {
             formatVersion: 1,

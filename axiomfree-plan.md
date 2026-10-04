@@ -701,12 +701,14 @@ for spec-2 records only (spec-1 records keep their shape until ported):
   effect: 13.4 MB → 5.9 MB over today's corpus.
 - Proof entries store the telescope only; `conclusion` and `assumptions`
   are derived by every reader at load, never stored.
-- `certificate` is `{ judge, kernels, bundle: { formatVersion, digest,
-  registryBlob }, challengeExportSha256, challenge }` with the Challenge
-  verbatim and no stored edge list: the publisher regenerates the
-  Challenge from the stored data and requires byte equality. Absent on a
-  record with no proofs. The bundle is a further layer of the record's
-  capture manifest.
+- `certificate` is `{ judge: { selfTest, tools }, kernels, bundle: {
+  formatVersion, digest, registryBlob }, challengeExportSha256,
+  solutionExportSha256, challenge }` with the Challenge verbatim and no
+  stored edge list: the publisher regenerates the Challenge from the
+  stored data and requires byte equality. The judge's toolchain (the
+  row's) and `comparatorExitCode` (always 0) are filled in by readers, not
+  stored. Absent on a record with no proofs. The bundle is a further layer
+  of the record's capture manifest.
 - Duplicates of the environment row and of the manifest are dropped.
   `sourceText` and the parsed annotations stay in the record: every
   concept page and `lax serve` need them without a fetch.
@@ -813,3 +815,14 @@ Coverage: the spec-2 golden (`overLookalike`, a flagged link), classifier,
 parser and Challenge-check cases, a spec-1 grammar test through the
 publication schema, the generator goldens, and a lax-website test with a
 `get?` proof.
+
+2026-10-04, ultracode review C5: the stored `certificate.judge` is
+`{ selfTest, tools }`. Its `toolchain` (the row's, like the capture's
+pins) and `comparatorExitCode` (always 0) are dropped by
+`recordedBuildOutput`, filled from the row by `expandRecordedBuildOutput`
+and by the trusted parser, which refuses a stored copy; the in-memory
+payload keeps both. Kernels, probes, tool digests and both export digests
+stay as historical attestation; `selfTest.passed` stays until I6 changes
+the local `passed: false` shape. lax-website ignores the stored judge
+(its certified mark names the record's environment, `leanVersion`) and
+now requires `solutionExportSha256`.
