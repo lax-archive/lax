@@ -41,8 +41,7 @@ lax-website branch `axiomfree` (not merged, not released). Next: stage 6
 spec 2 once the mathlib tag exists, epoch flip, close `v4.33.0`, the Lax17
 hand-port, the production round trip with a `--paranoid` rerun on a
 machine that never ran lax, the spec reconciliation of `spec_v2_draft.md`
-— it still describes two containers, and lacks `solutionExportSha256` and
-`_root_.`). Stage-4 items for Jan: the sandboxed `lax certify --run`
+— it still describes two containers and lacks `_root_.`). Stage-4 items for Jan: the sandboxed `lax certify --run`
 against a *real* record (the e2e exercises it over local fixture
 repositories only after the folder is materialised unsandboxed, because
 bubblewrap cannot see them; whether Lake's sandbox clones from GitHub and
@@ -384,9 +383,8 @@ of a Lax17-sized relative certificate (the composed Solution of a
   capture shape by field presence (`files` absent → spec 2); spec selection
   should come from the owning environment row, once, and every archive and
   capture reader branch on that.
-- The spec draft (`spec_v2_draft.md`) still describes two containers and no
-  `solutionExportSha256`; Jan reconciles ("Two containers" → three, the
-  judge's mounts, both export digests as host-recorded provenance).
+- The spec draft (`spec_v2_draft.md`) still describes two containers; Jan
+  reconciles ("Two containers" → three, the judge's mounts).
 - **Scratch-repo rehearsal** (`scripts/rehearsal/`) for the Actions-side
   change: `certificate.tar` in the validate artifact and
   `VALIDATION_CERTIFICATE_PATH` in both publish steps, the certificate

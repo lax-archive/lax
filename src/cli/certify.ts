@@ -87,7 +87,6 @@ interface IndexedRecord {
   requiredByConcepts: string[];
   requiredByProofs: string[];
   certificate?: {
-    toolchain: string;
     digest: string;
     registryBlob?: string;
     challenge: string;
@@ -145,7 +144,7 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
   try {
     const prepared =
       options.fetch === true
-        ? await fetchStoredBundle(target.record)
+        ? await fetchStoredBundle(target.record, environment)
         : target.kind === "statement"
           ? composeCertificate(target.record, target.statement, options.relativeTo ?? [], records, environment)
           : regenerateBundle(target, records, environment);
@@ -240,17 +239,13 @@ function indexRecord(record: ArchiveSourceRecord, archive: ArchiveSnapshot): Ind
   }
   const proofs = (Array.isArray(output.proofs) ? output.proofs : []).filter(isObject) as unknown as ProofEntry[];
   const stored = isObject(output.certificate) ? output.certificate : undefined;
-  const judge = stored !== undefined && isObject(stored.judge) ? stored.judge : undefined;
   const bundle = stored !== undefined && isObject(stored.bundle) ? stored.bundle : undefined;
   const certificate =
     stored !== undefined &&
-    judge !== undefined &&
     bundle !== undefined &&
-    typeof judge.toolchain === "string" &&
     typeof bundle.digest === "string" &&
     typeof stored.challenge === "string"
       ? {
-          toolchain: judge.toolchain,
           digest: bundle.digest,
           ...(typeof bundle.registryBlob === "string" ? { registryBlob: bundle.registryBlob } : {}),
           challenge: stored.challenge,
@@ -422,14 +417,14 @@ function regenerateBundle(
   }
   return {
     files,
-    toolchain: record.certificate?.toolchain ?? environment.leanToolchain,
+    toolchain: environment.leanToolchain,
     settled: target.kind === "record" ? "Regenerated the bundle" : "Generated the edge's bundle",
     detail,
     notes,
   };
 }
 
-async function fetchStoredBundle(record: IndexedRecord): Promise<PreparedBundle> {
+async function fetchStoredBundle(record: IndexedRecord, environment: ArchiveEnvironment): Promise<PreparedBundle> {
   const stored = record.certificate;
   if (stored === undefined) throw new Error(`${record.id} carries no certificate: nothing to fetch`);
   if (stored.registryBlob === undefined) throw new Error(`${record.id}'s certificate names no registry blob: nothing to fetch`);
@@ -449,7 +444,7 @@ async function fetchStoredBundle(record: IndexedRecord): Promise<PreparedBundle>
     throw new Error(`the fetched bundle's Challenge.lean is not the one ${record.id}'s record stores — the archive's record is inconsistent; report it`);
   return {
     files,
-    toolchain: stored.toolchain,
+    toolchain: environment.leanToolchain,
     settled: "Fetched the bundle",
     detail: `digest ${stored.digest.slice(0, 12)} verified`,
     notes: [],

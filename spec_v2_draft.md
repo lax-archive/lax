@@ -1133,10 +1133,10 @@ bundled checkers); the trusted parser refuses a certificate whose self-test
 did not pass. The judge's toolchain and ``lake comparator``'s exit code are
 not stored: the toolchain is the environment row's, and the exit code is 0
 on every record, since a certificate is recorded only on a pass. Readers
-fill both in, and the trusted parser refuses a stored copy. ``kernels`` names the kernels that accepted the solution in trusted
-validation (``lean`` for Lean's own kernel; ``leanchecker-paranoid``,
-``lean4lean``, ``nanoda``, ``con-leche``, ``con-ron`` for the bundled
-external checkers). ``bundle`` is the digest reference of the five
+fill both in, and the trusted parser refuses a stored copy. ``kernels``
+names the kernels that accepted the solution in trusted validation
+(``lean`` for Lean's own kernel; ``leanchecker-paranoid``, ``lean4lean``,
+``nanoda``, ``con-leche``, ``con-ron`` for the bundled external checkers). ``bundle`` is the digest reference of the five
 generated files (see Certification), fetched and verified like a capture.
 ``challengeExportSha256`` and ``solutionExportSha256`` are the host's
 digests of the two export files the judge read, bind-mounted one at a
@@ -2212,8 +2212,9 @@ definition's right-hand side, which is the claim — rather than a signature
 that reads ``X : Prop``. A proof card shows the proof's **telescope**: its
 hypotheses in binder order and its conclusion, which is the edge as the
 author wrote it. A certified record carries the mark "certified: ``lake
-comparator`` (<toolchain>, <kernels>), bundle <digest>", read from
-``certificate``; beneath the proof network the record's ``Challenge.lean``
+comparator`` (Lean <leanVersion>, kernels <kernels>), bundle <digest>": the
+environment is the manifest's ``leanVersion``, the kernels and the digest
+are read from ``certificate``; beneath the proof network the record's ``Challenge.lean``
 is shown collapsed, beside the bundle digest and the rerun command, because
 the Challenge is what makes the mark checkable by a reader. Every spec-2
 environment's listing states that the concept packages a record depends on
