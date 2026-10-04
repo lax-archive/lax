@@ -141,17 +141,18 @@ export function interpretComparatorRun(result: { code: number; output: string })
       };
     }
     const lean = errors.slice(0, -1);
-    // Every module it builds is lax's text or a package the archive built
-    // and validated: a failure is lax and the reader's checkout disagreeing
-    // with the archive (the translation's question), never a verdict on the
-    // proof — the archive's own judge builds nothing.
+    // Every module it builds is lax's text — a record's regenerated bundle or
+    // a relative certificate's composition — or a package the archive built
+    // and validated: a failure is lax or the reader's checkout disagreeing
+    // with the archive's records (the translation's question), never a
+    // verdict on a proof — the archive's own judge builds nothing.
     return {
       kind: "violation",
       intent: "translation",
       rule: "comparator-build",
       message:
-        "`lake comparator` could not build the Challenge or the solution module that the archive built and judged — " +
-        "lax's generated files or this checkout disagree with the archive; " +
+        "`lake comparator` could not build the Challenge or the solution module lax generated or named — " +
+        "lax's generated files or this checkout disagree with the archive's records; " +
         `${REPORT}. Lean said:\n${lean.length > 0 ? lean.map((line) => `error: ${line}`).join("\n") : transcript(result.output)}`,
     };
   }

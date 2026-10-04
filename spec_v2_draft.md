@@ -700,7 +700,8 @@ Rules:
 
 - **Binders.** Binder names and binder kinds (explicit, implicit, instance)
   are irrelevant to proof-hood, are not part of an edge, and are not
-  recorded: the generated certificate applies the proof with ``@``. A
+  recorded: the comparator compares types with ``Expr.eqv``, which ignores
+  binder names and kinds. A
   hypothesis the proof never uses is still an assumption. A section
   ``variable`` that the elaborator dropped because the body never mentions
   it is not a binder, and so not an assumption; a conditional proof written
@@ -1939,8 +1940,8 @@ builds cleanly with ``lax build``.
 
 **Publication.** The four files are pushed to the capture store as one
 digest-addressed bundle before the database commit that references it, and
-``build-output.json`` records the bundle digest, the judge (toolchain,
-self-test, tool digests), the kernels that ran, both export digests, and
+``build-output.json`` records the bundle digest, the judge (self-test,
+tool digests), the kernels that ran, both export digests, and
 the ``Challenge.lean`` source verbatim (see Archive Database). The publisher
 regenerates the four files from the record's own stored data, re-seals
 them, and holds the published tar to them byte for byte, credential-free,

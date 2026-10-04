@@ -33,7 +33,7 @@ import {
   lakefileText,
   manifestDependencies,
   orderedProofs,
-  proofPackagesOf,
+  proofPackageRoot,
   theoremNamesOf,
   type BundleFile,
   type CertifiedProof,
@@ -198,9 +198,11 @@ function localSource(name: string): CertifyPackage {
 export function planCertificate(record: CertifyRecord): CertifyPlan | undefined {
   if (record.proofs.length === 0) return undefined;
   const proofs = orderedProofs(record.proofs.map(certifiedProof));
-  const proofPackages = proofPackagesOf(proofs);
-  if (proofPackages.length !== 1 || proofPackages[0] !== record.ownProofs)
-    throw new Error(`the proofs name packages ${proofPackages.join(", ")}; the record's proof package is ${record.ownProofs}`);
+  // The one source of the solution module: what comparator.json names, and
+  // what container B and the host export.
+  const solutionModule = proofPackageRoot(proofs);
+  if (solutionModule !== record.ownProofs)
+    throw new Error(`the proofs name package ${solutionModule}; the record's proof package is ${record.ownProofs}`);
   const direct = new Map(
     record.resolution.proofs
       .filter((dependency) => dependency.kind === "concepts")
@@ -238,7 +240,7 @@ export function planCertificate(record: CertifyRecord): CertifyPlan | undefined 
     kind: localPackages.length === 0 ? "publishable" : "local",
     proofs,
     theoremNames,
-    solutionModule: record.ownProofs,
+    solutionModule,
     exportTargets: [
       ...facts.comparatorExportTargets.slice(0, 4), // the Quot four
       ...theoremNames,

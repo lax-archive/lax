@@ -437,8 +437,9 @@ one byte for byte; `--fetch` pulls the stored bundle by digest instead), a
 proof id is one edge, and a statement id is a *relative certificate* — the
 implied edge `{--relative-to statements} → statement`, discharged by the
 archive's proofs composed along the proof network's witness forest, under
-the theorem name `Cert.<statement-id>`. The five files plus `lean-toolchain`
-land in `--out` (default `./certificate-<target>`); the command prints the
+the theorem name `Cert.<statement-id>`. The bundle's files (four for a record
+or proof id, five with `Solution.lean` for a relative certificate) plus
+`lean-toolchain` land in `--out` (default `./certificate-<target>`); the command prints the
 `lake comparator --config comparator.json` line, or runs it with `--run`
 (`--paranoid` adds the toolchain's bundled kernels) inside the tool's own
 bubblewrap sandbox — git and `bwrap` must be on PATH, and no unsandboxed

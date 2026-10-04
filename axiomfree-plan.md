@@ -871,4 +871,11 @@ shapes above, `no_index` included, certified on the host), the comparator
 negatives driven against a stand-in solution module, the four-container
 layout rehearsal, and the sandboxed `lax certify lax-41 --run`. Docker
 smoke `spec2-certify` green in 45 s (Challenge build 4.3 s + export 3.5 s,
-proof-package export 2.4 s, judge 1.0 s).
+proof-package export 2.4 s, judge 1.0 s). Re-review fixes the same day:
+the README, draft and `contracts.ts` now give `Expr.eqv` (not an `@`
+application) as why binder names and kinds go unrecorded, the
+`comparator-build` message no longer claims the archive built a relative
+certificate's composition, and `planCertificate` takes the solution module
+from `proofPackageRoot` alone. Owed with the next inspector rebuild: the
+`TelescopeBinder` docstring in the inspector's `Main.lean` still gives the
+`@` reason.

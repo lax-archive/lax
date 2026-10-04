@@ -464,9 +464,9 @@ export interface InspectorLink {
  * chain once the validator has judged every constant a statement and every
  * level a universe parameter of the proof, so levels are parameter names.
  * Hypotheses keep binder order and duplicates; `ProofEntry.conclusion` and
- * `assumptions` are derived from it. Stage 3's certificate generator applies
- * the proof with `@` in exactly this order, so binder names and kinds are not
- * part of an edge and are not recorded.
+ * `assumptions` are derived from it. The comparator compares types with
+ * `Expr.eqv`, which ignores binder names and kinds, so they are not part of
+ * an edge and are not recorded.
  */
 export interface ProofTelescope {
   hypotheses: Array<{ statement: string; levels: string[] }>;

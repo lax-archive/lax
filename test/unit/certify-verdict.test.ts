@@ -118,6 +118,25 @@ describe("the comparator verdict", () => {
     expect(message).toContain("Solution.lean:6:60: Type mismatch");
   });
 
+  it("words a build failure truthfully for a relative certificate, whose files the archive never built", () => {
+    // `lax certify <statement> --run` over an ill-typed composition: the
+    // Solution.lean is lax's local composition, not anything the archive judged
+    const verdict = interpretComparatorRun({
+      code: 1,
+      output: transcript(
+        "Building Solution",
+        "error: Solution.lean:9:2: Application type mismatch",
+        "error: build failed",
+        "error: Child exited with 1",
+      ),
+    });
+    expect(verdict).toMatchObject({ kind: "violation", rule: "comparator-build", intent: "translation" });
+    const message = (verdict as { message: string }).message;
+    expect(message).toContain("the solution module lax generated or named");
+    expect(message).not.toContain("the archive built and judged");
+    expect(message).toContain("Solution.lean:9:2: Application type mismatch");
+  });
+
   it("reports exit 2 and anything else as the archive's failure, never a verdict", () => {
     const missing = interpretComparatorRun({
       code: 2,
