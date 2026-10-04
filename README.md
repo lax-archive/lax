@@ -442,7 +442,8 @@ or proof id — `lean-toolchain` among them — and six with `Solution.lean` for
 relative certificate) land in `--out` (default `./certificate-<target>`); the
 command prints the `lake comparator --config comparator.json` line a reader
 runs there by hand (elan and git on PATH; it clones the records' packages
-from their authors' repositories), or checks the certificate itself with
+from their authors' repositories, so it needs them still to serve the pinned
+commits — the archive keeps no copy of its own), or checks the certificate itself with
 `--run` (`--paranoid` adds the toolchain's bundled kernels). `--run` builds in
 a fresh scratch project, never in the folder's own `.lake`: the records'
 packages from the *sources* of their verified captures in the archive (never

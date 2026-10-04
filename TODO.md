@@ -11,7 +11,10 @@ rewrite-plan.md (fully executed).
 
 The plan is `axiomfree-plan.md`: Jan's decisions (attribute marker from a
 pinned `LaxCore`, libraries pinned as a set with mathlib and CSLib, Replay
-kept, kernel set a per-environment setting), the design, and six stages
+kept, kernel set a per-environment setting; decision 11 of 2026-10-04 night:
+CSLib allowed, not required, the library set curated by maintainers case by
+case with no admission protocol, and the by-hand rerun's dependence on the
+authors' repositories accepted — nothing owed), the design, and six stages
 released to `main` one by one. The spike is done (`spike/axiomfree/REPORT.md`);
 the outside review and the common-sense review sit beside it and are folded
 in; all decisions confirmed. Stage 1 landed 2026-10-03 (the library at
@@ -40,8 +43,8 @@ lax-website branch `axiomfree` (not merged, not released). Next: stage 6
 (Jan: merge and release the renderer and re-pin it; admit `v4.35.0` at
 spec 2 once the mathlib tag exists, epoch flip, close `v4.33.0`, the Lax17
 hand-port, the production round trip with a `--paranoid` rerun on a
-machine that never ran lax, the spec reconciliation of `spec_v2_draft.md`
-— it still describes two containers and lacks `_root_.`). Stage-4 items for Jan: the sandboxed `lax certify --run`
+machine that never ran lax, the spec reconciliation of `spec_v2_draft.md`).
+Stage-4 items for Jan: the sandboxed `lax certify --run`
 against a *real* record (since the ultracode review's S1/M1 it builds in a
 fresh scratch project from the records' captures in the registry and the
 real mathlib warm store, bound read-only into bubblewrap, with no network
@@ -50,15 +53,6 @@ store's oleans under the sandbox rather than rebuilding is the rehearsal's
 question); `lax certify`
 of a Lax17-sized relative certificate (the composed Solution of a
 28-hypothesis chain). Jan's items before stage 3 ships:
-
-- **Decide where a certificate's package sources live** (ultracode review
-  2026-10-04, M1 item 2; `axiomfree-plan.md` open decision 4, with the
-  trade-off). Before the first spec-2 record: an archive-owned
-  preservation remote the publish job pushes the certified commits to (the
-  bundle then names it; a credentialed push, storage, and a bundle-format
-  change that is free only now), or explicitly accepted author-repo
-  dependence for the by-hand rerun (`lax certify --run` already builds
-  from the captures and needs no author repository).
 
 - **Docker smoke of Certify, again** — RUN 2026-10-04 twice: after the third
   pass on the five-container layout (`spec2-certify` in 42 s: A1 4.2 s, A2
@@ -393,8 +387,6 @@ of a Lax17-sized relative certificate (the composed Solution of a
   capture shape by field presence (`files` absent → spec 2); spec selection
   should come from the owning environment row, once, and every archive and
   capture reader branch on that.
-- The spec draft (`spec_v2_draft.md`) still describes two containers; Jan
-  reconciles ("Two containers" → three, the judge's mounts).
 - **Scratch-repo rehearsal** (`scripts/rehearsal/`) for the Actions-side
   change: `certificate.tar` in the validate artifact and
   `VALIDATION_CERTIFICATE_PATH` in both publish steps, the certificate

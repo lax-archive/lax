@@ -239,6 +239,19 @@ spec.md: the spec-2 text is a draft Jan reconciles.
       paragraph (kernel-grade vs metadata-grade facts) does not carry over
       to spec 2. Spec-notes entry for the private exemption, since spec.md
       un-mangles private names before the test.
+11. **Libraries and author repositories** (Jan, 2026-10-04 night; closes
+    open decisions 1 and 4).
+    - *CSLib is allowed*, not required; mathlib and `LaxCore` are required.
+    - *No library-admission protocol.* Which libraries an environment's
+      set lists is curated by the maintainers case by case when the row
+      is admitted; there is no fixed checklist for a library.
+    - *Author-repo dependence accepted (M1.2).* A bundle's requires name
+      the authors' repositories at the certified commits, and the by-hand
+      rerun (`lake comparator` in the fetched folder) needs them still to
+      serve those commits; the archive keeps no preservation remote. `lax
+      certify --run`, which builds from the archive's captured sources, is
+      the durable path, and the reader-facing text (draft, README, website
+      trust note) says so.
 
 ## Design
 
@@ -697,7 +710,7 @@ now follow.
   flattens the workspace, so a proof package importing a tagged concept
   needs the library resolvable anyway. `lax init` scaffolds mathlib and
   `LaxCore`; CSLib is added by the author when needed (open decision 1
-  stays "allowed").
+  stays "allowed"; confirmed by decision 11).
 - **A statement of a package that is only transitively reachable** in a
   proof's chain is a violation, as the spec-1 axiom-hygiene rule was —
   never a silent helper. A `private` theorem of proof shape is a violation
@@ -742,31 +755,14 @@ for spec-2 records only (spec-1 records keep their shape until ported):
 
 ## Open decisions
 
-1. **CSLib: allowed or required?** Assumed allowed (a submission that does
-   not need it should not carry it); mathlib and LaxCore required.
+Closed by decision 11 (2026-10-04 night): 1 (CSLib allowed, not
+required) and 4 (author-repo dependence of the by-hand rerun accepted, no
+preservation remote). Still as assumed, not re-decided:
+
 2. **Kernel set per submit** (decision 5's setting): Lean's kernel alone
    until the Lax17 port measures the full set.
 3. **`lax certify --run` before `lax register`**: author tool, not a gate;
    registration already rests on the per-submit judge.
-4. **Where a certificate's package sources live (ultracode review M1.2,
-   Jan's decision, open).** Every record package in a bundle is a git
-   require on the *author's* repository at the certified commit, so the
-   by-hand rerun (`lake comparator` in the fetched folder) dies with a
-   deleted, private or rewritten repository — and with it every relative
-   certificate through that record; spec 1 never depended on author
-   repositories after registration. `lax certify --run` no longer does
-   (it builds from the captures' sources, S1/M1.3), so the question is
-   only what the *bundle* names. (a) An archive-owned preservation remote:
-   the publish job pushes the certified commit's git objects (never
-   executed; integrity stays on the SHA) to a repository the archive
-   controls, and the bundle's requires name it — a further credentialed
-   write in the publish job, a storage cost, and a bundle-format change
-   (the URL is inside the digest), cheap only before the first record.
-   (b) Accept author-repo dependence explicitly: the bundle stays as is,
-   the draft and the website say the by-hand rerun needs the authors'
-   repositories and `lax certify --run` is the durable path — no new
-   machinery, but "rerun with nothing of lax" then has an expiry the
-   archive does not control.
 
 ## Record
 
@@ -883,7 +879,8 @@ violation are gone; a comparator that builds a module itself (a reader's
 `translation`. A relative certificate keeps its generated `Solution.lean`,
 `rootName` and `Cert.<statement-id>`; the bundle shapes differ by that one
 file (`generate.ts bundleMembers`), and the publisher and `lax certify
---fetch` hold a record's tar to the four. Verified first on v4.35.0-rc3 in
+--fetch` hold a record's tar to the four (five since M1.1 sealed
+`lean-toolchain`, 2026-10-05; superseded). Verified first on v4.35.0-rc3 in
 scratch: a plain `leanexport <ProofsRoot>` matched Challenge theorems for
 `variable`/`include`, implicit and instance-implicit binders, one- and
 two-parameter universe-polymorphic proofs, a nested proof name, and no
@@ -917,7 +914,8 @@ inspector's arguments over the Challenge, the report reader, the
 `challenge-build` message, and `checkChallengeReport`, which now takes the
 bundle's certificate theorems (`{name, levelParams, telescope}`) instead
 of proof entries, so a relative certificate's `Cert.<statement-id>` is
-held to its implied edge. `--run` (`cli/certify-hold.ts`) resolves, builds
+held to its implied edge. `--run` (`cli/certify-hold.ts`, since folded into
+`cli/certify-run.ts` by the S1/M1 entry below) resolves, builds
 the Challenge, exports it and runs the per-environment inspector, each
 under bubblewrap with Lake's own `buildSandboxArgs` shape (network only
 for `lake resolve-deps`, `.lake` writable only for resolution and the
@@ -991,3 +989,20 @@ lax path asks the comparator to build); the website's trust note says what
 the dependents' side of the metadata-resubmission decision (their stored
 bundles pin the old commit, which `--fetch --run` refuses) is added to
 that TODO item.
+
+2026-10-05, decision 11 recorded and the final review of the previous
+batch closed. Jan's decisions of 2026-10-04 night: CSLib allowed, not
+required; no library-admission protocol (libraries curated case by case);
+the by-hand rerun's dependence on the authors' repositories accepted (open
+decisions 1 and 4 closed; the draft, lax's README and lax-website's README
+now say the by-hand rerun needs the authors' repositories and `--run`
+builds from the captures). Also noted: `spec_conceptdialect.md` on `main`
+is marked "proposal, not enforced" (main `0f15d70`), which the draft's
+dialect paragraph now says. Review fixes: `checkArchiveName` refuses a
+dotted universe parameter (`u.v` matched `LEAN_NAME_PATTERN`, then
+`leanLevel` threw and the run reported a mislabelled `certify`
+violation), and `LeanNameError`'s comment no longer claims the schema
+refuses it; `lax certify --fetch` holds the fetched `comparator.json` to
+`comparatorConfigText` of the record's proofs, as it holds the Challenge
+and `lean-toolchain`; the draft calls `Solution.lean` the sixth file;
+stale TODO lines about the draft's containers and `_root_` are gone.

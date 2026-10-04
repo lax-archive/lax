@@ -567,10 +567,13 @@ const CASES: Case[] = [
       decl({ name: "Lax1Proofs.«证明»", telescope: chain([], [A]) }),
       decl({ name: "Lax1Proofs.poly", levelParams: ["«λ»"], telescope: chain([], [A]) }),
       decl({ name: "Lax1Proofs.main!", telescope: chain([], [A]) }),
+      // a universe parameter stands alone in the certificate: no dots
+      decl({ name: "Lax1Proofs.dotted", levelParams: ["u.v"], telescope: chain([], [A]) }),
     ],
     violations: [
       ["proof", "proof Lax1Proofs.«证明»: its name is not a plain Lean identifier"],
       ["proof", "proof Lax1Proofs.poly: its universe parameter «λ» is not a plain Lean identifier"],
+      ["proof", "proof Lax1Proofs.dotted: its universe parameter u.v is not a plain Lean identifier"],
     ],
     proofEntries: [{ id: "Lax1Proofs.main!" }],
   },

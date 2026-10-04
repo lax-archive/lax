@@ -133,12 +133,16 @@ environment:
 - ``CSLib`` (allowed) — the commit chosen against the row's mathlib at
   admission.
 
+Which libraries an environment lists is curated by the maintainers case by
+case when the row is admitted; there is no fixed admission protocol for a
+library.
+
 > draft note: the ``v4.35.0`` row — the mathlib tag commit, the ``LaxCore``
 > commit, the ``CSLib`` commit and repository URL, and the closure date of
 > ``v4.33.0`` — is filled in at admission (plan, stage 6). The spike measured
 > ``v4.35.0-rc3`` (mathlib ``c55e6e786f49471c72fbddbec5415808896aec1e``), not
-> a final tag. Whether ``CSLib`` is allowed or required is the plan's open
-> decision 1; this draft takes "allowed", as the plan assumes.
+> a final tag. ``CSLib`` is allowed, not required (Jan, 2026-10-04; the
+> plan's decision 11).
 
 A closed environment remains supported only for records created before its
 closure date, including init records which had not yet selected an
@@ -654,8 +658,8 @@ Additional Rules:
   auxiliary and is what ``AimpC`` above does.
 
 The concept dialect (``spec_conceptdialect.md``) is a separate project: a
-whitelist of the Lean a concept package may be written in, enforced by a
-parser. Spec 2 does not depend on it; a spec-2 concept package is any Lean
+proposed whitelist of the Lean a concept package may be written in, to be
+enforced by a parser; no gate enforces it today, and its text says so. Spec 2 does not depend on it; a spec-2 concept package is any Lean
 that passes the rules above. If the dialect lands, its declaration and
 attribute whitelists must admit ``@[lax_statement]`` and ``def … : Prop`` and
 drop ``axiom``, which the dialect today lists as allowed.
@@ -1526,7 +1530,7 @@ digests after the judge has run. A wrong answer anywhere is an
 infrastructure failure, never a finding against the author; the record
 carries the probes that passed and the digests beside the toolchain name.
 A reader who reruns the bundle trusts the toolchain and its kernels, the
-environment's libraries (mathlib, ``LaxCore``, ``CSLib`` where required),
+environment's libraries (mathlib, ``LaxCore``, ``CSLib`` where imported),
 and the concept packages the record depends on — "concept packages you
 depend on are trusted, as today" — and, for a by-hand rerun itself,
 nothing of lax (``lax certify --run`` adds lax's own reading of the
@@ -1989,9 +1993,11 @@ replaced by builds from source. Where the
 inspector cannot be built, the Challenge is still exported and judged and
 the result is reported as "comparator accepted; Challenge meaning not
 checked", never as certified. Every certificate whose records' captures
-the archive still serves can be rerun this way; the by-hand rerun also
-depends on the authors' repositories, which the archive does not keep (an
-open decision, see the plan).
+the archive still serves can be rerun this way. The by-hand rerun also
+needs the authors' repositories to still serve the pinned commits: the
+archive keeps no copy of its own (accepted, the plan's decision 11), and
+``lax certify --run``, which builds from the archive's captured sources, is
+the durable path.
 
 > draft note (2026-10-04, open for Jan): three binding questions the
 > reviews raised are not settled here. (1) *Revalidation*: ``/lax admin
@@ -2058,7 +2064,7 @@ host toolchain's own tool digests, and the trusted parser never admits it.
 a statement proven, or proven relative to a set of statements — ``lax
 certify`` composes a standalone certificate: the Challenge states the
 implied edge as one theorem (the relative-to statements as hypotheses, the
-target as conclusion, named ``Cert.<statement-id>``), and a fifth file,
+target as conclusion, named ``Cert.<statement-id>``), and a sixth file,
 ``Solution.lean``, discharges it by applying the proofs along the witness forest that ``lax generate-prooftree``'s selection
 already computes, innermost first, each proof's hypotheses filled by the
 theorems proving them or by the hypotheses of the certificate. The
@@ -2229,7 +2235,7 @@ the kernel; exit 0; the bundle is pushed; the record's ``certificate``
 carries the digest, ``kernels: ["lean"]``, and the Challenge source above.
 
 The relative certificate ``lax certify Lax261.Infinite.InfinitelyManyPrimes``
-— the statement proven outright, through ``lax-42``'s proof — has the fifth
+— the statement proven outright, through ``lax-42``'s proof — has the sixth
 file, a ``Solution.lean`` composing the proofs:
 
     import Lax261Proofs
@@ -2350,12 +2356,10 @@ so plain ``lake build`` works immediately; when the workspace cannot be built
 with a warning, but the folder must enter a Git repository before ``lax
 build`` or ``lax submit``.
 
-> draft note: the plan says ``lax init`` scaffolds "the three library
-> requires", while open decision 1 assumes ``CSLib`` is *allowed* so that "a
-> submission that does not need it should not carry it". This draft
-> scaffolds the required libraries and leaves ``CSLib`` to the author (a
-> commented-out require in the lakefile would show the pin); if ``CSLib``
-> becomes required, the scaffold carries it. Whether the scaffold's example
+> draft note: ``CSLib`` is allowed, not required (the plan's decision 11),
+> so the scaffold carries the required libraries and leaves ``CSLib`` to the
+> author (a commented-out require in the lakefile would show the pin).
+> Whether the scaffold's example
 > statement and proof are emitted at all, or only as comments as the spec-1
 > scaffold does, is also open.
 

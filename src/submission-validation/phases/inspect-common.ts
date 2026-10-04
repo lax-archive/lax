@@ -79,7 +79,8 @@ const LOWER_GREEK = /\p{Script=Greek}/u;
  * recorded and linked — under spec 2 also written into the certificate — by
  * the name Lean prints, so that name must be in the archive's grammar
  * (contracts.ts LEAN_NAME_PATTERN): plain identifier components, none Lean
- * prints in `«»`. A name outside it is refused here, as a finding, rather
+ * prints in `«»`; a universe parameter stands alone in Lean source (`.{u}`),
+ * so it is one component, never dotted (certify/lean-name.ts `leanLevel`). A name outside it is refused here, as a finding, rather
  * than by the publication schema after validation passed (an
  * infrastructure failure). Spec 2 marks the finding `translation`; spec 1
  * has no intents. Returns whether the endpoint may be recorded. */
@@ -89,13 +90,14 @@ export function checkArchiveName(
   findings: FindingCollector,
   intent?: FindingIntent,
 ): boolean {
-  const outside = [declaration.name, ...(declaration.levelParams ?? [])].filter((name) => !LEAN_NAME_PATTERN.test(name));
-  if (outside.length === 0) return true;
-  const which = outside[0] === declaration.name ? "its name" : `its universe parameter ${outside[0]}`;
+  const nameOutside = !LEAN_NAME_PATTERN.test(declaration.name);
+  const level = (declaration.levelParams ?? []).find((name) => !LEAN_NAME_PATTERN.test(name) || name.includes("."));
+  if (!nameOutside && level === undefined) return true;
+  const which = nameOutside ? "its name" : `its universe parameter ${level}`;
   findings.violate(
     label,
     `${label} ${declaration.userName ?? declaration.name}: ${which} is not a plain Lean identifier; a statement or ` +
-      "proof and its universe parameters are named by dot-separated identifiers Lean prints without `«»` " +
+      "proof is named by dot-separated identifiers, and each universe parameter by one identifier, Lean prints without `«»` " +
       "(ASCII, Latin-1 and Latin Extended-A letters, Greek but `λ`, `Π`, `Σ`, letterlike symbols, digits, " +
       "subscripts, `_`, `'`, `!`, `?`) — rename it",
     intent,

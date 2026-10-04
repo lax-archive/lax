@@ -455,6 +455,12 @@ describe("lax certify", () => {
     await expect(withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out: path.join(work, "tampered2"), fetch: true }))).rejects.toThrow(
       /fetched bundle's Challenge\.lean is not the one lax-42's record stores/u,
     );
+    // and to the comparator.json the record's proofs give, which decides
+    // the theorems held and the axioms permitted
+    stored(tampered.digest);
+    await expect(withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out: path.join(work, "tampered3"), fetch: true }))).rejects.toThrow(
+      /fetched bundle's comparator\.json is not the one lax-42's proofs give/u,
+    );
   });
 
   it("certifies one edge for a proof id", async () => {

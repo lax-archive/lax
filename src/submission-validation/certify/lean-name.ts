@@ -36,9 +36,11 @@ const RESERVED = new Set([
 ]);
 
 /**
- * A name the generator cannot write: one outside the archive's name grammar.
- * The classifier and the schema refuse every such name before a record
- * reaches the generator, so this fires only on a record that bypassed them;
+ * A name the generator cannot write: one outside the archive's name grammar,
+ * or a dotted universe parameter. The classifier refuses every such name
+ * before a record reaches the generator (phases/inspect-common.ts
+ * `checkArchiveName`; the schema repeats the grammar but not the undotted
+ * level rule), so this fires only on a record that bypassed it;
  * the phases turn it into a `certify` violation that names it, and nothing
  * else in lax throws it.
  */

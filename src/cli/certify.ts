@@ -540,13 +540,18 @@ async function fetchStoredBundle(record: IndexedRecord, environment: ArchiveEnvi
   const files = Object.fromEntries(RECORD_BUNDLE_FILES.map((name) => [name, members.get(name)!])) as RecordBundle;
   if (files["Challenge.lean"] !== stored.challenge)
     throw new Error(`the fetched bundle's Challenge.lean is not the one ${record.id}'s record stores — the archive's record is inconsistent; report it`);
+  // comparator.json decides which theorems the comparator holds and which
+  // axioms it permits: it must be the one the record's proofs give
+  const theorems = orderedProofs(record.proofs.map(certifiedProof));
+  if (files["comparator.json"] !== comparatorConfigText(theorems))
+    throw new Error(`the fetched bundle's comparator.json is not the one ${record.id}'s proofs give — the archive's record is inconsistent; report it`);
   if (files["lean-toolchain"] !== leanToolchainText(environment))
     throw new Error(`the fetched bundle's lean-toolchain is not ${environment.id}'s ${environment.leanToolchain} — the archive's record is inconsistent; report it`);
   return {
     files,
     // the fetched Challenge is the record's stored one, which the publisher
     // held to the record's own proofs
-    theorems: orderedProofs(record.proofs.map(certifiedProof)).map(edgeTheorem),
+    theorems: theorems.map(edgeTheorem),
     settled: "Fetched the bundle",
     detail: `digest ${stored.digest.slice(0, 12)} verified`,
     notes: [],
