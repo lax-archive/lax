@@ -45,6 +45,36 @@ describe("local validation reporting", () => {
     });
   });
 
+  it("heads spec-2 findings by intent, the judge's first, after anything unheaded", () => {
+    expect(
+      groupFindings(
+        [
+          { phase: "inspect", rule: "namespace", message: "proof declaration Foo does not carry namespace Lax1Proofs", intent: "standards" },
+          { phase: "certify", rule: "kernel-rejected", message: "Lean's kernel rejected the solution:\nerror: …", intent: "judge" },
+          { phase: "static", rule: "manifest", message: "title is missing" },
+          { phase: "inspect", rule: "proof", message: "theorem Lax1Proofs.rep concludes Poly.{w, w} with `w` repeated", intent: "translation" },
+        ],
+        "error",
+      ),
+    ).toEqual({
+      headline: "4 errors",
+      body: [
+        "layout · manifest",
+        "  title is missing",
+        "judge · the proof does not establish the edge",
+        "  certificate · kernel-rejected",
+        "    Lean's kernel rejected the solution:",
+        "    error: …",
+        "translation · the theorem is not the edge the record claims",
+        "  statements · proof",
+        "    theorem Lax1Proofs.rep concludes Poly.{w, w} with `w` repeated",
+        "standards · archive standard, not a correctness failure",
+        "  statements · namespace",
+        "    proof declaration Foo does not carry namespace Lax1Proofs",
+      ],
+    });
+  });
+
   it("returns nothing when validation found nothing", () => {
     expect(groupFindings([], "warning")).toBeUndefined();
   });

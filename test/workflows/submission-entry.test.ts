@@ -243,6 +243,29 @@ describe("report-validation entry point", () => {
     // Only the first violation, and no fenced transcript, warnings, or second
     // finding: the artifact is the record of the build.
     expect(body).not.toContain("the conclusion is not proved");
+
+    // A spec-2 finding carries which question it answers (decision 10), and
+    // the tag says so; an intent that is not one of the three closed words
+    // is dropped, never echoed.
+    for (const [intent, tag] of [
+      ["judge", "[judge · certify/kernel-rejected]"],
+      ["translation", "[translation · certify/kernel-rejected]"],
+      ["<script>", "[certify/kernel-rejected]"],
+      [undefined, "[certify/kernel-rejected]"],
+    ] as const) {
+      fs.writeFileSync(reportPath, JSON.stringify({
+        reportVersion: 1,
+        ok: false,
+        request: { id: "lax-42" },
+        warnings: [],
+        violations: [{ phase: "certify", rule: "kernel-rejected", message: "the kernel rejected the Solution", ...(intent === undefined ? {} : { intent }) }],
+      }));
+      const labelled: IssueState = { comments: [], reactions: [] };
+      installIssueFetch(labelled);
+      await reportValidation();
+      const line = labelled.comments[0]!.body.split("\n").find((candidate) => candidate.startsWith("First finding"))!;
+      expect(line, String(intent)).toContain(`First finding \`${tag}\`: the kernel rejected the Solution`);
+    }
     expect(body).not.toContain("the abstract is short");
     expect(body).not.toContain("```");
     expect(body).toContain(resultMarker(commentId));

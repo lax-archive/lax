@@ -19,7 +19,7 @@ describe("the comparator verdict", () => {
       code: 1,
       output: transcript("Resolving dependencies", "error: Challenge and solution theorem statement do not match: 'Cert.Lax38Proofs.hasSucc'"),
     });
-    expect(verdict).toMatchObject({ kind: "violation", rule: "statement-mismatch" });
+    expect(verdict).toMatchObject({ kind: "violation", rule: "statement-mismatch", intent: "judge" });
     expect((verdict as { message: string }).message).toContain("Cert.Lax38Proofs.hasSucc");
     expect((verdict as { message: string }).message).toContain("report it as a lax bug");
   });
@@ -40,7 +40,59 @@ describe("the comparator verdict", () => {
     expect(interpretComparatorRun({ code: 1, output: transcript("error: Const not found in solution: 'Cert.X.y'") }))
       .toMatchObject({ kind: "violation", rule: "missing-constant" });
     expect(interpretComparatorRun({ code: 1, output: transcript("Lean default kernel rejected the solution", "error: Lean default exited with 1") }))
-      .toMatchObject({ kind: "violation", rule: "kernel-rejected" });
+      .toMatchObject({ kind: "violation", rule: "kernel-rejected", intent: "judge" });
+  });
+
+  it("reserves kernel-rejected for the comparator's own rejection notice; a kernel that did not run is the archive's failure", () => {
+    // the exit line without the notice: a crash, an OOM, a sandbox refusal
+    const silent = interpretComparatorRun({ code: 1, output: transcript("Running Lean default kernel on solution", "error: Lean default exited with 137") });
+    expect(silent.kind).toBe("failure");
+    if (silent.kind === "failure") {
+      expect(silent.failure.kind).toBe("infrastructure");
+      expect(silent.failure.message).toContain("nothing was judged");
+    }
+    // the launch failure the comparator reports as an exception
+    const launch = interpretComparatorRun({
+      code: 1,
+      output: transcript("Error while interacting with nanoda kernel", "error: Error while interacting with nanoda kernel: no such file or directory (error code: 2)"),
+    });
+    expect(launch.kind).toBe("failure");
+    if (launch.kind === "failure") expect(launch.failure.message).toContain("could not be run");
+    // Lean's kernel accepted, an independent checker did not: a disagreement to examine
+    const disagreement = interpretComparatorRun({
+      code: 1,
+      output: transcript("Lean default kernel accepts the solution", "nanoda kernel rejected the solution", "error: nanoda exited with 1"),
+    });
+    expect(disagreement.kind).toBe("failure");
+    if (disagreement.kind === "failure") expect(disagreement.failure.message).toContain("kernel disagreement");
+    // the rejection itself does not presume a lax bug any more
+    const rejected = interpretComparatorRun({ code: 1, output: transcript("Lean default kernel rejected the solution", "error: Lean default exited with 1") });
+    expect((rejected as { message: string }).message).toContain("builds cleanly with `lax build`");
+  });
+
+  it("a kernel or a child that did not exit 1 crashed or was killed; the rejection notice does not make it a verdict", () => {
+    // the comparator prints its notice for every nonzero exit (Check.lean
+    // runExternalKernel), so the exit code is what tells a rejection apart
+    for (const code of ["134", "137", "255"]) {
+      const crash = interpretComparatorRun({ code: 1, output: transcript("Lean default kernel rejected the solution", `error: Lean default exited with ${code}`) });
+      expect(crash.kind, code).toBe("failure");
+      if (crash.kind === "failure") {
+        expect(crash.failure.kind).toBe("infrastructure");
+        expect(crash.failure.message).toContain("crash or a kill");
+      }
+    }
+    // a paranoid checker that crashed is not a disagreement either
+    const paranoid = interpretComparatorRun({
+      code: 1,
+      output: transcript("Lean default kernel accepts the solution", "nanoda kernel rejected the solution", "error: nanoda exited with 134"),
+    });
+    expect(paranoid.kind).toBe("failure");
+    if (paranoid.kind === "failure") expect(paranoid.failure.message).toContain("crash or a kill");
+    // the comparator's own child (the build, the exporter) likewise
+    const child = interpretComparatorRun({ code: 1, output: transcript("error: Child exited with 134") });
+    expect(child.kind).toBe("failure");
+    if (child.kind === "failure") expect(child.failure.message).toContain("crash or a kill");
+    expect(interpretComparatorRun({ code: 1, output: transcript("error: Child exited with 1") })).toMatchObject({ kind: "violation", rule: "solution-build" });
   });
 
   it("tells a Solution that did not elaborate apart, quoting Lean", () => {

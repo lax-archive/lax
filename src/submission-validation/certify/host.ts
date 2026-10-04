@@ -16,13 +16,15 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
+import type { FindingIntent } from "../contracts.js";
 import { infrastructureFailure, resourceLimitFailure } from "../failures.js";
-import { hostLeanEnv, lakeBinary, lakePathEnv, packageLibDir, toolchainBinDir } from "../host/leanenv.js";
+import { toolchainDir, hostLeanEnv, lakeBinary, lakePathEnv, packageLibDir, toolchainBinDir } from "../host/leanenv.js";
 import { run } from "../host/proc.js";
 import { seedOverrides } from "../host/warmstore.js";
 import { dependencySubDir } from "../phases/provision.js";
 import { sealBundle } from "./bundle.js";
-import { nameViolation, type CertifyResult } from "./phase.js";
+import { checkChallengeReport } from "./challenge-check.js";
+import { nameViolation, readChallengeReport, type CertifyResult } from "./phase.js";
 import {
   CHALLENGE_MODULE,
   SOLUTION_MODULE,
@@ -35,6 +37,7 @@ import {
   type CertifyPlan,
   type CertifyRecord,
 } from "./project.js";
+import { toolDigests } from "./self-test.js";
 import { interpretComparatorRun } from "./verdict.js";
 
 export interface HostCertifyInput {
@@ -44,6 +47,9 @@ export interface HostCertifyInput {
   warmWs: string;
   limits: ValidationLimits;
   echo: boolean;
+  /** The inspector binary the pipeline inspected the packages with: it reads
+   * the built Challenge too (certify/challenge-check.ts). */
+  inspectorBin: string;
   /** The lib dirs of the dependencies the proofs build materialised, and of
    * the siblings a nonstrict build built in place (host/pipeline.ts). */
   dependencyLibs: string[];
@@ -107,8 +113,14 @@ export async function certifyOnHost(input: HostCertifyInput): Promise<CertifyRes
     ownLibs: string[],
     exportPath: string,
     rule: string,
+    intent: FindingIntent,
     didNot: string,
-  ): Promise<{ kind: "exported"; exportPath: string; sha256: string } | { kind: "violation"; rule: string; message: string }> => {
+    /** What follows the diagnosis: when to report it as a lax bug. */
+    report: string,
+    /** Inspect the built module after the export (container A2's rule) and
+     * leave the report here. */
+    inspectReport?: string,
+  ): Promise<{ kind: "exported"; exportPath: string; sha256: string } | { kind: "violation"; rule: string; message: string; intent: FindingIntent }> => {
     if (input.echo) console.log(`\n== lake build ${module} (certificate) ==`);
     const build = await run(lake, ["build", module], projectDir, {
       echo: input.echo,
@@ -117,13 +129,14 @@ export async function certifyOnHost(input: HostCertifyInput): Promise<CertifyRes
       maxOutputBytes: input.limits.maxOutputBytes,
     });
     if (build.code === 124) throw resourceLimitFailure(`building the certificate ${module} exceeded its time limit`);
+    // 3 is host/proc.ts's "terminated by a signal": a crash, never the author's
+    if (build.code === 3) throw infrastructureFailure(`building the certificate ${module} was terminated by a signal:\n${build.output.trim()}`);
     if (build.code !== 0) {
       return {
         kind: "violation" as const,
+        intent,
         rule,
-        message:
-          `${didNot}, so lax's generator and classifier disagree with Lean; please report it as a lax bug, ` +
-          `quoting this message. The transcript:\n${build.output.trim()}`,
+        message: `${didNot}; ${report}. The transcript:\n${build.output.trim()}`,
       };
     }
     const leanEnv = hostLeanEnv(
@@ -144,19 +157,35 @@ export async function certifyOnHost(input: HostCertifyInput): Promise<CertifyRes
     if (exported.code !== 0) throw infrastructureFailure(`exporting the ${module} failed (exit ${exported.code}):\n${exported.output.trim()}`);
     const stat = fs.lstatSync(exportPath);
     if (!stat.isFile() || stat.size === 0) throw infrastructureFailure(`the ${module} export is empty`);
+    if (inspectReport !== undefined) {
+      // the inspector's argument shape (phases/inspect-runner.ts
+      // inspectorArguments): the spec, the report, the module list — the one
+      // generated module, which is its own root
+      const inspected = await leanEnv.exec(input.inspectorBin, ["--spec", "2", inspectReport, module], projectDir);
+      if (inspected.code !== 0) throw infrastructureFailure(`inspecting the ${module} failed (exit ${inspected.code}):\n${inspected.output.trim()}`);
+    }
     return { kind: "exported" as const, exportPath, sha256: sha256File(exportPath) };
   };
 
   // ── the Challenge export, as container A makes it ──────────────────────
-  const challenge = await input.phase("certify challenge", () =>
-    buildAndExport(
+  const challengeReport = path.join(certifyDir, "challenge-report.json");
+  const challenge = await input.phase("certify challenge", async () => {
+    const exported = await buildAndExport(
       CHALLENGE_MODULE,
       [packageLibDir(path.join(input.submissionRoot, "concepts"))],
       path.join(certifyDir, "challenge.export"),
       "challenge-build",
+      "translation",
       "the generated Challenge did not build over the concept packages — the statements lax named from the " +
-        "proofs' telescopes do not elaborate the way Lean reads them",
-    ));
+        "proofs' telescopes do not elaborate the way Lean reads them, so lax's generator and classifier disagree with Lean",
+      "please report it as a lax bug, quoting this message",
+      challengeReport,
+    );
+    if (exported.kind === "violation") return exported;
+    // the Challenge held to the telescope, as the trusted phase holds it
+    const mismatch = checkChallengeReport(readChallengeReport(challengeReport, input.limits.inspectorReportBytes), input.record.proofs);
+    return mismatch ?? exported;
+  });
   if (challenge.kind === "violation") return challenge;
 
   // ── the Solution export, as container B makes it ───────────────────────
@@ -166,8 +195,10 @@ export async function certifyOnHost(input: HostCertifyInput): Promise<CertifyRes
       [packageLibDir(path.join(input.submissionRoot, "concepts")), packageLibDir(path.join(input.submissionRoot, "proofs"))],
       path.join(certifyDir, "solution.export"),
       "solution-build",
+      "judge",
       "the generated Solution did not elaborate — the certificate lax wrote from the proofs' telescopes does " +
         "not apply the proofs the way Lean reads them",
+      "if your proof package builds cleanly with `lax build`, report it as a lax bug, quoting this message",
     ));
   if (solution.kind === "violation") return solution;
 
@@ -215,7 +246,9 @@ export async function certifyOnHost(input: HostCertifyInput): Promise<CertifyRes
     kind: "certified",
     bundlePath,
     certificate: {
-      judge: { toolchain: environment.leanToolchain, comparatorExitCode: 0 },
+      // a local run proves no runner: no self-test, and the digests are of
+      // the host's own toolchain (certify/self-test.ts)
+      judge: { toolchain: environment.leanToolchain, comparatorExitCode: 0, selfTest: { passed: false, probes: [] }, tools: toolDigests(toolchainDir(environment)) },
       kernels: kernelsOf(input.limits.certificationKernels, environment),
       bundle: { formatVersion: 1, digest: sealed.digest },
       challengeExportSha256: challenge.sha256,

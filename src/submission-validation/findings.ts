@@ -1,5 +1,5 @@
 import { FINDING_RULE_BYTES, oneLineMessage } from "./artifact-schema.js";
-import type { ValidationFinding, ValidationPhase } from "./contracts.js";
+import type { FindingIntent, ValidationFinding, ValidationPhase } from "./contracts.js";
 
 /**
  * The one door every finding goes through, and therefore the place the report
@@ -18,12 +18,20 @@ export class FindingCollector {
 
   constructor(private readonly phase: ValidationPhase) {}
 
-  violate(rule: string, message: string): void {
-    this.violations.push(this.finding(rule, message));
+  violate(rule: string, message: string, intent?: FindingIntent): void {
+    this.violations.push(this.finding(rule, message, intent));
   }
 
-  warn(rule: string, message: string): void {
-    this.warnings.push(this.finding(rule, message));
+  warn(rule: string, message: string, intent?: FindingIntent): void {
+    this.warnings.push(this.finding(rule, message, intent));
+  }
+
+  /** The intent of every finding collected so far that names none: the
+   * spec-2 classifier marks its `translation` rules explicitly and the rest
+   * of the inspect phase is archive standards by default. */
+  defaultIntent(intent: FindingIntent): void {
+    for (const finding of [...this.violations, ...this.warnings])
+      if (finding.intent === undefined) finding.intent = intent;
   }
 
   absorb(other: FindingCollector): void {
@@ -38,11 +46,12 @@ export class FindingCollector {
   /** Rules are literals everywhere today, but they go through the same
    * sanitizer as the message so the guarantee holds for the whole finding
    * rather than for the half that happened to be remembered. */
-  private finding(rule: string, message: string): ValidationFinding {
+  private finding(rule: string, message: string, intent?: FindingIntent): ValidationFinding {
     return {
       phase: this.phase,
       rule: oneLineMessage(rule, { maxBytes: FINDING_RULE_BYTES }),
       message: oneLineMessage(message),
+      ...(intent === undefined ? {} : { intent }),
     };
   }
 }

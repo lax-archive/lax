@@ -21,7 +21,7 @@ import type {
   ValidationReport,
   ValidationRequest,
 } from "../../src/submission-validation/contracts.js";
-import { packageNameForSubmission } from "../../src/submission-validation/contracts.js";
+import { JUDGE_TOOLS, packageNameForSubmission, SELF_TEST_PROBES } from "../../src/submission-validation/contracts.js";
 import {
   environment as environmentById,
   epoch,
@@ -30,6 +30,7 @@ import {
 } from "../../src/submission-validation/environments.js";
 import { recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
 import { ensureValidationHost } from "../../src/submission-validation/host/setup.js";
+import { toolchainBinDir } from "../../src/submission-validation/host/leanenv.js";
 import { mathlibUrl, REFLOWTEX_REV } from "../../src/submission-validation/pins.js";
 import {
   validateSubmission,
@@ -448,11 +449,11 @@ function fixtures(): SmokeFixture[] {
     },
     // Stage 3's Certify in the real containers (axiomfree-plan.md): a spec-2
     // submission with an unconditional and a conditional proof runs through
-    // container A (the Challenge built and exported without the proof
-    // package), container B (the Solution built and exported over the proof
-    // capture), and container C (`lake comparator` over both exports, with
-    // nothing of the builds mounted), and the build output carries the
-    // certificate.
+    // containers A1/A2 (the Challenge built without the proof package, then
+    // exported and inspected over the read-only build tree), B1/B2 (the
+    // Solution built over the proof capture, then exported), and C (`lake
+    // comparator` over both exports, with nothing of the builds mounted),
+    // and the build output carries the certificate.
     // Only selectable in a spec-2 environment, which the real table does not
     // have yet: inject the rehearsal row with the real mathlib at its tag and
     // the fixture LaxCore (a `file://` repository is fine — the warm store is
@@ -478,6 +479,11 @@ function fixtures(): SmokeFixture[] {
             assert.deepEqual(certificate.kernels, ["lean"]);
             assert.equal(certificate.judge.comparatorExitCode, 0);
             assert.equal(certificate.judge.toolchain, environment.leanToolchain);
+            // the judge proved itself first, in the real containers: every
+            // probe passed, and the judge's binaries are digested as installed
+            assert.deepEqual(certificate.judge.selfTest, { passed: true, probes: [...SELF_TEST_PROBES] });
+            for (const tool of JUDGE_TOOLS) assert.match(certificate.judge.tools[tool], /^[0-9a-f]{64}$/u, tool);
+            assert.equal(certificate.judge.tools.lake, createHash("sha256").update(fs.readFileSync(path.join(toolchainBinDir(environment), "lake"))).digest("hex"));
             assert(certificate.challenge.includes("theorem Cert.Lax47Proofs.step"), certificate.challenge);
             const bundlePath = (report as { certificateBundlePath?: string }).certificateBundlePath;
             assert(bundlePath !== undefined && bundlePath.startsWith(jobRoot), "the bundle did not come out of the job directory");
@@ -488,6 +494,20 @@ function fixtures(): SmokeFixture[] {
             assert.match(certificate.solutionExportSha256, /^[0-9a-f]{64}$/u);
             assert.notEqual(certificate.challengeExportSha256, certificate.solutionExportSha256);
             const certifyDir = path.dirname(bundlePath);
+            // the build steps read a plan of their own, from a read-only
+            // mount, and the export steps' plans ask for no build
+            for (const [side, module] of [["challenge", "Challenge"], ["solution", "Solution"]] as const) {
+              assert.deepEqual(JSON.parse(fs.readFileSync(path.join(certifyDir, side, "plan", "plan.json"), "utf8")), { tool: "build", project: "/cert/project", module });
+              const exportPlan = JSON.parse(fs.readFileSync(path.join(certifyDir, side, "out", "plan.json"), "utf8")) as Record<string, unknown>;
+              assert.equal(exportPlan.tool, "export");
+              assert.equal(exportPlan.module, module);
+            }
+            // the Challenge's inspection report, the telescope check's input
+            assert(fs.statSync(path.join(certifyDir, "challenge", "out", "challenge-report.json")).size > 0);
+            // the self-test's own runs: three exports, the forgery, the probe's report
+            for (const file of ["challenge.export", "solution.export", "mismatch.export", "forged.export"]) assert(fs.statSync(path.join(certifyDir, "self-test", "out", file)).size > 0, file);
+            const probes = JSON.parse(fs.readFileSync(path.join(certifyDir, "self-test", "probe", "probes.json"), "utf8")) as Record<string, unknown>;
+            assert.deepEqual(probes, { canaryInvisible: true, networkAbsent: true, leancheckerResolves: "/opt/lax/toolchain/bin/leanchecker", projectReadOnly: true, toolchainReadOnly: true });
             const judgePlan = JSON.parse(fs.readFileSync(path.join(certifyDir, "judge", "out", "plan.json"), "utf8")) as Record<string, unknown>;
             assert.equal(judgePlan.tool, "comparator");
             assert.equal(judgePlan.solutionExport, "/cert/solution.export");

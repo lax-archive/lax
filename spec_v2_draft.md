@@ -507,6 +507,61 @@ Example ``lakefile.toml`` of the corresponding proof package:
 Each submission with id ``Lax261`` owns two top-level namespaces: its concepts 
 live in ``Lax261`` and its proofs in ``Lax261Proofs``. 
 
+The rule is the composition rule, and nothing more: a relative certificate
+imports many records' packages into one Lean environment, and Lean refuses
+two modules that declare the same constant (unless both are theorems of
+identical name, type, and level parameters — ``finalizeImport``'s
+tolerance for realized names). A prefix the record owns is the one local
+condition that guarantees composition with records that do not exist yet.
+The test applies to every constant a package contributes, on the name as
+the olean persists it, and the only exemptions are ones Lean's own
+mechanisms vouch for — never the shape of a name. The inspector reports
+each declaration's **origin** with its evidence: ``authored``; ``private``
+with the module Lean mangled it with (``_private.<module>.0.…``);
+``scoped`` with the module whose macro scopes it carries
+(``…._@.<module>._hyg.<n>``); ``realized`` with the imported constant it
+was realized under (``f.congr_simp``, ``f.eq_def``, ``f.eq_<n>``, a
+matcher's ``splitter`` and equations — reserved names Lean persists under
+the rewritten function's namespace and regenerates identically wherever
+they are needed); and ``auxiliary`` with the package's own declaration it
+was generated for (``S.rec``, ``S.casesOn``, ``f.match_1``, ``f.proof_1``),
+whose name extends its parent's and so carries the parent's prefix. Exempt
+from the prefix test, and from nothing else, are a ``private`` or
+``scoped`` name of one of the package's own modules, and a ``realized``
+**theorem**: two records that both realize ``f.eq_def`` can be imported
+together because Lean admits identical theorems twice. A realized
+*definition* under an imported name (``bv_decide``'s
+``<enum>.enumToBitVec``) is refused, because two records carrying it cannot
+be imported together. A name that merely looks generated — ``proof_1``,
+``eq_1``, a leading underscore — is authored unless the olean says
+otherwise, and is held to the prefix like any other.
+
+Two things names cannot see are rules of their own. A record declares no
+``initialize`` and none of its sugar (``register_option``,
+``register_simp_attr``, ``declare_syntax_cat``, a persistent environment
+extension): such a registry is keyed by a name the namespace rule cannot
+see, and two records choosing the same one cannot be imported together.
+And every ``syntax``, ``notation``, ``macro``, ``macro_rules``, and ``elab``
+a record declares is ``scoped`` or ``local``: a global one rewrites every
+importer, the archive's generated Challenge included. The inspector reads
+both facts from the olean's extension entries with extensions disabled.
+The rule is not the whole defence for the second: the certificate is also
+held to the archive's reading of each edge (see Certification).
+
+A name is also held to what a reader can read. The archive's canonical
+form of a name is its dot-separated components, nothing escaped; a name
+whose components do not round-trip through that form — a ``.`` inside a
+component, a numeric component outside Lean's private mangling — is
+written escaped by the inspector and refused as an endpoint, since
+``Lax1.C.«A.B»`` and ``Lax1.C.A.B`` would otherwise read as one constant.
+Every user-level name is NFC, carries no combining mark or invisible format
+character, and uses one script per component (lower-case Greek beside
+Latin excepted): a Greek capital in a Latin word, or a Cyrillic letter, is
+refused, because the Challenge text is the audit surface and a lookalike
+would read as the real statement. Within one package a name is declared
+once; a name two modules both declare is refused unless both copies are a
+realized theorem, which Lean merges.
+
 ## Concepts
 
 A **concept** is a Lean module of the concept package; every module except the
@@ -571,7 +626,13 @@ Additional Rules:
 
 - **No axioms.** The ``axiom`` declaration kind is a violation anywhere in the
   concept package: spec 2 has no archive axioms, and a submission that
-  declares one has misunderstood the rule, not found a loophole.
+  declares one has misunderstood the rule, not found a loophole. This, and
+  the rule that every declaration's axiom set is within the background
+  three (so no ``sorry`` anywhere), are archive standards: the correctness
+  of an edge comes from the judge alone, which re-checks the edge's whole
+  cone, and a helper with ``sorry`` that no edge uses is harmless to the
+  graph — and misleading to a reader, which is why the standard is a hard
+  rejection and not a warning.
 
 - **Axiom-free.** The axiom set (``#print axioms``) of every declaration of
   the concept package is a subset of the archive environment's three
@@ -678,7 +739,11 @@ Rules:
   axioms; ``sorryAx`` and the native-computation axioms are not background.
   A statement never appears in an axiom set, because it is a definition: the
   only way to rest on an unproven statement is to assume it as a hypothesis,
-  which is visible in the type and recorded as an edge.
+  which is visible in the type and recorded as an edge. Both rules are
+  archive standards (see "The three questions"): the judge re-checks every
+  edge's whole cone and refuses a ``sorry`` or a stray axiom there on its
+  own; what the standard adds is the helper no edge reaches, which is
+  harmless to the graph and misleading to a reader.
 
 - **Namespace.** Every name declared in the proof package carries the
   prefix ``Lax261Proofs``, as for concepts.
@@ -1023,30 +1088,42 @@ proofs, it does not display their code.
 The ``certificate`` block:
 
     {
-      "edges": [
-        { "proof": "Lax261Proofs.Q", "theorem": "Cert.Lax261Proofs.Q" }
-      ],
+      "judge": {
+        "toolchain": "leanprover/lean4:v4.35.0",
+        "comparatorExitCode": 0,
+        "selfTest": { "passed": true, "probes": ["comparator-accepts", "..."] },
+        "tools": { "lake": "<sha256>", "lean": "<sha256>", "leanexport": "...", "leanchecker": "...", "...": "..." }
+      },
+      "kernels": ["lean"],
       "bundle": {
         "formatVersion": 1,
-        "digest": "sha256:...",
+        "digest": "<sha256>",
         "registryBlob": "ghcr.io/lax-archive/lax-captures@sha256:..."
       },
-      "judge": "lake comparator",
-      "kernels": ["lean"],
+      "challengeExportSha256": "<sha256>",
+      "solutionExportSha256": "<sha256>",
       "challenge": "import Lax42.Colorings\nimport Lax261.Myconcept\n\ntheorem Cert.Lax261Proofs.Q.{u} ..."
     }
 
-``edges`` lists every proof of the record with the name of its certificate
-theorem — the same list, in the same order, as the theorems the generated
-``Challenge.lean`` declares. ``bundle`` is the digest reference of the five
-generated files (see Certification), fetched and verified like a capture.
-``kernels`` names the kernels that accepted the solution in trusted
+No edge list is stored: the edges are the proofs' telescopes, and every
+reader derives them. ``judge`` names the toolchain whose ``lake comparator``
+ran, its exit code (always 0 on a record), the self-test it passed first
+with every probe in order, and the sha256 of each judge binary as installed
+(``lake``, ``lean``, ``leanexport``, ``leanchecker`` and the five bundled
+checkers); the trusted parser refuses a certificate whose self-test did not
+pass. ``kernels`` names the kernels that accepted the solution in trusted
 validation (``lean`` for Lean's own kernel; ``leanchecker-paranoid``,
 ``lean4lean``, ``nanoda``, ``con-leche``, ``con-ron`` for the bundled
-external checkers). ``challenge`` is the generated ``Challenge.lean`` source
-verbatim: the one artifact that states, in Lean, exactly what was certified,
-so the website shows it without fetching anything. A record with no proofs
-has ``edges: []`` and none of the other keys: nothing ran.
+external checkers). ``bundle`` is the digest reference of the five
+generated files (see Certification), fetched and verified like a capture.
+``challengeExportSha256`` and ``solutionExportSha256`` are the host's
+digests of the two export files the judge read, bind-mounted one at a
+time: host-recorded provenance a rerun compares its own exports against.
+``challenge`` is the generated ``Challenge.lean`` source verbatim: the one
+artifact that states, in Lean, exactly what was certified, so the website
+shows it without fetching anything; the trusted parser holds it to the
+generator's regeneration from the telescopes. A record with no proofs has
+no ``certificate`` key: nothing ran.
 
 > draft note: the plan says a later run with more kernels "is the same
 > command on the same bundle, published as a new attestation beside the old
@@ -1056,7 +1133,7 @@ has ``edges: []`` and none of the other keys: nothing ran.
 > the one per-submit run.
 
 The content-bearing file is deterministic: concepts, statements, proofs, and
-certificate edges are sorted by ``id``; package names, imports, assumptions,
+the derived certificate edges are sorted by ``id``; package names, imports, assumptions,
 capture files, and other set-like lists are sorted lexicographically.
 Telescopes and annotation sections retain authorial order.
 
@@ -1347,29 +1424,43 @@ over-long text is elided with `` […] ``.
   toolchain in the submission's own packages and stream their transcript.
   When concepts fail, proofs are skipped.
 
-- **Replay:** re-check every declaration of both packages with
+- **Replay:** re-check every declaration of the concept package with
   ``leanchecker`` from the pinned toolchain. The pipeline invokes it directly
   over a search path composed from the just-captured submission artifacts,
   verified dependency captures, and the warm workspace; it never uses
   ``lake env`` or dependency artifacts written during Compile. Trusted
-  validation always replays. Local authoring skips Replay by default and
-  enables it with ``lax build --replay``. Replay closes the hole left by
-  unchecked elaboration APIs; dependency authenticity comes from their
-  digest-addressed captures rather than from replay itself. Replay stays in
-  spec 2 beside Certify, never instead of it: Replay is what makes the
-  whole-package axiom walk kernel-grade, while the certificate replays only
-  the cones of the named edges.
+  validation always replays the concept package. Local authoring skips
+  Replay by default and enables it with ``lax build --replay``. The proof
+  package is not replayed in spec 2: its edges are established by Certify
+  alone, and no archive standard reads anything Replay would add (see "The
+  three questions" below). Concept packages are replayed because every later
+  record imports them and the archive presents them as the statement
+  surface a reader trusts.
+
+  The guarantee this leaves is narrower than "the package was checked", and
+  the archive says so: the certified edges are kernel-checked by the judge
+  over their whole cones; every other declaration of a proof package — a
+  helper no edge reaches, a package with no classified edges — is not
+  independently replayed. A proof package another record requires is
+  imported as ordinary Lean content, and its non-edge declarations carry no
+  archive guarantee; a downstream record's own certified edges are judged
+  afresh, cones included, so nothing unchecked reaches an edge the archive
+  vouches for. A consumer who needs checked reusable helpers runs
+  ``lax build --replay`` over the package: the local flag replays both
+  packages, which is exactly the check the archive's own run omits.
 
 - **Inspect:** extract environment facts with the ``Lax.Inspector``
   executable, then judge every remaining rule in the TypeScript pipeline —
   including the import rule, root-module exactness, statement-hood, and
   proof-hood — see below.
 
-- **Certify** (spec-2 environments only): generate the **certificate
-  bundle** from the inspected telescopes and have the environment's own
-  ``lake comparator`` judge it, in two containers, with the Challenge export
-  read-only — see Certification below. Exit 1 of the comparator is a
-  violation reported per edge; a record with no proofs runs nothing.
+- **Certify** (spec-2 environments only): prove the judge on lax's own
+  one-line modules, then generate the **certificate bundle** from the
+  inspected telescopes and have the environment's own ``lake comparator``
+  judge it — a build and an export container per side, then a clean judge
+  over the two read-only exports — see Certification below. The
+  comparator's own rejection diagnostics are violations reported per edge;
+  a record with no proofs runs nothing.
 
 - **Paper** (only for a declared paper, concurrently with Compile through
   Certify): the marker gate, the PDF compile, and the web derivation of the
@@ -1387,42 +1478,94 @@ over-long text is elided with `` […] ``.
   ``capture.tar``, and the bundle for credential-free publication preflight.
   Partial builds emit neither.
 
-In trusted validation, Compile, Replay, Inspect, and Certify form a trust
-chain. Compile is where untrusted code runs, so nothing it writes is trusted
-on its own. Replay authenticates the oleans' kernel-level content relative to
-their imports — every declaration type-checks against the imported
-environment — and no more. Inspect reports what the oleans say, and the
-TypeScript validator decides whether that is admissible. The imports
-themselves are inherited, not authenticated: on the runner they come from
-verified, immutable dependency captures, so the background Replay checks
-against is exactly what an earlier trusted submit published. Certify then
-re-derives the proof network's edges by a second, independent route: a
-Challenge that imports only concept packages states each edge as a theorem,
-a Solution that imports the proof package discharges it by applying the
-proof, and the comparator — the toolchain's own tool, frozen with the
-environment — checks that both state the same theorem, that the solution's
-axiom closure is the background three, and that the kernel accepts it. A
-reader who reruns the bundle trusts the toolchain and its kernels, the
+**The three questions.** Trusted validation answers three questions, each
+by one piece of the pipeline, and no piece answers another's; a fourth
+piece binds the three answers to the record.
+
+*Correctness of the Lean theorem* is the judge's: Certify's containers
+and the comparator — the toolchain's own tool, frozen with the
+environment. A Challenge that imports only concept packages states each
+edge as a theorem, a Solution that imports the proof package discharges it
+by applying the proof, and the comparator checks that both state the same
+theorem, that the solution's axiom closure is the background three, and
+that the kernel accepts it, over an export of the Solution's whole cone.
+This is the sole proof-validity check for a certified edge; nothing else in
+the pipeline contributes to it, and nothing else may claim to. Before it
+judges anything of the record, the judge proves itself: the same containers
+build, export and judge three one-line modules lax owns — a matching pair
+the comparator must accept, a mismatched pair it must reject, and a Solution
+export whose proof term was replaced by its statement, which the kernel must
+refuse — and probe the judge's confinement from inside (a canary the host
+wrote is invisible, there is no network interface, ``which leanchecker`` is
+the toolchain's, nothing but ``/out`` is writable). The host digests the
+judge's binaries before the first container and holds them to the same
+digests after the judge has run. A wrong answer anywhere is an
+infrastructure failure, never a finding against the author; the record
+carries the probes that passed and the digests beside the toolchain name.
+A reader who reruns the bundle trusts the toolchain and its kernels, the
 environment's libraries (mathlib, ``LaxCore``, ``CSLib`` where required),
 and the concept packages the record depends on — "concept packages you
-depend on are trusted, as today" — and nothing of lax: not the inspector,
-not the validator, not the database.
+depend on are trusted, as today" — and, for the rerun itself, nothing of
+lax.
 
-The inspector's facts therefore carry two grades of trust. **Kernel-grade:**
-kinds, types, values, and everything recomputed from them — axiom sets, the
-shape of a type, level parameters — which Replay makes impossible to forge
-within the submission's own packages; for imported packages the same facts
-are authentic by provisioning. **Metadata-grade:** import lists,
-constant-list membership, docstrings, attribute entries — artifact data a
-malicious Compile could fabricate. Rules lean on metadata only where forgery
-cannot make a false thing true: docstrings are authored content anyway, a
-forged import list can hide at worst an editorial violation, a forged
-``lax_statement`` entry on the package's own definition is what the author
-could have written as an attribute, and every cross-package claim —
+*The theorem is the edge* is the translation's: the TypeScript that turns
+the inspector's telescope reading into Challenge and Solution. It checks
+that every constant names a registered statement of a package the record
+requires, that the universe rule holds, and that the edge list the record
+carries is exactly what is rendered. This is correctness-critical: the
+judge verifies whatever Challenge it is handed, so a ``C.{u,u}`` conclusion
+passed through would be judged correctly and recorded wrongly. The record
+stores ``Challenge.lean`` verbatim and the website shows it beside the
+record, so a reader audits the translation by reading a few lines of Lean
+and checking that each theorem states the edge they care about. That audit
+covers the visible implication and its universes; what the imported
+constants mean, and whether the published verdict belongs to those bytes,
+is the fourth piece's.
+
+*Provenance and binding* is everything that connects the three answers to
+the published record: the captures the Challenge was built against and
+their digests, the environment's pins, the warm workspace, the host-recorded
+digests of both exports, the publisher's credential-free regeneration of
+the five bundle files from the record's own data, and the database commit.
+The judge establishes a property of two export files under a
+configuration; that the Challenge export is the published Challenge built
+against the concept definitions the record identifies, that the library
+artifacts are the recorded pins, and that the verdict is attributed to this
+record, rests here. This is where the trust in concept authors lives, the
+submission's own concept package included: a reader who wants more than
+the Challenge checks the Solution's application of the named proof,
+``comparator.json``'s target list and permitted axioms, the statement
+definitions in the concept source, the lakefile pins and the toolchain, and
+the export digests — all of which the record and its bundle carry. The
+defensible sentence is: the judge is the sole proof-validity checker for
+certified edges; archive edge soundness additionally requires faithful
+translation, authentic Challenge inputs, and correct binding of the verdict
+to the published record.
+
+*Conformity with archive standards* is the inspector's and its TypeScript
+rules': what the archive requires because it wants its records a certain
+way, enforced whether or not correctness needs it — the namespace rule
+(composition), the whole-package axiom-free and ``sorry``-free rule, the
+frontmatter rules, the import rule, root-module exactness, the unused-lemma
+warning, docstrings. Every such finding is a rejection, labelled as a
+standard. Inspect reads what Compile's oleans say; Compile is where
+untrusted code runs, so these are the author's claims about their own
+package plus facts a faithful reader takes from the olean (names, kinds,
+bodies), and the inspector loads no extension and runs no initializer of
+the submission. Anything a forged olean could claim here that reaches an
+edge's cone is re-checked by the judge; what does not reach one is a lie
+about the author's own record's style. Every cross-package claim —
 including which constants of a required package are its statements — is
 checked against the database, never the workspace (see Inspection
 Internals). Layout, lakefiles, and the manifest are read from the files
-directly. The chain bottoms out in Lean's kernel, the environment's
+directly.
+
+Every finding carries which question it answers (``judge``,
+``translation``, ``standards``), and ``lax submit`` and ``lax build`` print
+the three apart: the proof does not establish the edge; the theorem is not
+the edge the record claims; an archive standard, not a correctness failure.
+
+The chain bottoms out in Lean's kernel, the environment's
 toolchain and library revisions, digest-addressed dependency captures, and
 the protected publication workflow.
 
@@ -1617,8 +1760,8 @@ report: the root module imports exactly the other modules of the inventory
 declarations, and carries no module docstring. No separate file-tree
 cross-check is needed: the inventory *is* the file tree, and Replay and
 Inspect enumerate exactly it — a source file the root fails to pull in is
-still replayed and inspected, and a root import naming a module outside
-the inventory fails exactness directly.
+still inspected (and, in the concept package, replayed), and a root import
+naming a module outside the inventory fails exactness directly.
 
 **Unused helpers.** The reported constant references form a graph over the
 package. The validator walks it from the proofs; a user-level
@@ -1642,8 +1785,8 @@ a string (see Certification).
 
 ### Certification
 
-Certify is the fourth content phase, after Compile, Replay, and Inspect, in
-spec-2 environments. It runs in the existing docker runner with the existing
+Certify is the fourth content phase, after Compile, Replay (concepts only),
+and Inspect, in spec-2 environments. It runs in the existing docker runner with the existing
 mounts and limits, and it adds nothing to what the archive *decides* — the
 validator has already classified every proof — but a great deal to what a
 reader can *check*: the certificate is a ``(Challenge, Solution)`` pair for
@@ -1651,8 +1794,10 @@ the toolchain's ``lake comparator``, which anyone can rerun with nothing of
 lax installed.
 
 **The bundle.** From the record's telescopes and canonical names, lax
-generates five files. Every name is emitted escaped from a ``Lean.Name``
-(``«…»`` where Lean needs it), never interpolated from a reported string.
+generates five files. Every name is written from the archive's canonical
+form, quoted with ``«…»`` where Lean needs it and never interpolated from
+a reported string; a name whose components do not round-trip through the
+canonical form is refused before anything is generated (see Namespaces).
 
 1. ``lakefile.toml``: the environment's libraries at the row's pins, and
    every concept and proof package involved — the required ones at their
@@ -1670,9 +1815,11 @@ generates five files. Every name is emitted escaped from a ``Lean.Name``
        theorem Cert.<proof-id>.{<the proof's level parameters>}
          (h₁ : S₁) … (hₖ : Sₖ) : C := sorry
 
-   with the hypotheses in the proof's own binder order, every binder
-   explicit, and every statement constant instantiated exactly as in the
-   proof's type. The theorem name is ``Cert`` prefixed to the proof's
+   with the hypotheses in the proof's own binder order and binder kinds
+   (explicit, implicit, instance, strict implicit — the Solution applies
+   the proof with ``@``, so the kinds are preserved rather than
+   normalized), and every statement constant instantiated exactly as in
+   the proof's type. The theorem name is ``Cert`` prefixed to the proof's
    canonical name.
 4. ``Solution.lean``: imports the proof modules; the same theorems, each
    discharged by ``@<proof-id>.{<levels>} h₁ … hₖ`` — the proof applied with
@@ -1682,53 +1829,104 @@ generates five files. Every name is emitted escaped from a ``Lean.Name``
    in the record's edge order — ``definition_names: []`` always, and
    ``permitted_axioms`` — the three background axioms.
 
-A record with no proofs has no bundle: nothing runs, and the record says so
-(``edges: []``).
+A record with no proofs has no bundle and no ``certificate`` block:
+nothing runs.
 
-**Two containers.** Container A mounts the concept captures and the warm
-workspace read-only, never the proof package, builds ``Challenge`` and
-exports it with the toolchain's ``leanexport`` to ``challenge.export``.
-Container B mounts ``challenge.export`` **read-only** beside the proof
-capture and the same read-only workspace, and runs
+**Five containers, after the self-test.** The judge self-test runs first
+(see "The three questions"): the same container shapes over three one-line
+modules lax owns, then the confinement probe; the host has digested the
+judge's binaries before it. Then:
 
-    lake comparator --challenge-from-export challenge.export --inadvisably-no-sandbox
+- **A1** mounts the warm workspace, the record's own concept capture and
+  the concept closure's captures read-only, and the Challenge half of the
+  generated project with a writable ``.lake`` and nothing else writable;
+  it runs ``lake build Challenge``. This is where concept-package code
+  runs — every module initializer of the closure. Nothing of any proof
+  package is mounted.
+- **A2** is a fresh container over A1's build tree mounted **read-only**,
+  with ``/out`` as its only writable mount; it runs the toolchain's
+  ``leanexport`` to ``challenge.export`` and then the inspector over the
+  built Challenge, both of which import with extensions disabled, so no
+  record code runs and no process of A1 is alive. The host holds every
+  ``Cert.<proof-id>`` theorem the inspector read — statement constants,
+  universe instances, binder positions and kinds, level parameters — to
+  the recorded telescope; a disagreement is a ``translation`` violation.
+  Each export is thus a verifier-owned file no candidate phase can write
+  to.
+- **B1** mounts what A1 had plus the proof capture and the whole project
+  and runs ``lake build Solution``: the only container that executes the
+  proof package's code.
+- **B2** exports the Solution over B1's read-only build tree, as A2 does.
+- **C**, the judge, is a fresh container with the bundle's five files
+  read-only, both exports bind-mounted read-only as single files, the
+  toolchain, the tools, and a read-only ``git`` shim — no capture, no warm
+  workspace, nothing writable but ``/out`` — running
 
-with the kernel set the environment names (``--paranoid``, or the named
-subset through ``external_kernels``; Lean's own kernel alone for
-``v4.35.0`` at admission). The comparator's own sandbox is bubblewrap, which
-the docker sandbox does not admit; the two-container layout supplies what
-that sandbox is for — the Solution build cannot touch the Challenge export
-or the toolchain, both of which are read-only mounts, and every file it can
-write is thrown away with the container. That is the whole of "the judge
-shares nothing with the build". A third, clean container that compares both
-``--*-from-export`` files is the belt-and-braces variant, and is how a
-published bundle is rerun anyway.
+      lake comparator --challenge-from-export … --solution-from-export … --inadvisably-no-sandbox [--paranoid]
 
-**Verdict.** Exit 0 is the verdict. Exit 1 is a violation reported per edge
-— the comparator names the theorem whose statement differs between the two
-exports, the illegal axiom, or the kernel's rejection; a Solution that does
-not compile is also exit 1 and is told apart by phase (``Building
-Solution`` versus ``Running … kernel``), so that a fixture dying in
-elaboration is noticed as such. Exit 2 is a pipeline failure — a missing
-manifest, a missing export, a malformed configuration — reported as an
-operational failure, never as a verdict on the submission. An exit 1 on a
-record the validator has already accepted is a bug in lax or in the
-toolchain, and the report says so; the author sees it as a violation on the
-``certify`` phase with the comparator's own message.
+  with the kernel set the environment names (Lean's own kernel alone for
+  ``v4.35.0`` at admission). With both exports supplied the comparator
+  builds and resolves nothing; it parses the two exports, compares the
+  theorems, and runs the kernels over the Solution export. The host
+  records the sha256 of both exports as it bind-mounted them.
 
-> draft note: the plan says exit 1 "is a violation reported by edge". It
-> does not say whether the finding should also tell the author that the
-> validator and the comparator disagree, which by construction means a lax
-> bug (the validator accepted the shape the comparator refuses). This draft
-> says so in the finding; the alternative is a plain violation.
+The comparator's own sandbox is bubblewrap, which the docker sandbox does
+not admit; the container layout supplies what that sandbox is for. Nothing
+a build writes reaches its export step except the build tree, read-only;
+nothing B1 or B2 writes reaches C; C's PATH has no writable entry, which is
+what makes ``which leanchecker`` resolve to the toolchain's. After C the
+host digests the judge's binaries again and refuses the certificate if any
+changed.
+
+**Verdict.** Exit 0 is the verdict. Exit 1 with one of the comparator's
+own diagnostics is a violation reported per edge, labelled ``judge`` — the
+theorem whose statement differs between the two exports, the illegal
+axiom, or a kernel's rejection, which the comparator reports only for the
+kernel's own exit 1. A Solution that does not elaborate in B1 is the
+judge's no one step early (``solution-build``); a Challenge that does not
+build in A1 is a ``translation`` finding, since no proof code is present
+there — its cause is lax's generator or, under decision 8's trust in
+concept authors, the concept package's own build. Everything else — the
+comparator's exit 2, a kernel that crashed or was killed, a tool that did
+not start, a signal, a container that hit its limit, a kernel disagreeing
+with Lean's under ``--paranoid`` — is an infrastructure failure for the
+archive to examine, never a finding against the author. A violation's
+message asks the author to report it as a lax bug only if their package
+builds cleanly with ``lax build``.
 
 **Publication.** The five files are pushed to the capture store as one
 digest-addressed bundle before the database commit that references it, and
-``build-output.json`` records the bundle digest, the kernels that ran, and
-the ``Challenge.lean`` source verbatim (see Archive Database). Rerunning a
-published bundle is ``lax certify lax-N --run``, or by hand: fetch the five
-files by digest, ``lake comparator`` in the folder (with its own sandbox,
-and ``--paranoid`` if desired).
+``build-output.json`` records the bundle digest, the judge (toolchain,
+self-test, tool digests), the kernels that ran, both export digests, and
+the ``Challenge.lean`` source verbatim (see Archive Database). The publisher
+regenerates the five files from the record's own stored data, re-seals
+them, and holds the published tar to them byte for byte, credential-free,
+before any token is minted. Rerunning a published bundle is ``lax certify
+lax-N --run``, or by hand: fetch the five files by digest, ``lake
+comparator`` in the folder (with its own sandbox, and ``--paranoid`` if
+desired). ``lax certify --run`` verifies every checkout in its workspace at
+the bundle's pinned revision and clean before it runs, and removes the
+record packages' build products, so a previous run's proof build cannot
+feed the next run's Challenge.
+
+> draft note (2026-10-04, open for Jan): three binding questions the
+> reviews raised are not settled here. (1) *Revalidation*: ``/lax admin
+> revalidate`` of a concept record replaces its capture while dependents
+> keep certificates judged against the old one; a statement whose body
+> changed (compile-time code with a date threshold passes concept Replay)
+> would then show as proven. Options: refuse a revalidation whose concept
+> capture digest changes while registered dependents exist, or make it a
+> new version under supersedes; in every case record the dependency
+> capture digests in the certificate and resolve a certified edge's
+> endpoints by (statement id, capture digest). (2) *Metadata-only
+> resubmission* moves ``record.source`` to the new commit while the
+> certificate bundle's own-package require still names the certified one,
+> so ``lax certify`` regenerates a different digest than ``--fetch``
+> returns; record the certified source commit beside the presentation
+> source, or regenerate the bundle on that path. (3) The website's trust
+> note should say what the Challenge and the bundle establish and what a
+> reader must check beyond them (the fourth piece), not that the reader
+> need not trust the pipeline.
 
 > draft note: the plan places the bundle in the capture store; whether it
 > is a further layer of the record's capture OCI manifest (as the paper PDF
@@ -1742,13 +1940,19 @@ where the Challenge imports it); and the concept packages the record
 depends on, fetched at their recorded commits — their statements mean what
 their descriptions say, and their modules do what concept modules do.
 Concept packages you depend on are trusted, as today; the concept dialect,
-if it ever lands, tightens this without changing a data shape. The reader
-does **not** trust lax: not the inspector, not the validator, not the
-database, not the website. The Challenge is the complete statement of what
-was certified, and the website shows it beside the mark.
+if it ever lands, tightens this without changing a data shape. For the
+rerun itself the reader trusts nothing of lax. The Challenge is the
+complete statement of what was certified and the website shows it beside
+the mark; a reader who wants to tie that statement to the published
+verdict also reads the Solution, ``comparator.json``, the statement
+definitions in the concept source, the lakefile pins, and the export
+digests the record carries (see "The three questions", provenance and
+binding).
 
 **Local builds.** ``lax build`` runs Certify as well, through the host
-toolchain's ``lake comparator``.
+toolchain's ``lake comparator``. A local run proves no runner: its
+certificate records ``selfTest: { passed: false, probes: [] }`` and the
+host toolchain's own tool digests, and the trusted parser never admits it.
 
 > draft note: the plan says "local ``lax build`` runs the same phase
 > through the same runner", and the runner is the docker runner — but
@@ -2092,7 +2296,9 @@ bundle beside ``build-output.json``, under ``.lake/`` of the submission
 root, where no ignore rule needs to change. ``--only
 concepts`` and ``--only proofs`` provide partial iteration builds without
 replacing ``build-output.json``; proofs-only still builds concepts as its
-prerequisite but skips concept Replay. A declared paper is compiled with the
+prerequisite but skips concept Replay. In spec 2 the local ``--replay``
+replays both packages — the whole-package check the archive's own run
+omits (see Replay). A declared paper is compiled with the
 host ``latexmk`` as a preview (skipped with a note when absent); the
 archive's compile is the authority. Build warns when it wrote a generated
 file no ignore rule covers; it never edits ``.gitignore``.
@@ -2122,7 +2328,7 @@ warning, so that an unregistered chain can be built locally:
 The output of a nonstrict build records which edges it admitted and which
 siblings it built, and ``lax submit`` never reuses it. Registration never
 trusts local output: the GitHub Actions workflow rebuilds a submitted commit
-with Replay mandatory.
+with concept Replay mandatory.
 
 **lax serve [folder]** runs the **site generator** and serves the result
 locally. It is a long-running process that does not daemonize by default. It
@@ -2307,8 +2513,8 @@ form the write control plane; the public database remains the read surface.
   pinned by digest. The environment's toolchain, warm workspace,
   inspector, and helper tools are installed on the VM and mounted read-only. Compile gets
   a copy of committed source plus isolated writable build directories; Replay
-  and Inspect read only the captured submission artifacts and verified
-  dependency captures. Certify's Challenge container reads only the concept
+  (concepts only in spec 2) and Inspect read only the captured submission
+  artifacts and verified dependency captures. Certify's Challenge container reads only the concept
   captures and the warm workspace; its Solution container reads those, the
   proof capture, and the Challenge export, all read-only, and runs the
   comparator without its own sandbox because the container is the sandbox.
@@ -2382,7 +2588,7 @@ preflight.
 
 The npm CLI and ``submission.yml`` share the TypeScript validators,
 inspection judgments, and the certificate generator; the workflow adds
-isolated execution, mandatory Replay,
+isolated execution, mandatory concept Replay,
 capture sealing, and publication. The Website renderer is built in the
 separate ``lax-website`` repository and bundled from the revision pinned in
 this repository, with third-party notices for the code it vendors; the

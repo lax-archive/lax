@@ -896,7 +896,10 @@ function firstViolation(report: ValidationReport): string {
   const phase = safeInline(String(finding.phase ?? "validation"), 40) || "validation";
   const rule = safeInline(String(finding.rule ?? "unspecified"), 60) || "unspecified";
   const message = String(finding.message ?? "");
-  return `First finding \`[${phase}/${rule}]\`: ${safeInlineEnds(message, 400) || "unspecified failure"}`;
+  // a spec-2 finding says which question it answers (decision 10:
+  // judge | translation | standards); the tag is a closed word, never text
+  const intent = finding.intent === "judge" || finding.intent === "translation" || finding.intent === "standards" ? `${finding.intent} · ` : "";
+  return `First finding \`[${intent}${phase}/${rule}]\`: ${safeInlineEnds(message, 400) || "unspecified failure"}`;
 }
 
 function validationFailureSummary(report: ValidationReport): string {

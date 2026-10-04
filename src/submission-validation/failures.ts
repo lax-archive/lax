@@ -1,22 +1,25 @@
-import type { ValidationFailure, ValidationReport } from "./contracts.js";
+import type { FindingIntent, ValidationFailure, ValidationReport } from "./contracts.js";
 import { leanFacts } from "./lean-facts.js";
 
 export type PipelineFailureKind = "submission" | ValidationFailure["kind"];
 
-/** A phase error whose ownership has been decided at the closest boundary. */
+/** A phase error whose ownership has been decided at the closest boundary.
+ * A submission-kind failure may name the rule and intent of the finding it
+ * becomes, when the boundary knows them better than the phase's fallback. */
 export class PipelineFailure extends Error {
   constructor(
     readonly kind: PipelineFailureKind,
     message: string,
     readonly retryable = false,
+    readonly finding?: { rule: string; intent?: FindingIntent },
   ) {
     super(message);
     this.name = "PipelineFailure";
   }
 }
 
-export function submissionFailure(message: string): PipelineFailure {
-  return new PipelineFailure("submission", message);
+export function submissionFailure(message: string, finding?: { rule: string; intent?: FindingIntent }): PipelineFailure {
+  return new PipelineFailure("submission", message, false, finding);
 }
 
 export function resourceLimitFailure(message: string): PipelineFailure {

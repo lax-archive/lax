@@ -44,7 +44,9 @@ spec.md: the spec-2 text is a draft Jan reconciles.
    not with the archive.
 6. Replay stays. The comparator is added beside it, never instead of it:
    Replay is what makes the whole-package axiom walk kernel-grade, and the
-   comparator replays only the named edges' cones.
+   comparator replays only the named edges' cones. *Re-read under
+   decision 10 (2026-10-04): Replay is a standards hardening, not a
+   correctness input; see there for what stays.*
 7. Spec-2 files keep spec-1 style: ordinary `import`, no
    `module` header, no `public`/`@[expose]`. The spike showed a header-less
    file builds against the v4.35 mathlib and sees everything; the module
@@ -61,6 +63,163 @@ spec.md: the spec-2 text is a draft Jan reconciles.
 9. Stages ship to `main` one by one behind `npm run check` and
    the rehearsal gate, as the environments work did. The `axiomfree`
    branch exists only while a stage is unreleasable on its own.
+10. **Division of intents** (Jan, 2026-10-04, after the Palomar
+    comparison and the redundancy walk; confirmed the same day with all
+    three open calls: proof Replay dropped, private declarations exempt,
+    whole-package axiom-free a hard standard). The pipeline has three
+    pieces with three questions, and no piece answers another's:
+    - *The judge* — containers A, B, C and `lake comparator` — answers
+      **correctness of the Lean theorem**: the Solution theorem has
+      exactly the Challenge's type and the kernel accepts its proof. It is
+      the sole source of edge soundness. Nothing else in the pipeline
+      contributes to that answer and nothing else may claim to.
+    - *The edge translation* — the trusted TypeScript that turns a
+      telescope reading into Challenge and Solution (`certify/generate.ts`
+      and the spec-2 branch of judge inspection) — answers **the theorem
+      is the edge**: every constant names a registered statement of a
+      package the record requires, the universe rule holds, and the edge
+      list the record carries is exactly what is rendered. This is
+      correctness-critical, because the judge verifies whatever Challenge
+      it is handed: a `C.{u,u}` conclusion passed through would be judged
+      correctly and recorded wrongly. These rules are not style and are
+      never relaxed. The record stores `Challenge.lean` verbatim and the
+      website shows it, so a reader checks with their own eyes that the
+      theorem states the edge they care about. That audit covers the
+      visible implication and its universes; it does not by itself
+      establish what the imported constants mean or that the published
+      verdict belongs to those bytes — that is the fourth piece.
+    - *Provenance and binding* (named by the Codex intents review,
+      `spike/axiomfree/codex-review-intents-20261004.md`, finding 2):
+      the judge establishes a property of two export files under a
+      configuration. That the Challenge export is the published Challenge
+      built against the concept definitions the record identifies, that
+      the library artifacts are the recorded pins, and that the verdict
+      is attributed to this record, rests on capture production,
+      dependency resolution, the warm store, the export handling, the
+      publisher's regeneration, and the database. This piece is
+      correctness-critical and it is where the trust in concept authors
+      (decision 8), the submission's own concept package included, and in
+      the pins actually lives. The defensible sentence is therefore: *the
+      judge is the sole proof-validity checker for certified edges;
+      archive edge soundness additionally requires faithful translation,
+      authentic Challenge inputs, and correct binding of the verdict to
+      the published record.* Palomar states the same split. *Fable
+      review the same day* (`spike/axiomfree/fable-review-intents-20261004.md`):
+      the judge's answer still rested on one standards rule — container A
+      ran `lake build Challenge` (every closure concept package's
+      initializers), `leanexport`, and the inspector in one container
+      with `/out` writable throughout, so a concept initializer could
+      leave a process behind that rewrites the export or the telescope
+      report after they are written; only the no-`initialize` rule stood
+      in the way. Fixed by splitting build from export: A1/B1 build in a
+      writable tree, A2/B2 are fresh containers that mount that tree
+      read-only and run only `leanexport` and the inspector (both import
+      with `loadExts := false`, so nothing of a record executes there),
+      writing to the one `/out`. Five docker runs per certification.
+      Palomar's wording: each export is a verifier-owned file no
+      candidate phase can write to. *Second Codex review the same day*
+      (`spike/axiomfree/codex-review-intents-2-20261004.md`, with every
+      earlier report in hand): the canonical-name fix exempted
+      internal-looking names, and Lean's `isInternalDetail` is a
+      heuristic (`proof_1`, `eq_1`, `match_1`, `omega_1`, any `_`
+      prefix), so an authored `C.«A.B».proof_1` still flattens, escapes
+      the namespace rule, and can be tagged; the rule is therefore:
+      endpoints (statements, proofs, telescope constants) must be
+      user-level *and* canonical, and ownership is enforced for every
+      persisted declaration with provenance-based exemptions only
+      (reserved theorem realizations, the package's own private and
+      macro-scoped names). Three more: a *revalidation* of a concept
+      record can change a statement's body (compile-time code with a
+      date threshold) while dependents keep certificates judged against
+      the old capture — certified dependency identities must include
+      capture digests and revalidation must refuse or invalidate; `lax
+      certify --run` reuses `.lake`, so a proof build's compile-time IO
+      can alter the concept checkout for the next run — the reader tool
+      needs the archive's separation of inputs and execution; and the
+      inspector reads bodies from the merged environment, so two
+      same-name theorems in two modules hide one body from the hygiene
+      walk — inspect per-module `ConstantInfo`. Decision 10 stands; what
+      the reviews keep finding is in the translation and binding pieces,
+      never in the judge, which is the division doing its job.
+    - *The inspector and its TypeScript rules* answer **conformity with
+      archive standards**: what the archive requires because it wants its
+      records a certain way, enforced whether or not correctness needs
+      it. Compositionality through the namespace rule; axiom-free and
+      sorry-free across the whole package (a helper with `sorry` that no
+      edge uses is harmless to the graph and misleading to a reader, so it
+      stays a hard standard); the frontmatter rules, the unused-lemma
+      warning, the import rule, root-module exactness, docstrings.
+      Rejections, all of them, labelled as standards.
+
+    Consequences:
+    - *Replay is a standards decision.* Its job was to make the
+      inspector's facts forgery-proof; under the division those are
+      standards facts, and anything that reaches an edge's cone is
+      re-checked by the judge. Replay becomes "the archive's published
+      packages are kernel-consistent as a whole". Decided: kept for
+      concept packages (every later record imports them; the archive
+      presents them as the statement surface a reader trusts), dropped
+      for spec-2 proof packages (leaves; the judge covers their edges, and
+      a downstream judge re-checks any helper a later proof reaches). No
+      standards check consumes Replay's output — Replay is a gate that
+      returns nothing and Inspect reads the oleans directly — so the
+      exact loss is one case: a dead helper in a hostile package can claim
+      a body that does not type-check and the standards check believes
+      it. One leanchecker run per proof package saved.
+    - *The namespace rule is the composition rule.* Lean's `finalizeImport`
+      (v4.35, `subsumesInfo`) refuses two modules declaring the same
+      constant unless both are theorems of identical name, type, and level
+      parameters. So: private declarations cannot clash (module-mangled;
+      modules are unique per record) and are exempt from the prefix test;
+      compiler-realized reserved theorems (`congr_simp`, `eq_def`, match
+      splitters) clash harmlessly and stay exempt — that exemption is the
+      composition rule applied, not a whitelist, and it grows only with
+      Lean's reserved-name set per version; everything else carries the
+      record's prefix, the only *local* condition that guarantees
+      composition with records that do not exist yet. A global
+      first-come-first-served name registry was considered and rejected
+      (non-local validity, unforeseeable rejections, exceptions for
+      revalidation and successors). *Fresh-mind review the same day*
+      (`spike/axiomfree/namespace-review-20261004.md`, ~15 cases verified
+      on rc3): the prefix rule is sufficient for every *declared*
+      constant, and three things names cannot see were missed — (B2) the
+      reserved-name exemption admits a realized **definition** under an
+      imported name (`<enum>.enumToBitVec` from the `bv_decide`
+      normalizer), which Lean refuses to co-import, so the exemption is
+      theorem-kind only; (F1) `initialize` and its sugar register
+      name-keyed global extensions that clash at import, so records
+      declare none; (E1) a **global** `syntax`/`macro_rules`/`elab`
+      rewrites every importer, the generated Challenge included — a
+      concept-package macro turns `theorem Cert.p : 1 = 2 := sorry` into
+      `Cert.p : True`, axiom-free, and both exports agree — so every
+      syntax extension and attribute application in a record is `scoped`
+      or `local`. E1 is a *provenance* hole, not a style one, and the
+      rule alone is not the defence: the trusted Certify phase holds the
+      exported Challenge's theorem types to the recorded telescopes
+      (constants, level instances, level parameters), which is also the
+      independent structural check the Codex intents review asked for.
+    - *Names must round-trip.* The spec-2 inspector flattens names with
+      `Name.toString (escape := false)` and the generator splits on dots,
+      which is not injective (`Lax1.C.«A.B»` vs `Lax1.C.A.B`); with the
+      silent de-duplication in `uniqueDeclarations` a record could tag one
+      and prove the other (Codex intents review, finding 1). Fixed at the
+      boundary as a translation rule: a non-internal name whose components
+      do not round-trip is a violation, and a duplicated reported name is
+      a violation unless both are theorems.
+    - *Findings carry their intent.* The report artifact and the issue
+      comment say whether a rejection came from the judge, the
+      translation, or the standards: three different instructions to an
+      author (your proof is wrong; your theorem is not the edge you think;
+      your package does not meet the house rules).
+    - *The inspector's reading stays where it is*: over Compile's capture,
+      `loadExts := false`, never inside container B; its output is the
+      author's claim plus standards facts.
+    - *Spec text.* `spec_v2_draft.md`'s hygiene paragraph states the
+      whole-package rule as an archive standard beside the sentence that
+      edge correctness comes from the judge alone; the spec-1 trust-chain
+      paragraph (kernel-grade vs metadata-grade facts) does not carry over
+      to spec 2. Spec-notes entry for the private exemption, since spec.md
+      un-mangles private names before the test.
 
 ## Design
 
@@ -102,6 +261,8 @@ axiom set of every declaration is a subset of the background three:
 `sorryAx` and the native-computation axioms are not background. This is
 the existing walk (`phases/inspect.ts`) with the "statements of required
 packages" branch deleted, run over Replay-authenticated oleans as today.
+Under decision 10 this is an archive standard, not a correctness input:
+edge correctness comes from the judge alone.
 
 ### Environment libraries
 
@@ -157,17 +318,21 @@ existing docker runner with the existing mounts and limits:
 2. Container A mounts the concept captures and the warm store read-only,
    never the proof package, builds the Challenge and exports it with
    `leanexport` to `challenge.export`.
-3. Container B mounts `challenge.export` **read-only** beside the proof
-   capture and runs `lake comparator --challenge-from-export
-   challenge.export --inadvisably-no-sandbox`, with the kernel set the
-   environment's setting names (`--paranoid` or a named subset; Lean's
-   kernel alone to start). Exit 0 is the verdict; exit 1 is a violation
-   reported by edge; exit 2 is a pipeline failure. A compile error in the
-   Solution is also exit 1 and is told apart by phase. The build cannot
-   touch the Challenge export or the toolchain, which is the whole of the
-   "judge shares nothing with the build" requirement; a third clean
-   container comparing both `--*-from-export` files is the belt-and-braces
-   variant and is how a published bundle is rerun anyway.
+3. *(As executed after the stages 1–3 review, 2026-10-04; the original
+   two-container step is in git history.)* Container B mounts the proof
+   capture and the whole project, builds the Solution and exports it with
+   the same `leanexport` rule to `solution.export`; it is the only
+   container that executes proof-package code and is torn down first.
+   Container C, the judge, is a fresh container with the bundle's five
+   files and both exports read-only, the toolchain, a read-only `git`
+   shim, and nothing writable but `/out`; it runs `lake comparator
+   --challenge-from-export --solution-from-export --inadvisably-no-sandbox
+   [--paranoid]`, which builds and resolves nothing. The host records both
+   export digests. Exit 0 is the verdict; the comparator's own rejection
+   diagnostics are violations reported by edge; a kernel that failed to
+   run, a launch failure, or an unexplained stop is an infrastructure
+   failure, never a finding against the author (Codex intents review,
+   finding 6); exit 2 is a pipeline failure.
 4. The five generated files are pushed to the capture store
    (`capture-store.ts`, digest-addressed, before the database commit that
    references them); `build-output.json` records the bundle digest, the
@@ -440,6 +605,18 @@ Stages 1 to 3 are the feature; 4 and 5 make it usable; 6 closes it.
   `v4.33.0` closes at the flip.
 - **`v4.35.0` final slips.** Rehearse on the release candidate; admission
   is a row plus two library commits.
+
+## State at the end of 2026-10-04 (day session)
+
+Decision 10 and four outside reviews landed in three worker passes
+(uncommitted at the time of writing; `npm run check` green, 1094 tests),
+and the five-container Certify ran in docker: `spec2-certify` in 42 s
+(Challenge build 4.2 s + export 3.4 s, Solution build 4.2 s + export
+2.2 s, judge 1.1 s; concept Replay 9.3 s is the heaviest span at
+837 MiB; no proof Replay). A fourth pass (judge self-test, tool digests,
+the draft fold) and a verification review of the day's diff against the
+four reports followed; see TODO.md for what each closed and the
+decisions left to Jan.
 
 ## State at the end of 2026-10-04's night session
 

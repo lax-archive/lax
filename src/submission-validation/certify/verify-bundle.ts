@@ -54,6 +54,37 @@ function refuse(message: string): never {
   throw new ValidationError(`certificate bundle: ${message}`);
 }
 
+/**
+ * Where a warm closure entry may point (fable review 2026-10-04, finding
+ * 1.4): `https://github.com/…`, or the scheme and host of one of the
+ * environment's own library pins — for a `file://` pin (the test seams'
+ * fake mathlib), the pin's own directory. A reader's `lax certify --run`
+ * fetches these packages, so the bundle must not be able to send them to a
+ * repository of the author's.
+ */
+function admittedWarmUrl(url: string, environment: ArchiveEnvironment): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === "https:" && parsed.host === "github.com") return true;
+  for (const library of librariesOf(environment)) {
+    let pin: URL;
+    try {
+      pin = new URL(library.url());
+    } catch {
+      continue;
+    }
+    if (pin.protocol !== parsed.protocol || pin.host !== parsed.host) continue;
+    if (pin.protocol !== "file:") return true;
+    const directory = pin.pathname.slice(0, pin.pathname.lastIndexOf("/") + 1);
+    if (parsed.pathname.startsWith(directory)) return true;
+  }
+  return false;
+}
+
 /** The warm closure entries at the tail of a bundle's manifest, held to
  * their shape and to the environment's pins. */
 function warmEntries(manifestText: string, skip: number, environment: ArchiveEnvironment, taken: ReadonlySet<string>): Record<string, unknown>[] {
@@ -74,8 +105,10 @@ function warmEntries(manifestText: string, skip: number, environment: ArchiveEnv
     if (typeof entry.name !== "string" || !PACKAGE_NAME.test(entry.name)) refuse("a warm manifest entry has no package name");
     if (names.has(entry.name) || taken.has(entry.name)) refuse(`the warm manifest entry ${entry.name} repeats a package`);
     names.add(entry.name);
-    if (typeof entry.url !== "string" || entry.url.length > 512 || !/^(?:https:\/\/|file:\/\/)[^\s\u0000-\u001f]+$/u.test(entry.url))
+    if (typeof entry.url !== "string" || entry.url.length > 512 || !/^[a-z]+:\/\/[^\s\u0000-\u001f]+$/u.test(entry.url))
       refuse(`the warm manifest entry ${entry.name} has no plausible url`);
+    if (!admittedWarmUrl(entry.url, environment))
+      refuse(`the warm manifest entry ${entry.name} is not at github.com nor beside the environment's library pins: ${entry.url}`);
     if (typeof entry.rev !== "string" || !/^[0-9a-f]{40}$/u.test(entry.rev)) refuse(`the warm manifest entry ${entry.name} has no commit`);
     if (entry.inputRev !== undefined && (typeof entry.inputRev !== "string" || entry.inputRev.length > 256)) refuse(`the warm manifest entry ${entry.name} has an implausible inputRev`);
     if (entry.subDir !== undefined && entry.subDir !== null && (typeof entry.subDir !== "string" || entry.subDir.length > 256)) refuse(`the warm manifest entry ${entry.name} has an implausible subDir`);

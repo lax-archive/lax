@@ -1,5 +1,11 @@
 import type { SuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
 import { certifiedProof, challengeText } from "../../src/submission-validation/certify/generate.js";
+import { JUDGE_TOOLS, SELF_TEST_PROBES, type JudgeTool } from "../../src/submission-validation/contracts.js";
+
+/** A judge's tool digests as a fixture carries them: one sha256 per tool. */
+export function fakeToolDigests(): Record<JudgeTool, string> {
+  return Object.fromEntries(JUDGE_TOOLS.map((tool, index) => [tool, String(index).repeat(64)])) as Record<JudgeTool, string>;
+}
 import type {
   BuildOutputPayload,
   CaptureManifest,
@@ -153,7 +159,7 @@ export function spec2Artifacts(id = "lax-42"): SuccessfulValidationArtifacts {
     },
   ];
   const certificate: CertificateOutput = {
-    judge: { toolchain: runtime.leanToolchain, comparatorExitCode: 0 },
+    judge: { toolchain: runtime.leanToolchain, comparatorExitCode: 0, selfTest: { passed: true, probes: [...SELF_TEST_PROBES] }, tools: fakeToolDigests() },
     kernels: ["lean"],
     bundle: { formatVersion: 1, digest: "c".repeat(64) },
     challengeExportSha256: "e".repeat(64),

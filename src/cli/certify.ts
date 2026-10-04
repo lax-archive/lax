@@ -20,6 +20,7 @@
 // workspace (its locked manifest is the bundle's `lake-manifest.json`); it
 // needs no authentication. Spec-1 records have no certificate: refused.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { SourceLocation } from "../shared/types.js";
@@ -157,14 +158,23 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     steps.settle("write", { label: `Wrote ${ui.tilde(directory)}`, detail: "5 files + lean-toolchain" });
 
     if (options.run === true) {
-      verdict = await runComparator(directory, environment, options.paranoid === true);
+      const workspace = verifyCertificateWorkspace(directory, prepared.files["lake-manifest.json"]);
+      const freshness =
+        workspace.verified.length === 0
+          ? "fresh checkouts"
+          : `${ui.plural(workspace.verified.length, "checkout")} verified at the pinned revisions and clean, record build products removed`;
+      const ran = await runComparator(directory, environment, options.paranoid === true);
+      verdict = ran.verdict;
       if (verdict.kind === "certified") {
         steps.settle("run", {
           label: "Certified",
-          detail: `${environment.leanToolchain} · kernels: ${kernelsOf(options.paranoid === true ? "paranoid" : "lean", environment).join(", ")}`,
+          detail:
+            // the kernels the transcript says accepted, not the flag's promise
+            `${environment.leanToolchain} · kernels: ${(ran.kernels.length > 0 ? ran.kernels : kernelsOf(options.paranoid === true ? "paranoid" : "lean", environment)).join(", ")} · ` +
+            `Challenge built from ${freshness}`,
         });
       } else {
-        steps.settle("run", { status: "fail", label: verdict.kind === "violation" ? "Refused" : "Could not run" });
+        steps.settle("run", { status: "fail", label: verdict.kind === "violation" ? "Refused" : "Could not run", detail: `Challenge built from ${freshness}` });
       }
     }
   } finally {
@@ -188,7 +198,7 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     return 0;
   }
   if (verdict.kind === "violation") {
-    const group = groupFindings([{ phase: "certify", rule: verdict.rule, message: verdict.message }], "error")!;
+    const group = groupFindings([{ phase: "certify", rule: verdict.rule, message: verdict.message, intent: verdict.intent }], "error")!;
     ui.problem(group.headline, group.body);
   } else {
     ui.problem("`lake comparator` did not run to a verdict", verdict.failure.message.split("\n"));
@@ -538,6 +548,97 @@ function composeCertificate(
 
 // ── the folder, and the comparator ───────────────────────────────────────
 
+/** A package the archive's records contribute — `Lax<id>` or `Lax<id>Proofs`
+ * (contracts.ts packageNameForSubmission) — as opposed to the environment's
+ * libraries and their closure. */
+const RECORD_PACKAGE = /^Lax[0-9]+(?:Proofs)?$/u;
+
+/**
+ * The certificate folder's `.lake` is kept between runs so that mathlib's
+ * checkout and cache survive, and `lake comparator` builds the Challenge
+ * before the Solution — but a proof package's elaboration-time IO in one
+ * run can alter a dependency checkout inside `.lake`, and Lake accepts a
+ * checkout at the required revision even when it is dirty (pinned
+ * `Lake/Load/Materialize.lean`: a warning, not a refusal), so the next run's
+ * Challenge would be built against the altered concept (codex review 2
+ * 2026-10-04, finding 3). Before every run, therefore: every package
+ * checkout the bundle's manifest pins is held to its revision and to a
+ * clean tree, or the run is refused naming the package; and the record
+ * packages' build products — theirs and the certificate project's own —
+ * are removed so the Challenge and the Solution are rebuilt from the
+ * verified sources, while the environment libraries' caches stay. A
+ * checkout that does not exist yet is Lake's to clone, as on a first run.
+ */
+export function verifyCertificateWorkspace(directory: string, manifest: string): { verified: string[]; cleaned: string[] } {
+  const verified: string[] = [];
+  const cleaned: string[] = [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifest);
+  } catch {
+    throw new Error("the bundle's lake-manifest.json is not JSON");
+  }
+  const packages = isObject(parsed) && Array.isArray(parsed.packages) ? parsed.packages : [];
+  const packagesDir = path.join(directory, ".lake", "packages");
+  for (const entry of packages) {
+    if (!isObject(entry) || typeof entry.name !== "string" || entry.type !== "git" || typeof entry.rev !== "string") continue;
+    if (!/^[A-Za-z0-9_.-]{1,128}$/u.test(entry.name)) throw new Error(`the bundle's manifest names a package Lake cannot check out: ${JSON.stringify(entry.name)}`);
+    const checkout = path.join(packagesDir, entry.name);
+    if (!fs.existsSync(checkout)) continue;
+    const head = git(checkout, ["rev-parse", "HEAD"]);
+    if (head.code !== 0 || head.output.trim() !== entry.rev) {
+      throw new Error(
+        `.lake/packages/${entry.name} is at ${head.output.trim() || "no commit"}, not the revision the bundle pins ` +
+          `(${entry.rev}); delete ${ui.tilde(checkout)} and rerun`,
+      );
+    }
+    // the checkout's sources and tracked files; its `.lake` is Lake's build
+    // state, not source — a checkout that does not ignore it would show as
+    // untracked — and is handled below: a record package's is removed, a
+    // library's kept.
+    // TODO(decision 10): a library's `.lake/build` survives between runs
+    // and a previous run's proof build could have planted oleans with
+    // matching traces there; closing that needs fresh library build trees
+    // per run (an unpack from the mathlib cache), which the first-run
+    // budget this check keeps does not allow for yet.
+    // `--ignored`: a git-ignored file a previous run left counts too; what
+    // does not count is Lake's own build state, `.lake` at any depth (a
+    // package laid out under `concepts/` keeps its `.lake` there)
+    const status = git(checkout, ["status", "--porcelain", "--ignored", "--", ".", ":(exclude,glob)**/.lake", ":(exclude,glob)**/.lake/**"]);
+    if (status.code !== 0 || status.output.trim() !== "") {
+      throw new Error(
+        `.lake/packages/${entry.name} has local changes a previous run may have made:\n${status.output.trim() || "(git status failed)"}\n` +
+          `delete ${ui.tilde(checkout)} and rerun`,
+      );
+    }
+    verified.push(entry.name);
+    if (RECORD_PACKAGE.test(entry.name)) {
+      const build = path.join(checkout, ".lake", "build");
+      if (fs.existsSync(build)) {
+        fs.rmSync(build, { recursive: true, force: true });
+        cleaned.push(entry.name);
+      }
+    }
+  }
+  const ownBuild = path.join(directory, ".lake", "build");
+  if (fs.existsSync(ownBuild)) {
+    fs.rmSync(ownBuild, { recursive: true, force: true });
+    cleaned.push("LaxCertificate");
+  }
+  return { verified, cleaned };
+}
+
+function git(cwd: string, args: string[]): { code: number; output: string } {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error !== undefined) return { code: 127, output: result.error.message };
+  return { code: result.status ?? 1, output: `${result.stdout}${result.stderr}` };
+}
+
 function certificateFolder(folder: string): string {
   const root = path.resolve(folder);
   if (fs.existsSync(root)) {
@@ -557,7 +658,11 @@ function certificateFolder(folder: string): string {
  * bundle's git requires inside it; both are checked first so the refusal
  * names the tool rather than quoting the comparator's exit 2.
  */
-async function runComparator(directory: string, environment: ArchiveEnvironment, paranoid: boolean): Promise<ComparatorVerdict> {
+async function runComparator(
+  directory: string,
+  environment: ArchiveEnvironment,
+  paranoid: boolean,
+): Promise<{ verdict: ComparatorVerdict; kernels: string[] }> {
   if (!fs.existsSync(path.join(toolchainBinDir(environment), "lake")))
     throw new Error(`the ${environment.id} toolchain is not installed — run ${ui.cmd(`lax doctor --env ${environment.id}`)}`);
   const missing: string[] = [];
@@ -573,5 +678,8 @@ async function runComparator(directory: string, environment: ArchiveEnvironment,
   );
   if (/unknown (?:sub)?command/iu.test(result.output) && /comparator/u.test(result.output))
     throw new Error(`the toolchain ${environment.leanToolchain} has no \`lake comparator\`: ${result.output.trim()}`);
-  return interpretComparatorRun(result);
+  // `<kernel> kernel accepts the solution`, one line per kernel that ran
+  // (Lake/CLI/Check.lean runExternalKernel); the record's names for them
+  const accepted = [...result.output.matchAll(/^(.+?) kernel accepts the solution$/gmu)].map((match) => match[1]!);
+  return { verdict: interpretComparatorRun(result), kernels: accepted };
 }

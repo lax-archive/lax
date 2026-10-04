@@ -50,14 +50,227 @@ pulls mathlib's artifact cache is the rehearsal's question); `lax certify`
 of a Lax17-sized relative certificate (the composed Solution of a
 28-hypothesis chain). Jan's items before stage 3 ships:
 
-- **Docker smoke of Certify, again**: the 2026-10-03 run covered the
+- **Docker smoke of Certify, again** — RUN 2026-10-04 twice: after the third
+  pass on the five-container layout (`spec2-certify` in 42 s: A1 4.2 s, A2
+  3.4 s, B1 4.2 s, B2 2.2 s, C 1.1 s; no proof Replay; peak 837 MiB in concept
+  Replay) and after the fourth with the judge self-test (47 s, self-test
+  7.3 s, every probe true in the real container).
+  Original item: the 2026-10-03 run covered the
   two-container layout; the three-container one (A exports the Challenge, B
   builds and exports the Solution, C judges both exports with nothing of the
   builds mounted and a read-only `git` shim) is owed a run
   (`LAX_SMOKE_CASE=spec2-certify npm run smoke:submission-validation` with
   the spec-2 row injected — recipe in `test/smoke/submission-validation.ts`).
   The smoke needs the real mathlib warm store for rc3 (`~/.lax/warm/v4.35.0-…`,
-  built on first run, ~6 min).
+  built on first run, ~6 min). The layout is now five containers (A1/A2,
+  B1/B2, C — fable review finding 1.1): check that the export steps' `.lake`
+  mounts are read-only in `docker inspect`, and settle whether docker adds
+  `noexec` to an explicit `--tmpfs=/tmp:rw,nosuid,nodev,size=…` option
+  string — commit d5eaa9b found `/tmp` noexec empirically while
+  `container.ts` never asks for it; nothing relies on it today
+  (`certify/phase.ts` header), but the comment should say what is true.
+- **Judge self-test before any candidate code runs** — LANDED 2026-10-04
+  (fourth pass, uncommitted at the time of writing): `certify/self-test.ts`
+  runs a core-only three-module project through the same containers before
+  A1 (matching pair passes, mismatched pair rejected by the comparison,
+  export forged `value := type` refused by Lean's kernel) plus an eight-probe
+  confinement check in the judge runtime (host canaries invisible, `lo` the
+  only interface, `leanchecker` resolved to the toolchain, writes refused);
+  nine tool sha256s digested before S1 and re-checked after C; the
+  certificate's `judge` block carries `selfTest` and `tools`, and
+  `parseCertificate` refuses a certificate without them. Cost in the smoke:
+  7.3 s of 47 s. Owed in lax-website: its parser of `certificate.judge`
+  must accept the two new keys before a spec-2 record is published.
+  Original item:
+- **Judge self-test before any candidate code runs** (from Palomar's
+  policy, `PalomarRegistry/PalomarSubmission/SECURITY.md`, 2026-10-04):
+  Certify should first export and judge three one-line modules of its own
+  in the same containers and policy — a matching pair must pass, a
+  mismatched pair must be rejected by the comparison, and a copy of the
+  matching Solution export whose proof is replaced by its statement must be
+  refused by Lean's kernel — and probe the sandbox (a canary written under
+  the host home, `/tmp`, and the job dir invisible; no network; the judge's
+  PATH resolving `which leanchecker` to the toolchain's). A wrong answer is
+  an infrastructure failure, never a candidate result. Record the probe in
+  the certificate's `judge` block. Cheap: three exports and one comparator
+  run, and it turns "the judge said yes" into "a judge that just said no to
+  a fake said yes". Second, smaller item from the same source: record the
+  sha256 of `lake`, `lean`, `leanexport`, `leanchecker` and the kernels as
+  installed beside the toolchain name, checked before and after the
+  sandboxed runs.
+- **Division of intents** (plan decision 10, 2026-10-04, confirmed by
+  Jan the same day) — the five items below LANDED in the working tree the
+  same day (uncommitted; `npm run check` green), together with Codex
+  intents-review findings 1 (canonical-name rule: non-canonical names are
+  escaped and flagged by the inspector, refused as `name-not-canonical`;
+  a repeated name is refused unless both are theorems), 5 (the private
+  exemption requires the package's own module), 6 (a kernel that failed
+  to run is an infrastructure failure, never `kernel-rejected`) and the
+  draft's narrower Replay wording. Not triggerable on rc3 in the
+  realized-shape fixture: `hcongr_<n>`. Kept for the record: the judge answers correctness, the edge translation
+  answers "the theorem is the edge", the inspector answers archive
+  standards. Implementation items, each small, in this order:
+  - **Private declarations exempt from the namespace rule** (they are
+    module-mangled and cannot clash); spec-notes entry, since spec.md
+    un-mangles before the prefix test; a unit test with a top-level
+    `private theorem` in a proof package.
+  - **Findings carry their intent**: a `judge | translation | standards`
+    field on every finding, surfaced in the report artifact's rendering
+    (`src/cli/run-artifacts.ts`) and the outcome comment, so an author
+    reads "your proof is wrong" vs "your theorem is not the edge" vs
+    "house rules".
+  - **Drop Replay for spec-2 proof packages, keep it for concept
+    packages** (decided). One `if` in
+    `pipeline.ts replayStage` keyed on the environment's spec version and
+    the package kind; the spec-2 draft's "Compile, Replay, Inspect" text
+    follows.
+  - **Realized-shape fixture at admission**: a proof package that triggers
+    every compiler-realized reserved name the inspector exempts
+    (`congr_simp`, `eq_def`, `unfold`, `hcongr_<n>`, match splitters and
+    `congr_eq_<n>`) so a new Lean version's new shape is caught at
+    environment admission, never by an author; add to the admission
+    checklist in `history/environments-plan.md`.
+  - **Spec text**: `spec_v2_draft.md` hygiene paragraph as a standard
+    beside "edge correctness comes from the judge alone"; the trust-chain
+    paragraph does not carry over to spec 2; the Challenge shown verbatim
+    on the record page is the reader's audit surface for the translation.
+  - **Fresh-mind review of the proof namespace conventions** — DONE
+    2026-10-04, report at `spike/axiomfree/namespace-review-20261004.md`;
+    its findings are the next block. The brief was: an independent agent
+    whose sole job is to work out the right namespace conventions for
+    proof packages so that composition — importing any set of the
+    environment's records into one Lean environment — always succeeds.
+    Give it only the question, Lean's import rule (`finalizeImport` /
+    `subsumesInfo` in the environment's toolchain), the spec-2 draft's
+    Namespaces section, and the inspector's `userLevelName?`; not this
+    session's reasoning, which is what it is meant to check. Things we may
+    have missed: auto-named instances and `deriving` output, names
+    realized under a *mathlib* namespace by two records with different
+    statements, `open ... in` and `export` aliases, universe-polymorphic
+    duplicates, structure projections and auxiliary recursors, and
+    anything the concept-package side (`Lax261.<Module>` ownership) leaves
+    reachable from a proof package. Save its report beside the plan.
+- **Namespace review findings** (`spike/axiomfree/namespace-review-20261004.md`,
+  2026-10-04; verified on rc3 with a scratch project) — LANDED the same
+  day by the second worker pass (uncommitted; `npm run check` green,
+  1077 tests): `certify/challenge-check.ts` holds every `Cert.<id>`
+  theorem to the recorded telescope; reserved non-theorems are flagged
+  `realized` and held to the prefix; `initialize` entries and global
+  parser/macro/elab entries are read inertly and refused; duplicates
+  refused unless two reserved theorems; author phrasing in
+  `assets/instructions.md`. From the Fable review: the build/export
+  split (A1, A2, B1, B2, C; export steps mount the build tree read-only
+  and write only `/out`), signals exit 3 = infrastructure, name hygiene
+  (NFC, no marks/format chars, one script per component), non-https
+  warm entries refused, `olean-unreadable` as a standards finding. Not
+  as a committed fixture: the `enumToBitVec` reproduction (needs
+  `Std.Tactic.BVDecide` in the fake mathlib). Kept for the record:
+  - **Challenge held to the telescope (E1, correctness).** After container
+    A, compare each exported `Cert.<id>` theorem's stored type and level
+    parameters with the recorded telescope: the same statement constants
+    with the same level instances in the same binder positions, the same
+    conclusion. Mismatch is a `translation` violation. Implementation
+    choice: run the inspector (`loadExts := false`) over A's Challenge
+    olean and reuse the telescope reader, or parse `challenge.export`;
+    either way the comparison is host-side over structured data, never a
+    text diff. This closes the global-macro rewrite and is the
+    independent structural check from the Codex review.
+  - **Reserved-name exemption is theorem-kind only (B2).** A realized
+    definition under an imported name (`<enum>.enumToBitVec`) is a
+    namespace violation with the message "realized definition under an
+    imported name; use a different tactic". Admission checklist: re-grep
+    the toolchain's realizers for public `defnDecl` on every bump.
+  - **No `initialize` in records (F1).** Detect `regularInitAttr` /
+    `builtinInitAttr` entries in a record module's olean, or any constant
+    with an `initFn` component; standards violation covering
+    `register_option`, `register_simp_attr`, `declare_syntax_cat`,
+    persistent extensions. (A reader's `lax certify --run` still runs
+    authored elaboration-time IO; see the second Codex review, finding 3.)
+  - **Global syntax state is a violation (E1 rule).** A non-scoped entry a
+    record module contributes to the parser, macro, term-elab,
+    command-elab, or attribute extensions (`ScopedEnvExtension` entries
+    with their scope, readable inertly like `matcherNamesOf`) is a
+    standards violation; `scoped`/`local` pass. If reading the entries
+    inertly turns out costly, land the type check first and leave this as
+    a TODO with the extension names listed.
+  - **Within-package duplicate names (D2).** Dedupe by `(name, module)`;
+    a repeated `name` is a violation unless it is a reserved theorem
+    (realized in two modules of the same package, which Lean merges).
+    Refines the worker's rule from the Codex review.
+  - Optional hygiene the reviewer listed, Jan decides: forbid `export`
+    into a namespace outside the package (C3); forbid `@[extern]`/
+    `@[export]`, `unsafe`, `partial` (I1, I2); author phrasing for
+    `assets/instructions.md` ("put everything under `namespace
+    LaxNNNProofs`; never `_root_`; never `initialize`; `scoped
+    notation`/`local attribute`; avoid `bv_decide`/`bv_normalize` on
+    enums you did not define").
+  - **Eager composition guard** (open question 3): a scheduled job that
+    builds one file importing every proof package of an environment;
+    catches every clash class except attribute drift, before the first
+    relative certificate across an offending pair.
+- **Codex intents review, open items** (`spike/axiomfree/
+  codex-review-intents-20261004.md`, 2026-10-04; findings 1, 5, 6 and the
+  draft wording landed, see above; these are Jan's or later):
+  - **Publish the judged exports, or a reconstruction that is compared to
+    them.** The record carries `challengeExportSha256` /
+    `solutionExportSha256`, but the exports themselves are not in the
+    five-file bundle, and `lax certify --run` judges a *rebuilt* project
+    without comparing its fresh exports to the recorded digests
+    (`src/cli/certify.ts runComparator`). "Replay the archive's historical
+    evidence" and "prove this proposition again from source" are
+    different operations and should be two commands, or one command with
+    a `--historical` mode that fetches the exports by digest. A verdict
+    manifest binding exports, configuration, tools, and record id is the
+    same item.
+  - **Reader's checklist on the record page**: what a reader must check
+    beyond Challenge.lean — the Solution's application of the named
+    proof, `comparator.json`'s target list and permitted axioms, the
+    statement definitions in the concept source, the lakefile pins and
+    toolchain, and the export digests. The website's certificate panel
+    should list these with links; the reflowed Challenge alone is a
+    partial audit (finding 3).
+  - **Warm closure pinned per environment** (already above; finding 2
+    repeats it): until then, the publisher's regeneration does not
+    authenticate the full dependency closure.
+  - **Independent structural checker for the translation**: a second
+    implementation (or a Lean-side check in the judge project) that the
+    exported Challenge's theorems reference exactly the registered
+    statement constants the record names, so that regeneration with the
+    same TypeScript is not the only check (best-practices section).
+  - **Unused-helper and proof-dependency findings stay advisory**; every
+    hard standard documents its rationale and its enforcement limit, and
+    the `standards` label is never read as "security-irrelevant".
+- **Fable intents review, open items** (`spike/axiomfree/
+  fable-review-intents-20261004.md`, 2026-10-04; finding 2 — the
+  build/export split — plus findings 4, 5 (cheap half), 6, 7 went to the
+  second worker; these remain):
+  - **Show compiled bodies of the package-local cone** (finding 3). The
+    reader's audit surface shows olean bodies only for tagged statements;
+    auxiliaries a statement refers to are shown from *source*, which
+    compile-time IO in the concept package can make differ from the
+    judged olean. The inspector already has `usedConstants`; emit the
+    pretty-printed bodies of the package-local cone of every statement,
+    the website shows them beside the source with the note "compiled, as
+    shown", and the trust note says which of the two a reader is
+    trusting. Palomar has no analogue because its Challenge imports no
+    candidate code; this is lax's own answer for the concept side.
+  - **Carry the direct-require set in the report** (finding 5, the other
+    half): `verify-bundle.ts` treats the whole resolved closure as direct,
+    so the publisher cannot repeat the direct-require rule. Record the
+    direct set in `build-output.json` and have the publisher regenerate
+    the lakefile from it.
+  - **`uniqueDeclarations` merges same-name theorems without comparing
+    types** (D2, the half the second worker's refinement may not cover):
+    two reserved theorems of the same name in two modules of one package
+    are kept as one; if they ever differed in type Lean would refuse the
+    root import first, so this is a consistency note, not a hole — record
+    which module's copy the id refers to.
+  - **Stale wording** the review lists: plan line ~226 (names "emitted
+    escaped from a `Lean.Name`") and draft 1736/1749–1765 still describe
+    the pre-split flow; Jan's reconciliation.
+  - **Docker smoke**: verify whether docker adds `noexec` to an explicit
+    `--tmpfs` option string (commit d5eaa9b found the tmpfs noexec
+    empirically; `container.ts` passes `rw,nosuid,nodev` only).
 - **Pin the warm manifest per spec-2 environment.** The publisher regenerates
   and re-seals the whole certificate bundle from the record (`certify/
   verify-bundle.ts`) except the warm closure's entries in `lake-manifest.json`
@@ -66,6 +279,105 @@ of a Lax17-sized relative certificate (the composed Solution of a
   to their shape and to the row's library pins. A committed copy of the warm
   manifest per environment (an admission-checklist item) would let the
   publisher regenerate that too and close the gap.
+- **Second Codex intents review** (`spike/axiomfree/
+  codex-review-intents-2-20261004.md`, 2026-10-04, written with every
+  earlier report in hand; premises of 1, 3, 4 checked against the Lean
+  source and the code) — the worker items LANDED the same day (third
+  pass, uncommitted; `npm run check` green, 1094 tests): the inspector
+  emits one `origin` per declaration with evidence (`authored` /
+  `private {module}` / `scoped {module}` / `realized {parent}` /
+  `auxiliary {parent}`, each from Lean's own facts), every rule consults
+  `origin` and none the display name; per-module bodies in the axiom
+  walk and hygiene before de-duplication; `lax certify --run` verifies
+  every manifest checkout at its pin and clean and removes the record
+  packages' build products (residual `TODO(decision 10)` in certify.ts:
+  a library's `.lake/build` survives between runs); `kernel-rejected`
+  only for kernel exit 1; local `--replay` covers both packages. Kept
+  for the record; the "Jan's decisions" sub-list is still open:
+  - **Provenance-based ownership (finding 1, High).** `isInternalDetail`
+    is a heuristic, not provenance: an authored `Lax1.C.«A.B».proof_1`
+    is exempt from the namespace rule and the canonical-name rule and
+    can still be tagged. Rules: (a) a tagged statement and a proof-shaped
+    theorem must have a `userName` (be user-level) and be canonical, or
+    they are refused as `translation`; (b) the namespace prefix test
+    applies to *every* declaration the package contributes, with
+    exemptions only for authenticated provenance — `isReservedName` true
+    and theorem kind (realizations under imported constants), the
+    package's own `_private.<module>.0.` names, the package's own
+    macro-scoped (`_@.<module>._hyg.`) and `_aux_<module>_` names — never
+    for "looks internal"; the realized-shape e2e fixture and the existing
+    fixtures are the test that no generated name of an honest package
+    trips it; (c) telescope constants go through the same user-level +
+    canonical gate.
+  - **Per-module hygiene (finding 4).** The inspector enumerates each
+    module's `constNames` but reads the body with `env.find?` over the
+    merged environment, so two same-name theorems in two modules (one
+    `sorry`, one not) show the merged body twice. Read each module's own
+    `ConstantInfo` from its `ModuleData.constants`, run the axiom walk on
+    that, and apply hygiene before de-duplication; the duplicate
+    exception then requires the inspector's `realized` origin (an
+    `isReservedName` fact), not merely an absent `userName`.
+  - **`lax certify --run` reuses `.lake` (finding 3).** A proof build's
+    elaboration-time IO can alter the concept dependency checkout inside
+    `.lake`; the next run's Challenge is built against it and "Certified"
+    is printed. Before every run: verify each `.lake/packages/<pkg>` is at
+    its pinned revision and clean (`git rev-parse HEAD`, `git status
+    --porcelain` empty) or refuse; delete the record packages' build
+    products (keep mathlib's cache); and say in the output that the
+    Challenge was built from freshly verified checkouts.
+  - **Kernel crash vs rejection (incomplete fix of finding 6).** The
+    comparator prints its rejection notice for *every* nonzero kernel
+    exit, a crash included (Check.lean); read the kernel's own exit code
+    from the transcript and treat anything but the documented rejection
+    code (signal range, 134, …) as infrastructure. `run-certify.mjs`
+    exit 2 (spawn failure: missing `leanexport`/inspector) must be
+    infrastructure in A/B's readers too.
+  - **`lax build --replay` must replay spec-2 proof packages locally**
+    (the draft recommends it for checked helpers but `host/pipeline.ts`
+    excludes them even with the flag): opt-in local replay covers both
+    packages.
+  - **`src/cli/certify.ts` ~191 drops `verdict.intent`** when building the
+    reader CLI finding; keep it.
+  - **Jan's decisions from this review:**
+    - *Revalidation semantics (finding 2, High).* `/lax admin
+      revalidate` of a concept record replaces its capture while
+      dependents keep certificates judged against the old one; a
+      statement whose body changed (compile-time code with a date
+      threshold passes concept Replay) is then shown as proven. Options:
+      refuse a revalidation whose concept capture digest changes while
+      registered dependents exist; or make it a new version under the
+      supersedes mechanism; and in every case record the dependency
+      capture digests in the certificate (`verify-bundle.ts` has them in
+      the manifest already) and have the website resolve a certified
+      edge's endpoints by (statement id, capture digest).
+    - *Metadata-only resubmission keeps the certificate at the old
+      commit (finding 5).* `record.source` moves to C2, the bundle's
+      own-package require still names C1, so `lax certify` regenerates a
+      different digest than `--fetch` returns. Record the certified
+      source commit separately from the presentation source, or
+      regenerate the bundle on the metadata path under the "Lean sources
+      byte-identical" equivalence the comparison already proves.
+    - *Website trust note* (lax-website `shared.ts` ~244) says readers
+      need not trust the pipeline; narrow it to what the Challenge and
+      the bundle establish (the reader's checklist item above).
+- **Verification pass** (`spike/axiomfree/verification-20261004.md`,
+  2026-10-04): 28 of 29 worker-assigned findings CLOSED by re-tracing the
+  diff, 1 PARTIAL (the issue comment carried no intent; sent to the fourth
+  pass with five small flagged items: `oleanRefusalPattern` too wide, A1
+  build failure wording, `canonStr` injectivity comment, dead
+  `privateOwner`, no test pinning the proof-Replay drop). Residuals it
+  named that no block tracked:
+  - **UTS#39 confusables**: name hygiene covers NFC, marks, and script
+    mixing per component, not single-script confusables (Fable 1.3's
+    other half); the website linking every Challenge name to its card is
+    the cheap complement.
+  - **Attribute applications are out of the global-syntax rule** (namespace
+    review E2, by that review's own verdict): `attribute [simp] …` on an
+    imported declaration changes every importer's simp set; harmless to
+    the certificate, a courtesy rule for other authors if wanted.
+  - **A forged reserved theorem with a wrong type** breaks co-import with
+    an honest record that realizes the same name (namespace C1-5's
+    reserved half); no soundness effect, a composition nuisance only.
 - **Reader consolidation** (review, "later"): `archive-schema.ts` accepts a
   broad envelope and `artifact-schema.ts parsePublishedCapture` picks the
   capture shape by field presence (`files` absent → spec 2); spec selection

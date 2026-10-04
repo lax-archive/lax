@@ -53,7 +53,7 @@ import { capturePaperSources, runPaperPhase, type CompiledPaper, type PaperPhase
 import type { WebDeriver } from "../paper/web.js";
 import { emitBuildOutput } from "../phases/emit.js";
 import { judgeInspection, libraryRootsOf } from "../phases/inspect.js";
-import { inspectorArguments, parseInspectorReport } from "../phases/inspect-runner.js";
+import { inspectorArguments, inspectorExitFailure, parseInspectorReport } from "../phases/inspect-runner.js";
 import { dependencyClosure, dependencySubDir } from "../phases/provision.js";
 import { runResolution } from "../phases/resolution.js";
 import { runStaticValidation } from "../phases/static.js";
@@ -220,8 +220,14 @@ export async function validateSubmissionOnHost(
     // Locally keep the full multi-line message: the author owns the transcript.
     const failure = asPipelineFailure(error, fallbackKind);
     const message = failure.message;
-    if (failure.kind === "submission") violations.push({ phase, rule, message });
-    else state.failure = { kind: failure.kind, retryable: failure.retryable, phase, rule, message };
+    if (failure.kind === "submission") {
+      violations.push({
+        phase,
+        rule: failure.finding?.rule ?? rule,
+        message,
+        ...(failure.finding?.intent === undefined ? {} : { intent: failure.finding.intent }),
+      });
+    } else state.failure = { kind: failure.kind, retryable: failure.retryable, phase, rule, message };
     return report(false);
   };
 
@@ -477,7 +483,11 @@ export async function validateSubmissionOnHost(
 
     if (options.replay === true) {
       // Mirror the trusted stage scoping: concepts replay under every scope but
-      // `proofs`, proofs replay under every scope but `concepts`.
+      // `proofs`, proofs replay under every scope but `concepts`. Unlike the
+      // archive's run, which in spec 2 replays the concept package alone
+      // (decision 10: the judge covers the edges), the opt-in local replay
+      // covers both packages — it is what an author runs for kernel-checked
+      // reusable helpers, which the archive does not vouch for.
       const replayKinds = kinds.filter((kind) => !(scope === "proofs" && kind === "concepts"));
       for (const kind of replayKinds) {
         const inventory = staticCheck.result[kind]!.inventory;
@@ -526,11 +536,7 @@ export async function validateSubmissionOnHost(
         inspectorArguments(state.environment.specVersion, reportPath, inventory),
         cwd,
       );
-      if (result.code !== 0) {
-        throw new Error(
-          `inspector failed for package ${inventory.packageName} (exit ${result.code}):\n${result.output.trim()}`,
-        );
-      }
+      if (result.code !== 0) throw inspectorExitFailure(kind, result, state.environment.specVersion);
       const stat = fs.lstatSync(reportPath);
       if (!stat.isFile() || stat.size > state.limits.inspectorReportBytes)
         throw new Error(`${kind} inspector report is missing or oversized`);
@@ -614,6 +620,7 @@ export async function validateSubmissionOnHost(
         warmWs: warm,
         limits: state.limits,
         echo,
+        inspectorBin,
         dependencyLibs: dependencyLibDirs("proofs"),
         phase: state.phase,
       }));
@@ -621,7 +628,7 @@ export async function validateSubmissionOnHost(
       return fail("certify", "comparator", error);
     }
     if (certified.kind === "violation") {
-      violations.push({ phase: "certify", rule: certified.rule, message: certified.message });
+      violations.push({ phase: "certify", rule: certified.rule, message: certified.message, intent: certified.intent });
       return report(false);
     }
     options.onDetail?.(

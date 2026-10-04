@@ -27,6 +27,15 @@
 // a subset of the background three (`sorryAx` and the native-computation
 // axioms are not background). Frontmatter anywhere in the proof package is a
 // violation naming the spec-1 habit.
+//
+// Every finding here carries its intent (decision 10): the statement and
+// proof rules decide what edge a theorem is — `translation`, the one
+// correctness-critical reading outside the kernel, since the certificate
+// generator renders whatever these rules admit and the judge verifies
+// whatever it is handed. Namespace, hygiene, and frontmatter are archive
+// standards, enforced whether or not correctness needs them; they take the
+// phase's default. Private declarations are exempt from the namespace rule
+// (they are module-mangled and cannot clash) and from nothing else.
 
 import type {
   InspectorDeclaration,
@@ -41,6 +50,7 @@ import {
   BACKGROUND_AXIOMS,
   checkNamespace,
   isPrivateName,
+  nameHygieneProblems,
   shortName,
   splitSections,
   type ClassificationInput,
@@ -51,20 +61,28 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
   const ownStatements = new Set<string>();
 
   for (const declaration of input.conceptDeclarations) {
-    checkNamespace(declaration, declaration.module, "concept", findings);
+    // the standards, over every declaration the package contributes — a
+    // duplicated name included, each module's own body (inspect.ts
+    // uniqueDeclarations)
+    checkNamespace(declaration, declaration.module, "concept", findings, { exemptPrivateOf: input.ownModules.concepts });
     checkAxiomHygiene(declaration, "concept", findings);
+    checkInitializer(declaration, "concept", findings);
     if (declaration.doc?.hasFrontmatter)
       findings.violate(
         "annotation",
         `concept declaration ${display(declaration)} carries docstring frontmatter; a concept's annotation ` +
           "is its module docstring, and spec 2 has no proof frontmatter",
       );
+    const userLevel = checkCanonicalName(declaration, "concept", findings) && checkNameHygiene(declaration, "concept", findings);
     if (declaration.laxStatement !== true) continue;
+    // an endpoint: user-level, canonical, legible, or no statement at all
+    if (!checkEndpointName(declaration, "concept", findings) || !userLevel) continue;
     const problems = statementProblems(declaration);
-    for (const problem of problems) findings.violate("statement", `${display(declaration)} ${problem}`);
+    for (const problem of problems) findings.violate("statement", `${display(declaration)} ${problem}`, "translation");
     if (problems.length > 0) continue;
     const entry = input.byModule.get(declaration.module);
     if (entry === undefined) continue; // the root module: the root-module rule has fired
+    if (ownStatements.has(declaration.name)) continue; // a duplicate: refused by inspect.ts, registered once
     ownStatements.add(declaration.name);
     entry.statements.push(statementEntry(declaration));
   }
@@ -97,12 +115,17 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
       : "none";
 
   const proofs: ProofEntry[] = [];
+  const proofIds = new Set<string>();
   for (const declaration of input.proofDeclarations) {
-    checkNamespace(declaration, proofInventory.packageName, "proof", findings);
+    checkNamespace(declaration, proofInventory.packageName, "proof", findings, { exemptPrivateOf: input.ownModules.proofs });
     checkAxiomHygiene(declaration, "proof", findings);
+    checkInitializer(declaration, "proof", findings);
+    const userLevel = checkCanonicalName(declaration, "proof", findings) && checkNameHygiene(declaration, "proof", findings);
+    // a house rule, not a reading: the classifier never takes a statement
+    // from a proof package's tags, so no edge depends on it
     if (declaration.laxStatement === true)
       findings.violate(
-        "statement",
+        "marker",
         `${display(declaration)} carries @[lax_statement] in the proof package; statements are declared ` +
           "in the concept package, and a proof package proves them",
       );
@@ -116,11 +139,28 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
     const telescope = declaration.telescope;
     if (telescope === undefined || telescope === null) continue; // a helper
     const chain = [...telescope.hypotheses, telescope.conclusion];
+    // a definition of proof shape is a helper
+    if (declaration.kind !== "theorem") continue;
+    // a chain naming a constant the inspector had to write escaped (a
+    // non-canonical name, `isCanonicalName`) is refused outright rather
+    // than read as a proof of the flattened text (codex review 2
+    // 2026-10-04, finding 1); a canonical constant that is no registered
+    // statement makes the theorem a helper below
+    const escaped = chain.find((link) => link.const.includes("«"));
+    if (escaped !== undefined) {
+      findings.violate(
+        "proof",
+        `theorem ${display(declaration)} has the shape of a proof over ${escaped.const}, whose name the archive's ` +
+          "canonical form cannot carry; an endpoint is a user-level definition with a plain dotted name",
+        "translation",
+      );
+      continue;
+    }
     const kinds = chain.map((link) => statementOf(link.const));
     // a chain over something that is no statement anywhere is a helper
     if (kinds.includes("none")) continue;
-    // a definition of proof shape is a helper too
-    if (declaration.kind !== "theorem") continue;
+    // an endpoint: user-level, canonical, legible, or refused
+    if (!checkEndpointName(declaration, "proof", findings) || !userLevel) continue;
 
     const where = `theorem ${display(declaration)}`;
     let ok = true;
@@ -131,6 +171,7 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
         "proof",
         `${where} has the shape of a proof, but ${link.const} is a statement of ${transitive.get(link.const)}, ` +
           "which the proof package does not require directly — to assume or conclude a statement, require its package",
+        "translation",
       );
     }
     if (isPrivateName(declaration.name)) {
@@ -139,6 +180,7 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
         "proof",
         `private ${where} has the shape of a proof (${describeEdge(telescope)}); the archive's certificate ` +
           "must name it from another module — drop `private`, or give it a type that is not a chain of statements if it is a helper",
+        "translation",
       );
     }
     const params = new Set(declaration.levelParams ?? []);
@@ -150,6 +192,7 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
           "proof",
           `${where} instantiates ${link.const} at universe level \`${renderLevel(level)}\`; every level ` +
             "argument of a statement in a proof's type must be a universe parameter of the proof",
+          "translation",
         );
       }
     }
@@ -162,6 +205,7 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
         `${where} concludes ${telescope.conclusion.const}.{${conclusionLevels.join(", ")}} with \`${repeated}\` ` +
           "repeated; a proof concludes its statement in full generality, so the conclusion's level arguments " +
           "must be pairwise distinct universe parameters",
+        "translation",
       );
     }
     if (!ok) continue;
@@ -178,6 +222,8 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
       },
     };
     const body = splitSections(declaration.doc?.description ?? "", where, findings);
+    if (proofIds.has(declaration.name)) continue; // a duplicate: refused by inspect.ts, recorded once
+    proofIds.add(declaration.name);
     proofs.push({
       id: declaration.name,
       path: proofInventory.paths.get(declaration.module) ?? "",
@@ -269,6 +315,105 @@ function checkAxiomHygiene(
         `axioms ${[...BACKGROUND_AXIOMS].join(", ")}`,
     );
   }
+}
+
+/** No `initialize` in a record (standards; F1 in
+ * spike/axiomfree/namespace-review-20261004.md): an initializer registers a
+ * name-keyed global registry — a persistent extension, an option, a simp
+ * attribute, a syntax category — that Lean refuses at import when two
+ * records chose the same name, which no name rule can see, and it runs
+ * arbitrary IO in every importer's `lean`, a reader's `lax certify --run`
+ * included. The inspector flags every declaration a module marks `@[init]`. */
+function checkInitializer(declaration: InspectorDeclaration, label: "concept" | "proof", findings: FindingCollector): void {
+  if (declaration.initializer !== true) return;
+  findings.violate(
+    "initialize",
+    `${label} module ${declaration.module} declares an initializer (${display(declaration)}); a record declares no ` +
+      "`initialize`, `register_option`, `register_simp_attr`, `declare_syntax_cat`, or persistent extension — " +
+      "two records registering the same name cannot be imported together",
+  );
+}
+
+/** The canonical-name rule (translation): a name the dotted canonical form
+ * cannot carry unambiguously — a component with a `.` in it, a numeric
+ * component — is refused, never flattened, because the certificate names
+ * constants by that form and `Lax1.C.«A.B»` would otherwise read as
+ * `Lax1.C.A.B` (codex review 2026-10-04, finding 1). The inspector wrote the
+ * name escaped, so the author sees the `«»`. Returns whether the
+ * declaration may be classified at all. */
+function checkCanonicalName(declaration: InspectorDeclaration, label: "concept" | "proof", findings: FindingCollector): boolean {
+  if (declaration.nonCanonical !== true) return true;
+  // Lean's own scoped, realized, and auxiliary names (`foo._@.<module>._hyg.3`)
+  // are non-canonical by construction and never translated; the endpoint
+  // gate (`checkEndpointName`) keeps one from being a statement or a proof
+  if (!isAuthoredOrigin(declaration)) return false;
+  findings.violate(
+    "name-not-canonical",
+    `${label} declaration ${declaration.name} has a component Lean must quote; the archive names every constant ` +
+      "by its plain dot-separated components, so a component containing a `.` cannot be told from a nested " +
+      "namespace — rename the declaration",
+    "translation",
+  );
+  return false;
+}
+
+/** The name-hygiene rule (translation; fable review 2026-10-04, finding
+ * 1.3): the Challenge text is the reader's audit surface, so a name a reader
+ * cannot tell from another is refused — a non-NFC name, a combining mark or
+ * a format control (an invisible joiner), or a component mixing scripts
+ * (a Cyrillic `а` in a Latin word; a Greek capital, which the escaper
+ * writes bare). Lower-case Greek beside Latin (`hα`) is what Lean authors
+ * write and is admitted; the letterlike block (`ℕ`) is Common. Applies to
+ * the names the certificate can carry — those with a user-level name — and
+ * to universe parameters. Returns whether the declaration may be
+ * classified. */
+function checkNameHygiene(declaration: InspectorDeclaration, label: "concept" | "proof", findings: FindingCollector): boolean {
+  if (!isAuthoredOrigin(declaration)) return true;
+  const problems = [
+    ...nameHygieneProblems(declaration.name),
+    ...(declaration.levelParams ?? []).flatMap((level) => nameHygieneProblems(level).map((problem) => `universe parameter ${level} ${problem}`)),
+  ];
+  if (problems.length === 0) return true;
+  findings.violate(
+    "name-hygiene",
+    `${label} declaration ${display(declaration)} ${problems[0]}; the certificate's text is what a reader checks, ` +
+      "so a name must read as itself — rename the declaration",
+    "translation",
+  );
+  return false;
+}
+
+/** Authored by the module's own syntax, or private (which has its own
+ * rule and hint): what the authored rules — canonical, legible, endpoint —
+ * apply to. Scoped, realized, and auxiliary declarations are Lean's. */
+function isAuthoredOrigin(declaration: InspectorDeclaration): boolean {
+  return declaration.origin?.kind === "authored" || declaration.origin?.kind === "private";
+}
+
+/** The endpoint gate (translation; codex review 2 2026-10-04, finding 1):
+ * a statement or a proof is an authored declaration — by the inspector's
+ * `origin`, the one provenance fact, never by the shape of its name or the
+ * presence of a display name. What Lean generated (a realization, an
+ * auxiliary `proof_1`, a macro-scoped name) can carry the tag or the shape
+ * of a proof only through a forged or mistaken olean, and is refused
+ * rather than translated. */
+function checkEndpointName(declaration: InspectorDeclaration, label: "concept" | "proof", findings: FindingCollector): boolean {
+  if (isAuthoredOrigin(declaration)) return true;
+  const what = label === "concept" ? "carries @[lax_statement]" : "has the shape of a proof";
+  const origin = declaration.origin;
+  const why =
+    origin === undefined ? "its origin is unknown"
+      : origin.kind === "realized" ? `Lean realized it under ${origin.parent}`
+      : origin.kind === "auxiliary" ? `Lean generated it for ${origin.parent}`
+      : origin.kind === "scoped" ? `it carries macro scopes of ${origin.module}`
+      : `its origin is ${origin.kind}`;
+  findings.violate(
+    label === "concept" ? "statement" : "proof",
+    `${label} declaration ${declaration.name} ${what} but is not an authored declaration — ${why}; an endpoint ` +
+      "is a declaration written in the module's own syntax",
+    "translation",
+  );
+  return false;
 }
 
 function display(declaration: InspectorDeclaration): string {

@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseSuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
 import { DEFAULT_LIMITS } from "../../src/submission-validation/config.js";
-import type { CaptureManifest, ValidationReport } from "../../src/submission-validation/contracts.js";
+import type { CaptureManifest, ValidationFinding, ValidationReport } from "../../src/submission-validation/contracts.js";
 import { FindingCollector } from "../../src/submission-validation/findings.js";
 import {
   CAPTURE_FILENAME,
@@ -351,6 +351,22 @@ describe("submission validation outputs", () => {
       report.request,
       { ...report.runtime, environment: "v4.31.0" },
     )).toThrow("does not match the workflow's pinned runtime");
+  });
+
+  it("carries a warning's intent through the publication schema, and refuses one it does not know", () => {
+    const directory = temporaryDirectory();
+    fs.writeFileSync(path.join(directory, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+    const standards: ValidationFinding = { phase: "inspect", rule: "unused-lemma", message: "helper lemma x is not used", intent: "standards" };
+    writeValidationOutputs(directory, { ...successfulReport(), warnings: [standards] });
+    const written = readJson(path.join(directory, VALIDATION_REPORT_FILENAME)) as ValidationReport;
+    expect(written.ok).toBe(true);
+    expect(written.warnings).toEqual([standards]);
+
+    const bogus = { ...standards, intent: "vibes" } as unknown as ValidationFinding;
+    const second = temporaryDirectory();
+    fs.writeFileSync(path.join(second, CAPTURE_FILENAME), "capture", { mode: 0o600 });
+    expect(() => writeValidationOutputs(second, { ...successfulReport(), warnings: [bogus] }))
+      .toThrow("validation warning 1 intent is invalid");
   });
 
   it("refuses to emit a successful report the trusted publisher would reject, and says so in the report", () => {

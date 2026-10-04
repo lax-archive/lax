@@ -118,6 +118,14 @@ describe("the trusted parser on a spec-2 record", () => {
       for (const [mutate, expected] of [
         [(c: Record<string, any>) => { c.judge.toolchain = "leanprover/lean4:v4.33.0"; }, "judged by a toolchain other than the environment's"],
         [(c: Record<string, any>) => { c.judge.comparatorExitCode = 1; }, "comparatorExitCode must be 0"],
+        // the judge proved itself first: a local run's `passed: false`, a
+        // missing probe, an extra probe, a missing or malformed tool digest
+        [(c: Record<string, any>) => { c.judge.selfTest.passed = false; }, "selfTest must have passed"],
+        [(c: Record<string, any>) => { c.judge.selfTest.probes = c.judge.selfTest.probes.slice(1); }, "selfTest probes must be exactly"],
+        [(c: Record<string, any>) => { c.judge.selfTest.probes = [...c.judge.selfTest.probes, "extra"]; }, "contains more than"],
+        [(c: Record<string, any>) => { delete c.judge.selfTest; }, "generated certificate judge must contain exactly"],
+        [(c: Record<string, any>) => { delete c.judge.tools.lake; }, "generated certificate judge tools must contain exactly"],
+        [(c: Record<string, any>) => { c.judge.tools.lean = "abc"; }, "lowercase SHA-256"],
         [(c: Record<string, any>) => { c.kernels = ["nanoda"]; }, "unknown kernel"],
         [(c: Record<string, any>) => { c.kernels = ["lean", "lean"]; }, "contains more than"],
         [(c: Record<string, any>) => { c.kernels = ["my-kernel"]; }, "unknown kernel"],

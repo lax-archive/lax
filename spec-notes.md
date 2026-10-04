@@ -7,6 +7,32 @@ file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22, 2026-08-07, 2026-09-14, 2026-09-15, and 2026-09-19
 and removed here; the folded text survives in git history.)
 
+## Namespace rule: private declarations exempt (proposed, 2026-10-04)
+
+spec.md "Inspection Internals", *The namespace check*: "un-mangle the
+private names … and the check is a single prefix test". Proposed: a
+`private` declaration is exempt from the prefix test, in both packages;
+every other rule still applies to it (a private statement and a private
+proof stay the violations they are). Implemented for spec 2 on the
+`axiomfree` branch (`phases/inspect-spec2.ts`, `checkNamespace`'s
+`exemptPrivate`, axiomfree-plan.md decision 10); spec 1 keeps the current
+reading until this is folded in.
+
+Why: the namespace rule exists so that every record composes with every
+other — a relative certificate imports many records' packages into one
+Lean environment. Lean 4.35's `finalizeImport` refuses two modules that
+declare the same constant unless both are theorems of identical name, type,
+and level parameters (`subsumesInfo`, `Lean/Environment.lean`). A private
+declaration is persisted as `_private.<module>.0.<name>`; the module is
+unique to the record (root-module exactness), so two records' private
+`foo` are different constants and cannot clash. The prefix test on the
+un-mangled name therefore refuses nothing composition needs refused, and in
+practice it is what trips authors who write a top-level `private` helper
+without a `namespace` block. The compiler-realized reserved names the
+inspector already drops before the test are the same rule from the other
+side: Lean regenerates them identically in every package that needs them,
+and the import tolerance admits the duplicates.
+
 ## Concept dialect: second draft, advisory model (proposed, 2026-07-29)
 
 [spec_conceptdialect_draft.md](spec_conceptdialect_draft.md) is a proposed

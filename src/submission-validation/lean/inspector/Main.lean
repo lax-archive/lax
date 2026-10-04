@@ -202,6 +202,105 @@ def userLevelName? (env : Environment) (matchers : NameSet) (n : Name) : Option 
     else if isMatcherRealization matchers n || isMatcherRealization matchers u then none
     else some u
 
+/-- Whether a name is reserved, in its persisted or its un-mangled form — the
+two gaps `userLevelName?` documents. It is the evidence behind
+`Origin.realized`: the validator exempts a realized *theorem* from the
+namespace rule, since Lean's `finalizeImport` admits the same theorem from
+two modules (identical name, type, and level parameters — `subsumesInfo`),
+which is exactly what a realization regenerated in two records is; a
+realized **definition** under an imported name (`bv_decide`'s
+`<enum>.enumToBitVec`, the one public one in v4.35) is refused at import
+when two records both carry it, and is a violation
+(spike/axiomfree/namespace-review-20261004.md, B2). -/
+def isReservedEither (env : Environment) (n : Name) : Bool :=
+  isReservedName env n || isReservedName env ((privateToUserName? n).getD n)
+
+/-- Where a spec-2 declaration came from, with the evidence, as the report
+writes it under `origin` (decision 10; codex review 2 2026-10-04, finding 1).
+Every validator rule that distinguishes authored content from what Lean
+generated consults this one fact; `userName` is the display name and no
+rule reads its presence. The cases, in the order they are decided:
+
+* `scoped module` — a name carrying macro scopes (`hasMacroScopes`); the
+  module is the one `extractMacroScopes` names (`scopeModule`).
+  Decided first: such a name has numeric components whatever else it is.
+* `private module` — Lean's private mangling `_private.<module>.0.<rest>`
+  (`privatePrefix?`); the module is the mangling's own evidence, and it
+  settles ownership before anything Lean realized inside the name.
+* `realized parent` — a reserved name (`isReservedName`, persisted or
+  un-mangled) or a matcher realization: a name Lean realizes under an
+  existing constant and refuses an author (`checkNotAlreadyDeclared`);
+  the parent is that constant. Theorem or not — the validator reads the
+  kind beside it.
+* `authored` — the declaration has a declaration range: it was elaborated
+  from the module's own syntax (`declRangeExt`, read inertly).
+* `auxiliary parent` — no range, and the nearest proper prefix is a
+  constant of this package: a recursor, `casesOn`, `noConfusion`, a
+  matcher, `sizeOf` lemmas, `mk.injEq`, an abstracted `proof_<n>` — every
+  one extends the declaration it was generated for, which is the parent.
+* `authored`, otherwise: a declaration without a range and without an own
+  parent is held to the authored rules, the stricter reading.
+
+The range and matcher entries come from the submission's own olean and
+are untrusted data: a forged range makes a generated name authored
+(stricter, harmless), a dropped range makes an authored name auxiliary
+(never an endpoint, still held to its prefix). -/
+inductive Origin where
+  | authored
+  | «private» (module : Name)
+  | scoped (module : Name)
+  | realized (parent : Name)
+  | auxiliary (parent : Name)
+
+/-- `_private.M.0.rest` → `M`: the private prefix without its `_private`
+root and its trailing number. -/
+def privateModule? (n : Name) : Option Name := do
+  let p ← privatePrefix? n
+  let m := p.getPrefix
+  some (m.replacePrefix `_private Name.anonymous)
+
+/-- The nearest proper prefix that is a constant of the package. -/
+partial def ownParent? (packageNames : NameSet) (n : Name) : Option Name :=
+  let p := n.getPrefix
+  if p.isAnonymous then none
+  else if packageNames.contains p then some p
+  else ownParent? packageNames p
+
+/-- The module a macro-scoped name was elaborated in. `extractMacroScopes`
+on `<name>._@.<module>.<hash>._hygCtx._hyg.<n>` (v4.35, probed) gives
+`imported = <module>.<hash>` and `ctx = _hygCtx`; concatenated and
+stripped of the trailing number and `_`-components, that is the module. -/
+partial def scopeModule : Name → Name
+  | .num p _ => scopeModule p
+  | .str p s => if s.startsWith "_" then scopeModule p else .str p s
+  | .anonymous => .anonymous
+
+def originOf (env : Environment) (matchers : NameSet) (packageNames : NameSet)
+    (ranges : NameMap DeclarationRanges) (n : Name) : Origin :=
+  let u := (privateToUserName? n).getD n
+  -- macro scopes first: a scoped name has numeric components by
+  -- construction whatever else it is (a private `initFn` is both), and the
+  -- scope's context names the module that elaborated it
+  if n.hasMacroScopes then
+    let v := extractMacroScopes n
+    .scoped (scopeModule (v.imported ++ v.ctx))
+  -- then privacy: the mangling settles ownership before anything Lean
+  -- realized inside the private name (a matcher's `splitter` is a private
+  -- *definition*, which realized-def rules would otherwise refuse)
+  else if let some m := privateModule? n then .«private» m
+  else if isReservedEither env n || isMatcherRealization matchers n || isMatcherRealization matchers u then
+    .realized u.getPrefix
+  else if ranges.contains n then .authored
+  else if let some p := ownParent? packageNames n then .auxiliary p
+  else .authored
+
+def jsonOfOrigin (canon : Name → String) : Origin → Json
+  | .authored => Json.mkObj [("kind", Json.str "authored")]
+  | .«private» m => Json.mkObj [("kind", Json.str "private"), ("module", Json.str (canon m))]
+  | .scoped m => Json.mkObj [("kind", Json.str "scoped"), ("module", Json.str (canon m))]
+  | .realized p => Json.mkObj [("kind", Json.str "realized"), ("parent", Json.str (canon p))]
+  | .auxiliary p => Json.mkObj [("kind", Json.str "auxiliary"), ("parent", Json.str (canon p))]
+
 def runCoreIO (env : Environment) (x : CoreM α) : IO α := do
   let coreCtx : Core.Context := { fileName := "<laxinspector>", fileMap := default }
   let (a, _) ← x.toIO coreCtx { env }
@@ -220,11 +319,29 @@ in one inspector-owned cache across declarations.
 -/
 structure AxiomCacheState where
   seen : NameMap (Array Name) := {}
+  /-- the axiom sets of the current module's own constants, which the walk
+  resolves from that module's olean rather than from the merged
+  environment: reset per module (`AxiomCacheCtx.local`) -/
+  localSeen : NameMap (Array Name) := {}
   /-- constants whose traversal is still open, at their DFS stack depth -/
   inProgress : NameMap Nat := {}
   axioms : NameSet := {}
 
-abbrev AxiomCacheM := ReaderT Environment (StateM AxiomCacheState)
+/-- What the walk resolves a constant against. `finalizeImport` keeps one
+copy of a theorem two modules both declare (identical name, type, and level
+parameters — `subsumesInfo`), so `env.find?` on such a name returns the
+later module's body and the earlier module's copy, `sorry` and all, would
+never be walked (codex review 2 2026-10-04, finding 4). The module's own
+constants (`ModuleData.constants`, exactly what its olean stores) take
+precedence over the merged environment, for the root and for everything the
+walk reaches that this module declares; everything else is the merged
+environment, which is what this module imported. -/
+structure AxiomCacheCtx where
+  env : Environment
+  /-- the current module's constants by name -/
+  «local» : Std.HashMap Name ConstantInfo
+
+abbrev AxiomCacheM := ReaderT AxiomCacheCtx (StateM AxiomCacheState)
 
 def insertAxioms (s : NameSet) (axs : Array Name) : NameSet :=
   axs.foldl (init := s) fun acc ax => acc.insert ax
@@ -247,7 +364,11 @@ later query recomputes the other members against that entry.
 -/
 partial def collectAxiomsCached (c : Name) (depth : Nat := 0) : AxiomCacheM (Option Nat) := do
   let s ← get
-  if let some axs := s.seen.find? c then
+  let ctx ← read
+  -- a constant this module declares is cached per module, since the merged
+  -- environment may hold another module's copy of the same name
+  let isLocal := ctx.local.contains c
+  if let some axs := (if isLocal then s.localSeen else s.seen).find? c then
     modify fun s => { s with axioms := insertAxioms s.axioms axs }
     return none
   if let some d := s.inProgress.find? c then
@@ -258,8 +379,7 @@ partial def collectAxiomsCached (c : Name) (depth : Nat := 0) : AxiomCacheM (Opt
   let collectExpr (low : Option Nat) (e : Expr) : AxiomCacheM (Option Nat) :=
     e.getUsedConstants.foldlM (init := low) fun acc n =>
       return minLow acc (← collectAxiomsCached n (depth + 1))
-  let env ← read
-  let low ← match env.checked.get.find? c with
+  let low ← match (ctx.local[c]? <|> ctx.env.checked.get.find? c) with
     | some (.axiomInfo v) => do
         modify fun s => { s with axioms := s.axioms.insert c }
         collectExpr none v.type
@@ -282,7 +402,8 @@ partial def collectAxiomsCached (c : Name) (depth : Nat := 0) : AxiomCacheM (Opt
     | none => true
     | some d => depth ≤ d
   modify fun s => {
-    seen := if cacheable then s.seen.insert c result else s.seen
+    seen := if cacheable && !isLocal then s.seen.insert c result else s.seen
+    localSeen := if cacheable && isLocal then s.localSeen.insert c result else s.localSeen
     inProgress := s.inProgress.erase c
     axioms := insertAxioms savedAxioms result
   }
@@ -291,11 +412,12 @@ partial def collectAxiomsCached (c : Name) (depth : Nat := 0) : AxiomCacheM (Opt
     | some d => if d < depth then some d else none
     | none => none
 
-def axiomsOfCached (env : Environment) (state : AxiomCacheState) (n : Name) :
+def axiomsOfCached (ctx : AxiomCacheCtx) (state : AxiomCacheState) (n : Name) :
     Array Name × AxiomCacheState :=
   let state := { state with axioms := {} }
-  let (_, state) := (collectAxiomsCached n).run env |>.run state
-  (state.seen.find? n).getD #[] |> fun axs => (axs, state)
+  let (_, state) := (collectAxiomsCached n).run ctx |>.run state
+  let seen := if ctx.local.contains n then state.localSeen else state.seen
+  (seen.find? n).getD #[] |> fun axs => (axs, state)
 
 /-- Constants mentioned directly by a declaration's type or value. The
 validator uses the package-local part of this graph to decide which helper
@@ -330,6 +452,38 @@ persisted extension data: no reduction, no kernel work, no judgment — whether
 a constant in a telescope *is* a statement is the validator's question.
 -/
 
+/-- The archive's canonical name form — dot-separated string components,
+nothing escaped, which `certify/lean-name.ts` re-quotes — is not injective
+over `Lean.Name`: `Lax1.C.«A.B»` and `Lax1.C.A.B` flatten to the same text
+(codex review 2026-10-04, finding 1). A name is canonical iff, un-mangled,
+every component is `Name.str` with no `.` in it. The test is structural and
+exempts nothing: `Name.isInternalDetail` is a shape heuristic (`proof_1`,
+`eq_1`, a `_` prefix), not provenance, and an authored `C.«A.B».proof_1`
+exempted by it would flatten to another constant's canonical name (codex
+review 2 2026-10-04, finding 1). Every spec-2 name that is not canonical
+is written in Lean's *escaped* form instead (`«A.B»`, numeric components
+as digits), and the declaration is flagged `nonCanonical`; the validator
+refuses a user-level or endpoint declaration so named and lets Lean's own
+macro-scoped and auxiliary names (`…._@.<module>._hyg.3`), which are never
+translated, pass. The escaped form is not itself injective: `.num k` and
+`.str "k"` both print as `k`. That route is closed elsewhere, not here —
+the validator admits only canonical names as endpoints and
+`LEAN_NAME_PATTERN` admits no all-digit component, so a `.num` name never
+names an edge, and a Solution that applied a proof under the wrong reading
+would fail to elaborate in B1 (verification review 2026-10-04). -/
+partial def isCanonicalName (n : Name) : Bool :=
+  go ((privateToUserName? n).getD n)
+where
+  go : Name → Bool
+    | .anonymous => true
+    | .str p s => !s.contains '.' && go p
+    | .num _ _ => false
+
+/-- A spec-2 name as the report writes it: canonical, or escaped when it
+cannot be. -/
+def canonStr (n : Name) : String :=
+  if isCanonicalName n then n.toString (escape := false) else n.toString
+
 /-- A universe level, structurally, as a JSON array tagged by its head:
 `["zero"]`, `["succ", l]`, `["max", a, b]`, `["imax", a, b]`, and
 `["param", "u"]` for a universe variable. A level metavariable never survives
@@ -341,7 +495,7 @@ partial def jsonOfLevel : Level → Json
   | .succ l => Json.arr #[Json.str "succ", jsonOfLevel l]
   | .max a b => Json.arr #[Json.str "max", jsonOfLevel a, jsonOfLevel b]
   | .imax a b => Json.arr #[Json.str "imax", jsonOfLevel a, jsonOfLevel b]
-  | .param n => Json.arr #[Json.str "param", Json.str (n.toString (escape := false))]
+  | .param n => Json.arr #[Json.str "param", Json.str (canonStr n)]
   | .mvar _ => Json.arr #[Json.str "mvar"]
 
 /-- `Lean.BinderInfo`'s own constructor names. -/
@@ -376,11 +530,11 @@ def jsonOfTelescope : Option (Array TelescopeBinder × Name × List Level) → J
   | some (binders, n, ls) =>
     Json.mkObj
       [("hypotheses", Json.arr (binders.map fun b => Json.mkObj
-          [("const", Json.str (b.const.toString (escape := false))),
+          [("const", Json.str (canonStr b.const)),
            ("levels", Json.arr (b.levels.toArray.map jsonOfLevel)),
            ("binder", jsonOfBinderInfo b.binder)])),
        ("conclusion", Json.mkObj
-          [("const", Json.str (n.toString (escape := false))),
+          [("const", Json.str (canonStr n)),
            ("levels", Json.arr (ls.toArray.map jsonOfLevel))])]
 
 /-- The number of leading `∀`-binders of the stored type, metadata stripped:
@@ -580,6 +734,80 @@ unsafe def laxStatementsOf (datas : Array ModuleData) : NameSet := Id.run do
           out := out.insert (unsafeCast e : Name)
   return out
 
+-- `initializersOf` casts each entry of the `init`/`builtin_init` attributes'
+-- extensions to `Name × Name` — the declaration and its initialization
+-- function, as a `ParametricAttribute Name` persists them. The attributes'
+-- own types are guarded: `ParametricAttribute α` is what makes the persisted
+-- entries `Name × α`.
+run_cmd do
+  ShapeGuard.checkConst "initializersOf" `Lean.regularInitAttr "(Lean.ParametricAttribute Lean.Name)"
+  ShapeGuard.checkConst "initializersOf" `Lean.builtinInitAttr "(Lean.ParametricAttribute Lean.Name)"
+
+/-- The declarations a module marks `@[init …]`/`@[builtin_init …]` — every
+`initialize`, `builtin_initialize`, and their sugar (`register_option`,
+`register_simp_attr`, `declare_syntax_cat`, a persistent extension) — read
+from the raw olean entries as `moduleDocsOf` reads module docs. A record
+declares none (spec 2): an initializer registers a name-keyed global
+registry that clashes at import when two records pick the same name, and
+runs arbitrary IO in every importer's `lean`
+(spike/axiomfree/namespace-review-20261004.md, F1). -/
+unsafe def initializersOf (data : ModuleData) : NameSet := Id.run do
+  let mut out : NameSet := {}
+  for (extName, entries) in data.entries do
+    let name := (privateToUserName? extName).getD extName
+    if name == `Lean.regularInitAttr || name == `Lean.builtinInitAttr then
+      for e in entries do
+        let (decl, _) := (unsafeCast e : Name × Name)
+        out := out.insert decl
+  return out
+
+/-- The extensions that hold a module's syntax, macro, and elaborator
+registrations: `syntax`/`notation`/`infix` tokens and parsers,
+`macro`/`macro_rules`/`notation` expansions, `elab`/`elab_rules` for terms,
+commands, and tactics. Every one is a `ScopedEnvExtension`, and the olean
+keeps each entry's scope: `global`, or `scoped` under a namespace
+(a `local` one is not persisted at all). -/
+def syntaxExtensions : List Name :=
+  [`Lean.Parser.parserExtension, `Lean.Elab.macroAttribute, `Lean.Elab.Term.termElabAttribute,
+   `Lean.Elab.Command.commandElabAttribute, `Lean.Elab.Tactic.tacticElabAttribute]
+
+-- `globalSyntaxOf` casts each entry of those extensions to
+-- `ScopedEnvExtension.Entry` and reads its constructor, and a parser
+-- extension entry further to `ParserExtension.OLeanEntry` for its kind.
+run_cmd do
+  ShapeGuard.checkType "globalSyntaxOf" `Lean.Parser.ParserExtension.OLeanEntry
+    "Lean.Parser.ParserExtension.OLeanEntry.token : (explicit val : Lean.Parser.Token) -> Lean.Parser.ParserExtension.OLeanEntry\nLean.Parser.ParserExtension.OLeanEntry.kind : (explicit val : Lean.SyntaxNodeKind) -> Lean.Parser.ParserExtension.OLeanEntry\nLean.Parser.ParserExtension.OLeanEntry.category : (explicit catName : Lean.Name) -> (explicit declName : Lean.Name) -> (explicit behavior : Lean.Parser.LeadingIdentBehavior) -> Lean.Parser.ParserExtension.OLeanEntry\nLean.Parser.ParserExtension.OLeanEntry.parser : (explicit catName : Lean.Name) -> (explicit declName : Lean.Name) -> (explicit prio : Nat) -> Lean.Parser.ParserExtension.OLeanEntry"
+  ShapeGuard.checkType "globalSyntaxOf" `Lean.ScopedEnvExtension.Entry
+    "Lean.ScopedEnvExtension.Entry.global : (implicit α : Sort) -> (explicit a._@._internal._hyg.0 : #0) -> (Lean.ScopedEnvExtension.Entry #1)\nLean.ScopedEnvExtension.Entry.scoped : (implicit α : Sort) -> (explicit a._@._internal._hyg.0 : Lean.Name) -> (explicit a._@._internal._hyg.0 : #1) -> (Lean.ScopedEnvExtension.Entry #2)"
+
+/-- The syntax extensions a module contributes a *global* entry to. A global
+`syntax`, `macro_rules`, or `elab` rewrites every importer — the archive's
+generated Challenge included: a `macro_rules` for `theorem` in a concept
+package turns `theorem Cert.p : 1 = 2 := sorry` into `Cert.p : True` with
+both exports agreeing (spike/axiomfree/namespace-review-20261004.md, E1) —
+and two records' global tokens collide for every later author. A record
+declares every syntax extension `scoped` or `local` (spec 2). -/
+unsafe def globalSyntaxOf (data : ModuleData) : Array Name := Id.run do
+  let mut out : Array Name := #[]
+  for (extName, entries) in data.entries do
+    let name := (privateToUserName? extName).getD extName
+    if syntaxExtensions.contains name then
+      let global := entries.any fun e =>
+        match (unsafeCast e : ScopedEnvExtension.Entry NonScalar) with
+        | .global a =>
+          -- a syntax node *kind* is registered globally by every `syntax`,
+          -- `scoped` or not (kinds are names under the declaring namespace
+          -- and clash with nothing); what rewrites an importer is a token,
+          -- a parser, or a category
+          if name == `Lean.Parser.parserExtension then
+            match (unsafeCast a : Parser.ParserExtension.OLeanEntry) with
+            | .kind _ => false
+            | _ => true
+          else true
+        | .scoped _ _ => false
+      if global then out := out.push name
+  return out
+
 def usage : IO UInt32 := do
   IO.eprintln "usage: laxinspector --spec <1|2> <out.json> <module> [<module>...]"
   return 1
@@ -652,31 +880,58 @@ unsafe def main (args : List String) : IO UInt32 := do
     let moduleDocs := moduleDocsOf data
     let declarationRanges := declarationRangesOf data
     let moduleDocsJson := Json.arr <| moduleDocs.map fun d => jsonOfParsedDoc (parseDoc d.doc)
-    moduleJsons := moduleJsons.push <| Json.mkObj
+    -- the module-level spec-2 facts: the syntax extensions this module
+    -- registers globally; the declarations it marks `@[init]` are flagged
+    -- per declaration below
+    let globalSyntax := if spec == 2 then globalSyntaxOf data else #[]
+    let initializers := if spec == 2 then initializersOf data else {}
+    moduleJsons := moduleJsons.push <| Json.mkObj <|
       [("name", Json.str (nameStr m)),
        ("imports", importsJson),
        ("moduleDocs", moduleDocsJson),
-       ("declCount", toJson data.constNames.size)]
+       ("declCount", toJson data.constNames.size)] ++
+      (if spec == 2 then [("globalSyntax", Json.arr (globalSyntax.map fun n => Json.str (nameStr n)))] else [])
 
+    -- the module's own constants, as its olean stores them: `env.find?`
+    -- would return the merged environment's copy, which for a theorem two
+    -- modules both declare is the later module's (`AxiomCacheCtx`)
+    let mut localMap : Std.HashMap Name ConstantInfo := {}
+    for i in [0:data.constNames.size] do
+      localMap := localMap.insert data.constNames[i]! data.constants[i]!
+    let ctx : AxiomCacheCtx := { env, «local» := localMap }
+    axiomCache := { axiomCache with localSeen := {} }
     for declName in data.constNames do
-      let some ci := env.find? declName
+      let some ci := localMap[declName]?
         | IO.eprintln s!"constant {declName} of module {m} not found"
           return 2
-      let (axioms, axiomCache') := axiomsOfCached env axiomCache declName
+      let (axioms, axiomCache') := axiomsOfCached ctx axiomCache declName
       axiomCache := axiomCache'
       let usedConstants := (usedConstantsOf ci).toArray
         |>.filter packageNames.contains
         |>.qsort Name.lt
       let doc? ← findDocString? env declName
       let parsed? := doc?.map parseDoc
+      -- a spec-2 declaration whose name is not canonical is written
+      -- escaped and flagged (`isCanonicalName`); spec 1 is untouched
+      let canonical := spec != 2 || isCanonicalName declName
+      let declStr (n : Name) : String := if canonical then nameStr n else n.toString
       let mut fields : List (String × Json) :=
-        [("name", Json.str (nameStr declName)),
+        [("name", Json.str (declStr declName)),
          ("kind", Json.str (kindOf ci)),
          ("module", Json.str (nameStr m)),
          ("axioms", Json.arr (axioms.map fun a => Json.str (nameStr a))),
          ("usedConstants", Json.arr (usedConstants.map fun n => Json.str (nameStr n)))]
+      if !canonical then
+        fields := fields ++ [("nonCanonical", Json.bool true)]
+      -- `userName` is the display name: the spec's user-level reading, and
+      -- nothing a rule branches on. Where a declaration came from is
+      -- `origin`, one fact with its evidence (`Origin`).
       if let some u := userLevelName? env matchers declName then
-        fields := fields ++ [("userName", Json.str (nameStr u))]
+        fields := fields ++ [("userName", Json.str (declStr u))]
+      if spec == 2 then
+        fields := fields ++ [("origin", jsonOfOrigin canonStr (originOf env matchers packageNames declarationRanges declName))]
+      if initializers.contains declName then
+        fields := fields ++ [("initializer", Json.bool true)]
       if let some ranges := declarationRanges.find? declName then
         fields := fields ++ [
           ("startLine", toJson ranges.range.pos.line),
@@ -728,7 +983,7 @@ unsafe def main (args : List String) : IO UInt32 := do
         fields := fields ++ [
           ("laxStatement", Json.bool tagged),
           ("isProp", Json.bool isProp),
-          ("levelParams", Json.arr (ci.levelParams.toArray.map fun n => Json.str (nameStr n))),
+          ("levelParams", Json.arr (ci.levelParams.toArray.map fun n => Json.str (canonStr n))),
           ("telescope", jsonOfTelescope (telescopeOf type))]
         if tagged then
           fields := fields ++ [("binders", toJson (leadingBinders type))]

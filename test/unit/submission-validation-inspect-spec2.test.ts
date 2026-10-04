@@ -46,9 +46,14 @@ const PROOF_INVENTORY = inventory("Lax1Proofs", ["Lax1Proofs.Basic"]);
  * a helper theorem unless said otherwise. */
 function decl(overrides: Partial<InspectorDeclaration> & { name: string }): InspectorDeclaration {
   const module = overrides.module ?? (overrides.name.startsWith("Lax1Proofs") || overrides.name.includes(".Lax1Proofs.") ? "Lax1Proofs.Basic" : "Lax1.Claim");
+  // the origin as the inspector would report it for the name: private by
+  // its mangling, authored otherwise; a case states any other origin
+  const mangled = /^_private\.(.+?)\.0\./u.exec(overrides.name);
+  const origin: InspectorDeclaration["origin"] = mangled === null ? { kind: "authored" } : { kind: "private", module: mangled[1]! };
   return {
     kind: "theorem",
     userName: overrides.name,
+    origin,
     axioms: [],
     usedConstants: [],
     laxStatement: false,
@@ -197,10 +202,115 @@ const CASES: Case[] = [
     statements: [],
   },
   {
+    // decision 10: a private name is module-mangled and cannot clash with
+    // another record's, so the namespace rule — the composition rule — has
+    // nothing to say about it; every other rule still applies
+    name: "a private declaration outside the namespace is admitted in either package",
+    concepts: [
+      statement(A),
+      decl({ name: "_private.Lax1.Claim.0.aux", userName: "aux", kind: "def", isProp: true }),
+    ],
+    proofs: [decl({ name: "_private.Lax1Proofs.Basic.0.hidden_helper", userName: "hidden_helper" })],
+    violations: [],
+    statements: [{ id: A }],
+  },
+  {
+    // codex review 2026-10-04, finding 5: a `_private.` prefix is not
+    // provenance — only a name mangled with one of the package's own
+    // modules is exempt; anything else takes the ordinary prefix test
+    name: "a private-looking name under someone else's module is not exempt",
+    concepts: [statement(A)],
+    proofs: [decl({ name: "_private.Lax9Proofs.Basic.0.hidden", userName: "hidden" })],
+    violations: [["namespace", "proof declaration hidden does not carry namespace Lax1Proofs"]],
+  },
+  {
+    // codex review 2026-10-04, finding 1: `Lax1.Claim.«A.B»` and
+    // `Lax1.Claim.A.B` flatten to one canonical string; the inspector
+    // writes the first escaped and flagged, and it is refused, not merged
+    name: "a name the canonical form cannot carry is refused, and the plain one beside it survives",
+    concepts: [
+      statement("Lax1.Claim.«A.B»", { nonCanonical: true }),
+      decl({ name: "Lax1.Claim.A.B", kind: "def", isProp: true }),
+    ],
+    proofs: [],
+    violations: [["name-not-canonical", "concept declaration Lax1.Claim.«A.B» has a component Lean must quote"]],
+    statements: [],
+  },
+  {
+    name: "two reserved theorems of one name are the realized-duplicate case and keep the first; anything else is refused",
+    concepts: [
+      statement(A),
+      // realized in two modules, reported with the realized origin and no
+      // userName: Lean merges them (an absent userName alone is not
+      // provenance — an authored `proof_1` has none either)
+      decl({ name: "Lax1.Claim.foo.eq_1", module: "Lax1.Claim", userName: undefined, origin: { kind: "realized", parent: "Lax1.Claim.foo" } }),
+      decl({ name: "Lax1.Claim.foo.eq_1", module: "Lax1.Claim", userName: undefined, origin: { kind: "realized", parent: "Lax1.Claim.foo" } }),
+      decl({ name: "Lax1.Claim.twice", kind: "def", isProp: true }),
+      decl({ name: "Lax1.Claim.twice", kind: "theorem" }),
+      // two authored theorems of one name (D2): the record's id would
+      // describe one and the Solution apply the other
+      decl({ name: "Lax1.Claim.lemma", module: "Lax1.Claim" }),
+      decl({ name: "Lax1.Claim.lemma", module: "Lax1.Claim" }),
+    ],
+    proofs: [],
+    violations: [
+      ["duplicate-name", "concept declaration Lax1.Claim.twice is declared twice (def in Lax1.Claim, theorem in Lax1.Claim)"],
+      ["duplicate-name", "concept declaration Lax1.Claim.lemma is declared twice (theorem in Lax1.Claim, theorem in Lax1.Claim)"],
+    ],
+    statements: [{ id: A }],
+  },
+  {
+    name: "a realized definition under an imported name is a namespace violation; under the package's own prefix it is nothing",
+    concepts: [statement(A)],
+    proofs: [
+      // bv_decide's normalizer realizes `<enum>.enumToBitVec` as a public
+      // def under the enum's namespace (namespace review, B2)
+      decl({ name: "Col.enumToBitVec", kind: "def", origin: { kind: "realized", parent: "Col" } }),
+      decl({ name: "Lax1Proofs.Shade.enumToBitVec", kind: "def", origin: { kind: "realized", parent: "Lax1Proofs.Shade" } }),
+    ],
+    violations: [["namespace", "proof declaration Col.enumToBitVec is a realized definition under an imported name; Lean refuses to import two records that both realize it"]],
+  },
+  {
+    name: "a name a reader cannot read as itself is refused: a combining mark, an invisible joiner, a script mix, a Greek capital lookalike; hα and ℕ are fine",
+    concepts: [statement(A), statement("Lax1.Claim.hα"), statement("Lax1.Claim.ℕbound"), statement("Lax1.Claim.Fermat\u034f")],
+    proofs: [
+      decl({ name: "Lax1Proofs.Ferm\u0430t" }), // Cyrillic а
+      decl({ name: "Lax1Proofs.Prime\u039frder" }), // Greek capital Omicron
+      decl({ name: "Lax1Proofs.e\u0301tale" }), // e + combining acute: not NFC
+      decl({ name: "Lax1Proofs.levels", levelParams: ["u\u034f"] }),
+    ],
+    violations: [
+      ["name-hygiene", "concept declaration Lax1.Claim.Fermat\u034f carries a combining mark or an invisible format character"],
+      ["name-hygiene", "proof declaration Lax1Proofs.Ferm\u0430t mixes Latin and Cyrillic in the component \"Ferm\u0430t\""],
+      ["name-hygiene", "proof declaration Lax1Proofs.Prime\u039frder mixes Latin and Greek in the component \"Prime\u039frder\""],
+      // the collector writes every message in NFC (findings.ts), so the
+      // name shows composed here while the rule saw it decomposed
+      ["name-hygiene", "proof declaration Lax1Proofs.\u00e9tale is not in Unicode normal form C"],
+      ["name-hygiene", "proof declaration Lax1Proofs.levels universe parameter u\u034f carries a combining mark"],
+    ],
+    statements: [{ id: A }, { id: "Lax1.Claim.hα" }, { id: "Lax1.Claim.ℕbound" }],
+  },
+  {
+    name: "an initializer anywhere in a record is a violation (F1)",
+    concepts: [statement(A), decl({ name: "Lax1.Claim.myExt", kind: "opaque", initializer: true })],
+    proofs: [decl({ name: "_private.Lax1Proofs.Basic.0.Lax1Proofs.initFn._@.Lax1Proofs.Basic._hyg.12", kind: "def", userName: undefined, initializer: true })],
+    violations: [
+      ["initialize", "concept module Lax1.Claim declares an initializer (Lax1.Claim.myExt)"],
+      ["initialize", "proof module Lax1Proofs.Basic declares an initializer (_private.Lax1Proofs.Basic.0.Lax1Proofs.initFn._@.Lax1Proofs.Basic._hyg.12)"],
+    ],
+    statements: [{ id: A }],
+  },
+  {
+    name: "a private declaration keeps every rule but the namespace one",
+    concepts: [statement(A)],
+    proofs: [decl({ name: "_private.Lax1Proofs.Basic.0.hidden_helper", userName: "hidden_helper", axioms: ["sorryAx"] })],
+    violations: [["axiom-free", "proof declaration hidden_helper depends on axiom sorryAx"]],
+  },
+  {
     name: "the marker in the proof package is a violation",
     concepts: [statement(A)],
     proofs: [statement("Lax1Proofs.S")],
-    violations: [["statement", "Lax1Proofs.S carries @[lax_statement] in the proof package; statements are declared in the concept package"]],
+    violations: [["marker", "Lax1Proofs.S carries @[lax_statement] in the proof package; statements are declared in the concept package"]],
   },
   {
     name: "a proof of AimpC is the edge {} → AimpC, not {A} → C",
@@ -377,6 +487,117 @@ const CASES: Case[] = [
     proofs: [],
     violations: [["axiom-free", "concept declaration Lax1.Claim.A depends on axiom sorryAx"]],
   },
+  // ── provenance-based ownership (codex review 2 2026-10-04, finding 1) ──
+  {
+    name: "the dependency side of the internal-name scenario: a def under another record's namespace is a namespace violation however internal its name looks",
+    concepts: [decl({ name: "Lax2.C.A.B.proof_1", kind: "def", isProp: true, userName: undefined })],
+    proofs: [],
+    violations: [["namespace", "concept declaration Lax2.C.A.B.proof_1 does not carry namespace Lax1.Claim"]],
+    statements: [],
+  },
+  {
+    name: "the record side: an authored tagged def with an internal-looking, non-canonical name is refused by the canonical rule, never flattened",
+    concepts: [statement("Lax1.Claim.«A.B».proof_1", { nonCanonical: true, userName: undefined })],
+    proofs: [],
+    violations: [["name-not-canonical", "concept declaration Lax1.Claim.«A.B».proof_1 has a component Lean must quote"]],
+    statements: [],
+  },
+  {
+    name: "a tagged declaration Lean generated (an auxiliary of an own declaration) is refused as an endpoint by its origin",
+    concepts: [statement("Lax1.Claim.A.proof_1", { userName: undefined, origin: { kind: "auxiliary", parent: "Lax1.Claim.A" } })],
+    proofs: [],
+    violations: [["statement", "Lax1.Claim.A.proof_1 carries @[lax_statement] but is not an authored declaration — Lean generated it for Lax1.Claim.A"]],
+    statements: [],
+  },
+  {
+    name: "a tagged declaration Lean realized is refused as an endpoint by its origin, whatever its display name",
+    concepts: [statement("Lax1.Claim.A.eq_1", { origin: { kind: "realized", parent: "Lax1.Claim.A" } })],
+    proofs: [],
+    violations: [["statement", "Lax1.Claim.A.eq_1 carries @[lax_statement] but is not an authored declaration — Lean realized it under Lax1.Claim.A"]],
+    statements: [],
+  },
+  {
+    name: "a proof over a constant the inspector had to escape is refused, not read as a proof of the flattened name",
+    concepts: [statement(A)],
+    proofs: [decl({ name: "Lax1Proofs.p", telescope: chain([], ["Lax1.Claim.«A.B».proof_1"]) })],
+    violations: [["proof", "theorem Lax1Proofs.p has the shape of a proof over Lax1.Claim.«A.B».proof_1, whose name the archive's canonical form cannot carry"]],
+    proofEntries: [],
+  },
+  {
+    name: "a proof over a canonical constant that is no registered statement is a helper, however internal the constant looks",
+    concepts: [statement(A)],
+    proofs: [decl({ name: "Lax1Proofs.p", telescope: chain([], ["Lax1.Claim.A.B.proof_1"]) })],
+    violations: [],
+    proofEntries: [],
+  },
+  {
+    name: "a theorem of proof shape that Lean generated is refused as an endpoint by its origin",
+    concepts: [statement(A)],
+    proofs: [decl({ name: "Lax1Proofs.p.proof_1", userName: undefined, origin: { kind: "auxiliary", parent: "Lax1Proofs.p" }, telescope: chain([], [A]) })],
+    violations: [["proof", "proof declaration Lax1Proofs.p.proof_1 has the shape of a proof but is not an authored declaration — Lean generated it for Lax1Proofs.p"]],
+    proofEntries: [],
+  },
+  {
+    name: "an honest package's generated names all carry the prefix or an origin Lean vouches for, and pass",
+    concepts: [
+      statement(A),
+      // `structure`/`inductive` internals extend the type's name
+      decl({ name: "Lax1.Claim.S", kind: "inductive", userName: "Lax1.Claim.S" }),
+      decl({ name: "Lax1.Claim.S.rec", kind: "rec", userName: undefined, origin: { kind: "auxiliary", parent: "Lax1.Claim.S" } }),
+      decl({ name: "Lax1.Claim.S.mk.injEq", kind: "theorem", userName: undefined, origin: { kind: "auxiliary", parent: "Lax1.Claim.S.mk" } }),
+    ],
+    proofs: [
+      decl({ name: "Lax1Proofs.f", kind: "def" }),
+      // `match` compiles to `<fn>.match_<n>`, `decreasing_by` to `<fn>.proof_<n>`
+      decl({ name: "Lax1Proofs.f.match_1", kind: "def", userName: undefined, origin: { kind: "auxiliary", parent: "Lax1Proofs.f" } }),
+      decl({ name: "Lax1Proofs.f.proof_1", kind: "theorem", userName: undefined, origin: { kind: "auxiliary", parent: "Lax1Proofs.f" } }),
+      // equation lemmas are realized under the function, own or imported
+      decl({ name: "Lax1Proofs.f.eq_1", kind: "theorem", userName: undefined, origin: { kind: "realized", parent: "Lax1Proofs.f" } }),
+      decl({ name: "Nat.add.eq_1", kind: "theorem", userName: undefined, origin: { kind: "realized", parent: "Nat.add" } }),
+      decl({ name: "Nat.add.congr_simp", kind: "theorem", userName: undefined, origin: { kind: "realized", parent: "Nat.add" } }),
+      // a matcher's splitter is private per module, under its own module
+      decl({ name: "_private.Lax1Proofs.Basic.0.Nat.add.match_1.splitter", kind: "def", userName: undefined }),
+      // an auto-named instance under the namespace, a private helper
+      decl({ name: "Lax1Proofs.instDecidableEqS", kind: "def" }),
+      decl({ name: "_private.Lax1Proofs.Basic.0.Lax1Proofs.helper", userName: "Lax1Proofs.helper" }),
+      // a macro-scoped auxiliary: non-canonical by construction, never translated
+      decl({ name: "Lax1Proofs.foo._@.Lax1Proofs.Basic._hyg.3", kind: "def", userName: undefined, nonCanonical: true, origin: { kind: "scoped", module: "Lax1Proofs.Basic" } }),
+    ],
+    violations: [],
+  },
+  {
+    name: "a private or scoped name of another module is held to the prefix on its un-mangled form",
+    concepts: [statement(A)],
+    proofs: [
+      decl({ name: "_private.Lax2Proofs.Basic.0.Lax2Proofs.helper", userName: "Lax2Proofs.helper" }),
+      decl({ name: "Lax2Proofs.foo._@.Lax2Proofs.Basic._hyg.3", kind: "def", userName: undefined, nonCanonical: true, origin: { kind: "scoped", module: "Lax2Proofs.Basic" } }),
+    ],
+    violations: [
+      ["namespace", "proof declaration Lax2Proofs.helper does not carry namespace Lax1Proofs"],
+      ["namespace", "proof declaration Lax2Proofs.foo._@.Lax2Proofs.Basic._hyg.3 does not carry namespace Lax1Proofs"],
+    ],
+  },
+  {
+    name: "two authored copies of one theorem name are refused, and each module's body is judged: the sorry copy fails hygiene",
+    concepts: [statement(A)],
+    proofs: [
+      decl({ name: "Lax1Proofs.h.proof_1", userName: undefined }),
+      decl({ name: "Lax1Proofs.h.proof_1", userName: undefined, axioms: ["sorryAx"] }),
+    ],
+    violations: [
+      ["duplicate-name", "proof declaration Lax1Proofs.h.proof_1 is declared twice"],
+      ["axiom-free", "proof declaration Lax1Proofs.h.proof_1 depends on axiom sorryAx"],
+    ],
+  },
+  {
+    name: "two realized copies of one theorem are the realization Lean admits from two modules",
+    concepts: [statement(A)],
+    proofs: [
+      decl({ name: "Nat.add.eq_1", userName: undefined, origin: { kind: "realized", parent: "Nat.add" } }),
+      decl({ name: "Nat.add.eq_1", userName: undefined, origin: { kind: "realized", parent: "Nat.add" } }),
+    ],
+    violations: [],
+  },
 ];
 
 describe("spec-2 classification", () => {
@@ -396,6 +617,12 @@ describe("spec-2 classification", () => {
       );
       const actual = judged.findings.violations.map((finding) => `[${finding.rule}] ${finding.message}`);
       expect(actual).toHaveLength(testCase.violations.length);
+      // decision 10: the rules that decide what edge a theorem is answer
+      // `translation`; every other inspect finding is an archive standard
+      for (const finding of [...judged.findings.violations, ...judged.findings.warnings]) {
+        const translation = ["statement", "proof", "name-not-canonical", "name-hygiene", "duplicate-name"].includes(finding.rule);
+        expect(finding.intent, `${finding.rule}: ${finding.message}`).toBe(translation ? "translation" : "standards");
+      }
       for (const [rule, substring] of testCase.violations) {
         expect(actual.some((line) => line.startsWith(`[${rule}] `) && line.includes(substring)), `${rule}: ${substring}\n${actual.join("\n")}`).toBe(true);
       }
@@ -413,6 +640,22 @@ describe("spec-2 classification", () => {
       }
     });
   }
+
+  it("a module registering global syntax is a violation; scoped and local syntax leave no global entry (E1)", () => {
+    const fixture = reports([statement(A)], [decl({ name: "Lax1Proofs.helper" })]);
+    fixture.proofs.modules[1]!.globalSyntax = ["Lean.Parser.parserExtension", "Lean.Elab.macroAttribute"];
+    fixture.concepts.modules[1]!.globalSyntax = ["Lean.Elab.Term.termElabAttribute"];
+    const judged = judgeInspection(fixture.concepts, fixture.proofs, CONCEPT_INVENTORY, PROOF_INVENTORY, EMPTY_RESOLUTION, "both", undefined, LIBRARY_ROOTS, 2);
+    const actual = judged.findings.violations.map((finding) => `[${finding.rule}] ${finding.message}`);
+    expect(actual).toEqual([
+      "[global-syntax] concept module Lax1.Claim registers global syntax (a term elaborator); a record declares every `syntax`, `notation`, `macro`, `macro_rules`, and `elab` as `scoped` or `local`",
+      "[global-syntax] proof module Lax1Proofs.Basic registers global syntax (a parser or token, a macro); a record declares every `syntax`, `notation`, `macro`, `macro_rules`, and `elab` as `scoped` or `local`",
+    ]);
+    for (const finding of judged.findings.violations) expect(finding.intent).toBe("standards");
+    const quiet = reports([statement(A)], [decl({ name: "Lax1Proofs.helper" })]);
+    quiet.proofs.modules[1]!.globalSyntax = [];
+    expect(judgeInspection(quiet.concepts, quiet.proofs, CONCEPT_INVENTORY, PROOF_INVENTORY, EMPTY_RESOLUTION, "both", undefined, LIBRARY_ROOTS, 2).findings.violations).toEqual([]);
+  });
 
   it("records a proof entry in the documented key order with levelParams and telescope", () => {
     const fixture = reports([statement(A), statement(C)], [decl({

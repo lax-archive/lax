@@ -86,11 +86,15 @@ export function run(
       if (memoryTimer !== undefined) clearInterval(memoryTimer);
       reject(e);
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (timer !== undefined) clearTimeout(timer);
       if (memoryTimer !== undefined) clearInterval(memoryTimer);
       if (timedOut) output += `\n[killed after ${Math.round(opts.timeoutMs! / 1000)}s timeout]\n`;
-      resolve({ code: timedOut ? 124 : (code ?? 1), output });
+      // a child that died by signal has no exit status: 3, the code the
+      // container tool script uses for the same thing, so a crash is never
+      // read as the author's build failing (certify/host.ts)
+      if (!timedOut && signal !== null) output += `\n[terminated by ${signal}]\n`;
+      resolve({ code: timedOut ? 124 : (code ?? (signal !== null ? 3 : 1)), output });
     });
   });
 }
@@ -155,11 +159,12 @@ export function runToFile(
       closeOnce();
       reject(error);
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (timer !== undefined) clearTimeout(timer);
       closeOnce();
       if (timedOut) output += `\n[killed after ${Math.round(opts.timeoutMs! / 1000)}s timeout]\n`;
-      resolve({ code: timedOut ? 124 : (code ?? 1), output });
+      if (!timedOut && signal !== null) output += `\n[terminated by ${signal}]\n`;
+      resolve({ code: timedOut ? 124 : (code ?? (signal !== null ? 3 : 1)), output });
     });
   });
 }

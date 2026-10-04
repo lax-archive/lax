@@ -140,6 +140,25 @@ describe("the publisher's reading of a certificate bundle", () => {
     });
   });
 
+  it("refuses a warm closure entry that points anywhere but github.com or beside the environment's own pins", () => {
+    // a reader's `lax certify --run` fetches these packages: a bundle must
+    // not be able to send one to a repository of the author's (fable
+    // review 2026-10-04, finding 1.4)
+    withTestEnvironments([spec2TestEnvironment()], () => {
+      for (const url of ["https://example.com/attacker/batteries", "file:///home/attacker/batteries", "ssh://git@github.com/leanprover-community/batteries", "https://github.com.evil.example/x/y"]) {
+        const { tar, provenance } = produced(PROOFS, [
+          ...warmPackages().filter((entry) => entry.name !== "batteries"),
+          { ...warmPackages()[0]!, url },
+        ]);
+        expect(() => verifyCertificateBundle(tar, provenance), url).toThrow("is not at github.com nor beside the environment's library pins");
+      }
+      // the library pins' own locations are admitted, whatever scheme the
+      // table uses (the test seams' fake mathlib is a `file://` repository)
+      const { tar, provenance } = produced();
+      expect(() => verifyCertificateBundle(tar, provenance)).not.toThrow();
+    });
+  });
+
   it("refuses a recorded Challenge that is not the bundle's", () => {
     withTestEnvironments([spec2TestEnvironment()], () => {
       const { tar, provenance } = produced();

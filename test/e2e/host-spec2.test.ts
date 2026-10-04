@@ -21,6 +21,7 @@ import { scaffoldSubmission } from "../../src/cli/scaffold.js";
 import * as ui from "../../src/cli/ui.js";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
 import { readBundle, sealBundle } from "../../src/submission-validation/certify/bundle.js";
+import { checkChallengeReport } from "../../src/submission-validation/certify/challenge-check.js";
 import { BUNDLE_FILES, type BundleFile } from "../../src/submission-validation/certify/generate.js";
 import {
   GIT_SHIM,
@@ -34,6 +35,16 @@ import {
   writeRunProject,
   type CertifyRecord,
 } from "../../src/submission-validation/certify/project.js";
+import {
+  SELF_TEST_MODULES,
+  SELF_TEST_PACKAGE,
+  SELF_TEST_THEOREM,
+  forgeKernelRejection,
+  selfTestComparatorConfig,
+  selfTestExportTargets,
+  selfTestProjectFiles,
+  toolDigests,
+} from "../../src/submission-validation/certify/self-test.js";
 import { interpretComparatorRun } from "../../src/submission-validation/certify/verdict.js";
 import type { HostValidationReport } from "../../src/submission-validation/host/pipeline.js";
 import {
@@ -41,12 +52,14 @@ import {
   epoch,
   librariesOf,
 } from "../../src/submission-validation/environments.js";
+import { inspectorBinary } from "../../src/submission-validation/host/inspector.js";
 import { lakeBinary, lakePathEnv, toolchainBinDir, toolchainDir } from "../../src/submission-validation/host/leanenv.js";
 import { run } from "../../src/submission-validation/host/proc.js";
+import { parseInspectorReport } from "../../src/submission-validation/phases/inspect-runner.js";
 import { readWarmManifestPackages, seedOverrides, warmDir, warmReady } from "../../src/submission-validation/host/warmstore.js";
 import { recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
 import { startFakeGhcr } from "../fake-ghcr.js";
-import { sharedWarmBase } from "../paths.js";
+import { SHARED_TOOLS, sharedWarmBase } from "../paths.js";
 import { archiveWith, publishLocalCapture } from "../support/captures.js";
 import { spec2TestEnvironment, withTestEnvironments, withTestEnvironmentsAsync } from "../support/environments.js";
 import { buildOnHost, freshLaxHome, makeHostSubmission, messages, rules, tmpDir } from "../support/host.js";
@@ -181,6 +194,141 @@ end Lax35Proofs
     });
   }, 600_000);
 
+  // Decision 10: the namespace rule is the composition rule, and the
+  // inspector's exemption of compiler-realized reserved names is that rule
+  // applied — Lean persists them under the *rewritten* function's namespace
+  // (here the concept package's), regenerates them identically in every
+  // package that needs them, and `finalizeImport` tolerates the duplicates.
+  // This fixture triggers every shape `userLevelName?` exempts so a new
+  // toolchain's new shape is found at admission, never by an author
+  // (history/environments-plan.md, admission checklist).
+  it("admits the reserved names a proof package realizes under a concept's namespace", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const root = makeHostSubmission(
+        "lax-39",
+        {
+          "concepts/Lax39.lean": "import Lax39.Shapes\n",
+          "concepts/Lax39/Shapes.lean": `import LaxCore
+
+/-!
+---
+title: Shapes
+type: theorem
+---
+Definitions whose use in a dependent package realizes reserved names.
+-/
+
+namespace Lax39.Shapes
+
+/-- an instance argument: simp through it realizes \`Bounded.congr_simp\` -/
+def Bounded {α : Type} [LT α] (bound x : α) : Prop := x < bound
+
+/-- a definition to unfold: \`IsSmall.eq_def\`, \`IsSmall.eq_1\` -/
+def IsSmall (n : Nat) : Prop := n < 10
+
+/-- a definition by match: \`pick.match_1.splitter\` and its equations -/
+def pick (n : Nat) : Nat :=
+  match n with
+  | 0 => 1
+  | k + 1 => k
+
+/-- a dependent argument: simp through it realizes \`guarded.congr_simp\` -/
+def guarded (n : Nat) (_h : n < 10) : Nat := n
+
+/-- a recursive definition: \`unfold\` realizes \`sumTo.eq_def\` -/
+def sumTo : Nat → Nat
+  | 0 => 0
+  | n + 1 => (n + 1) + sumTo n
+
+@[lax_statement] def Facts : Prop :=
+  Bounded (10 : Nat) (2 + 1) ∧ IsSmall 3 ∧ IsSmall (1 + 2) ∧ pick 0 = 1 ∧ (∀ n, pick (n + 1) = n)
+    ∧ (∀ n, pick n = 1 ∨ pick n = n - 1) ∧ (∀ (f g : Nat → Nat) x y (h : f x = g y), pick (f x) = pick (g y))
+    ∧ guarded (1 + 2) (by decide) = 3 ∧ sumTo 0 = 0 ∧ (∀ n, pick n ≤ n + 1)
+
+end Lax39.Shapes
+`,
+          "proofs/Lax39Proofs.lean": "import Lax39Proofs.Basic\n",
+          "proofs/Lax39Proofs/Basic.lean": `import Lax39.Shapes
+
+namespace Lax39Proofs
+
+open Lax39.Shapes
+
+theorem bounded_sum : Bounded (10 : Nat) (2 + 1) := by simp only [Nat.reduceAdd]; simp [Bounded]
+theorem small_unfold : IsSmall 3 := by unfold IsSmall; decide
+theorem small_simp : IsSmall (1 + 2) := by simp only [Nat.reduceAdd]; simp [IsSmall]
+theorem pick_zero : pick 0 = 1 := by simp [pick]
+theorem pick_succ (n : Nat) : pick (n + 1) = n := by simp [pick]
+theorem pick_cases (n : Nat) : pick n = 1 ∨ pick n = n - 1 := by
+  unfold pick
+  split <;> simp
+/-- a congruence step through \`pick\`: neither \`congr\` nor \`grind\` realizes
+\`pick.hcongr_<n>\` for a first-order function under v4.35.0-rc3 (both reach for
+\`congrArg\`), so that shape stays uncovered here — see the assertion list -/
+theorem pick_congr (f g : Nat → Nat) (x y : Nat) (h : f x = g y) : pick (f x) = pick (g y) := by grind
+theorem guarded_sum : guarded (1 + 2) (by decide) = 3 := by simp only [Nat.reduceAdd]; rfl
+theorem sumTo_zero : sumTo 0 = 0 := by unfold sumTo; rfl
+/-- a \`match\` in the goal: \`grind\` realizes \`pick.match_1.congr_eq_<n>\` -/
+theorem pick_le (n : Nat) : pick n ≤ n + 1 := by unfold pick; grind
+
+theorem facts : Lax39.Shapes.Facts :=
+  ⟨bounded_sum, small_unfold, small_simp, pick_zero, pick_succ, pick_cases, pick_congr, guarded_sum, sumTo_zero, pick_le⟩
+
+end Lax39Proofs
+`,
+        },
+        undefined,
+        { environment },
+      );
+      const jobDir = path.join(tmpDir("lax-39-job-"), "work");
+      const report = await buildOnHost(root, { id: "lax-39", jobDir });
+      expect(messages(report)).toBe("");
+      expect(report.ok).toBe(true);
+      expect(report.buildOutput!.proofs.map((proof) => proof.id)).toEqual(["Lax39Proofs.facts"]);
+      // what the proof package's oleans actually carry: the realized names
+      // under Lax39.Shapes, reported without a userName, and the rule silent
+      const inspected = JSON.parse(fs.readFileSync(path.join(jobDir, "checks", "inspect-proofs", "report.json"), "utf8")) as {
+        declarations: Array<{ name: string; userName?: string; origin?: { kind: string; parent?: string; module?: string } }>;
+      };
+      const realized = inspected.declarations.filter((declaration) => !declaration.name.startsWith("Lax39Proofs"));
+      expect(realized.length).toBeGreaterThan(0);
+      for (const declaration of realized) {
+        expect(declaration, declaration.name).not.toHaveProperty("userName");
+        // and the one provenance fact the rules consult says why: realized
+        // under the concept's constant, or — a matcher's `eq_<n>` and
+        // `splitter`, private per module by design — private, mangled with
+        // this package's own module, which settles ownership before anything
+        // Lean realized inside it
+        if (declaration.name.startsWith("_private.")) {
+          expect(declaration.origin, declaration.name).toEqual({ kind: "private", module: "Lax39Proofs.Basic" });
+        } else {
+          expect(declaration.origin?.kind, declaration.name).toBe("realized");
+          expect(declaration.origin?.parent, declaration.name).toMatch(/^Lax39\.Shapes\./u);
+        }
+      }
+      const names = realized.map((declaration) => declaration.name);
+      console.log(`[realized names] ${names.join(" ")}`);
+      // every shape `userLevelName?` exempts that this toolchain realizes for
+      // a dependent package: `congr_simp` (simp through a dependent binder),
+      // `eq_def` (unfold of a recursive definition), `eq_<n>` (simp with a
+      // definition), the match `splitter` and its `eq_<n>` (split), and the
+      // match `congr_eq_<n>` (grind over a match). `hcongr_<n>` is exempted
+      // too but no first-order fixture realizes it on v4.35.0-rc3: `congr`
+      // and `grind` both prove a one-argument congruence with `congrArg`.
+      for (const shape of [
+        /\.congr_simp$/u,
+        /\.eq_def$/u,
+        /\.eq_1$/u,
+        /\.match_1\.splitter$/u,
+        /\.match_1\.eq_1$/u,
+        /\.match_1\.congr_eq_1$/u,
+      ]) {
+        expect(names.some((name) => shape.test(name)), `${shape} among ${names.join(" ")}`).toBe(true);
+      }
+    });
+  });
+
   it("refuses a package that omits LaxCore before building anything", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;
@@ -268,7 +416,9 @@ end Lax38Proofs
       // generator and the same three steps as the archive's containers.
       const certificate = out.certificate!;
       expect(certificate).toMatchObject({
-        judge: { toolchain: SPEC2.leanToolchain, comparatorExitCode: 0 },
+        // a local run proves no runner: no self-test; the digests are the
+        // host toolchain's own
+        judge: { toolchain: SPEC2.leanToolchain, comparatorExitCode: 0, selfTest: { passed: false, probes: [] }, tools: toolDigests(toolchainDir(environment)) },
         kernels: ["lean"],
         bundle: { formatVersion: 1, digest: expect.stringMatching(/^[0-9a-f]{64}$/u) },
         challengeExportSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
@@ -539,6 +689,16 @@ end Lax43Proofs
       fs.rmdirSync(path.join(challengeProject, ".lake"));
       fs.symlinkSync(path.join(challengeDir, "build", ".lake"), path.join(challengeProject, ".lake"));
       const exportPath = path.join(challengeDir, "challenge.export");
+      // A1: the build, as the first container runs it
+      const planA1 = path.join(challengeDir, "build-plan.json");
+      fs.writeFileSync(planA1, JSON.stringify({ tool: "build", project: challengeProject, module: "Challenge", toolchainBin, home: path.join(root, "home") }));
+      const builtA = await runTool(planA1, "A1 (build)");
+      expect(builtA.output, builtA.output).not.toContain("error:");
+      expect(builtA.code).toBe(0);
+      expect(fs.existsSync(path.join(challengeDir, "build", ".lake", "build", "lib", "lean", "Challenge.olean"))).toBe(true);
+      // A2: the export and the inspection over the build tree, as the
+      // second container runs them — read-only there; here the build dir
+      // is simply not written to again
       const planA = path.join(challengeDir, "plan.json");
       fs.writeFileSync(planA, JSON.stringify({
         tool: "export",
@@ -549,11 +709,20 @@ end Lax43Proofs
         output: exportPath,
         toolchainBin,
         home: path.join(root, "home"),
+        inspect: { report: path.join(challengeDir, "challenge-report.json") },
+        inspector: await inspectorBinary(environment, {}, SHARED_TOOLS),
       }));
-      const built = await runTool(planA, "A (build + export)");
+      const built = await runTool(planA, "A2 (export + inspect)");
       expect(built.output, built.output).not.toContain("error:");
       expect(built.code).toBe(0);
+      expect(built.output).not.toContain("Building");
       expect(fs.statSync(exportPath).size).toBeGreaterThan(1000);
+      // the Challenge held to the telescope: the real inspector's reading of
+      // the real build states exactly the record's edges
+      const challengeReport = parseInspectorReport(JSON.parse(fs.readFileSync(path.join(challengeDir, "challenge-report.json"), "utf8")) as unknown, 2);
+      expect(challengeReport.declarations.filter((declaration) => declaration.name.startsWith("Cert.")).map((declaration) => declaration.name).sort())
+        .toEqual(record.proofs.map((proof) => `Cert.${proof.id}`).sort());
+      expect(checkChallengeReport(challengeReport, record.proofs)).toBeUndefined();
       expect(fs.readFileSync(exportPath, "utf8").startsWith('{"meta"')).toBe(true);
       // the export (lean4export 3.1.0 NDJSON, names hash-consed per
       // component) carries the certificate theorems as `thm` records
@@ -578,6 +747,11 @@ end Lax43Proofs
       fs.rmdirSync(path.join(solutionProject, ".lake"));
       fs.symlinkSync(path.join(solutionDir, "build", ".lake"), path.join(solutionProject, ".lake"));
       const solutionExport = path.join(solutionDir, "solution.export");
+      const planB1 = path.join(solutionDir, "build-plan.json");
+      fs.writeFileSync(planB1, JSON.stringify({ tool: "build", project: solutionProject, module: "Solution", toolchainBin, home: path.join(root, "home") }));
+      const builtB1 = await runTool(planB1, "B1 (build)");
+      expect(builtB1.output, builtB1.output).not.toContain("error:");
+      expect(builtB1.code).toBe(0);
       const planB = path.join(solutionDir, "plan.json");
       fs.writeFileSync(planB, JSON.stringify({
         tool: "export",
@@ -589,7 +763,7 @@ end Lax43Proofs
         toolchainBin,
         home: path.join(root, "home"),
       }));
-      const builtB = await runTool(planB, "B (build + export)");
+      const builtB = await runTool(planB, "B2 (export)");
       expect(builtB.output, builtB.output).not.toContain("error:");
       expect(builtB.code).toBe(0);
       expect(fs.readFileSync(solutionExport, "utf8")).toContain('"str":"Cert"');
@@ -644,6 +818,91 @@ end Lax43Proofs
         fs.chmodSync(judge.projectDir, 0o755);
         fs.chmodSync(judge.shimsDir, 0o755);
       }
+    });
+  }, 600_000);
+
+  // The judge self-test (certify/self-test.ts), rehearsed on the host with
+  // the real tool script: the three core-only modules built and exported in
+  // one export step, the Solution export forged by the host, and the real
+  // comparator asked three times — accept, reject the mismatch, and let
+  // Lean's kernel refuse the forgery. The confinement probe is the
+  // container's and is not rehearsed here.
+  it("rehearses the judge self-test with the real tool script: accept, mismatch, forged", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const root = tmpDir("lax-self-test-");
+      const tool = path.resolve("src/submission-validation/sandbox/tools/run-certify.mjs");
+      const toolchainBin = toolchainBinDir(environment);
+      const runTool = async (planFile: string, label: string) => {
+        const started = performance.now();
+        const result = await run(process.execPath, [tool, planFile], root, {
+          env: { LEAN_NUM_THREADS: "2", PATH: lakePathEnv(environment) },
+          maxOutputBytes: 1024 * 1024,
+        });
+        console.log(`[certify timing] self-test rehearsal ${label}: ${Math.round(performance.now() - started)} ms, exit ${result.code}`);
+        return result;
+      };
+      const projectDir = path.join(root, "project");
+      fs.mkdirSync(projectDir, { recursive: true });
+      for (const [name, content] of Object.entries(selfTestProjectFiles())) fs.writeFileSync(path.join(projectDir, name), content);
+      const started = performance.now();
+      const built = await runTool(
+        (() => { const f = path.join(root, "build-plan.json"); fs.writeFileSync(f, JSON.stringify({ tool: "build", project: projectDir, module: SELF_TEST_PACKAGE, toolchainBin, home: path.join(root, "home") })); return f; })(),
+        "S1 (build)",
+      );
+      expect(built.output, built.output).not.toContain("error:");
+      expect(built.code).toBe(0);
+      const outDir = path.join(root, "out");
+      fs.mkdirSync(outDir);
+      const exports = Object.fromEntries((["challenge", "solution", "mismatch"] as const).map((side) => [side, path.join(outDir, `${side}.export`)])) as Record<"challenge" | "solution" | "mismatch", string>;
+      const exportPlan = path.join(root, "export-plan.json");
+      fs.writeFileSync(exportPlan, JSON.stringify({
+        tool: "export",
+        project: projectDir,
+        targets: selfTestExportTargets(environment),
+        leanPath: [projectLibDir(projectDir)],
+        exports: [
+          { module: SELF_TEST_MODULES.challenge, output: exports.challenge },
+          { module: SELF_TEST_MODULES.solution, output: exports.solution },
+          { module: SELF_TEST_MODULES.mismatch, output: exports.mismatch },
+        ],
+        toolchainBin,
+        home: path.join(root, "home"),
+      }));
+      const exported = await runTool(exportPlan, "S2 (three exports)");
+      expect(exported.output, exported.output).not.toContain("error:");
+      expect(exported.code).toBe(0);
+      for (const file of Object.values(exports)) expect(fs.statSync(file).size).toBeGreaterThan(1000);
+      const forged = path.join(outDir, "forged.export");
+      fs.writeFileSync(forged, forgeKernelRejection(fs.readFileSync(exports.solution, "utf8"), SELF_TEST_THEOREM));
+      // the judge's project: the self-test's files and its comparator config
+      const judgeProject = path.join(root, "judge", "project");
+      const shims = path.join(root, "judge", "shims");
+      fs.mkdirSync(judgeProject, { recursive: true });
+      fs.mkdirSync(shims, { recursive: true });
+      const files = selfTestProjectFiles();
+      for (const name of ["lakefile.toml", "lake-manifest.json", `${SELF_TEST_MODULES.challenge}.lean`, `${SELF_TEST_MODULES.solution}.lean`]) fs.writeFileSync(path.join(judgeProject, name), files[name]!);
+      fs.writeFileSync(path.join(judgeProject, "comparator.json"), selfTestComparatorConfig());
+      fs.writeFileSync(path.join(shims, "git"), GIT_SHIM, { mode: 0o555 });
+      const judge = async (label: string, solutionExport: string) => {
+        const planFile = path.join(root, `judge-${label}.json`);
+        fs.writeFileSync(planFile, JSON.stringify({
+          tool: "comparator",
+          project: judgeProject,
+          config: "comparator.json",
+          challengeExport: exports.challenge,
+          solutionExport,
+          shims,
+          paranoid: false,
+          toolchainBin,
+          home: path.join(root, "home"),
+        }));
+        return interpretComparatorRun(await runTool(planFile, `S3-5 (${label})`));
+      };
+      expect(await judge("accept", exports.solution)).toEqual({ kind: "certified" });
+      expect(await judge("mismatch", exports.mismatch)).toMatchObject({ kind: "violation", rule: "statement-mismatch" });
+      expect(await judge("forged", forged)).toMatchObject({ kind: "violation", rule: "kernel-rejected" });
+      console.log(`[certify timing] self-test rehearsal total: ${Math.round(performance.now() - started)} ms`);
     });
   }, 600_000);
 
@@ -1006,7 +1265,7 @@ end Lax41Proofs
     });
   }, 600_000);
 
-  it("fails in Inspect on a private proof-shaped theorem and a concrete universe level", async () => {
+  it("fails in Inspect on a private proof-shaped theorem, a concrete universe level, an initializer, and global syntax", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;
       const root = makeHostSubmission(
@@ -1038,6 +1297,15 @@ private theorem hidden.{u} : Lax39.Order.Refl.{u} := fun _ _ => rfl
 
 theorem special : Lax39.Order.Refl.{0} := fun _ _ => rfl
 
+-- global syntax rewrites every importer (namespace review, E1); an
+-- initializer registers a name-keyed global registry (F1)
+syntax "lax_rfl" : tactic
+macro_rules | \`(tactic| lax_rfl) => \`(tactic| rfl)
+initialize do pure ()
+
+-- scoped syntax leaves no global entry
+scoped notation "⊗⊗" => Nat.mul
+
 end Lax39Proofs
 `,
         },
@@ -1046,8 +1314,14 @@ end Lax39Proofs
       );
       const report = await buildOnHost(root, { id: "lax-39" });
       expect(report.ok).toBe(false);
-      expect(rules(report)).toEqual(new Set(["proof"]));
+      expect(rules(report), messages(report)).toEqual(new Set(["proof", "initialize", "global-syntax"]));
       expect(report.violations.every((violation) => violation.phase === "inspect")).toBe(true);
+      expect(messages(report)).toContain(
+        "proof module Lax39Proofs.Basic registers global syntax (a parser or token, a macro); a record declares every `syntax`, `notation`, `macro`, `macro_rules`, and `elab` as `scoped` or `local`",
+      );
+      expect(messages(report)).toContain("proof module Lax39Proofs.Basic declares an initializer (");
+      for (const violation of report.violations)
+        expect(violation.intent).toBe(violation.rule === "proof" ? "translation" : "standards");
       expect(messages(report)).toContain(
         "private theorem Lax39Proofs.hidden has the shape of a proof ({} → Lax39.Order.Refl); the archive's certificate must name it from another module — drop `private`",
       );

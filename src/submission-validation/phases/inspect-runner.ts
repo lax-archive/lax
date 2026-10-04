@@ -5,6 +5,7 @@ import type {
   BinderKind,
   ConclusionFacts,
   ContentSpecVersion,
+  DeclarationOrigin,
   InspectorDeclaration,
   InspectorModule,
   InspectorReport,
@@ -15,7 +16,8 @@ import type {
   ResolutionResult,
 } from "../contracts.js";
 import type { ValidationRunner } from "../sandbox/container.js";
-import { containerBoundaryFailure, infrastructureFailure } from "../failures.js";
+import { containerBoundaryFailure, infrastructureFailure, submissionFailure, type PipelineFailure } from "../failures.js";
+import { leanFacts } from "../lean-facts.js";
 
 /** The inspector's argument list: the spec version first, then the output
  * path, then the package's inventory with the root first. One place for both
@@ -75,7 +77,7 @@ export async function runInspector(
       `${kind} inspection exceeded its memory limit`,
     );
     if (boundary !== undefined) throw boundary;
-    throw infrastructureFailure(result.output.trim() || `${kind} inspection failed`);
+    throw inspectorExitFailure(kind, result, specVersion);
   }
   const reportPath = path.join(outputDir, "report.json");
   let stat: fs.Stats;
@@ -96,6 +98,37 @@ export async function runInspector(
   }
 }
 
+/**
+ * Whose failure a non-zero inspector exit is. Under spec 1 the proof oleans
+ * met leanchecker first and its refusal was the author's; under spec 2 the
+ * proof package is not replayed (decision 10), so the inspector is the first
+ * process to load its oleans, and an olean Lean's import refuses — a
+ * duplicate constant across the package's modules, a constant the module
+ * lists but does not carry — is a finding against the submission
+ * (`olean-unreadable`, standards), not the archive's failure to retry
+ * (fable review 2026-10-04, finding 1.6). The message shapes are Lean's and
+ * the inspector's own, kept to what only the submission's olean content can
+ * cause (`lean-facts.ts oleanRefusalPattern`); a file that could not be
+ * read, a header the toolchain refuses, a missing data file, and anything
+ * else are still the archive's.
+ */
+export function inspectorExitFailure(
+  kind: "concepts" | "proofs",
+  result: { code: number; output: string },
+  specVersion: ContentSpecVersion,
+): PipelineFailure {
+  const output = result.output.trim();
+  if (specVersion === 2 && !leanFacts().missingModulePattern.test(output) && leanFacts().oleanRefusalPattern.test(output)) {
+    return submissionFailure(
+      `the ${kind} package's build artifacts could not be loaded (exit ${result.code}): ${output}\n` +
+        "Lean refuses to import the package's own oleans together; see the message above — a constant declared " +
+        "in two modules, or an artifact the build left incomplete",
+      { rule: "olean-unreadable", intent: "standards" },
+    );
+  }
+  return infrastructureFailure(`${kind} inspection failed (exit ${result.code}):\n${output}` || `${kind} inspection failed`);
+}
+
 /** Parse and bound an untrusted inspector report; shared with the host
  * pipeline, which invokes the inspector binary directly. The report is held
  * to the spec it was asked for: the four spec-2 facts on every declaration
@@ -108,7 +141,7 @@ export function parseInspectorReport(value: unknown, specVersion: ContentSpecVer
   if (!Array.isArray(report.declarations) || report.declarations.length > 1_000_000)
     throw new Error("inspector declarations must be a bounded array");
   return {
-    modules: report.modules.map(parseModule),
+    modules: report.modules.map((entry, index) => parseModule(entry, index, specVersion)),
     declarations: report.declarations.map((entry, index) => parseDeclaration(entry, index, specVersion)),
   };
 }
@@ -116,14 +149,19 @@ export function parseInspectorReport(value: unknown, specVersion: ContentSpecVer
 const SPEC2_FACTS = ["laxStatement", "isProp", "levelParams", "telescope"] as const;
 const BINDER_KINDS: readonly BinderKind[] = ["default", "implicit", "strictImplicit", "instImplicit"];
 
-function parseModule(value: unknown, index: number): InspectorModule {
+function parseModule(value: unknown, index: number, specVersion: ContentSpecVersion): InspectorModule {
   const item = record(value, `inspector module ${index}`);
-  exactKeys(item, ["name", "imports", "moduleDocs", "declCount"], `inspector module ${index}`);
+  exactKeys(
+    item,
+    ["name", "imports", "moduleDocs", "declCount", ...(specVersion === 2 ? ["globalSyntax"] : [])],
+    `inspector module ${index}`,
+  );
   return {
     name: text(item.name, "module name"),
     imports: stringArray(item.imports, "module imports"),
     moduleDocs: array(item.moduleDocs, "module docs", 100).map(parseDoc),
     declCount: natural(item.declCount, "module declaration count"),
+    ...(specVersion === 2 ? { globalSyntax: array(item.globalSyntax, "module globalSyntax", 100).map((name) => text(name, "module globalSyntax")) } : {}),
   };
 }
 
@@ -133,7 +171,7 @@ function parseDeclaration(value: unknown, index: number, specVersion: ContentSpe
   const allowed = [
     "name", "kind", "module", "axioms", "usedConstants", "userName", "doc", "conclusionFacts",
     "signature", "startLine", "endLine",
-    ...(specVersion === 2 ? [...SPEC2_FACTS, "binders", "body"] : []),
+    ...(specVersion === 2 ? [...SPEC2_FACTS, "binders", "body", "nonCanonical", "initializer", "origin"] : []),
   ];
   for (const key of Object.keys(item))
     if (!allowed.includes(key)) throw new Error(`${label} has unknown key ${key}`);
@@ -151,6 +189,12 @@ function parseDeclaration(value: unknown, index: number, specVersion: ContentSpe
   if (item.startLine !== undefined) declaration.startLine = natural(item.startLine, "declaration startLine");
   if (item.endLine !== undefined) declaration.endLine = natural(item.endLine, "declaration endLine");
   if (specVersion === 2) {
+    for (const flag of ["nonCanonical", "initializer"] as const) {
+      if (item[flag] === undefined) continue;
+      if (item[flag] !== true) throw new Error(`${label} ${flag} must be true when present`);
+      declaration[flag] = true;
+    }
+    declaration.origin = parseOrigin(item.origin, label);
     for (const key of SPEC2_FACTS)
       if (!Object.hasOwn(item, key)) throw new Error(`${label} lacks the spec-2 fact ${key}`);
     if (typeof item.laxStatement !== "boolean") throw new Error(`${label} laxStatement must be boolean`);
@@ -164,6 +208,29 @@ function parseDeclaration(value: unknown, index: number, specVersion: ContentSpe
     if (item.body !== undefined) declaration.body = text(item.body, "declaration body", 4 * 1024 * 1024);
   }
   return declaration;
+}
+
+/** The one provenance fact of a spec-2 declaration (contracts.ts
+ * DeclarationOrigin), required and closed: an unknown kind or a missing
+ * evidence field is a malformed report. */
+function parseOrigin(value: unknown, label: string): DeclarationOrigin {
+  const item = record(value, `${label} origin`);
+  const kind = text(item.kind, `${label} origin kind`);
+  switch (kind) {
+    case "authored":
+      exactKeys(item, ["kind"], `${label} origin`);
+      return { kind };
+    case "private":
+    case "scoped":
+      exactKeys(item, ["kind", "module"], `${label} origin`);
+      return { kind, module: text(item.module, `${label} origin module`) };
+    case "realized":
+    case "auxiliary":
+      exactKeys(item, ["kind", "parent"], `${label} origin`);
+      return { kind, parent: text(item.parent, `${label} origin parent`) };
+    default:
+      throw new Error(`${label} origin has an unknown kind ${JSON.stringify(kind)}`);
+  }
 }
 
 function parseTelescope(value: unknown, label: string): InspectorTelescope {

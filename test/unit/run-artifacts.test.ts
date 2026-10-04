@@ -52,6 +52,22 @@ describe("validation report artifacts", () => {
     ]);
   });
 
+  it("keeps a finding's intent when it is one of the three, and drops anything else", () => {
+    const report = parseValidationReportZip(
+      reportZip({
+        ...failedReport,
+        violations: [
+          { phase: "certify", rule: "kernel-rejected", message: "the kernel refused it", intent: "judge" },
+          { phase: "inspect", rule: "namespace", message: "no prefix", intent: "whatever" },
+        ],
+      }),
+    );
+    expect(report.violations).toEqual([
+      { phase: "certify", rule: "kernel-rejected", message: "the kernel refused it", intent: "judge" },
+      { phase: "inspect", rule: "namespace", message: "no prefix" },
+    ]);
+  });
+
   it("strips escape sequences and invisible characters from every string", () => {
     const report = parseValidationReportZip(
       reportZip({

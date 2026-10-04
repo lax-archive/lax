@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_LIMITS } from "../../src/submission-validation/config.js";
-import { runInspector } from "../../src/submission-validation/phases/inspect-runner.js";
+import { inspectorExitFailure, runInspector } from "../../src/submission-validation/phases/inspect-runner.js";
 import type {
   ContainerInvocation,
   ContainerResult,
@@ -452,6 +452,30 @@ describe("inspection judgments retained from main", () => {
     expect(rules).not.toContain("one-statement");
   });
 
+  it("keeps spec.md's reading for a private name — un-mangled, then tested — and carries no intent", () => {
+    const fixture = reports();
+    fixture.proofs.declarations.push({
+      name: "_private.Lax1Proofs.Basic.0.hidden",
+      userName: "hidden",
+      kind: "theorem",
+      module: "Lax1Proofs.Basic",
+      axioms: [],
+      usedConstants: [],
+      signature: "True",
+    });
+    const judged = judgeInspection(
+      fixture.concepts,
+      fixture.proofs,
+      fixture.conceptInventory,
+      fixture.proofInventory,
+      EMPTY_RESOLUTION,
+    );
+    expect(judged.findings.violations.map((finding) => `[${finding.rule}] ${finding.message}`))
+      .toContain("[namespace] proof declaration hidden does not carry namespace Lax1Proofs");
+    for (const finding of [...judged.findings.violations, ...judged.findings.warnings])
+      expect(finding).not.toHaveProperty("intent");
+  });
+
   it("names the offending import and the importable prefixes", () => {
     const fixture = reports();
     fixture.concepts.modules[1]!.imports.push("Batteries.Data.List.Basic");
@@ -614,6 +638,30 @@ describe("inspector report size bound", () => {
 
   it("rejects a report above the limit as an infrastructure failure, not a finding", async () => {
     await expect(inspect(257, 256)).rejects.toThrow(/proofs inspector report is missing or oversized/);
+  });
+
+  it("classifies a non-zero inspector exit: Lean's refusal of the package's own oleans is the author's under spec 2, the rest the archive's", () => {
+    const refusal = { code: 1, output: "uncaught exception: import Lax1Proofs.B failed, environment already contains 'Lax1Proofs.x' from Lax1Proofs.A" };
+    const spec2 = inspectorExitFailure("proofs", refusal, 2);
+    expect(spec2).toMatchObject({ kind: "submission", finding: { rule: "olean-unreadable", intent: "standards" } });
+    expect(spec2.message).toContain("environment already contains");
+    // spec 1 replayed the proof oleans first; the inspector's refusal stays the archive's there
+    expect(inspectorExitFailure("proofs", refusal, 1)).toMatchObject({ kind: "infrastructure" });
+    // a module missing from the composed path is the archive's under either spec
+    expect(inspectorExitFailure("proofs", { code: 1, output: "object file './Lax1Proofs.olean' of module Lax1Proofs does not exist" }, 2)).toMatchObject({ kind: "infrastructure" });
+    // and so is anything the pattern does not name
+    expect(inspectorExitFailure("concepts", { code: 2, output: "module Lax1.Claim not found in the built environment" }, 2)).toMatchObject({ kind: "infrastructure" });
+    expect(inspectorExitFailure("concepts", { code: 2, output: "constant Lax1.Claim.x of module Lax1.Claim not found" }, 2)).toMatchObject({ kind: "submission" });
+    // the shapes a truncated capture or a toolchain mismatch produce are the
+    // archive's, not a finding against the author (verification review)
+    for (const output of [
+      "failed to read file './Lax1Proofs.olean', invalid header",
+      "incompatible header in './Lax1Proofs.olean'",
+      "'./Lax1Proofs.olean' is not a valid .olean file",
+      "missing data file for module Lax1Proofs.A",
+    ]) {
+      expect(inspectorExitFailure("proofs", { code: 1, output }, 2), output).toMatchObject({ kind: "infrastructure" });
+    }
   });
 
   it("admits the largest real report: Lax17's 49 MB", () => {

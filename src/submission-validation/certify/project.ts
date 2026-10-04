@@ -58,6 +58,8 @@ export const CERTIFY_PATHS = {
   challengeExport: "/cert/challenge.export",
   solutionExport: "/cert/solution.export",
   shims: "/cert/shims",
+  /** The read-only plan of a build step (A1/B1), which has no `/out`. */
+  plan: "/cert/plan",
   out: "/out",
 } as const;
 

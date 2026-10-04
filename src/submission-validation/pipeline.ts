@@ -17,6 +17,7 @@ import type {
   ValidationRequest,
   ValidationRuntimeIdentity,
   ValidationScope,
+  ContentSpecVersion,
 } from "./contracts.js";
 import {
   asPipelineFailure,
@@ -53,11 +54,14 @@ import { Profiler } from "../shared/profile.js";
 import { ContainerRunner, type ValidationRunner } from "./sandbox/container.js";
 import { assertWorkspaceWithinLimit } from "./sandbox/workspace-limit.js";
 import { fetchSource, type FetchedSource } from "./source/fetch.js";
+import { toolchainDir } from "./host/leanenv.js";
 
 export interface ValidationOptions {
   /** A local build supplies already-available source and Archive data. */
   local?: { fetched: FetchedSource; archive: ArchiveSnapshot };
-  /** The trusted workflow always replays; local authoring keeps it opt-in. */
+  /** The trusted workflow always replays (concept packages; in spec 2 the
+   * proof package is never replayed — decision 10); local authoring keeps it
+   * opt-in. */
   replay?: boolean;
   /** Local authoring does not need the publishable artifact tar. */
   sealCapture?: boolean;
@@ -147,7 +151,9 @@ type CompiledValidation = PreparedValidation;
 type Preparation = { state: PreparedValidation } | { report: ValidationReport };
 
 /**
- * Run every phase — Compile, Replay, Inspect — sequentially in one process.
+ * Run every phase — Compile, Replay (concept packages; the proof package
+ * too in spec 1), Inspect, and in spec 2 Certify — sequentially in one
+ * process.
  * The trusted workflow's single validation job and local builds share this
  * entry point; there is no staged resume any more.
  */
@@ -279,34 +285,39 @@ async function compileStage(state: PreparedValidation): Promise<ValidationReport
   return undefined;
 }
 
+/**
+ * Which packages the trusted run replays: concepts under every scope but
+ * `proofs`; proofs under every scope but `concepts` — and in spec 1 only.
+ * Decision 10 (axiomfree-plan.md): in a spec-2 environment the judge is the
+ * sole source of edge correctness and no standards check consumes Replay's
+ * output, so the proof package is not replayed; concept packages are —
+ * every later record imports them. The local opt-in `lax build --replay`
+ * replays both (host/pipeline.ts), which is the check this run omits.
+ */
+export function replayTargets(scope: ValidationScope, specVersion: ContentSpecVersion): Array<"concepts" | "proofs"> {
+  const targets: Array<"concepts" | "proofs"> = [];
+  if (scope !== "proofs") targets.push("concepts");
+  if (scope !== "concepts" && specVersion !== 2) targets.push("proofs");
+  return targets;
+}
+
 async function replayStage(state: CompiledValidation): Promise<ValidationReport | undefined> {
   try {
     // Each checker receives the full container budget, so keep the two
     // heavyweight replays from stacking their limits against the host.
-    const replay: Array<() => Promise<void>> = [];
-    if (state.scope !== "proofs") replay.push(() => state.phase("replay concepts", () =>
-      replayPackage(
-        "concepts",
-        state.captureRoot,
-        state.staticResult.concepts!.inventory,
-        state.resolution,
-        state.jobDir,
-        state.dependencyRoot,
-        state.runner,
-        state.limits,
-      )));
-    if (state.scope !== "concepts") replay.push(() => state.phase("replay proofs", () =>
-      replayPackage(
-        "proofs",
-        state.captureRoot,
-        state.staticResult.proofs!.inventory,
-        state.resolution,
-        state.jobDir,
-        state.dependencyRoot,
-        state.runner,
-        state.limits,
-      )));
-    for (const check of replay) await check();
+    for (const kind of replayTargets(state.scope, state.environment.specVersion)) {
+      await state.phase(`replay ${kind}`, () =>
+        replayPackage(
+          kind,
+          state.captureRoot,
+          state.staticResult[kind]!.inventory,
+          state.resolution,
+          state.jobDir,
+          state.dependencyRoot,
+          state.runner,
+          state.limits,
+        ));
+    }
     return undefined;
   } catch (error) {
     return fail(state, "replay", "kernel-replay", error);
@@ -384,6 +395,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
         captureRoot: state.captureRoot,
         dependencyRoot: state.dependencyRoot,
         warmWs: state.warmWs,
+        toolchainDir: toolchainDir(state.environment),
         runner: state.runner,
         limits: state.limits,
         phase: state.phase,
@@ -392,7 +404,7 @@ async function inspectStage(state: CompiledValidation): Promise<ValidationOutcom
       return fail(state, "certify", "comparator", error);
     }
     if (certified.kind === "violation") {
-      state.violations.push({ phase: "certify", rule: certified.rule, message: certified.message });
+      state.violations.push({ phase: "certify", rule: certified.rule, message: certified.message, intent: certified.intent });
       return report(state, false);
     }
   }
@@ -718,7 +730,12 @@ function recordFailure(
   const failure = asPipelineFailure(error, fallbackKind, retryable);
   const message = safeError(failure);
   if (failure.kind === "submission") {
-    state.violations.push({ phase, rule, message });
+    state.violations.push({
+      phase,
+      rule: failure.finding?.rule ?? rule,
+      message,
+      ...(failure.finding?.intent === undefined ? {} : { intent: failure.finding.intent }),
+    });
   } else {
     state.failure = { kind: failure.kind, retryable: failure.retryable, phase, rule, message };
   }

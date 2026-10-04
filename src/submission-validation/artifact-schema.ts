@@ -39,13 +39,18 @@ import type {
   StatementEntry,
   SubmissionAuthor,
   SubmissionManifest,
+  FindingIntent,
+  JudgeTool,
+  SelfTestProbe,
   ValidationFinding,
   ValidationReport,
   ValidationRequest,
   ValidationRuntimeIdentity,
 } from "./contracts.js";
 import {
+  JUDGE_TOOLS,
   LEAN_NAME_PATTERN,
+  SELF_TEST_PROBES,
   parseCaptureBlobReference,
   submissionIdForPackage,
   validationRequestFromUnknown,
@@ -397,12 +402,23 @@ export function parseCertificate(
     ["judge", "kernels", "bundle", "challengeExportSha256", "solutionExportSha256", "challenge"],
     "generated certificate",
   );
-  const judge = exactObject(object.judge, ["toolchain", "comparatorExitCode"], "generated certificate judge");
+  const judge = exactObject(object.judge, ["toolchain", "comparatorExitCode", "selfTest", "tools"], "generated certificate judge");
   const toolchain = nonemptyText(judge.toolchain, "generated certificate judge toolchain", 128, false);
   if (toolchain !== runtime.leanToolchain) {
     throw new ValidationError("generated certificate was judged by a toolchain other than the environment's");
   }
   if (judge.comparatorExitCode !== 0) throw new ValidationError("generated certificate judge comparatorExitCode must be 0");
+  // the judge proved itself first (certify/self-test.ts): every probe, in
+  // order, and a pass — a local run's `passed: false` never publishes
+  const selfTest = exactObject(judge.selfTest, ["passed", "probes"], "generated certificate judge selfTest");
+  if (selfTest.passed !== true) throw new ValidationError("generated certificate judge selfTest must have passed");
+  const probes = boundedArray(selfTest.probes, "generated certificate judge selfTest probes", SELF_TEST_PROBES.length);
+  if (probes.length !== SELF_TEST_PROBES.length || probes.some((probe, index) => probe !== SELF_TEST_PROBES[index])) {
+    throw new ValidationError(`generated certificate judge selfTest probes must be exactly ${SELF_TEST_PROBES.join(", ")}`);
+  }
+  const toolsObject = exactObject(judge.tools, [...JUDGE_TOOLS], "generated certificate judge tools");
+  const tools = {} as Record<JudgeTool, string>;
+  for (const tool of JUDGE_TOOLS) tools[tool] = sha256(toolsObject[tool], `generated certificate judge tool ${tool}`);
   const expectedKernels = configuredKernels(runtime);
   const kernels = boundedArray(object.kernels, "generated certificate kernels", expectedKernels.length).map((kernel) => {
     if (!(expectedKernels as readonly unknown[]).includes(kernel)) throw new ValidationError("generated certificate names an unknown kernel");
@@ -435,7 +451,7 @@ export function parseCertificate(
     throw new ValidationError("generated certificate challenge is not what the generator writes for the record's proofs");
   }
   return {
-    judge: { toolchain, comparatorExitCode: 0 },
+    judge: { toolchain, comparatorExitCode: 0, selfTest: { passed: true, probes: [...probes] as SelfTestProbe[] }, tools },
     kernels,
     bundle: { formatVersion: 1, digest, ...(registryBlob === undefined ? {} : { registryBlob }) },
     challengeExportSha256: sha256(object.challengeExportSha256, "generated certificate challengeExportSha256"),
@@ -1064,15 +1080,24 @@ function utf8Suffix(message: string, maxBytes: number): string {
   return message.slice(start);
 }
 
+const FINDING_INTENTS: ReadonlySet<string> = new Set<FindingIntent>(["judge", "translation", "standards"]);
+
 function parseFinding(value: unknown, label: string): ValidationFinding {
-  const object = exactObject(value, ["phase", "rule", "message"], label);
+  // `intent` is optional: spec-1 findings and the shared phases carry none,
+  // and reports written before decision 10 must keep parsing.
+  const hasIntent = isObject(value) && Object.hasOwn(value, "intent");
+  const object = exactObject(value, ["phase", "rule", "message", ...(hasIntent ? ["intent"] : [])], label);
   if (typeof object.phase !== "string" || !PHASES.has(object.phase)) {
     throw new ValidationError(`${label} phase is invalid`);
+  }
+  if (hasIntent && (typeof object.intent !== "string" || !FINDING_INTENTS.has(object.intent))) {
+    throw new ValidationError(`${label} intent is invalid`);
   }
   return {
     phase: object.phase as ValidationFinding["phase"],
     rule: nonemptyText(object.rule, `${label} rule`, FINDING_RULE_BYTES, false),
     message: nonemptyText(object.message, `${label} message`, FINDING_MESSAGE_BYTES, false),
+    ...(hasIntent ? { intent: object.intent as FindingIntent } : {}),
   };
 }
 

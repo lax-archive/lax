@@ -19,11 +19,14 @@
 // fixture dying in elaboration is noticed as such and never passes as a
 // content verdict.
 
+import type { FindingIntent } from "../contracts.js";
 import { infrastructureFailure, type PipelineFailure } from "../failures.js";
 
+/** Every refusal the comparator utters is the judge's: the proof does not
+ * establish the edge the Challenge states (decision 10). */
 export type ComparatorVerdict =
   | { kind: "certified" }
-  | { kind: "violation"; rule: string; message: string }
+  | { kind: "violation"; rule: string; message: string; intent: FindingIntent }
   | { kind: "failure"; failure: PipelineFailure };
 
 const ERROR_LINE = /^error: (.*)$/u;
@@ -38,7 +41,13 @@ function errorLines(output: string): string[] {
 
 const REPORT =
   "the archive's validator accepted this record and the toolchain's `lake comparator` refused the certificate " +
-  "lax generated for it, which is a disagreement between lax and Lean: please report it as a lax bug, quoting this message";
+  "lax generated for it; if your package builds cleanly with `lax build`, report it as a lax bug, quoting this message";
+
+/** The transcript's lines, trimmed: the comparator's own stdout notices
+ * (`<kernel> kernel rejected the solution`) live beside its `error:` lines. */
+function lines(output: string): string[] {
+  return output.split(/\r?\n/u).map((line) => line.trim());
+}
 
 /** The whole transcript, trimmed, for the message a finding carries. */
 function transcript(output: string): string {
@@ -69,6 +78,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
   if ((match = /^Challenge and solution theorem statement do not match: '(.+)'$/u.exec(last)) !== null) {
     return {
       kind: "violation",
+      intent: "judge",
       rule: "statement-mismatch",
       message:
         `certificate theorem ${match[1]} does not state the same proposition in the Challenge (over the concept ` +
@@ -81,6 +91,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
   ) {
     return {
       kind: "violation",
+      intent: "judge",
       rule: "not-a-theorem",
       message: `certificate theorem ${match[1]} is not a theorem in the Solution: \`${last}\`; ${REPORT}`,
     };
@@ -88,6 +99,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
   if ((match = /^Const not found in (challenge|solution): '(.+)'$/u.exec(last)) !== null) {
     return {
       kind: "violation",
+      intent: "judge",
       rule: "missing-constant",
       message: `the ${match[1]} export lacks ${match[2]}: \`${last}\`; ${REPORT}`,
     };
@@ -95,6 +107,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
   if ((match = /^Const does not match between challenge and target '(.+)'$/u.exec(last)) !== null) {
     return {
       kind: "violation",
+      intent: "judge",
       rule: "constant-mismatch",
       message:
         `${match[1]} is not the same constant in the Challenge's environment and in the Solution's — a proof ` +
@@ -104,6 +117,7 @@ export function interpretComparatorRun(result: { code: number; output: string })
   if ((match = /^Illegal axiom detected: '(.+)'$/u.exec(last)) !== null) {
     return {
       kind: "violation",
+      intent: "judge",
       rule: "illegal-axiom",
       message:
         `the Solution's proofs rest on the axiom ${match[1]}, which is not one of the background three the ` +
@@ -113,10 +127,22 @@ export function interpretComparatorRun(result: { code: number; output: string })
   // `Child exited with N` is the comparator's own child — the Solution
   // build or the exporter — and is read before the kernel shapes, which
   // end the same way (`<kernel> exited with N`).
-  if (/^Child exited with \d+$/u.test(last)) {
+  const child = /^Child exited with (\d+)$/u.exec(last);
+  if (child !== null) {
+    // a child that did not exit 1 did not fail its job, it crashed or was
+    // killed (134 is abort, 128+n a signal): nothing was judged
+    if (child[1] !== "1") {
+      return {
+        kind: "failure",
+        failure: infrastructureFailure(
+          `the comparator's child stopped with exit ${child[1]}, which is a crash or a kill, not a build failure:\n${transcript(result.output)}`,
+        ),
+      };
+    }
     const lean = errors.slice(0, -1);
     return {
       kind: "violation",
+      intent: "judge",
       rule: "solution-build",
       message:
         "the generated Solution did not elaborate — the certificate lax wrote from the proofs' telescopes does " +
@@ -124,15 +150,71 @@ export function interpretComparatorRun(result: { code: number; output: string })
         `${REPORT}. Lean said:\n${lean.length > 0 ? lean.map((line) => `error: ${line}`).join("\n") : transcript(result.output)}`,
     };
   }
-  if (/kernel rejected the solution|exited with \d+$|Error while interacting with .* kernel/u.test(last)) {
+  // A kernel's nonzero exit is `<kernel> exited with N` after the
+  // comparator's own notice `<kernel> kernel rejected the solution`
+  // (Lake/CLI/Check.lean runExternalKernel). The comparator says "rejected"
+  // for every nonzero exit, a crash included, so the notice is the most it
+  // can vouch for; without it — a launch failure, `Error while interacting
+  // with … kernel`, any other stop — nothing was judged, and that is the
+  // archive's failure to retry, never a finding against the author (codex
+  // review 2026-10-04, finding 6; Palomar's reading of the same tool). When
+  // Lean's own kernel accepted and a `--paranoid` checker did not, that is
+  // a kernel disagreement for a maintainer to examine, not a verdict.
+  const exited = /^(.+) exited with (\d+)$/u.exec(last);
+  if (exited !== null) {
+    const kernel = exited[1]!;
+    const code = exited[2]!;
+    const all = lines(result.output);
+    if (all.includes(`${kernel} kernel rejected the solution`)) {
+      // The notice is printed for *every* nonzero exit — Check.lean
+      // runExternalKernel: `IO.println s!"{kernelName} kernel rejected the
+      // solution"` then `return some s!"{kernelName} exited with {ret}"` —
+      // so it does not tell a rejection from a crash. The kernels reject
+      // with exit 1; 134 is abort, 128+n a signal, anything else
+      // undocumented: a kernel that stopped that way judged nothing (codex
+      // review 2 2026-10-04, "earlier fixes that remain incomplete").
+      if (code !== "1") {
+        return {
+          kind: "failure",
+          failure: infrastructureFailure(
+            `the ${kernel} kernel stopped with exit ${code}, which is a crash or a kill rather than a rejection ` +
+              `(a kernel rejects with exit 1), so nothing was judged:\n${transcript(result.output)}`,
+          ),
+        };
+      }
+      if (kernel !== "Lean default" && all.includes("Lean default kernel accepts the solution")) {
+        return {
+          kind: "failure",
+          failure: infrastructureFailure(
+            `kernel disagreement: Lean's kernel accepted the Solution and ${kernel} did not (\`${last}\`); ` +
+              `a maintainer examines this, it is not a verdict on the submission:\n${transcript(result.output)}`,
+          ),
+        };
+      }
+      return {
+        kind: "violation",
+        intent: "judge",
+        rule: "kernel-rejected",
+        message: `${kernel}'s kernel rejected the Solution's proofs: \`${last}\`; ${REPORT}`,
+      };
+    }
     return {
-      kind: "violation",
-      rule: "kernel-rejected",
-      message: `a kernel rejected the Solution's proofs: \`${last}\`; ${REPORT}`,
+      kind: "failure",
+      failure: infrastructureFailure(
+        `the ${kernel} kernel stopped without the comparator's rejection notice (\`${last}\`), so nothing was ` +
+          `judged:\n${transcript(result.output)}`,
+      ),
+    };
+  }
+  if (/^Error while interacting with .* kernel/u.test(last)) {
+    return {
+      kind: "failure",
+      failure: infrastructureFailure(`a kernel could not be run, so nothing was judged: \`${last}\`\n${transcript(result.output)}`),
     };
   }
   return {
     kind: "violation",
+    intent: "judge",
     rule: "comparator",
     message: `\`lake comparator\` rejected the certificate: ${last || transcript(result.output)}; ${REPORT}`,
   };

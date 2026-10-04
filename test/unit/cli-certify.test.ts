@@ -22,6 +22,8 @@ import { warmDir } from "../../src/submission-validation/host/warmstore.js";
 import { startFakeGhcr, type FakeGhcr } from "../fake-ghcr.js";
 import { spec2TestEnvironment, withTestEnvironments, withTestEnvironmentsAsync } from "../support/environments.js";
 import { removeTree } from "../support/tmp.js";
+import { SELF_TEST_PROBES } from "../../src/submission-validation/contracts.js";
+import { fakeToolDigests } from "../support/validation-artifacts.js";
 
 const SPEC2 = spec2TestEnvironment();
 const TOOLCHAIN = SPEC2.leanToolchain!;
@@ -130,7 +132,7 @@ function writeRecord(input: RecordInput): void {
     input.certificate === undefined
       ? undefined
       : {
-          judge: { toolchain: TOOLCHAIN, comparatorExitCode: 0 },
+          judge: { toolchain: TOOLCHAIN, comparatorExitCode: 0, selfTest: { passed: true, probes: [...SELF_TEST_PROBES] }, tools: fakeToolDigests() },
           kernels: ["lean"],
           bundle: {
             formatVersion: 1,

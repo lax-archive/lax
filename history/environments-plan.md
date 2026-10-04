@@ -484,6 +484,24 @@ run's operator confirms it (M) until a test exists.
   adds an override only when the run shows `DEFAULT_LIMITS` is wrong.
 - (T, admission smoke) `lake exe cache get` exists and succeeds at the tag —
   the candidate's warm workspace is built cold in the same run.
+- (T, e2e, spec-2 rows) The realized-shape fixture passes on the candidate
+  toolchain: `test/e2e/host-spec2.test.ts` "admits the reserved names a
+  proof package realizes" builds a proof package that realizes every
+  compiler-generated reserved name the inspector exempts from the namespace
+  rule (`congr_simp`, `eq_def`, `eq_<n>`, match `splitter`/`eq_<n>`/
+  `congr_eq_<n>`) under a concept's namespace, and must pass before the row
+  ships — a new Lean version's new shape is found here, never by an author
+  (axiomfree-plan.md decision 10; history/hiccups.md for the first one).
+- (T, spec-2 rows) The toolchain's realizers are re-audited for *definition*
+  kind: `git grep -n "realizeConst\|addDecl <| .defnDecl\|mkThmOrUnsafeDef"
+  src/Lean/Meta` over the release — every realization under an imported
+  constant's namespace must be a theorem (`thmDecl`/`mkThmOrUnsafeDef`) or a
+  private def (the matcher splitter), because Lean imports two copies of a
+  theorem and refuses two of a def. v4.35's one public exception,
+  `<enum>.enumToBitVec`, is what the inspector's `realized` flag and the
+  namespace rule catch; a new one must be listed in the inspector's doc
+  comment and in `assets/instructions.md` before the row ships
+  (spike/axiomfree/namespace-review-20261004.md, B2).
 
 ## Risks and accepted trade-offs
 

@@ -72,10 +72,15 @@ export function judgeInspection(
   specVersion: ContentSpecVersion = 1,
 ): { result: InspectionResult; findings: FindingCollector } {
   const findings = new FindingCollector("inspect");
-  const conceptDeclarations = uniqueDeclarations(conceptReport.declarations);
-  const proofDeclarations = uniqueDeclarations(proofReport?.declarations ?? []);
+  const conceptDeclarations = uniqueDeclarations(conceptReport.declarations, "concept", findings, specVersion);
+  const proofDeclarations = uniqueDeclarations(proofReport?.declarations ?? [], "proof", findings, specVersion);
+  const ownModules = {
+    concepts: new Set([conceptInventory.rootModule, ...conceptInventory.modules]),
+    proofs: new Set(proofInventory === undefined ? [] : [proofInventory.rootModule, ...proofInventory.modules]),
+  };
   checkReportShape(conceptReport, "concept", findings);
   checkRootModule(conceptReport, conceptInventory, findings);
+  if (specVersion === 2) checkGlobalSyntax(conceptReport, "concept", findings);
   checkImports(
     conceptReport,
     conceptInventory,
@@ -93,6 +98,7 @@ export function judgeInspection(
     }
     checkReportShape(proofReport, "proof", findings);
     checkRootModule(proofReport, proofInventory, findings);
+    if (specVersion === 2) checkGlobalSyntax(proofReport, "proof", findings);
     checkImports(
       proofReport,
       proofInventory,
@@ -150,9 +156,14 @@ export function judgeInspection(
     proofInventory: scope === "concepts" ? undefined : proofInventory,
     resolution,
     siblings,
+    ownModules,
     findings,
   });
   if (scope !== "concepts") warnAboutUnusedLemmas(proofDeclarations, proofs, findings);
+  // Decision 10: a spec-2 inspect finding answers one of two questions. The
+  // classifier marked the ones that decide what edge a theorem is
+  // (`translation`); everything else here is an archive standard.
+  if (specVersion === 2) findings.defaultIntent("standards");
   concepts.sort((a, b) => a.id.localeCompare(b.id));
   proofs.sort((a, b) => a.id.localeCompare(b.id));
   return { result: { concepts, proofs }, findings };
@@ -319,12 +330,75 @@ function checkReportShape(report: InspectorReport, label: string, findings: Find
     findings.violate("inspector-report", `${label} inspector returned duplicate modules`);
 }
 
-function uniqueDeclarations(declarations: InspectorDeclaration[]): InspectorDeclaration[] {
-  // Lean permits compatible theorem declarations in multiple module files.
-  const seen = new Set<string>();
+/** Global syntax is a violation (standards; E1 in
+ * spike/axiomfree/namespace-review-20261004.md): a `syntax`, `notation`,
+ * `macro_rules`, or `elab` registered without `scoped` or `local` rewrites
+ * every importer — the archive's generated Challenge included, where a
+ * `macro_rules` for `theorem` can turn the stated edge into `True` with both
+ * exports agreeing — and two records' tokens collide for every later
+ * author. The inspector reports, per module, the extensions it registered
+ * a global entry in (a syntax node kind is always global and is not one). */
+function checkGlobalSyntax(report: InspectorReport, label: string, findings: FindingCollector): void {
+  for (const module of report.modules) {
+    const extensions = module.globalSyntax ?? [];
+    if (extensions.length === 0) continue;
+    findings.violate(
+      "global-syntax",
+      `${label} module ${module.name} registers global syntax (${extensions.map(describeSyntaxExtension).join(", ")}); ` +
+        "a record declares every `syntax`, `notation`, `macro`, `macro_rules`, and `elab` as `scoped` or `local`",
+    );
+  }
+}
+
+const SYNTAX_EXTENSION_NAMES: Record<string, string> = {
+  "Lean.Parser.parserExtension": "a parser or token",
+  "Lean.Elab.macroAttribute": "a macro",
+  "Lean.Elab.Term.termElabAttribute": "a term elaborator",
+  "Lean.Elab.Command.commandElabAttribute": "a command elaborator",
+  "Lean.Elab.Tactic.tacticElabAttribute": "a tactic elaborator",
+};
+
+function describeSyntaxExtension(name: string): string {
+  return SYNTAX_EXTENSION_NAMES[name] ?? name;
+}
+
+/** The declarations a classifier judges. Spec 1: one per name, first wins
+ * (Lean permits the same theorem in several module files). Spec 2: a
+ * repeated name is a violation unless both copies are realized theorems —
+ * a realization Lean regenerates identically in two modules, which
+ * `finalizeImport`'s tolerance admits — judged from the inspector's
+ * `origin`, never from an absent `userName` (an authored `proof_1` has
+ * none either; codex review 2 2026-10-04, findings 1 and 4). Every
+ * copy stays in the list: the standards rules (axiom hygiene above all)
+ * run over each module's own body, and the classifier registers an
+ * endpoint once. */
+function uniqueDeclarations(
+  declarations: InspectorDeclaration[],
+  label: "concept" | "proof",
+  findings: FindingCollector,
+  specVersion: ContentSpecVersion,
+): InspectorDeclaration[] {
+  const seen = new Map<string, InspectorDeclaration>();
+  const refused = new Set<string>();
   return declarations.filter((declaration) => {
-    if (seen.has(declaration.name)) return false;
-    seen.add(declaration.name);
+    const first = seen.get(declaration.name);
+    if (first === undefined) {
+      seen.set(declaration.name, declaration);
+      return true;
+    }
+    if (specVersion !== 2) return false;
+    const realizedTheorems =
+      first.kind === "theorem" && declaration.kind === "theorem" &&
+      first.origin?.kind === "realized" && declaration.origin?.kind === "realized";
+    if (!realizedTheorems && !refused.has(declaration.name)) {
+      refused.add(declaration.name);
+      findings.violate(
+        "duplicate-name",
+        `${label} declaration ${declaration.name} is declared twice (${first.kind} in ${first.module}, ` +
+          `${declaration.kind} in ${declaration.module}); a record declares each name once`,
+        "translation",
+      );
+    }
     return true;
   });
 }

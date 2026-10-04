@@ -254,10 +254,12 @@ function findings(value: unknown, label: string): ValidationFinding[] {
   }
   return value.slice(0, MAX_FINDINGS).map((entry) => {
     const finding = (typeof entry === "object" && entry !== null ? entry : {}) as Record<string, unknown>;
+    const intent = text(finding.intent, 20);
     return {
       phase: (text(finding.phase, 40) || "validation") as ValidationPhase,
       rule: text(finding.rule, 60) || "unspecified",
       message: text(finding.message, MESSAGE_LIMIT) || "unspecified failure",
+      ...(intent === "judge" || intent === "translation" || intent === "standards" ? { intent } : {}),
     };
   });
 }

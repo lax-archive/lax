@@ -1,5 +1,18 @@
-import type { ValidationFinding } from "../submission-validation/contracts.js";
+import type { FindingIntent, ValidationFinding } from "../submission-validation/contracts.js";
 import { plural } from "./ui.js";
+
+/**
+ * What a spec-2 finding's intent tells the author to do (axiomfree-plan.md,
+ * decision 10): three different instructions, so the three are headed
+ * separately, the judge's first. A finding without an intent — spec 1, and
+ * the phases both specs share — is printed as it always was, before any
+ * headed group.
+ */
+const INTENT_GUIDANCE: ReadonlyMap<FindingIntent, string> = new Map([
+  ["judge", "the proof does not establish the edge"],
+  ["translation", "the theorem is not the edge the record claims"],
+  ["standards", "archive standard, not a correctness failure"],
+]);
 
 /**
  * Validation phases as the author's nouns. The pipeline's nineteen internal
@@ -51,10 +64,17 @@ export function groupFindings(
   const distinct = unique(findings);
   if (distinct.length === 0) return undefined;
   const body: string[] = [];
-  for (const finding of distinct) {
-    body.push(`${phaseLabel(finding.phase)} · ${finding.rule}`);
+  const lines = (finding: ValidationFinding, indent: string): void => {
+    body.push(`${indent}${phaseLabel(finding.phase)} · ${finding.rule}`);
     // A compile transcript is its lines; keep them, indented under their rule.
-    for (const message of finding.message.split(/\r?\n/u)) body.push(`  ${message}`);
+    for (const message of finding.message.split(/\r?\n/u)) body.push(`${indent}  ${message}`);
+  };
+  for (const finding of distinct) if (finding.intent === undefined) lines(finding, "");
+  for (const [intent, guidance] of INTENT_GUIDANCE) {
+    const headed = distinct.filter((finding) => finding.intent === intent);
+    if (headed.length === 0) continue;
+    body.push(`${intent} · ${guidance}`);
+    for (const finding of headed) lines(finding, "  ");
   }
   return { headline: plural(distinct.length, severity), body };
 }
@@ -63,7 +83,7 @@ function unique(findings: readonly ValidationFinding[]): ValidationFinding[] {
   return [
     ...new Map(
       findings.map((finding) => [
-        `${finding.phase}\u0000${finding.rule}\u0000${finding.message}`,
+        `${finding.phase}\u0000${finding.rule}\u0000${finding.message}\u0000${finding.intent ?? ""}`,
         finding,
       ]),
     ).values(),

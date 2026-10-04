@@ -91,7 +91,7 @@ program
   .command("build")
   .argument("[folder]", "submission folder", ".")
   .option("--profile", "print phase timings")
-  .option("--replay", "also run the kernel replay the archive runs")
+  .option("--replay", "also run the kernel replay over both packages (the archive replays only the concept package in spec 2)")
   .option("--only <part>", "build only `concepts` or `proofs` for fast iteration")
   .option(
     "--build-from-source",

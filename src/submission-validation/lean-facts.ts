@@ -40,6 +40,19 @@ export interface LeanFacts {
   /** What leanchecker and lean say when a module they were told to replay is
    * not on the composed LEAN_PATH — an archive bug, never an author's. */
   missingModulePattern: RegExp;
+  /** What Lean's import says when a package's own oleans cannot be loaded
+   * together, and what the inspector says when an olean lists a constant it
+   * does not carry — the author's, under spec 2 (phases/inspect-runner.ts
+   * inspectorExitFailure). Kept to the shapes only a submission's own olean
+   * *content* can cause: a constant two of its modules both declare
+   * (`finalizeImport`'s refusal) and a constant a module lists but does not
+   * carry (the inspector's). The shapes a truncated capture, a toolchain
+   * mismatch or a missing companion file produce — `failed to read file`,
+   * `invalid header`, `incompatible header`, `not a valid .olean`, a missing
+   * data file — stay the archive's: they arise as readily from the
+   * archive's own handling of the bytes as from the author's build
+   * (verification review 2026-10-04). */
+  oleanRefusalPattern: RegExp;
   /** `Lake version 5.0.0 (Lean version 4.30.0)` → the two numbers. */
   parseLakeBanner: (raw: string) => { lean?: string; lake?: string };
   /** The constants `lake comparator` exports from both modules beside the
@@ -68,6 +81,8 @@ const SHARED: LeanFacts = {
   elanToolchainDirName: (toolchain) => toolchain.replace("/", "--").replace(":", "---"),
   missingModulePattern:
     /(?:unknown module|object file.*(?:not found|does not exist)|cannot find.*\.olean)/iu,
+  oleanRefusalPattern:
+    /(?:import .* failed, environment already contains|constant .* of module .* not found)/iu,
   parseLakeBanner: (raw) => ({
     lean: /Lean version ([^\s)]+)/u.exec(raw)?.[1],
     lake: /Lake version (\S+)/u.exec(raw)?.[1],

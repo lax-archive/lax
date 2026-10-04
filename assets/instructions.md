@@ -133,6 +133,20 @@ universe variables, pairwise distinct in the conclusion, never a fixed
 level like `Refl.{0}` or `Type`: a proof of one level proves a special
 case, not the statement, and `lax build` refuses it.
 
+**Names and syntax.** Put everything under `namespace Lax261Proofs` (and
+every concept's declarations under its module name): the archive imports
+any set of its records into one Lean environment when it composes
+certificates, and a name outside your prefix can collide with a record
+registered next year. Never escape with `_root_`; a `private` helper is
+fine anywhere. Never `initialize` (nor `register_option`,
+`register_simp_attr`, `declare_syntax_cat`): a registry keyed by name
+clashes at import. Write `scoped notation`, `scoped syntax`, `scoped
+macro_rules`, and `local attribute`, never the global forms — a global
+rule rewrites every file that imports yours, the archive's own certificate
+included, and `lax build` refuses it. Avoid `bv_decide`/`bv_normalize` on
+an enum you did not define: it realizes a definition under the enum's
+namespace, which two records cannot both carry.
+
 **Certificates.** Beside Replay, the archive judges every spec-2 record with
 the toolchain's `lake comparator`: from your proofs it generates a
 `Challenge.lean` stating each edge over the concept packages alone, a

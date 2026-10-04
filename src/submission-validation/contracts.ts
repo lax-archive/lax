@@ -36,10 +36,23 @@ export interface ValidationRequest {
   legacyManifestWithoutIssue?: true;
 }
 
+/**
+ * Which question a spec-2 finding answers (axiomfree-plan.md, decision 10):
+ * `judge` — the proof does not establish the edge (the comparator and its
+ * kernels); `translation` — the theorem is not the edge the record claims
+ * (statement-hood, statement-name resolution, the universe rule, the
+ * generator's own refusals); `standards` — an archive standard, never a
+ * correctness failure (namespace, axiom hygiene, frontmatter, imports, root
+ * module, unused lemmas). Absent on every spec-1 finding and on the phases
+ * shared by both specs.
+ */
+export type FindingIntent = "judge" | "translation" | "standards";
+
 export interface ValidationFinding {
   phase: ValidationPhase;
   rule: string;
   message: string;
+  intent?: FindingIntent;
 }
 
 /**
@@ -471,6 +484,10 @@ export interface InspectorModule {
   imports: string[];
   moduleDocs: ParsedDoc[];
   declCount: number;
+  /** Spec 2: the syntax extensions (parser, macro, term/command/tactic
+   * elaborator) this module registers a *global* entry in — a `syntax`,
+   * `notation`, `macro_rules`, or `elab` without `scoped`/`local`. */
+  globalSyntax?: string[];
 }
 
 export interface ConclusionFacts {
@@ -480,6 +497,19 @@ export interface ConclusionFacts {
   originReachable: boolean;
   defeq: boolean;
 }
+
+/** Where a spec-2 declaration came from (lean/inspector/Main.lean
+ * `Origin`): authored from the module's syntax; private, mangled with its
+ * module; scoped, carrying macro scopes of its module; realized by Lean
+ * under an existing constant (reserved names, matcher realizations), its
+ * parent; or an auxiliary Lean generated for an own declaration (recursors,
+ * `casesOn`, matchers, `sizeOf` lemmas, abstracted proofs), its parent. */
+export type DeclarationOrigin =
+  | { kind: "authored" }
+  | { kind: "private"; module: string }
+  | { kind: "scoped"; module: string }
+  | { kind: "realized"; parent: string }
+  | { kind: "auxiliary"; parent: string };
 
 export interface InspectorDeclaration {
   name: string;
@@ -512,6 +542,20 @@ export interface InspectorDeclaration {
   /** Tagged declarations only: the number of leading `∀`-binders of the
    * stored type, for the "takes binders" finding. */
   binders?: number;
+  /** Spec 2: the name has a component the canonical dotted form cannot
+   * carry (a `.` inside it, or a numeric component outside the private
+   * prefix); `name` and `userName` are then Lean's escaped form, and the
+   * classifier refuses the declaration (`name-not-canonical`). */
+  nonCanonical?: true;
+  /** Spec 2: where the declaration came from, with the evidence
+   * (lean/inspector/Main.lean `Origin`) — the one fact every rule that
+   * tells authored content from what Lean generated consults; `userName`
+   * is the display name and no rule reads its presence. Present on every
+   * declaration of a `--spec 2` report. */
+  origin?: DeclarationOrigin;
+  /** Spec 2: the declaration is marked `@[init]` — an `initialize` or its
+   * sugar — which a record may not declare. */
+  initializer?: true;
   /** Tagged definitions only: the pretty-printed body. */
   body?: string;
 }
@@ -550,11 +594,66 @@ export type CertificationKernel =
   | "con-leche"
   | "con-ron";
 
-/** Who judged the certificate: the toolchain whose `lake comparator` ran, and
- * its exit code — recorded only on a pass, so always 0. */
+/** The toolchain binaries the judge runs, digested as installed: the four
+ * the judge always uses and the five checkers `--paranoid` adds
+ * (CertificationKernel's binaries by their file names). The host hashes them
+ * before the first certify container starts and again after the judge has
+ * run (certify/self-test.ts); the record carries the digests beside the
+ * toolchain name so a later reader knows which bytes judged it. */
+export const JUDGE_TOOLS = [
+  "lake",
+  "lean",
+  "leanexport",
+  "leanchecker",
+  "leanchecker-paranoid",
+  "lean4lean",
+  "nanoda_bin",
+  "con-leche",
+  "con-ron",
+] as const;
+export type JudgeTool = (typeof JUDGE_TOOLS)[number];
+
+/** The probes of the judge self-test (certify/self-test.ts), in the order the
+ * record lists them. The first three are one-line Lean modules lax owns,
+ * built, exported, and judged through the same containers as the record: a
+ * matching pair the comparator must accept, a mismatched pair it must reject,
+ * and the matching Solution export with its proof term replaced by its
+ * statement, which Lean's kernel must refuse. The rest probe the judge's
+ * confinement from inside: a canary the host wrote under the job directory
+ * and under its `/tmp` is invisible, there is no network interface but `lo`,
+ * `which leanchecker` resolves to the toolchain's binary, and neither the
+ * project nor the toolchain is writable. A wrong answer is an infrastructure
+ * failure, never a finding against the author (Palomar's policy does the
+ * same before any candidate code runs). */
+export const SELF_TEST_PROBES = [
+  "comparator-accepts",
+  "comparator-rejects-mismatch",
+  "kernel-rejects-forged",
+  "canary-invisible",
+  "network-absent",
+  "leanchecker-resolves",
+  "project-read-only",
+  "toolchain-read-only",
+] as const;
+export type SelfTestProbe = (typeof SELF_TEST_PROBES)[number];
+
+/** The judge self-test's outcome as the record carries it: `passed` with
+ * every probe listed on the trusted path; `passed: false` with no probes on a
+ * local `lax build`, which runs no container and proves no runner. The
+ * trusted parser admits only the former. */
+export interface JudgeSelfTest {
+  passed: boolean;
+  probes: SelfTestProbe[];
+}
+
+/** Who judged the certificate: the toolchain whose `lake comparator` ran, its
+ * exit code — recorded only on a pass, so always 0 — the self-test the judge
+ * passed first, and the sha256 of each judge binary as installed. */
 export interface CertificateJudge {
   toolchain: string;
   comparatorExitCode: 0;
+  selfTest: JudgeSelfTest;
+  tools: Record<JudgeTool, string>;
 }
 
 /**
