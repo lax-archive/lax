@@ -1952,7 +1952,19 @@ desired), which builds the Challenge and then the proof package — a git
 dependency of the bundle — as the solution module. ``lax certify --run`` verifies every checkout in its workspace at
 the bundle's pinned revision and clean before it runs, and removes the
 record packages' build products, so a previous run's proof build cannot
-feed the next run's Challenge.
+feed the next run's Challenge. It then holds the Challenge to the
+telescope as A2 does: it resolves, builds ``Challenge``, exports it and
+runs the environment's inspector over it, each step under bubblewrap the
+way ``lake comparator`` confines its own (the network for resolution
+only), holds every theorem the inspector read to the theorems the bundle
+states — a relative certificate's ``Cert.<statement-id>`` to its implied
+edge — and hands that export to ``lake comparator
+--challenge-from-export``, so the comparator judges exactly the Challenge
+that was read and builds only the solution module. A disagreement is the
+same ``translation`` violation as in A2. Where the inspector cannot be
+built, the comparator runs as the bundle's own command and the result is
+reported as "comparator accepted; Challenge meaning not checked", never as
+certified.
 
 > draft note (2026-10-04, open for Jan): three binding questions the
 > reviews raised are not settled here. (1) *Revalidation*: ``/lax admin
@@ -2455,7 +2467,9 @@ rewrite, and the first ``lax build`` names each one left behind (a stray
 **lax certify <target> [--relative-to <statement>...] [--run [--paranoid]]
 [--output <folder>]** writes a certificate bundle (see Certification) and
 prints the ``lake comparator`` command for it; ``--run`` runs the command,
-with ``--paranoid`` adding the toolchain's bundled external kernels. The
+with ``--paranoid`` adding the toolchain's bundled external kernels, after
+holding the built Challenge to the theorems the bundle states (see
+Certification, Publication). The
 target is a ``lax-N`` id, whose per-submit bundle is fetched by its recorded
 digest, or regenerated from the record's telescopes when ``--relative-to``
 is given; a proof id, whose single edge is the certificate; or a statement

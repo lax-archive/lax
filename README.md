@@ -443,7 +443,13 @@ or proof id, five with `Solution.lean` for a relative certificate) plus
 `lake comparator --config comparator.json` line, or runs it with `--run`
 (`--paranoid` adds the toolchain's bundled kernels) inside the tool's own
 bubblewrap sandbox — git and `bwrap` must be on PATH, and no unsandboxed
-mode is offered. `lax doctor --env <spec-2 id>` reports the comparator, the
+mode is offered. Before the comparator runs, `--run` builds and exports the
+Challenge in the same kind of sandbox, reads it with the environment's
+inspector, holds every theorem to the edge the bundle states (the
+global-macro defence the archive's own Certify runs), and passes that export
+to the comparator with `--challenge-from-export`; where the inspector
+cannot be built it reports "comparator accepted; Challenge meaning not
+checked" instead of "certified". `lax doctor --env <spec-2 id>` reports the comparator, the
 sandbox, and each bundled kernel.
 
 `lax generate-prooftree lax-N` reads the local Archive database, selects one

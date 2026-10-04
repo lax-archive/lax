@@ -16,8 +16,9 @@ import * as ui from "../../src/cli/ui.js";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
 import { readBundle, sealBundle } from "../../src/submission-validation/certify/bundle.js";
 import { BUNDLE_FILES, challengeText, certifiedProof, type RelativeBundle } from "../../src/submission-validation/certify/generate.js";
-import type { ProofEntry } from "../../src/submission-validation/contracts.js";
+import type { InspectorReport, ProofEntry } from "../../src/submission-validation/contracts.js";
 import { environment as environmentById, epoch } from "../../src/submission-validation/environments.js";
+import { inspectorSourceHash } from "../../src/submission-validation/host/inspector.js";
 import { warmDir } from "../../src/submission-validation/host/warmstore.js";
 import { startFakeGhcr, type FakeGhcr } from "../fake-ghcr.js";
 import { spec2TestEnvironment, withTestEnvironments, withTestEnvironmentsAsync } from "../support/environments.js";
@@ -224,24 +225,77 @@ function bundleIn(directory: string): RelativeBundle {
   ) as RelativeBundle;
 }
 
-/** A toolchain directory with a `lake` that answers `comparator` as scripted,
- * and `git`/`bwrap` stand-ins on PATH, so --run reaches the verdict parser. */
-function fakeToolchain(comparator: string, tools: { git?: boolean; bwrap?: boolean } = {}): void {
+/** A toolchain directory with a `lake` that answers `comparator` (and the
+ * Challenge's `build`) as scripted, a `leanexport` that prints a stand-in
+ * export, and `git`/`bwrap` stand-ins on PATH — the `bwrap` one logs its
+ * command line and runs what follows `--` — so --run reaches the verdict
+ * parser. With `inspector`, the environment's inspector is already built and
+ * writes that report: the Challenge is held; without, building it fails and
+ * the Challenge's meaning goes unchecked. */
+function fakeToolchain(
+  comparator: string,
+  tools: { git?: boolean; bwrap?: boolean; build?: string; inspector?: InspectorReport } = {},
+): void {
   const mangled = TOOLCHAIN.replace("/", "--").replace(":", "---");
   const bin = path.join(home, "elan", "toolchains", mangled, "bin");
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(path.join(bin, "lean"), "");
   fs.writeFileSync(
     path.join(bin, "lake"),
-    `#!/bin/sh\necho "$@" >> ${JSON.stringify(path.join(home, "lake-args"))}\ncase "$1" in comparator) ${comparator} ;; esac\necho "Lake version 5.0.0"\n`,
+    `#!/bin/sh\necho "$@" >> ${JSON.stringify(path.join(home, "lake-args"))}\ncase "$1" in comparator) ${comparator} ;; build) ${tools.build ?? "true"} ;; esac\necho "Lake version 5.0.0"\n`,
     { mode: 0o755 },
   );
+  fs.writeFileSync(path.join(bin, "leanexport"), "#!/bin/sh\necho 'the Challenge export'\n", { mode: 0o755 });
   const fake = path.join(home, "bin");
   fs.mkdirSync(fake);
   if (tools.git !== false) fs.writeFileSync(path.join(fake, "git"), "#!/bin/sh\necho 'git version 2.43.0'\n", { mode: 0o755 });
-  if (tools.bwrap !== false) fs.writeFileSync(path.join(fake, "bwrap"), "#!/bin/sh\necho 'bubblewrap 0.9.0'\n", { mode: 0o755 });
+  if (tools.bwrap !== false) {
+    fs.writeFileSync(
+      path.join(fake, "bwrap"),
+      `#!/bin/sh\nif [ "$1" = --version ]; then echo 'bubblewrap 0.9.0'; exit 0; fi\n` +
+        `echo "$@" >> ${JSON.stringify(path.join(home, "bwrap-args"))}\n` +
+        `while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n`,
+      { mode: 0o755 },
+    );
+  }
+  if (tools.inspector !== undefined) {
+    const version = (JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8")) as { version: string }).version;
+    const key = withTestEnvironments([SPEC2], () => `${version}-${inspectorSourceHash(environmentById(SPEC2.id)!)}`);
+    const tool = path.join(home, "tools", key, "src", ".lake", "build", "bin");
+    fs.mkdirSync(tool, { recursive: true });
+    // the inspector's argument shape: --spec 2 <report> Challenge
+    fs.writeFileSync(path.join(tool, "laxinspector"), `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify(tools.inspector)}' > "$3"\n`, { mode: 0o755 });
+  }
   // the fake dir alone: a real git or bwrap on the machine must not stand in
   process.env.PATH = fake;
+}
+
+/** The inspector's reading of lax-42's Challenge: Euclid's edge as stated,
+ * or — a global macro's work — something else under the same name. */
+function challengeReport(rewritten = false): InspectorReport {
+  return {
+    modules: [{ name: "Challenge", imports: ["Lax42"], moduleDocs: [], declCount: 1, globalSyntax: [] }],
+    declarations: [
+      {
+        name: EUCLID.id,
+        kind: "theorem",
+        module: "Challenge",
+        axioms: ["sorryAx"],
+        usedConstants: [],
+        userName: EUCLID.id,
+        origin: { kind: "authored" },
+        laxStatement: false,
+        isProp: false,
+        levelParams: ["u"],
+        telescope: rewritten
+          ? { hypotheses: [], conclusion: { const: "True", levels: [] } }
+          : {
+              hypotheses: [{ const: "Lax42.Primes.ExistsPrimeDivisor", levels: [] }],
+              conclusion: { const: "Lax42.Primes.InfinitelyManyPrimes", levels: [["param", "u"]] },
+            },
+      },
+    ],
+  };
 }
 
 describe("lax certify", () => {
@@ -462,10 +516,10 @@ describe("lax certify", () => {
     await expect(run("lax-42")).rejects.toThrow(/there is no local copy of the archive/u);
   });
 
-  it("--run runs `lake comparator` in the bundle folder and renders the verdict", async () => {
+  it("--run holds the built Challenge to the edges, then judges against that export", async () => {
     writeChain();
     seedWarmStore();
-    fakeToolchain('echo "Your solution is okay!"; exit 0');
+    fakeToolchain('echo "Your solution is okay!"; exit 0', { inspector: challengeReport() });
     const log = quiet();
     const out = path.join(work, "run");
 
@@ -473,15 +527,29 @@ describe("lax certify", () => {
 
     expect(code).toBe(0);
     const output = printed(log);
+    expect(output).toContain("✓ Challenge states the edges");
+    expect(output).toContain("1 theorem read by the v4.35.0 inspector");
     expect(output).toContain("✓ Certified");
     expect(output).toContain(`${TOOLCHAIN} · kernels: lean`);
-    expect(output).toContain("lax-42 is certified: lake comparator --config comparator.json accepted it.");
-
-    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toBe("comparator --config comparator.json\n");
+    expect(output).toContain("lax-42 is certified: lake comparator --config comparator.json accepted it, against a Challenge that states the edges.");
+    // resolved, then built, inside the sandbox; the comparator handed the
+    // export the inspector read, so it builds only the proof package
+    const lakeArgs = fs.readFileSync(path.join(home, "lake-args"), "utf8").split("\n");
+    expect(lakeArgs.slice(0, 2)).toEqual(["resolve-deps", "build Challenge"]);
+    expect(lakeArgs[2]).toMatch(/^comparator --config comparator\.json --challenge-from-export \S+\/challenge\.export$/u);
+    // four sandboxed steps; only resolution has a network, and only the
+    // build has the folder's `.lake` writable
+    const sandboxed = fs.readFileSync(path.join(home, "bwrap-args"), "utf8").trim().split("\n");
+    expect(sandboxed).toHaveLength(4);
+    expect(sandboxed.map((line) => line.includes("--share-net"))).toEqual([true, false, false, false]);
+    expect(sandboxed.map((line) => line.includes(`--bind ${path.join(out, ".lake")} `))).toEqual([true, true, false, false]);
+    expect(sandboxed[2]).toContain("leanexport Challenge -- Quot Quot.mk Quot.lift Quot.ind Lax42Proofs.euclid propext");
+    expect(sandboxed[3]).toMatch(/laxinspector --spec 2 \S+\/challenge-report\.json Challenge$/u);
+    expect(sandboxed[3]).toContain(`LEAN_PATH ${path.join(out, ".lake", "build", "lib", "lean")}:`);
 
     // a refusal is a finding on the certificate phase, with the comparator's words
     fs.rmSync(path.join(home, "bin"), { recursive: true });
-    fakeToolchain(`echo "error: Illegal axiom detected: 'sorryAx'" >&2; exit 1`);
+    fakeToolchain(`echo "error: Illegal axiom detected: 'sorryAx'" >&2; exit 1`, { inspector: challengeReport() });
     const refused = quiet();
     expect(await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true, paranoid: true }))).toBe(1);
     const refusal = printed(refused);
@@ -489,7 +557,50 @@ describe("lax certify", () => {
     expect(refusal).toContain("certificate · illegal-axiom");
     expect(refusal).toContain("rest on the axiom sorryAx");
     // --paranoid went to the comparator's command line
-    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toContain("comparator --config comparator.json --paranoid\n");
+    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toMatch(/comparator --config comparator\.json --challenge-from-export \S+ --paranoid\n/u);
+  });
+
+  it("--run refuses a Challenge that elaborated to something else, before the comparator runs", async () => {
+    writeChain();
+    seedWarmStore();
+    fakeToolchain('echo "Your solution is okay!"; exit 0', { inspector: challengeReport(true) });
+    const log = quiet();
+    const out = path.join(work, "run");
+
+    expect(await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true }))).toBe(1);
+    const output = printed(log);
+    expect(output).toContain("✗ Refused");
+    expect(output).toContain("challenge-mismatch");
+    expect(output).toContain("Lax42Proofs.euclid states the edge {Lax42.Primes.ExistsPrimeDivisor} → Lax42.Primes.InfinitelyManyPrimes.{u}.{u}");
+    expect(output).toContain("elaborated to {} → True");
+    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).not.toContain("comparator");
+
+    // a Challenge that does not build is the translation's finding, not a run failure
+    fs.rmSync(path.join(home, "bin"), { recursive: true });
+    fs.rmSync(path.join(home, "lake-args"));
+    fakeToolchain('echo "Your solution is okay!"; exit 0', { inspector: challengeReport(), build: 'echo "error: unknown constant" >&2; exit 1' });
+    const broken = quiet();
+    expect(await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true }))).toBe(1);
+    expect(printed(broken)).toContain("challenge-build");
+    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).not.toContain("comparator");
+  });
+
+  it("--run without an inspector says the Challenge's meaning was not checked, never certified", async () => {
+    writeChain();
+    seedWarmStore();
+    fakeToolchain('echo "Your solution is okay!"; exit 0');
+    const log = quiet();
+    const out = path.join(work, "run");
+
+    expect(await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true }))).toBe(0);
+    const output = printed(log);
+    expect(output).toContain("! Challenge meaning not checked");
+    expect(output).toContain("✓ Comparator accepted");
+    expect(output).toContain("lax-42: comparator accepted; Challenge meaning not checked.");
+    expect(output).not.toContain("is certified");
+    expect(output).toContain("the v4.35.0 inspector could not be built here");
+    // the bundle's own command, nothing held: the inspector's build was the only other lake run
+    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toBe("build\ncomparator --config comparator.json\n");
   });
 
   it("--run insists on git and bubblewrap, and on the toolchain", async () => {

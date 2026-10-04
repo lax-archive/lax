@@ -45,7 +45,9 @@ machine that never ran lax, the spec reconciliation of `spec_v2_draft.md`
 against a *real* record (the e2e exercises it over local fixture
 repositories only after the folder is materialised unsandboxed, because
 bubblewrap cannot see them; whether Lake's sandbox clones from GitHub and
-pulls mathlib's artifact cache is the rehearsal's question); `lax certify`
+pulls mathlib's artifact cache is the rehearsal's question — now also for
+the Challenge hold, whose `lake resolve-deps` has the network and whose
+`lake build Challenge` does not, as in the comparator); `lax certify`
 of a Lax17-sized relative certificate (the composed Solution of a
 28-hypothesis chain). Jan's items before stage 3 ships:
 

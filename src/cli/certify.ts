@@ -16,7 +16,11 @@
 // folder; the command prints the `lake comparator`
 // line a reader runs there, or runs it with --run — sandboxed, as the tool
 // is: `--inadvisably-no-sandbox` is for lax's own build and is not offered
-// here, because this run is the author's trustworthy rerun.
+// here, because this run is the author's trustworthy rerun. --run first
+// holds the built Challenge to the theorems the bundle states, with the
+// per-environment inspector (cli/certify-hold.ts), and judges against that
+// very export; without the inspector it says the Challenge's meaning was
+// not checked instead of "certified".
 //
 // Needs the local archive copy, and for regeneration the environment's warm
 // workspace (its locked manifest is the bundle's `lake-manifest.json`); it
@@ -24,6 +28,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { SourceLocation } from "../shared/types.js";
 import { isObject, normalizeSubmissionId } from "../shared/validation.js";
@@ -38,11 +43,13 @@ import {
   certifiedProof,
   comparatorConfigText,
   conceptPackagesOf,
+  edgeTheorem,
   lakefileText,
   manifestDependencies,
   orderedProofs,
   relativeCertificateFiles,
   type Bundle,
+  type CertificateTheorem,
   type CertifiedProof,
   type CertifyPackage,
   type RecordBundle,
@@ -55,6 +62,7 @@ import { lakeBinary, lakePathEnv, toolchainBinDir } from "../submission-validati
 import { run } from "../submission-validation/host/proc.js";
 import { manifestText, readWarmManifestPackages, warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { expandRecordedBuildOutput } from "../submission-validation/recorded-shape.js";
+import { holdChallengeInSandbox, readBundleManifest, type ChallengeHold } from "./certify-hold.js";
 import { databaseDirectory, tryRefreshDatabase } from "./database.js";
 import { toolVersion } from "./doctor.js";
 import { groupFindings } from "./findings.js";
@@ -141,9 +149,13 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
   const steps = new ui.Steps();
   steps.add("bundle", options.fetch === true ? "Fetching the bundle" : target.kind === "statement" ? "Composing the certificate" : "Regenerating the bundle");
   steps.add("write", "Writing the bundle");
-  if (options.run === true) steps.add("run", "Running lake comparator");
+  if (options.run === true) {
+    steps.add("hold", "Holding the Challenge to the edges");
+    steps.add("run", "Running lake comparator");
+  }
 
   let verdict: ComparatorVerdict | undefined;
+  let hold: ChallengeHold | undefined;
   let directory: string;
   try {
     const prepared =
@@ -166,23 +178,57 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     steps.settle("write", { label: `Wrote ${ui.tilde(directory)}`, detail: `${members.length} files + lean-toolchain` });
 
     if (options.run === true) {
+      requireRunTools(environment);
       const workspace = verifyCertificateWorkspace(directory, prepared.files["lake-manifest.json"]);
       const freshness =
         workspace.verified.length === 0
           ? "fresh checkouts"
           : `${ui.plural(workspace.verified.length, "checkout")} verified at the pinned revisions and clean, record build products removed`;
-      const ran = await runComparator(directory, environment, options.paranoid === true);
-      verdict = ran.verdict;
-      if (verdict.kind === "certified") {
-        steps.settle("run", {
-          label: "Certified",
-          detail:
-            // the kernels the transcript says accepted, not the flag's promise
-            `${environment.leanToolchain} · kernels: ${(ran.kernels.length > 0 ? ran.kernels : kernelsOf(options.paranoid === true ? "paranoid" : "lean", environment)).join(", ")} · ` +
-            `Challenge built from ${freshness}`,
+      const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "lax-certify-"));
+      try {
+        hold = await holdChallengeInSandbox({
+          directory,
+          environment,
+          manifest: prepared.files["lake-manifest.json"],
+          theorems: prepared.theorems,
+          scratch,
+          echo: ui.isVerbose(),
+          onDetail: (text) => steps.detail("hold", text),
         });
-      } else {
-        steps.settle("run", { status: "fail", label: verdict.kind === "violation" ? "Refused" : "Could not run", detail: `Challenge built from ${freshness}` });
+        if (hold.kind === "held") {
+          steps.settle("hold", {
+            label: "Challenge states the edges",
+            detail: `${ui.plural(prepared.theorems.length, "theorem")} read by the ${environment.id} inspector · built from ${freshness}`,
+          });
+        } else if (hold.kind === "unchecked") {
+          steps.settle("hold", { status: "warn", label: "Challenge meaning not checked", detail: "no inspector" });
+          notes.add(
+            "The Challenge's theorems were not read back against the edges the bundle states, so a global",
+            "macro in a concept package could have changed what they say before the comparator judged them:",
+            `${hold.reason}`,
+          );
+        } else {
+          verdict = hold.verdict;
+          steps.settle("hold", { status: "fail", label: verdict.kind === "violation" ? "Refused" : "Could not run", detail: `Challenge built from ${freshness}` });
+          steps.settle("run", { hidden: true });
+        }
+        if (verdict === undefined) {
+          const ran = await runComparator(directory, environment, options.paranoid === true, hold.kind === "held" ? hold.challengeExport : undefined);
+          verdict = ran.verdict;
+          if (verdict.kind === "certified") {
+            steps.settle("run", {
+              label: hold.kind === "held" ? "Certified" : "Comparator accepted",
+              detail:
+                // the kernels the transcript says accepted, not the flag's promise
+                `${environment.leanToolchain} · kernels: ${(ran.kernels.length > 0 ? ran.kernels : kernelsOf(options.paranoid === true ? "paranoid" : "lean", environment)).join(", ")}` +
+                (hold.kind === "held" ? " · against the Challenge export read above" : ` · Challenge built from ${freshness}`),
+            });
+          } else {
+            steps.settle("run", { status: "fail", label: verdict.kind === "violation" ? "Refused" : "Could not run", detail: `Challenge built from ${freshness}` });
+          }
+        }
+      } finally {
+        fs.rmSync(scratch, { recursive: true, force: true });
       }
     }
   } finally {
@@ -200,7 +246,11 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     return 0;
   }
   if (verdict.kind === "certified") {
-    ui.verdict(`${label} is certified: ${command} accepted it.`);
+    ui.verdict(
+      hold?.kind === "held"
+        ? `${label} is certified: ${command} accepted it, against a Challenge that states the edges.`
+        : `${label}: comparator accepted; Challenge meaning not checked.`,
+    );
     notes.print();
     ui.done();
     return 0;
@@ -209,7 +259,10 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     const group = groupFindings([{ phase: "certify", rule: verdict.rule, message: verdict.message, intent: verdict.intent }], "error")!;
     ui.problem(group.headline, group.body);
   } else {
-    ui.problem("`lake comparator` did not run to a verdict", verdict.failure.message.split("\n"));
+    ui.problem(
+      hold?.kind === "refused" ? "the Challenge could not be held to the edges" : "`lake comparator` did not run to a verdict",
+      verdict.failure.message.split("\n"),
+    );
   }
   notes.print();
   ui.done();
@@ -218,6 +271,9 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
 
 interface PreparedBundle {
   files: Bundle;
+  /** What the Challenge states: the theorems the bundle was generated from,
+   * which --run holds the built Challenge to. */
+  theorems: CertificateTheorem[];
   toolchain: string;
   settled: string;
   detail: string;
@@ -425,6 +481,7 @@ function regenerateBundle(
   }
   return {
     files,
+    theorems: proofs.map(edgeTheorem),
     toolchain: environment.leanToolchain,
     settled: target.kind === "record" ? "Regenerated the bundle" : "Generated the edge's bundle",
     detail,
@@ -452,6 +509,9 @@ async function fetchStoredBundle(record: IndexedRecord, environment: ArchiveEnvi
     throw new Error(`the fetched bundle's Challenge.lean is not the one ${record.id}'s record stores — the archive's record is inconsistent; report it`);
   return {
     files,
+    // the fetched Challenge is the record's stored one, which the publisher
+    // held to the record's own proofs
+    theorems: orderedProofs(record.proofs.map(certifiedProof)).map(edgeTheorem),
     toolchain: environment.leanToolchain,
     settled: "Fetched the bundle",
     detail: `digest ${stored.digest.slice(0, 12)} verified`,
@@ -542,6 +602,7 @@ function composeCertificate(
       "lakefile.toml": lakefileText(librariesOf(environment), packages.map((name) => gitSource(name, records)), "relative"),
       "lake-manifest.json": manifestText(warm, manifestDependencies(closure.map((name) => gitSource(name, records)))),
     },
+    theorems: [composed.theorem],
     toolchain: environment.leanToolchain,
     settled: "Composed the certificate",
     detail: `${composed.theorem.name} · ${ui.plural(composed.proofsUsed.length, "proof")} applied: ${composed.proofsUsed.join(", ")}`,
@@ -575,17 +636,10 @@ const RECORD_PACKAGE = /^Lax[0-9]+(?:Proofs)?$/u;
 export function verifyCertificateWorkspace(directory: string, manifest: string): { verified: string[]; cleaned: string[] } {
   const verified: string[] = [];
   const cleaned: string[] = [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(manifest);
-  } catch {
-    throw new Error("the bundle's lake-manifest.json is not JSON");
-  }
-  const packages = isObject(parsed) && Array.isArray(parsed.packages) ? parsed.packages : [];
-  const packagesDir = path.join(directory, ".lake", "packages");
-  for (const entry of packages) {
-    if (!isObject(entry) || typeof entry.name !== "string" || entry.type !== "git" || typeof entry.rev !== "string") continue;
-    if (!/^[A-Za-z0-9_.-]{1,128}$/u.test(entry.name)) throw new Error(`the bundle's manifest names a package Lake cannot check out: ${JSON.stringify(entry.name)}`);
+  const manifestRead = readBundleManifest(manifest);
+  const packagesDir = path.join(directory, manifestRead.packagesDir);
+  for (const entry of manifestRead.packages) {
+    if (entry.type !== "git" || entry.rev === undefined) continue;
     const checkout = path.join(packagesDir, entry.name);
     if (!fs.existsSync(checkout)) continue;
     const head = git(checkout, ["rev-parse", "HEAD"]);
@@ -654,18 +708,12 @@ function certificateFolder(folder: string): string {
   return root;
 }
 
-/**
- * `lake comparator --config comparator.json [--paranoid]` in the folder, with
- * the environment's own lake and its bin dir first on PATH. The tool
- * sandboxes the build with bubblewrap and needs git on PATH to resolve the
- * bundle's git requires inside it; both are checked first so the refusal
- * names the tool rather than quoting the comparator's exit 2.
- */
-async function runComparator(
-  directory: string,
-  environment: ArchiveEnvironment,
-  paranoid: boolean,
-): Promise<{ verdict: ComparatorVerdict; kernels: string[] }> {
+/** What --run needs before anything runs: the environment's toolchain, and
+ * git and bubblewrap on PATH — `lake comparator` resolves the bundle's git
+ * requires inside its sandbox, and the Challenge is held in the same kind of
+ * sandbox (cli/certify-hold.ts). Checked first so the refusal names the
+ * tool rather than quoting the comparator's exit 2. */
+function requireRunTools(environment: ArchiveEnvironment): void {
   if (!fs.existsSync(path.join(toolchainBinDir(environment), "lake")))
     throw new Error(`the ${environment.id} toolchain is not installed — run ${ui.cmd(`lax doctor --env ${environment.id}`)}`);
   const missing: string[] = [];
@@ -673,9 +721,29 @@ async function runComparator(
   if (toolVersion("bwrap") === undefined)
     missing.push("bwrap — `lake comparator` builds inside a bubblewrap sandbox, which is what makes the rerun trustworthy; install bubblewrap");
   if (missing.length > 0) throw new Error(`lax certify --run needs ${missing.length === 1 ? "a tool" : "tools"} it cannot find:\n${missing.join("\n")}`);
+}
+
+/**
+ * `lake comparator --config comparator.json [--paranoid]` in the folder, with
+ * the environment's own lake and its bin dir first on PATH — handed the
+ * Challenge export that was held to the edges when there is one, so the
+ * comparator judges against exactly the Challenge the inspector read and
+ * builds only the solution module itself.
+ */
+async function runComparator(
+  directory: string,
+  environment: ArchiveEnvironment,
+  paranoid: boolean,
+  challengeExport: string | undefined,
+): Promise<{ verdict: ComparatorVerdict; kernels: string[] }> {
   const result = await run(
     lakeBinary(environment),
-    ["comparator", "--config", "comparator.json", ...(paranoid ? ["--paranoid"] : [])],
+    [
+      "comparator",
+      "--config", "comparator.json",
+      ...(challengeExport === undefined ? [] : ["--challenge-from-export", challengeExport]),
+      ...(paranoid ? ["--paranoid"] : []),
+    ],
     directory,
     { echo: ui.isVerbose(), env: { PATH: lakePathEnv(environment) }, maxOutputBytes: 16 * 1024 * 1024 },
   );

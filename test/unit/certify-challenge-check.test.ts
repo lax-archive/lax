@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { checkChallengeReport } from "../../src/submission-validation/certify/challenge-check.js";
+import { certifiedProof, edgeTheorem, type CertificateTheorem } from "../../src/submission-validation/certify/generate.js";
 import type { InspectorDeclaration, InspectorReport, ProofEntry } from "../../src/submission-validation/contracts.js";
 
 const EDGE: ProofEntry = {
@@ -24,6 +25,11 @@ const EDGE: ProofEntry = {
   assumptions: ["Lax1.Infinite.Poly", "Lax7.Primes.ExistsPrimeDivisor"],
   description: "",
 };
+
+/** What the Challenge must state for proof entries: their edges. */
+function edges(...proofs: ProofEntry[]): CertificateTheorem[] {
+  return proofs.map((proof) => edgeTheorem(certifiedProof(proof)));
+}
 
 /** The built theorem exactly as the edge states it. */
 function built(overrides: Partial<InspectorDeclaration> = {}): InspectorDeclaration {
@@ -58,12 +64,12 @@ function report(...declarations: InspectorDeclaration[]): InspectorReport {
 
 describe("the Challenge held to the telescope", () => {
   it("accepts a built theorem that states exactly the recorded edge", () => {
-    expect(checkChallengeReport(report(built()), [EDGE])).toBeUndefined();
+    expect(checkChallengeReport(report(built()), edges(EDGE))).toBeUndefined();
   });
 
   it("ignores declarations of other modules and keeps the first of a name", () => {
     const elsewhere = built({ module: "Lax1.Infinite", telescope: null });
-    expect(checkChallengeReport(report(elsewhere, built()), [EDGE])).toBeUndefined();
+    expect(checkChallengeReport(report(elsewhere, built()), edges(EDGE))).toBeUndefined();
   });
 
   const cases: Array<[string, InspectorDeclaration, string]> = [
@@ -158,22 +164,50 @@ describe("the Challenge held to the telescope", () => {
   ];
   for (const [name, declaration, detail] of cases) {
     it(`refuses ${name}`, () => {
-      const result = checkChallengeReport(report(declaration), [EDGE]);
+      const result = checkChallengeReport(report(declaration), edges(EDGE));
       expect(result).toMatchObject({ kind: "violation", intent: "translation", rule: "challenge-mismatch" });
-      expect(result!.message).toContain("Lax1Proofs.euclid states the edge {Lax7.Primes.ExistsPrimeDivisor, Lax1.Infinite.Poly.{u}} → Lax1.Infinite.InfinitelyManyPrimes.{u}.{u} in the record but");
+      expect(result!.message).toContain("Lax1Proofs.euclid states the edge {Lax7.Primes.ExistsPrimeDivisor, Lax1.Infinite.Poly.{u}} → Lax1.Infinite.InfinitelyManyPrimes.{u}.{u} by the archive's records but");
       expect(result!.message).toContain(detail);
     });
   }
 
   it("refuses a Challenge that does not declare the theorem at all", () => {
-    const result = checkChallengeReport(report(), [EDGE]);
+    const result = checkChallengeReport(report(), edges(EDGE));
     expect(result).toMatchObject({ kind: "violation", rule: "challenge-mismatch" });
     expect(result!.message).toContain("is not declared in the built Challenge");
   });
 
   it("checks every edge, in id order, and reports the first disagreement", () => {
     const second: ProofEntry = { ...EDGE, id: "Lax1Proofs.another", conclusion: "Lax1.Infinite.InfinitelyManyPrimes" };
-    const result = checkChallengeReport(report(built()), [EDGE, second]);
+    const result = checkChallengeReport(report(built()), edges(EDGE, second));
     expect(result!.message).toContain("Lax1Proofs.another states the edge");
+  });
+
+  // a reader's relative certificate (cli/certify-hold.ts): one implied edge
+  // under `Cert.<statement-id>`, held the same way
+  it("holds a relative certificate's one theorem to its implied edge", () => {
+    const relative: CertificateTheorem = {
+      name: "Cert.Lax1.Infinite.InfinitelyManyPrimes",
+      levelParams: ["u"],
+      telescope: {
+        hypotheses: [{ statement: "Lax1.Infinite.Poly", levels: ["u"] }],
+        conclusion: { statement: "Lax1.Infinite.InfinitelyManyPrimes", levels: ["u"] },
+      },
+    };
+    const stated = built({
+      name: relative.name,
+      userName: relative.name,
+      telescope: {
+        hypotheses: [{ const: "Lax1.Infinite.Poly", levels: [["param", "u"]] }],
+        conclusion: { const: "Lax1.Infinite.InfinitelyManyPrimes", levels: [["param", "u"]] },
+      },
+    });
+    expect(checkChallengeReport(report(stated), [relative])).toBeUndefined();
+    const rewritten = built({ name: relative.name, userName: relative.name, telescope: { hypotheses: [], conclusion: { const: "True", levels: [] } } });
+    const result = checkChallengeReport(report(rewritten), [relative]);
+    expect(result).toMatchObject({ kind: "violation", intent: "translation", rule: "challenge-mismatch" });
+    expect(result!.message).toContain(
+      "Cert.Lax1.Infinite.InfinitelyManyPrimes states the edge {Lax1.Infinite.Poly.{u}} → Lax1.Infinite.InfinitelyManyPrimes.{u}.{u} by the archive's records but elaborated to {} → True",
+    );
   });
 });

@@ -204,7 +204,9 @@ spec.md: the spec-2 text is a draft Jan reconciles.
       rule alone is not the defence: the trusted Certify phase holds the
       exported Challenge's theorem types to the recorded telescopes
       (constants, level instances, level parameters), which is also the
-      independent structural check the Codex intents review asked for.
+      independent structural check the Codex intents review asked for —
+      and, since the ultracode review's S2, so do the host path and a
+      reader's `lax certify --run`, relative certificates included.
     - *Names must round-trip.* The spec-2 inspector flattened names with
       `Name.toString (escape := false)` and the generator split on dots,
       which is not injective (`Lax1.C.«A.B»` vs `Lax1.C.A.B`); with the
@@ -566,7 +568,9 @@ record depends on are trusted as today.
    regenerated digest is reported against the record's rather than
    required to match (only the Challenge must); `--run` is the plain
    `lake comparator --config comparator.json` in the folder, sandboxed,
-   with git and `bwrap` checked first and no unsandboxed mode; `lax
+   with git and `bwrap` checked first and no unsandboxed mode (since the
+   ultracode review's S2 it first holds the Challenge to the telescope in
+   bubblewrap and passes `--challenge-from-export`; see the Record); `lax
    doctor` shows the comparator, the sandbox, and the kernel rows only
    for a spec-2 environment (a spec-1 toolchain bundles none, and the
    epoch's report must not gain five notes); the spec-2 scaffold declares
@@ -879,3 +883,27 @@ certificate's composition, and `planCertificate` takes the solution module
 from `proofPackageRoot` alone. Owed with the next inspector rebuild: the
 `TelescopeBinder` docstring in the inspector's `Main.lean` still gives the
 `@` reason.
+
+2026-10-04, ultracode review S2: the Challenge is held to the telescope
+in one step for all three callers — container A2, the host path behind
+`lax build`, and a reader's `lax certify --run` (record, edge, and
+relative certificates alike). `certify/challenge-check.ts` owns the
+inspector's arguments over the Challenge, the report reader, the
+`challenge-build` message, and `checkChallengeReport`, which now takes the
+bundle's certificate theorems (`{name, levelParams, telescope}`) instead
+of proof entries, so a relative certificate's `Cert.<statement-id>` is
+held to its implied edge. `--run` (`cli/certify-hold.ts`) resolves, builds
+the Challenge, exports it and runs the per-environment inspector, each
+under bubblewrap with Lake's own `buildSandboxArgs` shape (network only
+for `lake resolve-deps`, `.lake` writable only for resolution and the
+build, the search path composed from the bundle's manifest, never `lake
+env`), holds the report to the theorems, and hands that very export to
+`lake comparator --challenge-from-export`, so the comparator judges the
+Challenge the inspector read and builds only the solution module, after
+both reads. No host tool runs in a tree the sandbox can write (the S1
+rule). Without an inspector (it is compiled on first use) the comparator
+runs as the bundle's own command and the verdict reads "comparator
+accepted; Challenge meaning not checked", never "certified". Coverage:
+the fake-toolchain unit tests (held, rewritten, unbuildable, no
+inspector), a relative-certificate case of the check, and the sandboxed
+`--run` of the spec-2 e2e over the real comparator.

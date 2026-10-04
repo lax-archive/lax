@@ -66,9 +66,9 @@ import type { CertificateOutput, FindingIntent, ResolvedDependency } from "../co
 import { containerBoundaryFailure, infrastructureFailure, type PipelineFailure } from "../failures.js";
 import { seedOverrides } from "../host/warmstore.js";
 import type { ContainerMount, ValidationRunner } from "../sandbox/container.js";
-import { parseInspectorReport } from "../phases/inspect-runner.js";
 import { sealBundle } from "./bundle.js";
-import { checkChallengeReport } from "./challenge-check.js";
+import { challengeBuildViolation, holdChallenge } from "./challenge-check.js";
+import { edgeTheorem } from "./generate.js";
 import { LeanNameError } from "./lean-name.js";
 import {
   CERTIFY_PATHS,
@@ -219,25 +219,6 @@ function exportedFile(filename: string, what: string): { exportPath: string; sha
   return { exportPath: filename, sha256: sha256File(filename) };
 }
 
-/** The inspector's report over the built Challenge, as container A left it
- * in `/out`: a plain bounded file, parsed as every spec-2 report is
- * (phases/inspect-runner.ts). Missing or unreadable is the archive's
- * problem, never a verdict on the record. */
-export function readChallengeReport(filename: string, maxBytes: number): ReturnType<typeof parseInspectorReport> {
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(filename);
-  } catch {
-    throw infrastructureFailure("the Challenge inspection report was not produced");
-  }
-  if (!stat.isFile() || stat.size > maxBytes) throw infrastructureFailure("the Challenge inspection report is missing or oversized");
-  try {
-    return parseInspectorReport(JSON.parse(fs.readFileSync(filename, "utf8")) as unknown, 2);
-  } catch (error) {
-    throw infrastructureFailure(`could not read the Challenge inspection report: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
 /** A generated name outside the archive's grammar is the record's problem
  * to read, on the `certify` phase, before anything runs — a `translation`
  * refusal: the generator could not state the edge. */
@@ -302,28 +283,9 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
       // 2 is run-certify.mjs's "could not start": a malformed plan or a
       // tool that failed to spawn — the archive's, never the author's
       if (built.code === 2) throw infrastructureFailure(`the certificate build tool did not start for the Challenge:\n${built.output.trim()}`);
-      // The Challenge names only statements and no proof code is present
-      // in A1, so a build failure here is never the proof's. It is either
-      // lax's — the translation disagreeing with Lean about what the
-      // telescopes say — or the concept package's own: a concept
-      // initializer that aborts during `lake build Challenge`, a concept
-      // module that does not import cleanly. The second is decision 8's
-      // trusted-author assumption (axiomfree-plan.md): the archive does not
-      // defend against a concept package the record itself depends on, so
-      // the finding stays `translation` and the wording asks for a report
-      // only when the concept packages build on their own (verification
-      // review 2026-10-04).
-      return {
-        kind: "violation" as const,
-        intent: "translation" as const,
-        rule: "challenge-build",
-        message:
-          "the generated Challenge did not build over the concept packages — the statements lax named from the " +
-          "proofs' telescopes do not elaborate the way Lean reads them; if every concept package the record " +
-          "requires builds cleanly with `lax build`, lax's generator and classifier disagree with Lean: report it as " +
-          "a lax bug, quoting this message. The transcript:\n" +
-          built.output.trim(),
-      };
+      // never the proof's: no proof code is present in A1
+      // (certify/challenge-check.ts challengeBuildViolation)
+      return challengeBuildViolation(built.output);
     }
     // A2: the export and the inspection, over the build tree read-only
     const leanPath = [
@@ -367,9 +329,10 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
     const file = exportedFile(path.join(run.outDir, "challenge.export"), "Challenge");
     // The Challenge held to the telescope: what each certificate theorem
     // elaborated to, read by the inspector in A2, against the record's edge.
-    const mismatch = checkChallengeReport(
-      readChallengeReport(path.join(run.outDir, "challenge-report.json"), input.limits.inspectorReportBytes),
-      input.record.proofs,
+    const mismatch = holdChallenge(
+      path.join(run.outDir, "challenge-report.json"),
+      input.limits.inspectorReportBytes,
+      plan.proofs.map(edgeTheorem),
     );
     if (mismatch !== undefined) return mismatch;
     return { kind: "exported" as const, ...file };

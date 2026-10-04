@@ -23,8 +23,9 @@ import { run } from "../host/proc.js";
 import { seedOverrides } from "../host/warmstore.js";
 import { dependencySubDir } from "../phases/provision.js";
 import { sealBundle } from "./bundle.js";
-import { checkChallengeReport } from "./challenge-check.js";
-import { nameViolation, readChallengeReport, type CertifyResult } from "./phase.js";
+import { challengeBuildViolation, challengeInspectorArguments, holdChallenge } from "./challenge-check.js";
+import { edgeTheorem } from "./generate.js";
+import { nameViolation, type CertifyResult } from "./phase.js";
 import {
   CHALLENGE_MODULE,
   bundleProjectFiles,
@@ -127,10 +128,7 @@ export async function certifyOnHost(input: HostCertifyInput): Promise<CertifyRes
     const stat = fs.lstatSync(exportPath);
     if (!stat.isFile() || stat.size === 0) throw infrastructureFailure(`the ${module} export is empty`);
     if (inspectReport !== undefined) {
-      // the inspector's argument shape (phases/inspect-runner.ts
-      // inspectorArguments): the spec, the report, the module list — the one
-      // generated module, which is its own root
-      const inspected = await leanEnv.exec(input.inspectorBin, ["--spec", "2", inspectReport, module], projectDir);
+      const inspected = await leanEnv.exec(input.inspectorBin, challengeInspectorArguments(inspectReport), projectDir);
       if (inspected.code !== 0) throw infrastructureFailure(`inspecting the ${module} failed (exit ${inspected.code}):\n${inspected.output.trim()}`);
     }
     return { kind: "exported" as const, exportPath, sha256: sha256File(exportPath) };
@@ -150,20 +148,10 @@ export async function certifyOnHost(input: HostCertifyInput): Promise<CertifyRes
     if (build.code === 124) throw resourceLimitFailure(`building the certificate ${CHALLENGE_MODULE} exceeded its time limit`);
     // 3 is host/proc.ts's "terminated by a signal": a crash, never the author's
     if (build.code === 3) throw infrastructureFailure(`building the certificate ${CHALLENGE_MODULE} was terminated by a signal:\n${build.output.trim()}`);
-    if (build.code !== 0) {
-      return {
-        kind: "violation" as const,
-        intent: "translation" as const,
-        rule: "challenge-build",
-        message:
-          "the generated Challenge did not build over the concept packages — the statements lax named from the " +
-          "proofs' telescopes do not elaborate the way Lean reads them, so lax's generator and classifier disagree with Lean; " +
-          `please report it as a lax bug, quoting this message. The transcript:\n${build.output.trim()}`,
-      };
-    }
+    if (build.code !== 0) return challengeBuildViolation(build.output);
     const exported = await exportModule(CHALLENGE_MODULE, [projectLibDir(projectDir), conceptsLib], path.join(certifyDir, "challenge.export"), challengeReport);
     // the Challenge held to the telescope, as the trusted phase holds it
-    const mismatch = checkChallengeReport(readChallengeReport(challengeReport, input.limits.inspectorReportBytes), input.record.proofs);
+    const mismatch = holdChallenge(challengeReport, input.limits.inspectorReportBytes, plan.proofs.map(edgeTheorem));
     return mismatch ?? exported;
   });
   if (challenge.kind === "violation") return challenge;

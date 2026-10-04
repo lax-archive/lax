@@ -28,6 +28,7 @@ import {
   RECORD_BUNDLE_FILES,
   challengeText,
   certifiedProof,
+  comparatorExportTargets,
   comparatorConfigText,
   conceptPackagesOf,
   lakefileText,
@@ -241,12 +242,7 @@ export function planCertificate(record: CertifyRecord): CertifyPlan | undefined 
     proofs,
     theoremNames,
     solutionModule,
-    exportTargets: [
-      ...facts.comparatorExportTargets.slice(0, 4), // the Quot four
-      ...theoremNames,
-      ...facts.backgroundAxioms,
-      ...facts.comparatorExportTargets.slice(4),
-    ],
+    exportTargets: comparatorExportTargets(theoremNames, facts),
     referenced,
     referencedLocal,
     challengeClosure,

@@ -325,7 +325,7 @@ describe("the trusted Certify phase", () => {
     const { input, invocations } = harness({ challengeReport: rewritten });
     const result = await certifyInContainer(input);
     expect(result).toMatchObject({ kind: "violation", rule: "challenge-mismatch", intent: "translation" });
-    expect((result as { message: string }).message).toContain("theorem Lax1Proofs.euclid states the edge {Lax7.Primes.ExistsPrimeDivisor} → Lax1.Infinite.InfinitelyManyPrimes in the record but elaborated to {} → True");
+    expect((result as { message: string }).message).toContain("theorem Lax1Proofs.euclid states the edge {Lax7.Primes.ExistsPrimeDivisor} → Lax1.Infinite.InfinitelyManyPrimes by the archive's records but elaborated to {} → True");
     expect(invocations.map((invocation) => invocation.label)).toEqual([...SELF_TEST_LABELS, "certify-challenge-build", "certify-challenge-export"]);
   });
 

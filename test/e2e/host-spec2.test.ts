@@ -22,7 +22,7 @@ import * as ui from "../../src/cli/ui.js";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
 import { readBundle, sealBundle } from "../../src/submission-validation/certify/bundle.js";
 import { checkChallengeReport } from "../../src/submission-validation/certify/challenge-check.js";
-import { BUNDLE_FILES, type RelativeBundle } from "../../src/submission-validation/certify/generate.js";
+import { BUNDLE_FILES, certifiedProof, edgeTheorem, type RelativeBundle } from "../../src/submission-validation/certify/generate.js";
 import {
   GIT_SHIM,
   challengeProjectFiles,
@@ -916,7 +916,7 @@ end Lax49Proofs
       const challengeReport = parseInspectorReport(JSON.parse(fs.readFileSync(path.join(challengeDir, "challenge-report.json"), "utf8")) as unknown, 2);
       expect(challengeReport.declarations.filter((declaration) => declaration.module === "Challenge").map((declaration) => declaration.name).sort())
         .toEqual(record.proofs.map((proof) => proof.id).sort());
-      expect(checkChallengeReport(challengeReport, record.proofs)).toBeUndefined();
+      expect(checkChallengeReport(challengeReport, record.proofs.map((proof) => edgeTheorem(certifiedProof(proof))))).toBeUndefined();
       expect(fs.readFileSync(exportPath, "utf8").startsWith('{"meta"')).toBe(true);
       // the export (lean4export 3.1.0 NDJSON, names hash-consed per
       // component) carries the certificate theorems as `thm` records
@@ -1413,7 +1413,8 @@ end Lax41Proofs
           const code = await certify("Lax41.Chain.Downstream", { out: composed, run: true });
           console.info(`[certify timing] lax certify --run (sandboxed, folder materialised): ${Math.round(performance.now() - started)} ms, exit ${code}\n${logged.join("\n")}`);
           expect(code).toBe(0);
-          expect(logged.join("\n")).toContain("Lax41.Chain.Downstream is certified: lake comparator --config comparator.json accepted it.");
+          expect(logged.join("\n")).toContain("Lax41.Chain.Downstream is certified: lake comparator --config comparator.json accepted it, against a Challenge that states the edges.");
+          expect(logged.join("\n")).toContain("Challenge states the edges");
           // and the record's own bundle, sandboxed: the comparator builds the
           // proof package — a git dependency of the bundle — as the solution
           // module inside bubblewrap
@@ -1422,7 +1423,8 @@ end Lax41Proofs
           const recordCode = await certify("lax-41", { out: regenerated, run: true });
           console.info(`[certify timing] lax certify lax-41 --run (sandboxed): ${Math.round(performance.now() - recordStarted)} ms, exit ${recordCode}\n${logged.join("\n")}`);
           expect(recordCode).toBe(0);
-          expect(logged.join("\n")).toContain("lax-41 is certified: lake comparator --config comparator.json accepted it.");
+          expect(logged.join("\n")).toContain("lax-41 is certified: lake comparator --config comparator.json accepted it, against a Challenge that states the edges.");
+          expect(logged.join("\n")).toContain("Challenge states the edges");
         }
       } finally {
         for (const spy of spies) spy.mockRestore();

@@ -38,7 +38,7 @@
 import { createHash } from "node:crypto";
 import type { ProofEntry, ProofTelescope } from "../contracts.js";
 import type { PinnedLibrary } from "../environments.js";
-import { leanFacts } from "../lean-facts.js";
+import { leanFacts, type LeanFacts } from "../lean-facts.js";
 import type { SeededDependency } from "../host/warmstore.js";
 import { leanLevel, leanName } from "./lean-name.js";
 
@@ -318,6 +318,19 @@ export function comparatorConfigFor(
  */
 export function theoremNamesOf(proofs: readonly CertifiedProof[]): string[] {
   return orderedProofs(proofs).map((proof) => leanName(proof.id));
+}
+
+/** The exporter's declaration list for a Challenge stating `theoremNames`
+ * (in Lean's name syntax, as `theoremNamesOf` gives them): exactly what
+ * `lake comparator` itself exports (lean-facts.ts comparatorExportTargets),
+ * so a comparator handed this export finds every constant it looks up. */
+export function comparatorExportTargets(theoremNames: readonly string[], facts: LeanFacts = leanFacts()): string[] {
+  return [
+    ...facts.comparatorExportTargets.slice(0, 4), // the Quot four
+    ...theoremNames,
+    ...facts.backgroundAxioms,
+    ...facts.comparatorExportTargets.slice(4),
+  ];
 }
 
 /** A TOML basic string: the names and URLs here never need more than this. */

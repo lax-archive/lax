@@ -16,10 +16,22 @@
 // The proof package is not read again here: the comparator's type
 // comparison holds every proof to its Challenge theorem, which this check
 // has just held to the telescope, so the proof is held transitively.
+//
+// One step, three callers (ultracode review 2026-10-04, S2): container A2,
+// the host path behind `lax build` (certify/host.ts), and a reader's `lax
+// certify --run` (cli/certify-hold.ts), which holds a record's edges, one
+// edge, or a relative certificate's `Cert.<statement-id>` alike. Each runs
+// the per-environment inspector over its own built Challenge with
+// `challengeInspectorArguments` and hands the report here; what the
+// Challenge must state is the list of certificate theorems the bundle was
+// generated from, never re-read from the Challenge text.
 
-import type { InspectorDeclaration, InspectorLink, InspectorReport, InspectorTelescope, LevelExpr, ProofEntry, ProofTelescope } from "../contracts.js";
+import fs from "node:fs";
+import type { InspectorDeclaration, InspectorLink, InspectorReport, InspectorTelescope, LevelExpr, ProofTelescope } from "../contracts.js";
+import { infrastructureFailure } from "../failures.js";
+import { parseInspectorReport } from "../phases/inspect-runner.js";
 import { renderLevel } from "../phases/inspect-spec2.js";
-import { CHALLENGE_MODULE, certifiedProof, orderedProofs } from "./generate.js";
+import { CHALLENGE_MODULE, type CertificateTheorem } from "./generate.js";
 
 export interface ChallengeMismatch {
   kind: "violation";
@@ -28,33 +40,103 @@ export interface ChallengeMismatch {
   message: string;
 }
 
+export interface ChallengeBuildViolation {
+  kind: "violation";
+  intent: "translation";
+  rule: "challenge-build";
+  message: string;
+}
+
+/** The inspector's argument shape over the built Challenge
+ * (phases/inspect-runner.ts inspectorArguments): the spec, the report, the
+ * module list — the one generated module, which is its own root. The
+ * container's copy is in sandbox/tools/run-certify.mjs, which cannot import
+ * this. */
+export function challengeInspectorArguments(report: string): string[] {
+  return ["--spec", "2", report, CHALLENGE_MODULE];
+}
+
+/**
+ * A Challenge that did not build over the concept packages — wherever it was
+ * built. The Challenge names only statements and no proof code is present in
+ * its build, so the failure is never the proof's. It is either lax's — the
+ * translation disagreeing with Lean about what the telescopes say — or the
+ * concept package's own: a concept initializer that aborts during `lake
+ * build Challenge`, a concept module that does not import cleanly. The
+ * second is decision 8's trusted-author assumption (axiomfree-plan.md): the
+ * archive does not defend against a concept package the record itself
+ * depends on, so the finding stays `translation` and the wording asks for a
+ * report only when the concept packages build on their own (verification
+ * review 2026-10-04).
+ */
+export function challengeBuildViolation(transcript: string): ChallengeBuildViolation {
+  return {
+    kind: "violation",
+    intent: "translation",
+    rule: "challenge-build",
+    message:
+      "the generated Challenge did not build over the concept packages — the statements lax named from the " +
+      "proofs' telescopes do not elaborate the way Lean reads them; if every concept package the record " +
+      "requires builds cleanly with `lax build`, lax's generator and classifier disagree with Lean: report it as " +
+      `a lax bug, quoting this message. The transcript:\n${transcript.trim()}`,
+  };
+}
+
+/** The inspector's report over the built Challenge, as the inspection left
+ * it: a plain bounded file, parsed as every spec-2 report is
+ * (phases/inspect-runner.ts). Missing or unreadable is the archive's — or,
+ * for a reader's rerun, the tooling's — problem, never a verdict on the
+ * record. */
+export function readChallengeReport(filename: string, maxBytes: number): InspectorReport {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(filename);
+  } catch {
+    throw infrastructureFailure("the Challenge inspection report was not produced");
+  }
+  if (!stat.isFile() || stat.size > maxBytes) throw infrastructureFailure("the Challenge inspection report is missing or oversized");
+  try {
+    return parseInspectorReport(JSON.parse(fs.readFileSync(filename, "utf8")) as unknown, 2);
+  } catch (error) {
+    throw infrastructureFailure(`could not read the Challenge inspection report: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/** The step every caller takes once its inspector has written `report`:
+ * read it and hold the Challenge it describes to `theorems`. */
+export function holdChallenge(report: string, maxBytes: number, theorems: readonly CertificateTheorem[]): ChallengeMismatch | undefined {
+  return checkChallengeReport(readChallengeReport(report, maxBytes), theorems);
+}
+
 /**
  * Every certificate theorem of the built Challenge, as the inspector read it,
- * against the record's telescopes: the same statement constants with the
- * same universe instances in the same binder positions, the same
- * conclusion, the same level parameters (binder kinds are not part of an
- * edge: the comparator's `Expr.eqv` ignores them). The first
- * disagreement is the violation; `undefined` means the Challenge states
- * exactly the record's edges.
+ * against the theorems the bundle was generated from — a record's edges
+ * (`edgeTheorem`), or a relative certificate's one implied edge: the same
+ * statement constants with the same universe instances in the same binder
+ * positions, the same conclusion, the same level parameters (binder kinds
+ * are not part of an edge: the comparator's `Expr.eqv` ignores them). The
+ * first disagreement, in name order, is the violation; `undefined` means the
+ * Challenge states exactly those theorems.
  */
-export function checkChallengeReport(report: InspectorReport, proofs: readonly ProofEntry[]): ChallengeMismatch | undefined {
+export function checkChallengeReport(report: InspectorReport, theorems: readonly CertificateTheorem[]): ChallengeMismatch | undefined {
   const built = new Map<string, InspectorDeclaration>();
   for (const declaration of report.declarations)
     if (declaration.module === CHALLENGE_MODULE && !built.has(declaration.name)) built.set(declaration.name, declaration);
-  for (const proof of orderedProofs(proofs.map(certifiedProof))) {
-    const name = proof.id;
+  const ordered = [...theorems].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const theorem of ordered) {
+    const name = theorem.name;
     const declaration = built.get(name);
-    const recorded = { levelParams: proof.levelParams, telescope: proof.telescope };
+    const recorded = { levelParams: theorem.levelParams, telescope: theorem.telescope };
     if (declaration === undefined) return mismatch(name, recorded, "is not declared in the built Challenge");
     if (declaration.nonCanonical === true || declaration.kind !== "theorem")
       return mismatch(name, recorded, `is ${declaration.kind === "theorem" ? "not a canonical name" : `a ${declaration.kind}, not a theorem`} in the built Challenge`);
     const levelParams = declaration.levelParams ?? [];
-    if (!sameStrings(levelParams, proof.levelParams))
+    if (!sameStrings(levelParams, theorem.levelParams))
       return mismatch(name, recorded, `has universe parameters {${levelParams.join(", ")}} in the built Challenge`);
     const telescope = declaration.telescope;
     if (telescope === undefined || telescope === null)
       return mismatch(name, recorded, "elaborated to a type that is not a chain of statements in the built Challenge");
-    const problem = compareTelescope(telescope, proof.telescope);
+    const problem = compareTelescope(telescope, theorem.telescope);
     if (problem !== undefined) return mismatch(name, recorded, `elaborated to ${describeBuilt(telescope)} in the built Challenge (${problem})`);
   }
   return undefined;
@@ -127,7 +209,7 @@ function mismatch(name: string, recorded: { levelParams: readonly string[]; tele
     intent: "translation",
     rule: "challenge-mismatch",
     message:
-      `the certificate theorem ${name} states the edge ${describeRecorded(recorded)} in the record but ${what}; ` +
+      `the certificate theorem ${name} states the edge ${describeRecorded(recorded)} by the archive's records but ${what}; ` +
       "the Challenge lax wrote does not mean, once Lean reads it over the concept packages, what the record says the " +
       "edge is — a global `syntax`, `macro_rules`, or `elab` in a package the Challenge imports can do this; the " +
       "archive certifies only an edge whose Challenge elaborates to exactly the recorded telescope",
