@@ -101,9 +101,10 @@ of a Lax17-sized relative certificate (the composed Solution of a
 - **Division of intents** (plan decision 10, 2026-10-04, confirmed by
   Jan the same day) — the five items below LANDED in the working tree the
   same day (uncommitted; `npm run check` green), together with Codex
-  intents-review findings 1 (canonical-name rule: non-canonical names are
-  escaped and flagged by the inspector, refused as `name-not-canonical`;
-  a repeated name is refused unless both are theorems), 5 (the private
+  intents-review findings 1 (canonical-name rule, since C3 of the
+  ultracode review a `String.toName` round trip of Lean's escaped
+  printing, refused as `name-not-canonical`; a repeated name is refused
+  unless both are theorems), 5 (the private
   exemption requires the package's own module), 6 (a kernel that failed
   to run is an infrastructure failure, never `kernel-rejected`) and the
   draft's narrower Replay wording. Not triggerable on rc3 in the

@@ -769,16 +769,16 @@ describe("the trusted Certify phase", () => {
     }
   });
 
-  it("refuses a name the escaper cannot write as a certify violation, before any container runs", async () => {
+  it("refuses a name outside the archive's grammar as a certify violation, before any container runs", async () => {
     const { input, invocations } = harness();
     const result = await certifyInContainer({
       ...input,
       record: {
         ...input.record,
-        proofs: [{ ...PROOFS[0]!, id: "Lax1Proofs._", telescope: PROOFS[0]!.telescope }],
+        proofs: [{ ...PROOFS[0]!, id: "Lax1Proofs.«x»", telescope: PROOFS[0]!.telescope }],
       },
     });
-    expect(result).toMatchObject({ kind: "violation", rule: "name", intent: "translation", message: expect.stringContaining('"_"') });
+    expect(result).toMatchObject({ kind: "violation", rule: "name", intent: "translation", message: expect.stringContaining('"Cert.Lax1Proofs.«x»"') });
     expect(invocations).toEqual([]);
   });
 

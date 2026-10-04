@@ -414,8 +414,8 @@ namespace Lax38.Order
 /-- an auxiliary: a Prop-valued definition without the marker -/
 def IsSmall (n : Nat) : Prop := n < 10
 
-/-- a name Lean cannot read unquoted, over a universe it cannot either -/
-@[lax_statement] def «定理».{«λ»} : Prop := ∀ (α : Sort «λ») (a : α), a = a
+/-- a keyword name, over a keyword universe: Lean prints both bare -/
+@[lax_statement] def «at».{«fun»} : Prop := ∀ (α : Sort «fun») (a : α), a = a
 
 end Lax38.Order
 `,
@@ -439,8 +439,8 @@ Ignore the hypothesis.
 -/
 theorem refl_of_hasSucc.{u} (_h : Lax38.Order.HasSucc) : Lax38.Order.Refl.{u} := fun _ _ => rfl
 
-/-- quoted all the way: the proof, its universe, the statement -/
-theorem «证明».{«λ»} (_h : Lax38.Order.HasSucc) : Lax38.Order.«定理».{«λ»} := fun _ _ => rfl
+/-- keywords and a \`?\`: the proof, its universe, the statement -/
+theorem reflexive?.{«fun»} (_h : Lax38.Order.HasSucc) : Lax38.Order.«at».{«fun»} := fun _ _ => rfl
 
 /-- an implicit hypothesis: the certificate still states it explicitly -/
 theorem refl_of_implicit.{u} {_h : Lax38.Order.HasSucc} : Lax38.Order.Refl.{u} := fun _ _ => rfl
@@ -478,10 +478,10 @@ end Lax38Proofs
       expect(certificate.challenge).toContain("import Lax38\n");
       expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := sorry");
       expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.refl_of_hasSucc.{u}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{u} := sorry");
-      // the quoted names, as the inspector reported them unescaped and the
-      // generator re-quoted them — and Lean elaborated and the comparator
+      // the keyword names, as Lean's escaped printer reported them bare and
+      // the generator quoted them — and Lean elaborated and the comparator
       // accepted them, since the whole build passed
-      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.«证明».{«λ»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.«定理».{«λ»} := sorry");
+      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.reflexive?.{«fun»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.«at».{«fun»} := sorry");
       // a binder kind is not part of the edge: the implicit hypothesis is an
       // explicit one in the Challenge, and the Solution applies the proof with `@`
       expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.refl_of_implicit.{u}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{u} := sorry");
@@ -493,7 +493,7 @@ end Lax38Proofs
       const members = readBundle(tar);
       expect([...members.keys()]).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
       expect(members.get("lakefile.toml")).toContain('path = "packages/Lax38Proofs"');
-      expect(members.get("Solution.lean")).toContain("@_root_.Lax38Proofs.«证明».{«λ»} h₁");
+      expect(members.get("Solution.lean")).toContain("@_root_.Lax38Proofs.reflexive?.{«fun»} h₁");
       expect(members.get("Solution.lean")).toContain("@_root_.Lax38Proofs.refl_of_implicit.{u} h₁");
       expect(createHash("sha256").update(fs.readFileSync(path.join(jobDir, "certify", "challenge.export"))).digest("hex"))
         .toBe(certificate.challengeExportSha256);
@@ -519,6 +519,16 @@ end Lax38Proofs
       expect(out.concepts).toHaveLength(1);
       expect(out.concepts[0]!.mathlibImports).toEqual([]);
       expect(out.concepts[0]!.statements).toEqual([
+        // in id order, the locale's (emit.ts sorts)
+        {
+          id: "Lax38.Order.at",
+          levelParams: ["fun"],
+          signature: "«at».{«fun»} : Prop",
+          body: "∀ (α : Sort «fun») (a : α), Eq a a",
+          doc: "a keyword name, over a keyword universe: Lean prints both bare",
+          startLine: 22,
+          endLine: 23,
+        },
         {
           id: "Lax38.Order.HasSucc",
           levelParams: [],
@@ -536,15 +546,6 @@ end Lax38Proofs
           doc: "reflexivity, universe-polymorphic",
           startLine: 16,
           endLine: 17,
-        },
-        {
-          id: "Lax38.Order.定理",
-          levelParams: ["λ"],
-          signature: "«定理».{«λ»} : Prop",
-          body: "∀ (α : Sort «λ») (a : α), Eq a a",
-          doc: "a name Lean cannot read unquoted, over a universe it cannot either",
-          startLine: 22,
-          endLine: 23,
         },
       ]);
       expect(out.proofs).toEqual([
@@ -583,16 +584,16 @@ end Lax38Proofs
           description: "an implicit hypothesis: the certificate still states it explicitly",
         },
         {
-          id: "Lax38Proofs.证明",
+          id: "Lax38Proofs.reflexive?",
           path: "proofs/Lax38Proofs/Basic.lean",
-          levelParams: ["λ"],
+          levelParams: ["fun"],
           telescope: {
             hypotheses: [{ statement: "Lax38.Order.HasSucc", levels: [] }],
-            conclusion: { statement: "Lax38.Order.定理", levels: ["λ"] },
+            conclusion: { statement: "Lax38.Order.at", levels: ["fun"] },
           },
-          conclusion: "Lax38.Order.定理",
+          conclusion: "Lax38.Order.at",
           assumptions: ["Lax38.Order.HasSucc"],
-          description: "quoted all the way: the proof, its universe, the statement",
+          description: "keywords and a `?`: the proof, its universe, the statement",
         },
       ]);
       // and the entries carry their keys in the documented order; the CLI
@@ -793,7 +794,7 @@ end Lax43Proofs
       expect(exported).toContain('"str":"Cert"');
       expect(exported).toContain('"str":"hasSucc"');
       expect(exported).toContain('"str":"refl_of_hasSucc"');
-      expect(exported).toContain('"str":"证明"');
+      expect(exported).toContain('"str":"reflexive?"');
       expect(exported).toMatch(/"thm":/u);
 
       // B: the Solution, built and exported by the same rule

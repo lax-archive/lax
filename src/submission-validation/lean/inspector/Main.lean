@@ -309,14 +309,14 @@ def originOf (env : Environment) (matchers : NameSet) (packageNames : NameSet)
   else if let some p := ownParent? packageNames n then .auxiliary p
   else .authored
 
-def jsonOfOrigin (canon : Name → String) : Origin → Json
+def jsonOfOrigin : Origin → Json
   | .authored => Json.mkObj [("kind", Json.str "authored")]
-  | .«private» m none => Json.mkObj [("kind", Json.str "private"), ("module", Json.str (canon m))]
+  | .«private» m none => Json.mkObj [("kind", Json.str "private"), ("module", Json.str m.toString)]
   | .«private» m (some p) =>
-    Json.mkObj [("kind", Json.str "private"), ("module", Json.str (canon m)), ("parent", Json.str (canon p))]
-  | .scoped m => Json.mkObj [("kind", Json.str "scoped"), ("module", Json.str (canon m))]
-  | .realized p => Json.mkObj [("kind", Json.str "realized"), ("parent", Json.str (canon p))]
-  | .auxiliary p => Json.mkObj [("kind", Json.str "auxiliary"), ("parent", Json.str (canon p))]
+    Json.mkObj [("kind", Json.str "private"), ("module", Json.str m.toString), ("parent", Json.str p.toString)]
+  | .scoped m => Json.mkObj [("kind", Json.str "scoped"), ("module", Json.str m.toString)]
+  | .realized p => Json.mkObj [("kind", Json.str "realized"), ("parent", Json.str p.toString)]
+  | .auxiliary p => Json.mkObj [("kind", Json.str "auxiliary"), ("parent", Json.str p.toString)]
 
 def runCoreIO (env : Environment) (x : CoreM α) : IO α := do
   let coreCtx : Core.Context := { fileName := "<laxinspector>", fileMap := default }
@@ -469,37 +469,22 @@ persisted extension data: no reduction, no kernel work, no judgment — whether
 a constant in a telescope *is* a statement is the validator's question.
 -/
 
-/-- The archive's canonical name form — dot-separated string components,
-nothing escaped, which `certify/lean-name.ts` re-quotes — is not injective
-over `Lean.Name`: `Lax1.C.«A.B»` and `Lax1.C.A.B` flatten to the same text
-(codex review 2026-10-04, finding 1). A name is canonical iff, un-mangled,
-every component is `Name.str` with no `.` in it. The test is structural and
-exempts nothing: `Name.isInternalDetail` is a shape heuristic (`proof_1`,
-`eq_1`, a `_` prefix), not provenance, and an authored `C.«A.B».proof_1`
-exempted by it would flatten to another constant's canonical name (codex
-review 2 2026-10-04, finding 1). Every spec-2 name that is not canonical
-is written in Lean's *escaped* form instead (`«A.B»`, numeric components
-as digits), and the declaration is flagged `nonCanonical`; the validator
-refuses a user-level or endpoint declaration so named and lets Lean's own
-macro-scoped and auxiliary names (`…._@.<module>._hyg.3`), which are never
-translated, pass. The escaped form is not itself injective: `.num k` and
-`.str "k"` both print as `k`. That route is closed elsewhere, not here —
-the validator admits only canonical names as endpoints and
-`LEAN_NAME_PATTERN` admits no all-digit component, so a `.num` name never
-names an edge, and a Solution that applied a proof under the wrong reading
-would fail to elaborate in B1 (verification review 2026-10-04). -/
-partial def isCanonicalName (n : Name) : Bool :=
-  go ((privateToUserName? n).getD n)
-where
-  go : Name → Bool
-    | .anonymous => true
-    | .str p s => !s.contains '.' && go p
-    | .num _ _ => false
-
-/-- A spec-2 name as the report writes it: canonical, or escaped when it
-cannot be. -/
-def canonStr (n : Name) : String :=
-  if isCanonicalName n then n.toString (escape := false) else n.toString
+/-- Whether a name is canonical: Lean's escaped `Name.toString`, which every
+report writes, reads back through `String.toName` — the function `lake
+comparator` parses `theorem_names` with — as the same name, un-mangled
+(`privateToUserName?`). The escaped printer is injective wherever this
+holds: `Lax1.C.«A.B»` and `Lax1.C.A.B` print apart, as do `.str A "3"`
+(`A.«3»`) and `.num A 3` (`A.3`), all verified on v4.35.0-rc3 (ultracode
+review 2026-10-04, C3). It fails for a component carrying `»`, which the
+printer cannot quote, and for a name it prints unescaped — inaccessible
+(`x✝`, a trailing `_inaccessible`), macro-scoped, or rooted in `#`/`?`. A
+declaration so named is flagged `nonCanonical`; the validator refuses an
+authored one and lets Lean's own macro-scoped and auxiliary names pass.
+Whether a canonical name may be an *endpoint* is the validator's question
+(contracts.ts `LEAN_NAME_PATTERN`). -/
+def isCanonicalName (n : Name) : Bool :=
+  let u := (privateToUserName? n).getD n
+  u.toString.toName == u
 
 /-- A universe level, structurally, as a JSON array tagged by its head:
 `["zero"]`, `["succ", l]`, `["max", a, b]`, `["imax", a, b]`, and
@@ -512,7 +497,7 @@ partial def jsonOfLevel : Level → Json
   | .succ l => Json.arr #[Json.str "succ", jsonOfLevel l]
   | .max a b => Json.arr #[Json.str "max", jsonOfLevel a, jsonOfLevel b]
   | .imax a b => Json.arr #[Json.str "imax", jsonOfLevel a, jsonOfLevel b]
-  | .param n => Json.arr #[Json.str "param", Json.str (canonStr n)]
+  | .param n => Json.arr #[Json.str "param", Json.str n.toString]
   | .mvar _ => Json.arr #[Json.str "mvar"]
 
 /-- One hypothesis of a telescope. The binder's name and kind are not part of
@@ -542,10 +527,10 @@ def jsonOfTelescope : Option (Array TelescopeBinder × Name × List Level) → J
   | some (binders, n, ls) =>
     Json.mkObj
       [("hypotheses", Json.arr (binders.map fun b => Json.mkObj
-          [("const", Json.str (canonStr b.const)),
+          [("const", Json.str b.const.toString),
            ("levels", Json.arr (b.levels.toArray.map jsonOfLevel))])),
        ("conclusion", Json.mkObj
-          [("const", Json.str (canonStr n)),
+          [("const", Json.str n.toString),
            ("levels", Json.arr (ls.toArray.map jsonOfLevel))])]
 
 /-- The number of leading `∀`-binders of the stored type, metadata stripped:
@@ -840,12 +825,11 @@ unsafe def main (args : List String) : IO UInt32 := do
   -- the tag is read only when the environment's spec has it: the spec-1
   -- report must not change, and reading it is harmless but not free
   let laxStatements := if spec == 2 then laxStatementsOf datas else {}
-  -- One name representation per report (codex review 2026-10-03, finding 4):
-  -- a spec-2 report writes every name in the archive's canonical form —
-  -- dot-separated components, nothing escaped — which is what the validator
-  -- compares and the certificate generator re-quotes (certify/lean-name.ts);
-  -- a spec-1 report keeps `Name.toString`'s escaped form, byte-identical.
-  let nameStr (n : Name) : String := if spec == 2 then n.toString (escape := false) else n.toString
+  -- One name representation, both specs (ultracode review 2026-10-04, C3):
+  -- Lean's escaped `Name.toString`, which reads back through `String.toName`
+  -- (`isCanonicalName`); the validator compares names as printed, and the
+  -- certificate generator writes them as recorded (certify/lean-name.ts).
+  let nameStr (n : Name) : String := n.toString
   let mut idxMap : Std.HashMap Name Nat := {}
   for i in [0:allNames.size] do
     idxMap := idxMap.insert allNames[i]! i
@@ -922,25 +906,23 @@ unsafe def main (args : List String) : IO UInt32 := do
         |>.qsort Name.lt
       let doc? ← findDocString? env declName
       let parsed? := doc?.map parseDoc
-      -- a spec-2 declaration whose name is not canonical is written
-      -- escaped and flagged (`isCanonicalName`); spec 1 is untouched
-      let canonical := spec != 2 || isCanonicalName declName
-      let declStr (n : Name) : String := if canonical then nameStr n else n.toString
       let mut fields : List (String × Json) :=
-        [("name", Json.str (declStr declName)),
+        [("name", Json.str (nameStr declName)),
          ("kind", Json.str (kindOf ci)),
          ("module", Json.str (nameStr m)),
          ("axioms", Json.arr (axioms.map fun a => Json.str (nameStr a))),
          ("usedConstants", Json.arr (usedConstants.map fun n => Json.str (nameStr n)))]
-      if !canonical then
+      -- spec 2 flags a name that does not read back (`isCanonicalName`);
+      -- spec 1 is untouched
+      if spec == 2 && !isCanonicalName declName then
         fields := fields ++ [("nonCanonical", Json.bool true)]
       -- `userName` is the display name: the spec's user-level reading, and
       -- nothing a rule branches on. Where a declaration came from is
       -- `origin`, one fact with its evidence (`Origin`).
       if let some u := userLevelName? env matchers declName then
-        fields := fields ++ [("userName", Json.str (declStr u))]
+        fields := fields ++ [("userName", Json.str (nameStr u))]
       if spec == 2 then
-        fields := fields ++ [("origin", jsonOfOrigin canonStr (originOf env matchers packageNames declarationRanges declName))]
+        fields := fields ++ [("origin", jsonOfOrigin (originOf env matchers packageNames declarationRanges declName))]
       if initializers.contains declName then
         fields := fields ++ [("initializer", Json.bool true)]
       if let some ranges := declarationRanges.find? declName then
@@ -994,7 +976,7 @@ unsafe def main (args : List String) : IO UInt32 := do
         fields := fields ++ [
           ("laxStatement", Json.bool tagged),
           ("isProp", Json.bool isProp),
-          ("levelParams", Json.arr (ci.levelParams.toArray.map fun n => Json.str (canonStr n))),
+          ("levelParams", Json.arr (ci.levelParams.toArray.map fun n => Json.str n.toString)),
           ("telescope", jsonOfTelescope (telescopeOf type))]
         if tagged then
           fields := fields ++ [("binders", toJson (leadingBinders type))]

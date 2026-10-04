@@ -359,12 +359,36 @@ export interface PublishedCapture extends CaptureManifest {
   registryBlob: string;
 }
 
-/** A canonical Lean name: dot-separated identifiers, no «» escapes. The
- * shape every concept, proof, and statement id in a build output has, and
- * hence the shape of every concept or proof mark id in a paper (submission
- * marks use the `lax-N` record id instead). */
-export const LEAN_NAME_PATTERN =
-  /^(?:[\p{L}_][\p{L}\p{N}\p{M}_']*)(?:\.(?:[\p{L}_][\p{L}\p{N}\p{M}_']*))*$/u;
+// Lean's identifier grammar (`isLetterLike`, `isSubScriptAlnum`, `isIdFirst`,
+// `isIdRest` in Init/Meta/Defs.lean; identical in v4.33.0 through v4.35.0):
+// the characters `Name.toString` leaves bare in a component.
+const LEAN_LETTER_LIKE =
+  "\\u03b1-\\u03ba\\u03bc-\\u03c9" + // lower Greek, but λ
+  "\\u0391-\\u039f\\u03a1\\u03a2\\u03a4-\\u03a9" + // upper Greek, but Π and Σ
+  "\\u03ca-\\u03fb" + // Coptic
+  "\\u1f00-\\u1ffe" + // polytonic Greek
+  "\\u2100-\\u214f" + // the letterlike block (ℕ, ℘)
+  "\\u{1d49c}-\\u{1d59f}" + // script, double-struck, fraktur Latin
+  "\\u00c0-\\u00d6\\u00d8-\\u00f6\\u00f8-\\u00ff" + // Latin-1 letters, but × and ÷
+  "\\u0100-\\u017f"; // Latin Extended-A
+const LEAN_ID_FIRST = `A-Za-z_${LEAN_LETTER_LIKE}`;
+const LEAN_ID_REST = `${LEAN_ID_FIRST}0-9'!?\\u2080-\\u2089\\u2090-\\u209c\\u1d62-\\u1d6a\\u2c7c`;
+const LEAN_ID_COMPONENT = `[${LEAN_ID_FIRST}][${LEAN_ID_REST}]*`;
+
+/** The archive's name grammar, the one every rule shares: a name exactly as
+ * Lean's escaped `Name.toString` prints it when no component needs `«»` —
+ * dot-separated components, each a plain Lean identifier (`good?`, `main!`,
+ * `℘`, `h₁` and `étale` included), never `_` alone. It is the shape of every
+ * concept, proof, and statement id and every universe parameter in a build
+ * output, hence of every concept or proof mark id in a paper (submission
+ * marks use the `lax-N` record id instead); the spec-2 classifier refuses an
+ * endpoint outside it as a finding (phases/inspect-spec2.ts), the schema
+ * (artifact-schema.ts `identifier`) and lax-website's `LEAN_NAME` hold
+ * every recorded name to it, and the certificate generator splits on its
+ * dots (certify/lean-name.ts). A component Lean prints quoted (`«定理»`,
+ * `«A.B»`, `«λ»`) or numeric is outside it: such a name round-trips through
+ * `String.toName` but is no archive name. */
+export const LEAN_NAME_PATTERN = new RegExp(`^(?!_$)${LEAN_ID_COMPONENT}(?:\\.${LEAN_ID_COMPONENT})*$`, "u");
 
 const CAPTURE_BLOB_PATTERN =
   /^ghcr\.io\/([a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+)@sha256:([0-9a-f]{64})$/u;
@@ -541,10 +565,12 @@ export interface InspectorDeclaration {
   /** Tagged declarations only: the number of leading `∀`-binders of the
    * stored type, for the "takes binders" finding. */
   binders?: number;
-  /** Spec 2: the name has a component the canonical dotted form cannot
-   * carry (a `.` inside it, or a numeric component outside the private
-   * prefix); `name` and `userName` are then Lean's escaped form, and the
-   * classifier refuses the declaration (`name-not-canonical`). */
+  /** Spec 2: the name, un-mangled, is not canonical — Lean's escaped
+   * `Name.toString` does not read back through `String.toName` as the same
+   * name (a component carrying `»`, a name Lean prints unescaped because it
+   * is inaccessible or macro-scoped); the classifier refuses an authored
+   * declaration so named (`name-not-canonical`). Every other name in a
+   * report is injective as printed. */
   nonCanonical?: true;
   /** Spec 2: where the declaration came from, with the evidence
    * (lean/inspector/Main.lean `Origin`) — the one fact every rule that

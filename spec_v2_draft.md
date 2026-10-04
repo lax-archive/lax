@@ -551,12 +551,20 @@ both facts from the olean's extension entries with extensions disabled.
 The rule is not the whole defence for the second: the certificate is also
 held to the archive's reading of each edge (see Certification).
 
-A name is also held to what a reader can read. The archive's canonical
-form of a name is its dot-separated components, nothing escaped; a name
-whose components do not round-trip through that form — a ``.`` inside a
-component, a numeric component outside Lean's private mangling — is
-written escaped by the inspector and refused as an endpoint, since
-``Lax1.C.«A.B»`` and ``Lax1.C.A.B`` would otherwise read as one constant.
+A name is also held to what a reader can read. The archive writes every
+name as Lean's escaped ``Name.toString`` prints it, and a name is
+*canonical* when that text reads back through ``String.toName`` as the
+same name — so ``Lax1.C.«A.B»`` and ``Lax1.C.A.B`` are two names, as they
+are to Lean. An authored declaration whose name is not canonical (a
+component carrying ``»``, a name Lean prints unescaped) is refused. A
+statement, a proof, and every universe parameter of either must moreover be
+an *archive name*: one Lean prints with no ``«»``, that is, dot-separated
+components each a plain Lean identifier (letters, digits, ``_``, ``'``,
+``!``, ``?``, Greek but ``λ``, ``Π``, ``Σ``, the letterlike symbols, Latin-1
+and Latin Extended-A letters, subscripts), never ``_`` alone. The archive
+records, links, and certifies an endpoint by that text; ``«定理»``,
+``«A.B»`` and ``«λ»`` are refused as endpoints, and a constant outside the
+grammar is no statement.
 Every user-level name is NFC, carries no combining mark or invisible format
 character, and uses one script per component (lower-case Greek beside
 Latin excepted): a Greek capital in a Latin word, or a Cyrillic letter, is
@@ -1794,9 +1802,10 @@ docstrings (``getModuleDoc?`` for modules, ``findDocString?`` for
 declarations). No component of the pipeline reads source as Lean at all;
 Emit copies files into ``sourceText`` with line endings normalized to LF,
 which is a copy, not a parse. The one place the pipeline *writes* Lean is
-the certificate generator, and it writes only names it escaped from
-``Lean.Name`` values the inspector reported, never text it interpolated from
-a string (see Certification).
+the certificate generator, and it writes only archive names — Lean's own
+printing of the ``Lean.Name`` values the inspector reported, held to the
+archive's grammar — never other text it interpolated from a string (see
+Certification).
 
 ### Certification
 
@@ -1808,11 +1817,11 @@ reader can *check*: the certificate is a ``(Challenge, Solution)`` pair for
 the toolchain's ``lake comparator``, which anyone can rerun with nothing of
 lax installed.
 
-**The bundle.** From the record's telescopes and canonical names, lax
-generates five files. Every name is written from the archive's canonical
-form, quoted with ``«…»`` where Lean needs it and never interpolated from
-a reported string; a name whose components do not round-trip through the
-canonical form is refused before anything is generated (see Namespaces).
+**The bundle.** From the record's telescopes and archive names, lax
+generates five files. Every name is an archive name, written as recorded
+with a keyword component quoted (``.{«fun»}``), since Lean's printer leaves
+keywords bare; a name outside the archive's grammar is refused before
+anything is generated (see Namespaces).
 
 1. ``lakefile.toml``: the environment's libraries at the row's pins, and
    every concept and proof package involved — the required ones at their
@@ -1834,7 +1843,7 @@ canonical form is refused before anything is generated (see Namespaces).
    explicit binder whatever kind the proof declared it with (the Solution
    applies the proof with ``@``, and the kernel ignores binder kinds), and
    every statement constant instantiated exactly as in the proof's type. The
-   theorem name is ``Cert`` prefixed to the proof's canonical name.
+   theorem name is ``Cert`` prefixed to the proof's archive name.
 4. ``Solution.lean``: imports the proof modules; the same theorems, each
    discharged by ``@<proof-id>.{<levels>} h₁ … hₖ`` — the proof applied with
    ``@`` so binder info is irrelevant.

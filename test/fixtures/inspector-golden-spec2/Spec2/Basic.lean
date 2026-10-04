@@ -46,8 +46,9 @@ def Auxiliary : Prop := True
 @[lax_statement] private def Hidden : Prop := True
 
 /-- A name Lean cannot read unquoted, with a universe parameter it cannot either:
-the report writes both in the archive's canonical form, and the certificate
-generator quotes them again (certify/lean-name.ts). -/
+the report writes both as Lean's escaped `Name.toString` prints them, which
+reads back (`String.toName`), so neither is flagged; the validator refuses both
+as an endpoint, being no archive name (contracts.ts LEAN_NAME_PATTERN). -/
 @[lax_statement] def «定理».{«λ»} : Prop := ∀ (α : Sort «λ») (a : α), a = a
 
 -- ## theorems
@@ -99,5 +100,9 @@ theorem spec1Habit : Closed := fun _ => rfl
 axiom declaredAxiom : Closed
 
 theorem usesSorry : Closed := sorry
+
+/-- A name Lean prints unescaped (a trailing `_inaccessible`), so the printed
+`Spec2.Basic.A.B._inaccessible` does not read back: flagged `nonCanonical`. -/
+theorem «A.B»._inaccessible : True := trivial
 
 end Spec2.Basic

@@ -16,9 +16,14 @@ import type {
   ResolvedDependency,
   StatementEntry,
 } from "../../src/submission-validation/contracts.js";
+import { parseSuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
+import { certifiedProof, challengeText } from "../../src/submission-validation/certify/generate.js";
 import { judgeInspection } from "../../src/submission-validation/phases/inspect.js";
 import { renderLevel } from "../../src/submission-validation/phases/inspect-spec2.js";
+import { recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
+import { spec2TestEnvironment, withTestEnvironments } from "../support/environments.js";
 import { COMMIT, REPOSITORY } from "../support/submission-validation.js";
+import { spec2Artifacts, validationRequest } from "../support/validation-artifacts.js";
 
 const EMPTY_RESOLUTION: ResolutionResult = { concepts: [], proofs: [], all: [] };
 
@@ -226,14 +231,33 @@ const CASES: Case[] = [
     // codex review 2026-10-04, finding 1: `Lax1.Claim.«A.B»` and
     // `Lax1.Claim.A.B` flatten to one canonical string; the inspector
     // writes the first escaped and flagged, and it is refused, not merged
-    name: "a name the canonical form cannot carry is refused, and the plain one beside it survives",
+    // every name is Lean's escaped printing, so `«A.B»` and `A.B` print
+    // apart; the quoted one is canonical but no archive name (ultracode
+    // review 2026-10-04, C3)
+    name: "an endpoint Lean prints with «» is refused as no archive name, and the plain one beside it survives",
     concepts: [
-      statement("Lax1.Claim.«A.B»", { nonCanonical: true }),
-      decl({ name: "Lax1.Claim.A.B", kind: "def", isProp: true }),
+      statement("Lax1.Claim.«A.B»"),
+      statement("Lax1.Claim.A.B"),
+      statement("Lax1.Claim.«定理»"),
+      statement("Lax1.Claim.poly", { levelParams: ["«λ»"] }),
+      // Lean's identifier characters beyond ASCII letters are archive names
+      statement("Lax1.Claim.good?"),
+      statement("Lax1.Claim.℘₁"),
     ],
     proofs: [],
-    violations: [["name-not-canonical", "concept declaration Lax1.Claim.«A.B» has a component Lean must quote"]],
-    statements: [],
+    violations: [
+      ["statement", "statement Lax1.Claim.«A.B»: its name is not a plain Lean identifier"],
+      ["statement", "statement Lax1.Claim.«定理»: its name is not a plain Lean identifier"],
+      ["statement", "statement Lax1.Claim.poly: its universe parameter «λ» is not a plain Lean identifier"],
+    ],
+    statements: [{ id: "Lax1.Claim.A.B" }, { id: "Lax1.Claim.good?" }, { id: "Lax1.Claim.℘₁" }],
+  },
+  {
+    name: "an authored name Lean prints so that it does not read back is refused as not canonical",
+    concepts: [statement(A), decl({ name: "Lax1.Claim.A.B._inaccessible", nonCanonical: true })],
+    proofs: [],
+    violations: [["name-not-canonical", "concept declaration Lax1.Claim.A.B._inaccessible has a name Lean does not print so that it reads back"]],
+    statements: [{ id: A }],
   },
   {
     name: "two reserved theorems of one name are the realized-duplicate case and keep the first; anything else is refused",
@@ -495,10 +519,10 @@ const CASES: Case[] = [
     statements: [],
   },
   {
-    name: "the record side: an authored tagged def with an internal-looking, non-canonical name is refused by the canonical rule, never flattened",
-    concepts: [statement("Lax1.Claim.«A.B».proof_1", { nonCanonical: true, userName: undefined })],
+    name: "the record side: an authored tagged def with an internal-looking name Lean quotes is refused as no archive name, never flattened",
+    concepts: [statement("Lax1.Claim.«A.B».proof_1", { userName: undefined })],
     proofs: [],
-    violations: [["name-not-canonical", "concept declaration Lax1.Claim.«A.B».proof_1 has a component Lean must quote"]],
+    violations: [["statement", "statement Lax1.Claim.«A.B».proof_1: its name is not a plain Lean identifier"]],
     statements: [],
   },
   {
@@ -516,11 +540,27 @@ const CASES: Case[] = [
     statements: [],
   },
   {
-    name: "a proof over a constant the inspector had to escape is refused, not read as a proof of the flattened name",
-    concepts: [statement(A)],
-    proofs: [decl({ name: "Lax1Proofs.p", telescope: chain([], ["Lax1.Claim.«A.B».proof_1"]) })],
-    violations: [["proof", "theorem Lax1Proofs.p has the shape of a proof over Lax1.Claim.«A.B».proof_1, whose name the archive's canonical form cannot carry"]],
+    // the printed names are injective, so a constant Lean quotes is no
+    // statement anywhere: a helper, never a proof of a flattened name
+    name: "a proof over a constant Lean prints with «» is a helper, not read as a proof of the flattened name",
+    concepts: [statement(A), statement("Lax1.Claim.A.B")],
+    proofs: [decl({ name: "Lax1Proofs.p", telescope: chain([], ["Lax1.Claim.«A.B»"]) })],
+    violations: [],
     proofEntries: [],
+  },
+  {
+    name: "a proof or a universe parameter outside the archive's grammar is refused as an endpoint",
+    concepts: [statement(A)],
+    proofs: [
+      decl({ name: "Lax1Proofs.«证明»", telescope: chain([], [A]) }),
+      decl({ name: "Lax1Proofs.poly", levelParams: ["«λ»"], telescope: chain([], [A]) }),
+      decl({ name: "Lax1Proofs.main!", telescope: chain([], [A]) }),
+    ],
+    violations: [
+      ["proof", "proof Lax1Proofs.«证明»: its name is not a plain Lean identifier"],
+      ["proof", "proof Lax1Proofs.poly: its universe parameter «λ» is not a plain Lean identifier"],
+    ],
+    proofEntries: [{ id: "Lax1Proofs.main!" }],
   },
   {
     name: "a proof over a canonical constant that is no registered statement is a helper, however internal the constant looks",
@@ -680,6 +720,60 @@ describe("spec-2 classification", () => {
       }
     });
   }
+
+  // One name grammar (ultracode review 2026-10-04, C3): an endpoint the
+  // classifier admits must parse under the publication schema — a name
+  // refused there instead would be a non-retryable infrastructure failure
+  // after validation passed (outputs.ts requirePublishableReport) — and one
+  // it refuses must be a finding. The components are as Lean's escaped
+  // `Name.toString` prints them (checked on v4.35.0-rc3).
+  it("every endpoint name the classifier admits parses under the publication schema, and every other one is a finding", () => {
+    withTestEnvironments([spec2TestEnvironment()], () => {
+      const admitted = ["good?", "main!", "℘", "h₁", "étale", "α'", "xⱼ", "_x", "ℕ_ind"];
+      const refused = ["«定理»", "«A.B»", "«λ»", "«Π»", "«1st»", "«a b»"];
+      for (const component of [...admitted, ...refused]) {
+        for (const level of ["u", component]) {
+          const statementId = `Lax1.Claim.${component}`;
+          const proofId = `Lax1Proofs.${component}`;
+          const fixture = reports(
+            [statement(statementId, { levelParams: [level] })],
+            [decl({ name: proofId, levelParams: [level], telescope: chain([], [statementId, [["param", level]]]) })],
+          );
+          const judged = judgeInspection(fixture.concepts, fixture.proofs, CONCEPT_INVENTORY, PROOF_INVENTORY, EMPTY_RESOLUTION, "both", undefined, LIBRARY_ROOTS, 2);
+          const statements = judged.result.concepts.flatMap((concept) => concept.statements);
+          if (refused.includes(component)) {
+            expect(statements, component).toEqual([]);
+            expect(judged.findings.violations.map((finding) => finding.rule), component).toContain("statement");
+            continue;
+          }
+          expect(judged.findings.violations, `${component} at ${level}`).toEqual([]);
+          expect(judged.result.proofs, component).toHaveLength(1);
+          // the record the publisher would parse: the fixture's names in
+          // place of lax-42's, the Challenge regenerated from them
+          const artifacts = spec2Artifacts();
+          const rename = (name: string): string => name
+            .replace("Lax42.Primes.InfinitelyManyPrimes", statements[0]!.id.replace("Lax1.Claim", "Lax42.Primes"))
+            .replace("Lax42Proofs.euclid", judged.result.proofs[0]!.id.replace("Lax1Proofs", "Lax42Proofs"));
+          {
+            const output = artifacts.buildOutput;
+            const conclusion = output.concepts[0]!.statements[1]!;
+            conclusion.id = rename(conclusion.id);
+            conclusion.levelParams = [level];
+            const proof = output.proofs[0]!;
+            proof.id = rename(proof.id);
+            proof.levelParams = [level];
+            proof.telescope!.conclusion = { statement: rename(proof.telescope!.conclusion.statement), levels: [level] };
+            proof.conclusion = proof.telescope!.conclusion.statement;
+            output.certificate!.challenge = challengeText(output.proofs.map(certifiedProof));
+          }
+          const recorded = recordedBuildOutput(artifacts.buildOutput);
+          const report = { ...artifacts.report, buildOutput: recorded };
+          expect(() => parseSuccessfulValidationArtifacts(report, structuredClone(recorded), validationRequest(), artifacts.report.runtime), `${component} at ${level}`)
+            .not.toThrow();
+        }
+      }
+    });
+  });
 
   it("a module registering global syntax is a violation; scoped and local syntax leave no global entry (E1)", () => {
     const fixture = reports([statement(A)], [decl({ name: "Lax1Proofs.helper" })]);

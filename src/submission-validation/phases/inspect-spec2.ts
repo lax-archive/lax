@@ -40,12 +40,13 @@
 // phase's default. Private declarations are exempt from the namespace rule
 // (they are module-mangled and cannot clash) and from nothing else.
 
-import type {
-  InspectorDeclaration,
-  LevelExpr,
-  ProofEntry,
-  ProofTelescope,
-  StatementEntry,
+import {
+  LEAN_NAME_PATTERN,
+  type InspectorDeclaration,
+  type LevelExpr,
+  type ProofEntry,
+  type ProofTelescope,
+  type StatementEntry,
 } from "../contracts.js";
 import { leanName } from "../certify/lean-name.js";
 import type { FindingCollector } from "../findings.js";
@@ -83,6 +84,7 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
     const problems = statementProblems(declaration);
     for (const problem of problems) findings.violate("statement", `${display(declaration)} ${problem}`, "translation");
     if (problems.length > 0) continue;
+    if (!checkArchiveName(declaration, "statement", findings)) continue;
     const entry = input.byModule.get(declaration.module);
     if (entry === undefined) continue; // the root module: the root-module rule has fired
     if (ownStatements.has(declaration.name)) continue; // a duplicate: refused by inspect.ts, registered once
@@ -111,8 +113,11 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
   // to take statements from; a constant under its prefix is admitted as a
   // statement and the sibling's own build judges it.
   const siblingConcepts = new Set(input.siblings.proofs.filter((name) => !name.endsWith("Proofs")));
+  // A constant outside the archive's name grammar is no statement anywhere:
+  // every recorded statement id is an archive name (`checkArchiveName`).
   const statementOf = (name: string): "own" | "direct" | "transitive" | "none" =>
-    ownStatements.has(name) ? "own"
+    !LEAN_NAME_PATTERN.test(name) ? "none"
+      : ownStatements.has(name) ? "own"
       : direct.has(name) || siblingConcepts.has(name.split(".")[0]!) ? "direct"
       : transitive.has(name) ? "transitive"
       : "none";
@@ -144,21 +149,6 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
     const chain = [...telescope.hypotheses, telescope.conclusion];
     // a definition of proof shape is a helper
     if (declaration.kind !== "theorem") continue;
-    // a chain naming a constant the inspector had to write escaped (a
-    // non-canonical name, `isCanonicalName`) is refused outright rather
-    // than read as a proof of the flattened text (codex review 2
-    // 2026-10-04, finding 1); a canonical constant that is no registered
-    // statement makes the theorem a helper below
-    const escaped = chain.find((link) => link.const.includes("«"));
-    if (escaped !== undefined) {
-      findings.violate(
-        "proof",
-        `theorem ${display(declaration)} has the shape of a proof over ${escaped.const}, whose name the archive's ` +
-          "canonical form cannot carry; an endpoint is a user-level definition with a plain dotted name",
-        "translation",
-      );
-      continue;
-    }
     const kinds = chain.map((link) => statementOf(link.const));
     // a chain over something that is no statement anywhere is a helper
     if (kinds.includes("none")) continue;
@@ -213,6 +203,7 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
       );
     }
     if (!ok) continue;
+    if (!checkArchiveName(declaration, "proof", findings)) continue;
 
     const recorded: ProofTelescope = {
       hypotheses: telescope.hypotheses.map((hypothesis) => ({
@@ -267,15 +258,14 @@ function statementProblems(declaration: InspectorDeclaration): string[] {
   return problems;
 }
 
-/** A canonical name as Lean prints it — components Lean cannot read bare in
- * `«»` — for a signature shown to a reader; a component the quotes cannot
- * carry is shown as it is (the certificate generator, not this display, is
- * where such a name is refused). */
-function displayName(canonical: string): string {
+/** A recorded name as Lean source, for a signature shown to a reader — a
+ * keyword component quoted as the generator quotes it; anything the
+ * generator would refuse (a bare `_`) is shown as it is. */
+function displayName(name: string): string {
   try {
-    return leanName(canonical);
+    return leanName(name);
   } catch {
-    return canonical;
+    return name;
   }
 }
 
@@ -285,8 +275,8 @@ function statementEntry(declaration: InspectorDeclaration): StatementEntry {
   return {
     id: declaration.name,
     levelParams,
-    // the report's names are canonical (unescaped); the signature is Lean
-    // source for a reader, so it quotes them as Lean would
+    // the report's names are Lean's own printing; the signature is Lean
+    // source for a reader, so a keyword component is quoted as well
     signature: `${displayName(shortName(declaration))}${universes} : ${declaration.signature ?? "Prop"}`,
     body: declaration.body ?? "",
     ...(declaration.doc?.description ? { doc: declaration.doc.description } : {}),
@@ -337,13 +327,15 @@ function checkInitializer(declaration: InspectorDeclaration, label: "concept" | 
   );
 }
 
-/** The canonical-name rule (translation): a name the dotted canonical form
- * cannot carry unambiguously — a component with a `.` in it, a numeric
- * component — is refused, never flattened, because the certificate names
- * constants by that form and `Lax1.C.«A.B»` would otherwise read as
- * `Lax1.C.A.B` (codex review 2026-10-04, finding 1). The inspector wrote the
- * name escaped, so the author sees the `«»`. Returns whether the
- * declaration may be classified at all. */
+/** The canonical-name rule (translation): every name in a report is Lean's
+ * escaped `Name.toString`, which is injective wherever it reads back
+ * through `String.toName` — `Lax1.C.«A.B»` and `Lax1.C.A.B` print apart
+ * (ultracode review 2026-10-04, C3). The inspector flags a name that does
+ * not (`nonCanonical`: a component carrying `»`, an inaccessible name Lean
+ * prints unescaped), and an authored declaration so named is refused,
+ * since its printed name could be another constant's (codex review
+ * 2026-10-04, finding 1). Returns whether the declaration may be
+ * classified at all. */
 function checkCanonicalName(declaration: InspectorDeclaration, label: "concept" | "proof", findings: FindingCollector): boolean {
   if (declaration.nonCanonical !== true) return true;
   // Lean's own scoped, realized, and auxiliary names (`foo._@.<module>._hyg.3`)
@@ -352,9 +344,30 @@ function checkCanonicalName(declaration: InspectorDeclaration, label: "concept" 
   if (!isAuthoredOrigin(declaration)) return false;
   findings.violate(
     "name-not-canonical",
-    `${label} declaration ${declaration.name} has a component Lean must quote; the archive names every constant ` +
-      "by its plain dot-separated components, so a component containing a `.` cannot be told from a nested " +
-      "namespace — rename the declaration",
+    `${label} declaration ${declaration.name} has a name Lean does not print so that it reads back as the same ` +
+      "name, so the archive cannot tell it from another constant's — rename the declaration",
+    "translation",
+  );
+  return false;
+}
+
+/** The archive-name rule (translation; ultracode review 2026-10-04, C3): a
+ * statement or a proof, and every universe parameter it declares, is
+ * recorded, linked, and written into the certificate by the name Lean
+ * prints, so that name must be in the archive's grammar (contracts.ts
+ * LEAN_NAME_PATTERN): plain identifier components, none Lean prints in
+ * `«»`. A name outside it is refused here, as a finding, rather than by the
+ * publication schema after validation passed. Returns whether the endpoint
+ * may be recorded. */
+function checkArchiveName(declaration: InspectorDeclaration, label: "statement" | "proof", findings: FindingCollector): boolean {
+  const outside = [declaration.name, ...(declaration.levelParams ?? [])].filter((name) => !LEAN_NAME_PATTERN.test(name));
+  if (outside.length === 0) return true;
+  const which = outside[0] === declaration.name ? "its name" : `its universe parameter ${outside[0]}`;
+  findings.violate(
+    label,
+    `${label} ${display(declaration)}: ${which} is not a plain Lean identifier; a statement or proof and its ` +
+      "universe parameters are named by dot-separated identifiers Lean prints without `«»` (letters, digits, " +
+      "`_`, `'`, `!`, `?`, Greek, letterlike symbols, subscripts) — rename it",
     "translation",
   );
   return false;

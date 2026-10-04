@@ -198,14 +198,24 @@ spec.md: the spec-2 text is a draft Jan reconciles.
       exported Challenge's theorem types to the recorded telescopes
       (constants, level instances, level parameters), which is also the
       independent structural check the Codex intents review asked for.
-    - *Names must round-trip.* The spec-2 inspector flattens names with
-      `Name.toString (escape := false)` and the generator splits on dots,
+    - *Names must round-trip.* The spec-2 inspector flattened names with
+      `Name.toString (escape := false)` and the generator split on dots,
       which is not injective (`Lax1.C.«A.B»` vs `Lax1.C.A.B`); with the
       silent de-duplication in `uniqueDeclarations` a record could tag one
       and prove the other (Codex intents review, finding 1). Fixed at the
       boundary as a translation rule: a non-internal name whose components
       do not round-trip is a violation, and a duplicated reported name is
-      a violation unless both are theorems.
+      a violation unless both are theorems. *As executed after the
+      ultracode review (C3, 2026-10-04):* every report writes Lean's own
+      escaped `Name.toString`, which is injective wherever it reads back
+      through `String.toName` (the function `lake comparator` parses
+      `theorem_names` with); that round trip is the one canonicality test
+      (the inspector's `nonCanonical` flag), and an endpoint — a
+      statement, a proof, and each of its universe parameters — must
+      also be an *archive name*: a name Lean prints with no `«»`, one
+      grammar (contracts.ts `LEAN_NAME_PATTERN`, Lean's `isIdFirst`/
+      `isIdRest`) shared by the classifier, the schema, the generator and
+      lax-website. `«定理»`, `«A.B»`, `«λ»` are refused as endpoints.
     - *Findings carry their intent.* The report artifact and the issue
       comment say whether a rejection came from the judge, the
       translation, or the standards: three different instructions to an
@@ -310,8 +320,9 @@ definitions.
 A fourth phase after Compile, Replay, Inspect, in spec-2 rows, in the
 existing docker runner with the existing mounts and limits:
 
-1. lax generates, from the telescopes and canonical names (every name
-   emitted escaped from a `Lean.Name`, never interpolated from a reported
+1. lax generates, from the telescopes and archive names (every name
+   Lean's own escaped printing, in the archive's grammar, a keyword
+   component quoted — never anything else interpolated from a reported
    string): `lakefile.toml` (the libraries at the row's pins; every concept
    and proof package involved at the record's source triple, or the
    submission's own capture per submit), `lake-manifest.json` (the sandboxed
@@ -505,7 +516,8 @@ record depends on are trusted as today.
    Lean's name syntax (found by the e2e: `Syntax.decodeNameLit` panics on a
    bare `证明`); the e2e proves `«定理».{«λ»}`/`«证明»` from Inspect through
    elaboration to the comparator, and a generator golden is derived from the
-   real inspector report. (5) Metadata-only resubmission goes through
+   real inspector report. *(Superseded by the ultracode review's C3, see
+   Record: escaped names, one archive-name grammar, `«定理»` refused.)* (5) Metadata-only resubmission goes through
    `recordedBuildOutput` (`metadataCandidate`) on both the classifier and
    the publisher, and the stored keys admit `certificate`, so a spec-2
    record takes the fast path. (6) `planCertificate` accepts local package
@@ -753,3 +765,28 @@ and is gone. This revises the "preserve rather than normalize" resolution
 of Codex-intents finding 7. Coverage: both parsers refuse a leftover `binder`
 key (unit), and Lax38's `refl_of_implicit` certifies an implicit-binder
 proof through a generated `(h₁ : …)` Challenge on real Lean (e2e).
+
+2026-10-04, ultracode review C3: one name representation and one grammar.
+Both specs' reports write Lean's escaped `Name.toString` (spec-1 reports
+byte-identical, the golden unchanged); `canonStr`, the `escape := false`
+printer and the classifier's `«` sniff are gone. Canonical now means the
+printed name reads back through `String.toName` as the same name
+(verified on v4.35.0-rc3: `A.«3»`/`A.3` and `A.«B.C»`/`A.B.C` print
+apart; a `»` component, a trailing `_inaccessible` and macro scopes do not
+read back), which the inspector flags (`nonCanonical`) and the classifier
+refuses on an authored name. An endpoint and its universe parameters must
+also match `LEAN_NAME_PATTERN`, now Lean's own `isIdFirst`/`isIdRest`
+(checked against every code point up to U+1FFFF) — so `good?`, `main!`,
+`℘`, `étale` and `h₁` are admitted where the schema used to refuse them
+after validation passed (an infrastructure failure), and `«定理»`,
+`«A.B»`, `«λ»` are `statement`/`proof` findings. lax-website's
+`LEAN_NAME` mirrors the pattern. `certify/lean-name.ts` keeps only the
+keyword quoting `Name.toString` leaves to its caller (`.{«fun»}`); the
+lexer transcription, which had missed Latin-1 and Latin Extended-A, is
+gone. A non-archive telescope constant is no statement anywhere (a
+helper). Coverage: the spec-2 golden (escaped `«定理».{«λ»}`, a flagged
+`«A.B»._inaccessible`), a unit test that every endpoint the classifier
+admits parses under the publication schema, and Lax38's `«at».{«fun»}`
+and `reflexive?` certified through the comparator on real Lean (e2e).
+Spec 1 changes only in the schema: names Lean prints bare that the old
+pattern refused (`!`, `?`, letterlike) now parse.

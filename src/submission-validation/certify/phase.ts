@@ -233,8 +233,8 @@ export function readChallengeReport(filename: string, maxBytes: number): ReturnT
   }
 }
 
-/** A generated name the escaper cannot write is the record's problem to
- * read, on the `certify` phase, before anything runs — a `translation`
+/** A generated name outside the archive's grammar is the record's problem
+ * to read, on the `certify` phase, before anything runs — a `translation`
  * refusal: the generator could not state the edge. */
 export function nameViolation(error: unknown): CertifyResult | undefined {
   if (!(error instanceof LeanNameError)) return undefined;
@@ -243,8 +243,8 @@ export function nameViolation(error: unknown): CertifyResult | undefined {
     intent: "translation",
     rule: "name",
     message:
-      `${error.message}; the certificate names every statement and proof as a Lean identifier, and this ` +
-      "component cannot be written as one — rename the declaration",
+      `${error.message}; the certificate names every statement and proof by a name Lean prints without ` +
+      "`«»` — rename the declaration",
   };
 }
 

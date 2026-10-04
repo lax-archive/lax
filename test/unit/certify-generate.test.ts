@@ -1,11 +1,11 @@
 // The certificate generator (axiomfree-plan.md, "Certify" 1; stage 3's
 // goldens): the five files for an unconditional proof, a conditional one
-// with a duplicated hypothesis, a polymorphic one, a
-// handwritten name Lean cannot read unbracketed, and the quoted proof of the
-// spec-2 inspector golden exactly as the inspector reports it — compared
-// byte for byte against test/fixtures/certify/<case>/. Regeneration from the
-// recorded proof entries is deterministic by construction, and the escaper
-// is held to Lean's identifier grammar.
+// with a duplicated hypothesis, a polymorphic one, handwritten names with
+// keyword components and Lean's less common identifier characters, and a
+// polymorphic proof of the spec-2 inspector golden exactly as the inspector
+// reports it — compared byte for byte against test/fixtures/certify/<case>/.
+// Regeneration from the recorded proof entries is deterministic by
+// construction, and the generator writes only archive names.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -25,7 +25,7 @@ import {
   type BundleFile,
   type CertifiedProof,
 } from "../../src/submission-validation/certify/generate.js";
-import { isPlainIdentifier, isQuotable, leanName, LeanNameError } from "../../src/submission-validation/certify/lean-name.js";
+import { leanName, LeanNameError } from "../../src/submission-validation/certify/lean-name.js";
 import { manifestText } from "../../src/submission-validation/host/warmstore.js";
 import type { PinnedLibrary } from "../../src/submission-validation/environments.js";
 
@@ -76,13 +76,14 @@ const CASES: Record<string, CertifiedProof[]> = {
     },
   ],
   escaping: [
-    { id: "Lax7Proofs.theorem.定理", levelParams: ["λ"], telescope: { hypotheses: [{ statement: "Lax7.Facts.fun", levels: [] }], conclusion: { statement: "Lax7.Facts.α'", levels: ["λ"] } } },
+    { id: "Lax7Proofs.theorem.good?", levelParams: ["fun"], telescope: { hypotheses: [{ statement: "Lax7.Facts.℘", levels: [] }], conclusion: { statement: "Lax7.Facts.α'", levels: ["fun"] } } },
   ],
-  // the same shapes as the inspector itself reports them: the quoted proof
-  // `«证明».{«λ»}` of the spec-2 golden fixture, taken from the real report
-  // (test/fixtures/inspector-golden-spec2/expected.json), so the generator's
-  // input is the inspector's output and not a handwritten guess at it
-  inspected: [inspectedProof("Spec2.Basic.证明")],
+  // the same shapes as the inspector itself reports them: the polymorphic
+  // proof `polyProof.{w}` of the spec-2 golden fixture, taken from the real
+  // report (test/fixtures/inspector-golden-spec2/expected.json), so the
+  // generator's input is the inspector's output and not a handwritten guess
+  // at it
+  inspected: [inspectedProof("Spec2.Basic.polyProof")],
 };
 
 /** A proof of the spec-2 inspector golden as the validator would record it:
@@ -162,50 +163,33 @@ describe("the certificate generator", () => {
     });
   });
 
-  it("escapes every component Lean would not read back unbracketed, and nothing else", () => {
-    expect(isPlainIdentifier("hasSucc")).toBe(true);
-    expect(isPlainIdentifier("α'")).toBe(true);
-    expect(isPlainIdentifier("h₁")).toBe(true);
-    expect(isPlainIdentifier("_x!?")).toBe(true);
-    expect(isPlainIdentifier("fun")).toBe(false);
-    expect(isPlainIdentifier("theorem")).toBe(false);
-    expect(isPlainIdentifier("定理")).toBe(false);
-    expect(isPlainIdentifier("λ")).toBe(false);
-    expect(isPlainIdentifier("1st")).toBe(false);
-    // `_` alone is a hole: Lean's printer leaves it bare, the parser reads no identifier
-    expect(isPlainIdentifier("_")).toBe(false);
-    expect(leanName("Lax7.Facts.fun")).toBe("Lax7.Facts.«fun»");
-    expect(leanName("Lax7Proofs.theorem.定理")).toBe("Lax7Proofs.«theorem».«定理»");
+  it("writes an archive name as recorded, quoting only a keyword component", () => {
+    expect(leanName("Lax7.Facts.hasSucc")).toBe("Lax7.Facts.hasSucc");
     expect(leanName("Lax7.Facts.α'")).toBe("Lax7.Facts.α'");
-    expect(leanName("Lax7.Facts.1st")).toBe("Lax7.Facts.«1st»");
+    expect(leanName("Lax7.Facts.h₁")).toBe("Lax7.Facts.h₁");
+    expect(leanName("Lax7.Facts._x!?")).toBe("Lax7.Facts._x!?");
+    expect(leanName("Lax7.Facts.℘")).toBe("Lax7.Facts.℘");
+    expect(leanName("Lax7.Facts.fun")).toBe("Lax7.Facts.«fun»");
+    expect(leanName("fun")).toBe("«fun»");
+    // `_` inside a name is an ordinary identifier character
+    expect(leanName("Lax7._x._y_")).toBe("Lax7._x._y_");
   });
 
-  it("refuses, naming the component, what «» cannot quote: empty, `_`, a guillemet, whitespace, a control character", () => {
-    expect(isQuotable("定理")).toBe(true);
-    expect(isQuotable("a-b")).toBe(true);
-    for (const [canonical, component] of [
-      ["Lax7.«x»", "«x»"],
-      ["Lax7.x»", "x»"],
-      ["Lax7..x", ""],
-      ["Lax7._", "_"],
-      ["Lax7.a b", "a b"],
-      ["Lax7.a\nb", "a\nb"],
-      ["Lax7.a\u0007", "a\u0007"],
-      ["", ""],
-    ] as const) {
+  it("refuses, naming it, a name outside the archive's grammar", () => {
+    for (const name of [
+      "Lax7.«x»", "Lax7.«定理»", "Lax7.定理", "Lax7.x»", "Lax7..x", "Lax7.1st", "Lax7.3", "_", "Lax7.λ",
+      "Lax7.a b", "Lax7.a\nb", "Lax7.a\u0007", "",
+    ]) {
       let caught: unknown;
       try {
-        leanName(canonical);
+        leanName(name);
       } catch (error) {
         caught = error;
       }
-      expect(caught, canonical).toBeInstanceOf(LeanNameError);
-      expect((caught as LeanNameError).component).toBe(component);
-      expect((caught as LeanNameError).canonical).toBe(canonical);
-      expect((caught as Error).message).toContain(JSON.stringify(component));
+      expect(caught, name).toBeInstanceOf(LeanNameError);
+      expect((caught as LeanNameError).leanName).toBe(name);
+      expect((caught as Error).message).toContain(JSON.stringify(name));
     }
-    // but `_` inside a component is an ordinary identifier character
-    expect(leanName("Lax7._x._y_")).toBe("Lax7._x._y_");
   });
 
   it("seals the five files into a ustar archive that reads back", () => {
