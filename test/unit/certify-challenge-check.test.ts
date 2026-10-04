@@ -183,7 +183,7 @@ describe("the Challenge held to the telescope", () => {
     expect(result!.message).toContain("Lax1Proofs.another states the edge");
   });
 
-  // a reader's relative certificate (cli/certify-hold.ts): one implied edge
+  // a reader's relative certificate (cli/certify-run.ts): one implied edge
   // under `Cert.<statement-id>`, held the same way
   it("holds a relative certificate's one theorem to its implied edge", () => {
     const relative: CertificateTheorem = {

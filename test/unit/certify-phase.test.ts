@@ -489,7 +489,7 @@ describe("the trusted Certify phase", () => {
     expect(solutionExport.source).toBe(path.join(outB, "solution.export"));
     expect(fs.statSync(solutionExport.source).isFile()).toBe(true);
     const projectC = mountsOf(judge).find((mount) => mount.target === CERTIFY_PATHS.project)!.source;
-    expect(fs.readdirSync(projectC).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+    expect(fs.readdirSync(projectC).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"]);
     expect(JSON.parse(fs.readFileSync(path.join(projectC, "comparator.json"), "utf8"))).toMatchObject({
       challenge_module: "Challenge",
       solution_module: "Lax1Proofs",
@@ -519,8 +519,9 @@ describe("the trusted Certify phase", () => {
     const tar = fs.readFileSync(result.bundlePath);
     expect(createHash("sha256").update(tar).digest("hex")).toBe(result.certificate.bundle.digest);
     const members = readBundle(tar);
-    expect([...members.keys()]).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+    expect([...members.keys()]).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"]);
     expect(members.get("Challenge.lean")).toBe(result.certificate.challenge);
+    expect(members.get("lean-toolchain")).toBe(`${ENVIRONMENT.leanToolchain}\n`);
     expect(members.get("lakefile.toml")).toContain('git = "https://github.com/alice/primes"');
     // and the judge judged exactly the bundle's files
     for (const [name, content] of members) expect(fs.readFileSync(path.join(projectC, name), "utf8"), name).toBe(content);

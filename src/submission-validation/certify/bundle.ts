@@ -1,5 +1,5 @@
-// The certificate bundle as bytes: the generated files — a record's four, a
-// relative certificate's five (generate.ts bundleMembers) — in one
+// The certificate bundle as bytes: the generated files — a record's five, a
+// relative certificate's six (generate.ts bundleMembers) — in one
 // deterministic ustar archive, written in process. A capture is sealed by
 // the container's `tar` because it is gigabytes; a bundle is a few kilobytes
 // of text, and writing the archive here gives both pipelines — the trusted

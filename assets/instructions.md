@@ -171,10 +171,12 @@ one recorded. A refusal there, on a build the other phases accepted, is a
 disagreement between lax and Lean: report it. `lax certify <lax-N | proof |
 statement> [--relative-to …] [--run]` writes a rerunnable bundle — a
 record's, one edge's, or a statement proven relative to others, composed
-from the archive's proofs — and runs `lake comparator` over it in its
-sandbox when asked, after checking with lax's inspector that the
-Challenge Lean built states exactly those edges (without the inspector it
-says "comparator accepted; Challenge meaning not checked").
+from the archive's proofs — and with `--run` checks it on your machine:
+it builds the packages from the sources the archive captured, under
+bubblewrap, checks with lax's inspector that the Challenge Lean built
+states exactly those edges, and hands both exports to `lake comparator`
+(without the inspector it says "comparator accepted; Challenge meaning
+not checked").
 
 **Proof network, in spec 2.** The network is read off the telescopes: each
 proof's hypotheses and conclusion, in the order you wrote the binders. Make

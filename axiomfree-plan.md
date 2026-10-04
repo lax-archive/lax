@@ -343,10 +343,12 @@ existing docker runner with the existing mounts and limits:
    kinds ignored), `comparator.json` (`solution_module` = the proof
    package's root, which imports every module; `theorem_names` = the proof
    ids, `definition_names = []` always, `permitted_axioms` = the
-   background three). *As executed after the ultracode review's C1
+   background three), and `lean-toolchain` (the row's toolchain, sealed
+   since the ultracode review's M1, so elan picks the judged toolchain in
+   the folder). *As executed after the ultracode review's C1
    (2026-10-04); the `Cert.<proof-id>` wrapper Solution is in git
    history.* A relative certificate keeps a generated `Solution.lean`
-   (`Cert.<statement-id>`, the composed proofs) and so has five files: the
+   (`Cert.<statement-id>`, the composed proofs) and so has six files: the
    two bundle shapes differ by that one file. Zero edges: nothing runs, the
    record says "no edges".
 2. Container A mounts the concept captures and the warm store read-only,
@@ -359,7 +361,7 @@ existing docker runner with the existing mounts and limits:
    `/out`; it runs `leanexport <ProofsRoot>` by the same rule to
    `solution.export`. Nothing is built and no record code runs: the oleans
    Compile captured are the solution. Container C, the judge, is a fresh
-   container with the bundle's four files and both exports read-only, the
+   container with the bundle's five files and both exports read-only, the
    toolchain, a read-only `git` shim, and nothing writable but `/out`; it
    runs `lake comparator --challenge-from-export --solution-from-export
    --inadvisably-no-sandbox [--paranoid]`, which builds and resolves
@@ -368,7 +370,7 @@ existing docker runner with the existing mounts and limits:
    edge; a kernel that failed to run, a launch failure, or an unexplained
    stop is an infrastructure failure, never a finding against the author
    (Codex intents review, finding 6); exit 2 is a pipeline failure.
-4. The four generated files are pushed to the capture store
+4. The five generated files are pushed to the capture store
    (`capture-store.ts`, digest-addressed, before the database commit that
    references them); `build-output.json` records the bundle digest, the
    kernels that ran, and the generated `Challenge.lean` source verbatim
@@ -381,8 +383,12 @@ Local `lax build` runs the same phase through the same runner.
 
 `lax certify <proof|statement|lax-N> [--relative-to …] [--run
 [--paranoid]]`: regenerate the bundle from the database (the telescopes in
-`build-output.json`) or fetch it by digest, print or run the comparator
-command; a relative certificate for an implied edge composes Solution
+`build-output.json`) or fetch it by digest, print the comparator command,
+or with `--run` check the certificate in the trusted path's shape on the
+reader's machine (a fresh scratch project, the records' packages from their
+captures' sources, the libraries from the warm workspace, both modules
+built and exported under bubblewrap, the Challenge held, the comparator
+handed both exports — as executed after the ultracode review's S1 and M1); a relative certificate for an implied edge composes Solution
 bodies by application along `selectProofTree`'s witness forest, and the
 comparator's rejection of an ill-typed composition is the test that the
 composition rule is right. `lax doctor` reports the toolchain's bundled
@@ -742,6 +748,25 @@ for spec-2 records only (spec-1 records keep their shape until ported):
    until the Lax17 port measures the full set.
 3. **`lax certify --run` before `lax register`**: author tool, not a gate;
    registration already rests on the per-submit judge.
+4. **Where a certificate's package sources live (ultracode review M1.2,
+   Jan's decision, open).** Every record package in a bundle is a git
+   require on the *author's* repository at the certified commit, so the
+   by-hand rerun (`lake comparator` in the fetched folder) dies with a
+   deleted, private or rewritten repository — and with it every relative
+   certificate through that record; spec 1 never depended on author
+   repositories after registration. `lax certify --run` no longer does
+   (it builds from the captures' sources, S1/M1.3), so the question is
+   only what the *bundle* names. (a) An archive-owned preservation remote:
+   the publish job pushes the certified commit's git objects (never
+   executed; integrity stays on the SHA) to a repository the archive
+   controls, and the bundle's requires name it — a further credentialed
+   write in the publish job, a storage cost, and a bundle-format change
+   (the URL is inside the digest), cheap only before the first record.
+   (b) Accept author-repo dependence explicitly: the bundle stays as is,
+   the draft and the website say the by-hand rerun needs the authors'
+   repositories and `lax certify --run` is the durable path — no new
+   machinery, but "rerun with nothing of lax" then has an expiry the
+   archive does not control.
 
 ## Record
 
@@ -903,9 +928,45 @@ Challenge the inspector read and builds only the solution module, after
 both reads. The hold's own steps run no host tool in a tree the sandbox
 can write; S1 itself is still open — `verifyCertificateWorkspace` runs host
 `git rev-parse`/`git status` in `.lake/packages/*`, which the sandboxed
-build (the hold's and the comparator's) can write. Without an inspector (it is compiled on first use) the comparator
+build (the hold's and the comparator's) can write (closed 2026-10-05, the
+S1 entry below). Without an inspector (it is compiled on first use) the comparator
 runs as the bundle's own command and the verdict reads "comparator
 accepted; Challenge meaning not checked", never "certified". Coverage:
 the fake-toolchain unit tests (held, rewritten, unbuildable, no
 inspector), a relative-certificate case of the check, and the sandboxed
 `--run` of the spec-2 e2e over the real comparator.
+
+2026-10-05, ultracode review S1 and M1 (items 1, 3, 4; item 2 is open
+decision 4): `lax certify --run` no longer runs any host tool in a tree a
+sandboxed step could write. It used to keep the certificate folder's
+`.lake` between runs and verify each `.lake/packages/*` checkout with host
+`git rev-parse`/`git status` (`verifyCertificateWorkspace`), which a
+previous run's proof code could arm with a `core.fsmonitor` in the
+checkout's `.git/config`; that function, the reuse, and the
+`TODO(decision 10)` about planted library build products are gone. A run
+now lays out a fresh scratch project (`cli/certify-run.ts`
+`prepareRunProject`): the bundle's files verbatim, the records' packages
+copied from the *sources* of their published captures (verified by
+digest and inventory in `~/.lax/captures`, `cli/capture-cache.ts`, moved
+out of `prooftree.ts`; the commit the bundle pins must be the capture's
+and the record's), the libraries from the read-only warm workspace, all
+named in `.lake/package-overrides.json` (`seedOverrides` takes the extra
+entries) — no network, no git, no author repository. It builds and
+exports the Challenge, holds it with the inspector as before, builds and
+exports the solution module (a failure is `solution-build`, intent
+`translation`), and hands `lake comparator` both exports in a judge folder
+with the refusing `git` shim (`writeJudgeProject`), so the comparator
+builds nothing and only its kernels run in its own sandbox: container C's
+shape. `--run` needs bubblewrap, not git. The folder's own `.lake` (a
+by-hand run's) is never read. Regression test: a planted
+`core.fsmonitor` in the folder's `.lake/packages/Lax42` stays unfired by
+`--run` and fires under one host `git status` (`test/unit/cli-certify.test.ts`).
+Audit of the other host git/lake calls: none runs on a tree a sandbox
+writes (`lax build`'s are on the author's own unsandboxed checkout; the
+database refresh on `~/.lax/lax-database`). M1.1: `lean-toolchain` is the
+fifth sealed bundle file (`generate.ts leanToolchainText`; record bundles
+five files, relative six), so the separate write is gone and the
+publisher regenerates it with the rest. M1.4: the draft and the website
+now say the by-hand rerun needs the authors' repositories and `--run`
+needs the archive's captures, instead of "every certificate can be rerun
+from its bundle".

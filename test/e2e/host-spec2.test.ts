@@ -495,7 +495,7 @@ end Lax38Proofs
       const tar = fs.readFileSync(path.join(jobDir, "certify", "certificate.tar"));
       expect(createHash("sha256").update(tar).digest("hex")).toBe(certificate.bundle.digest);
       const members = readBundle(tar);
-      expect([...members.keys()]).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+      expect([...members.keys()]).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"]);
       expect(members.get("lakefile.toml")).toContain('path = "packages/Lax38Proofs"');
       expect(JSON.parse(members.get("comparator.json")!)).toMatchObject({
         solution_module: "Lax38Proofs",
@@ -959,7 +959,7 @@ end Lax49Proofs
       // run, so a comparator that wrote anywhere but its temp dir would fail
       const judgeDir = path.join(root, "judge");
       const judge = writeJudgeProject(judgeDir, plan.bundle);
-      expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+      expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"]);
       expect(fs.readFileSync(path.join(judge.shimsDir, "git"), "utf8")).toBe(GIT_SHIM);
       fs.chmodSync(exportPath, 0o444);
       fs.chmodSync(solutionExport, 0o444);
@@ -985,7 +985,7 @@ end Lax49Proofs
         expect(judged.output).not.toContain("Building");
         expect(judged.output).not.toContain("Resolving");
         expect(interpretComparatorRun(judged)).toEqual({ kind: "certified" });
-        expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+        expect(fs.readdirSync(judge.projectDir).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"]);
         // and the paranoid set runs through the same tool when asked
         fs.writeFileSync(planC, JSON.stringify({ ...judgePlan, paranoid: true }));
         const paranoid = await runTool(planC, "C (comparator --paranoid)");
@@ -1328,7 +1328,7 @@ end Lax41Proofs
         const archive = archiveWith(upstream, downstream);
         fs.mkdirSync(path.join(database, ".git"), { recursive: true });
         for (const id of ["lax-38", "lax-41"]) fs.cpSync(path.join(archive.root, id), path.join(database, id), { recursive: true });
-        // the files a folder holds: a record's four, a relative certificate's five
+        // the files a folder holds: a record's five, a relative certificate's six
         const bundleIn = (directory: string): RelativeBundle =>
           Object.fromEntries(
             BUNDLE_FILES.filter((name) => fs.existsSync(path.join(directory, name))).map((name) => [name, fs.readFileSync(path.join(directory, name), "utf8")]),
@@ -1382,7 +1382,8 @@ end Lax41Proofs
         // builds mathlib, LaxCore and the packages from source, and judges.
         // First without the sandbox — the fixture repositories are local
         // paths bubblewrap may not see — labelled as such; then the CLI's
-        // own `--run`, sandboxed, over the materialised folder.
+        // own `--run`, sandboxed, which needs neither the repositories nor
+        // these folders' build trees.
         const lake = lakeBinary(environment);
         const judgeUnsandboxed = async (directory: string, label: string) => {
           const started = performance.now();
@@ -1399,7 +1400,10 @@ end Lax41Proofs
 
         // the sandboxed rerun through the CLI, where bubblewrap can create
         // a user namespace (the spike's host sandbox); elsewhere it is
-        // reported and skipped, never faked
+        // reported and skipped, never faked. It builds in a fresh project of
+        // its own from the records' captures in the fake registry — the
+        // fixture repositories are never reached — and ignores the `.lake`
+        // the by-hand runs above left in these folders.
         let sandbox = false;
         try {
           execFileSync("bwrap", ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--unshare-user", "--die-with-parent", "--", "/bin/true"], { stdio: "ignore" });
@@ -1411,7 +1415,7 @@ end Lax41Proofs
           const started = performance.now();
           logged.length = 0;
           const code = await certify("Lax41.Chain.Downstream", { out: composed, run: true });
-          console.info(`[certify timing] lax certify --run (sandboxed, folder materialised): ${Math.round(performance.now() - started)} ms, exit ${code}\n${logged.join("\n")}`);
+          console.info(`[certify timing] lax certify --run (sandboxed, from captures): ${Math.round(performance.now() - started)} ms, exit ${code}\n${logged.join("\n")}`);
           expect(code).toBe(0);
           expect(logged.join("\n")).toContain("Lax41.Chain.Downstream is certified: lake comparator --config comparator.json accepted it, against a Challenge that states the edges.");
           expect(logged.join("\n")).toContain("Challenge states the edges");

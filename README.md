@@ -437,19 +437,24 @@ one byte for byte; `--fetch` pulls the stored bundle by digest instead), a
 proof id is one edge, and a statement id is a *relative certificate* — the
 implied edge `{--relative-to statements} → statement`, discharged by the
 archive's proofs composed along the proof network's witness forest, under
-the theorem name `Cert.<statement-id>`. The bundle's files (four for a record
-or proof id, five with `Solution.lean` for a relative certificate) plus
-`lean-toolchain` land in `--out` (default `./certificate-<target>`); the command prints the
-`lake comparator --config comparator.json` line, or runs it with `--run`
-(`--paranoid` adds the toolchain's bundled kernels) inside the tool's own
-bubblewrap sandbox — git and `bwrap` must be on PATH, and no unsandboxed
-mode is offered. Before the comparator runs, `--run` builds and exports the
-Challenge in the same kind of sandbox, reads it with the environment's
-inspector, holds every theorem to the edge the bundle states (the
-global-macro defence the archive's own Certify runs), and passes that export
-to the comparator with `--challenge-from-export`; where the inspector
-cannot be built it reports "comparator accepted; Challenge meaning not
-checked" instead of "certified". `lax doctor --env <spec-2 id>` reports the comparator, the
+the theorem name `Cert.<statement-id>`. The bundle's files (five for a record
+or proof id — `lean-toolchain` among them — and six with `Solution.lean` for a
+relative certificate) land in `--out` (default `./certificate-<target>`); the
+command prints the `lake comparator --config comparator.json` line a reader
+runs there by hand (elan and git on PATH; it clones the records' packages
+from their authors' repositories), or checks the certificate itself with
+`--run` (`--paranoid` adds the toolchain's bundled kernels). `--run` builds in
+a fresh scratch project, never in the folder's own `.lake`: the records'
+packages from the *sources* of their verified captures in the archive (never
+the captured build products), the environment's libraries from the warm
+workspace, no network and no git. It builds and exports the Challenge, reads
+it with the environment's inspector and holds every theorem to the edge the
+bundle states (the global-macro defence the archive's own Certify runs),
+builds and exports the solution module, and hands the comparator both
+exports — each build and export under the bubblewrap arguments the
+comparator gives its own children, `bwrap` on PATH, no unsandboxed mode.
+Where the inspector cannot be built it reports "comparator accepted;
+Challenge meaning not checked" instead of "certified". `lax doctor --env <spec-2 id>` reports the comparator, the
 sandbox, and each bundled kernel.
 
 `lax generate-prooftree lax-N` reads the local Archive database, selects one

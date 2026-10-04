@@ -5,12 +5,14 @@ import { describe, expect, it } from "vitest";
 import {
   captureInventory,
   captureInventoryPath,
-  generateProofTree,
-  isBackgroundOnly,
   readCaptureInventory,
-  selectProofTree,
   verifyCapture,
   writeCaptureInventory,
+} from "../../src/cli/capture-cache.js";
+import {
+  generateProofTree,
+  isBackgroundOnly,
+  selectProofTree,
   type NetworkProof,
   type ProofTreeSelection,
 } from "../../src/cli/prooftree.js";

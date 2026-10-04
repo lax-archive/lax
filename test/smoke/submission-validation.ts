@@ -515,7 +515,7 @@ function fixtures(): SmokeFixture[] {
             assert.equal(judgePlan.tool, "comparator");
             assert.equal(judgePlan.solutionExport, "/cert/solution.export");
             assert.equal(judgePlan.challengeExport, "/cert/challenge.export");
-            assert.deepEqual(fs.readdirSync(path.join(certifyDir, "judge", "project")).sort(), ["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+            assert.deepEqual(fs.readdirSync(path.join(certifyDir, "judge", "project")).sort(), ["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"]);
             assert.equal(JSON.parse(fs.readFileSync(path.join(certifyDir, "judge", "project", "comparator.json"), "utf8")).solution_module, "Lax47Proofs");
             assert.equal(
               createHash("sha256").update(fs.readFileSync(path.join(certifyDir, "challenge", "out", "challenge.export"))).digest("hex"),

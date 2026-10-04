@@ -1,7 +1,7 @@
 // The certificate generator (axiomfree-plan.md, "Certify" 1; the draft spec's
 // "Certification", "The bundle"): from a spec-2 record's proof entries — their
 // telescopes and universe parameters, exactly as `build-output.json` records
-// them — and the packages involved, the four files `lake comparator` judges.
+// them — and the packages involved, the five files `lake comparator` judges.
 //
 //   Challenge.lean    imports the concept packages the edges name and nothing
 //                     of any proof package; per proof one theorem named
@@ -18,12 +18,15 @@
 //                     source triple) or path requires (a local build)
 //   lake-manifest.json the complete manifest, so the comparator resolves
 //                     nothing (host/warmstore.ts manifestText)
+//   lean-toolchain    the environment's toolchain, so a reader's `lake` in
+//                     the folder is the one the record was judged with
+//                     (elan reads it; ultracode review 2026-10-04, M1)
 //
 // There is no Solution file for a record (ultracode review 2026-10-04, C1):
 // the comparator looks every theorem name up in the proof package's own
 // export and holds the author's constant to the Challenge's directly. A
 // *relative* certificate composes several proofs into one theorem that no
-// package declares, so its bundle carries a fifth file, `Solution.lean`,
+// package declares, so its bundle carries a sixth file, `Solution.lean`,
 // and names its theorem `Cert.<statement-id>` (relativeCertificateFiles);
 // the two bundle shapes differ by that one file.
 //
@@ -37,7 +40,7 @@
 
 import { createHash } from "node:crypto";
 import type { ProofEntry, ProofTelescope } from "../contracts.js";
-import type { PinnedLibrary } from "../environments.js";
+import type { ArchiveEnvironment, PinnedLibrary } from "../environments.js";
 import { leanFacts, type LeanFacts } from "../lean-facts.js";
 import type { SeededDependency } from "../host/warmstore.js";
 import { leanLevel, leanName } from "./lean-name.js";
@@ -76,18 +79,19 @@ export const BUNDLE_FILES = [
   "comparator.json",
   "lake-manifest.json",
   "lakefile.toml",
+  "lean-toolchain",
 ] as const;
 export type BundleFile = (typeof BUNDLE_FILES)[number];
-/** A record's bundle: the four files, no Solution (the proof package is the
+/** A record's bundle: the five files, no Solution (the proof package is the
  * solution module). */
-export const RECORD_BUNDLE_FILES = ["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"] as const;
+export const RECORD_BUNDLE_FILES = ["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"] as const;
 export type RecordBundle = Record<(typeof RECORD_BUNDLE_FILES)[number], string>;
 /** A relative certificate's bundle: the record shape plus `Solution.lean`. */
 export type RelativeBundle = Record<BundleFile, string>;
 export type Bundle = RecordBundle | RelativeBundle;
 
-/** The members of a bundle in tar order — the record's four or a relative
- * certificate's five, never another set: the one place the two shapes are
+/** The members of a bundle in tar order — the record's five or a relative
+ * certificate's six, never another set: the one place the two shapes are
  * told apart, for sealing and for reading a bundle back. */
 export function bundleMembers(files: Readonly<Partial<Record<BundleFile, string>>>): Array<{ name: BundleFile; content: string }> {
   const present = BUNDLE_FILES.filter((name) => files[name] !== undefined);
@@ -95,6 +99,11 @@ export function bundleMembers(files: Readonly<Partial<Record<BundleFile, string>
   if (present.length !== shape.length || present.some((name, index) => name !== shape[index]))
     throw new Error(`a bundle holds ${RECORD_BUNDLE_FILES.join(", ")} (a record) or ${BUNDLE_FILES.join(", ")} (a relative certificate), not ${present.join(", ") || "nothing"}`);
   return present.map((name) => ({ name, content: files[name]! }));
+}
+
+/** `lean-toolchain`: the environment's toolchain, the one line elan reads. */
+export function leanToolchainText(environment: Pick<ArchiveEnvironment, "leanToolchain">): string {
+  return `${environment.leanToolchain}\n`;
 }
 
 /** A proof entry of a build output, narrowed to the spec-2 shape or refused:

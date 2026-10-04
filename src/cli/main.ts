@@ -255,7 +255,7 @@ program
   .option("--relative-to <statements...>", "statements a statement target is proven relative to (its hypotheses)")
   .option("--out <folder>", "where the bundle goes (defaults to ./certificate-<target>)")
   .option("--fetch", "pull a record's stored bundle by its digest instead of regenerating it")
-  .option("--run", "run `lake comparator` over the bundle, in its sandbox")
+  .option("--run", "check the certificate here: build it from the archive's captures under bubblewrap, hold the Challenge to the edges, and run `lake comparator`")
   .option("--paranoid", "with --run: also the toolchain's bundled external kernels")
   .description("write a rerunnable `lake comparator` certificate from the archive: a record's bundle, one edge, or a statement proven relative to others")
   .action(

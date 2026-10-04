@@ -1137,7 +1137,7 @@ on every record, since a certificate is recorded only on a pass. Readers
 fill both in, and the trusted parser refuses a stored copy. ``kernels``
 names the kernels that accepted the solution in trusted validation
 (``lean`` for Lean's own kernel; ``leanchecker-paranoid``, ``lean4lean``,
-``nanoda``, ``con-leche``, ``con-ron`` for the bundled external checkers). ``bundle`` is the digest reference of the four
+``nanoda``, ``con-leche``, ``con-ron`` for the bundled external checkers). ``bundle`` is the digest reference of the five
 generated files (see Certification), fetched and verified like a capture.
 ``challengeExportSha256`` and ``solutionExportSha256`` are the host's
 digests of the two export files the judge read, bind-mounted one at a
@@ -1528,8 +1528,9 @@ carries the probes that passed and the digests beside the toolchain name.
 A reader who reruns the bundle trusts the toolchain and its kernels, the
 environment's libraries (mathlib, ``LaxCore``, ``CSLib`` where required),
 and the concept packages the record depends on — "concept packages you
-depend on are trusted, as today" — and, for the rerun itself, nothing of
-lax.
+depend on are trusted, as today" — and, for a by-hand rerun itself,
+nothing of lax (``lax certify --run`` adds lax's own reading of the
+Challenge and the archive's captures as the packages' sources).
 
 *The theorem is the edge* is the translation's: the TypeScript that turns
 the inspector's telescope reading into the Challenge. It checks
@@ -1549,7 +1550,7 @@ is the fourth piece's.
 the published record: the captures the Challenge was built against and
 their digests, the environment's pins, the warm workspace, the host-recorded
 digests of both exports, the publisher's credential-free regeneration of
-the four bundle files from the record's own data, and the database commit.
+the five bundle files from the record's own data, and the database commit.
 The judge establishes a property of two export files under a
 configuration; that the Challenge export is the published Challenge built
 against the concept definitions the record identifies, that the library
@@ -1815,8 +1816,10 @@ and Inspect, in spec-2 environments. It runs in the existing docker runner with 
 mounts and limits, and it adds nothing to what the archive *decides* — the
 validator has already classified every proof — but a great deal to what a
 reader can *check*: the certificate is a Challenge the record's own proof
-package must match, judged by the toolchain's ``lake comparator``, which
-anyone can rerun with nothing of lax installed. The comparator looks each
+package must match, judged by the toolchain's ``lake comparator``, which a
+reader reruns from the bundle — by hand with nothing of lax installed while
+the records' source repositories stay reachable, or with ``lax certify
+--run`` from the archive's own captures (see Publication). The comparator looks each
 Challenge theorem up *by name* in the solution module's export and compares
 the two constants' types with ``Expr.eqv`` (binder names and binder kinds
 ignored); so each Challenge theorem carries its proof's own name, and the
@@ -1824,7 +1827,7 @@ solution module is the proof package itself — the author's constants are
 judged directly, with no wrapper in between.
 
 **The bundle.** From the record's telescopes and archive names, lax
-generates four files. Every name is an archive name, written as recorded
+generates five files. Every name is an archive name, written as recorded
 with a familiar keyword component quoted (``Lax1.C.«fun»``), since Lean's
 printer leaves keywords bare; a universe parameter, which stands alone
 where any keyword of the imports would be read as that keyword, is always
@@ -1860,6 +1863,9 @@ grammar is refused before anything is generated (see Namespaces).
    reaches every proof — ``theorem_names`` — the proofs' archive names in
    the record's edge order — ``definition_names: []`` always, and
    ``permitted_axioms`` — the three background axioms.
+5. ``lean-toolchain``: the environment's toolchain, one line, so ``lake``
+   in the folder is the toolchain the record was judged with wherever elan
+   picks it.
 
 There is no Solution file for a record. A *relative* certificate (below)
 composes several proofs into one theorem no package declares, so its
@@ -1902,7 +1908,7 @@ judge's binaries before it. Then:
   <proof package root>`` to ``solution.export`` by A2's rule. Nothing is
   built: the oleans Compile captured are the solution, and the exporter
   runs none of their code.
-- **C**, the judge, is a fresh container with the bundle's four files
+- **C**, the judge, is a fresh container with the bundle's five files
   read-only, both exports bind-mounted read-only as single files, the
   toolchain, the tools, and a read-only ``git`` shim — no capture, no warm
   workspace, nothing writable but ``/out`` — running
@@ -1938,35 +1944,46 @@ archive to examine, never a finding against the author. A violation's
 message asks the author to report it as a lax bug only if their package
 builds cleanly with ``lax build``.
 
-**Publication.** The four files are pushed to the capture store as one
+**Publication.** The five files are pushed to the capture store as one
 digest-addressed bundle before the database commit that references it, and
 ``build-output.json`` records the bundle digest, the judge (self-test,
 tool digests), the kernels that ran, both export digests, and
 the ``Challenge.lean`` source verbatim (see Archive Database). The publisher
-regenerates the four files from the record's own stored data, re-seals
+regenerates the five files from the record's own stored data, re-seals
 them, and holds the published tar to them byte for byte, credential-free,
-before any token is minted. Rerunning a published bundle is ``lax certify
-lax-N --run``, the full check. By hand — fetch the four files by digest,
-``lake comparator`` in the folder (with its own sandbox, and
-``--paranoid`` if desired), which builds the Challenge and then the proof
-package — a git dependency of the bundle — as the solution module — is the
-comparator alone: it does not check what the Challenge means, which only
-the hold below does. ``lax certify --run`` verifies every checkout in its workspace at
-the bundle's pinned revision and clean before it runs, and removes the
-record packages' build products, so a previous run's proof build cannot
-feed the next run's Challenge. It then holds the Challenge to the
-telescope as A2 does: it resolves, builds ``Challenge``, exports it and
-runs the environment's inspector over it, each step under bubblewrap the
-way ``lake comparator`` confines its own (the network for resolution
-only), holds every theorem the inspector read to the theorems the bundle
-states — a relative certificate's ``Cert.<statement-id>`` to its implied
-edge — and hands that export to ``lake comparator
---challenge-from-export``, so the comparator judges exactly the Challenge
-that was read and builds only the solution module. A disagreement is the
-same ``translation`` violation as in A2. Where the inspector cannot be
-built, the comparator runs as the bundle's own command and the result is
-reported as "comparator accepted; Challenge meaning not checked", never as
-certified.
+before any token is minted.
+
+**Rerunning.** Two ways, which differ in what they need and what they
+check. *By hand*: fetch the five files by digest and run ``lake comparator``
+in the folder (with its own sandbox, and ``--paranoid`` if desired); it
+resolves the bundle's git requires — the records' packages from their
+authors' repositories, the libraries from theirs — builds the Challenge
+and the proof package as the solution module, and judges. That is the
+comparator alone: it does not check what the Challenge means, and it needs
+every repository the bundle names to still serve the pinned commit.
+*``lax certify lax-N --run``*, the full check, needs neither: it builds in
+a fresh scratch project, never in the folder's own ``.lake``, from the
+*sources* in each record's published capture — digest-verified, the commit
+the bundle pins, never the captured build products — and the environment's
+libraries from the warm workspace, with no network and no git; no host
+tool ever runs in a tree a sandboxed step could write. It builds and
+exports ``Challenge``, runs the environment's inspector over it and holds
+every theorem the inspector read to the theorems the bundle states — a
+relative certificate's ``Cert.<statement-id>`` to its implied edge, the
+same ``translation`` violation as in A2 — then builds and exports the
+solution module (a build failure there is a ``translation`` finding,
+``solution-build``), each step under bubblewrap with the arguments ``lake
+comparator`` gives its own children, ``.lake`` the only writable mount of a
+build, none for an export or the inspection. It hands both exports to
+``lake comparator --challenge-from-export … --solution-from-export …``,
+which builds and resolves nothing and runs its kernels in its own
+sandbox — container C's command on the reader's machine. Where the
+inspector cannot be built, the Challenge is still exported and judged and
+the result is reported as "comparator accepted; Challenge meaning not
+checked", never as certified. Every certificate whose records' captures
+the archive still serves can be rerun this way; the by-hand rerun also
+depends on the authors' repositories, which the archive does not keep (an
+open decision, see the plan).
 
 > draft note (2026-10-04, open for Jan): three binding questions the
 > reviews raised are not settled here. (1) *Revalidation*: ``/lax admin
@@ -1996,11 +2013,16 @@ certified.
 trusts: the Lean toolchain of the environment and the kernels that ran; the
 environment's libraries at their pins (mathlib, ``LaxCore``, and ``CSLib``
 where the Challenge imports it); and the concept packages the record
-depends on, fetched at their recorded commits — their statements mean what
+depends on, at their recorded commits — their statements mean what
 their descriptions say, and their modules do what concept modules do.
 Concept packages you depend on are trusted, as today; the concept dialect,
-if it ever lands, tightens this without changing a data shape. For the
-rerun itself the reader trusts nothing of lax. The Challenge is the
+if it ever lands, tightens this without changing a data shape. For a
+by-hand rerun, which fetches those commits from the authors' repositories,
+the reader trusts nothing of lax. ``lax certify --run`` takes the packages'
+sources from the archive's captures instead, so its reader also trusts
+that each capture holds the sources of the commit its record names — the
+trusted pipeline copied them from that checkout — and lax's own
+transcription of the comparator's sandbox for the builds. The Challenge is the
 complete statement of what was certified and the website shows it beside
 the mark; a reader who wants to tie that statement to the published
 verdict also reads ``comparator.json`` (which names the proof package
@@ -2468,10 +2490,12 @@ rewrite, and the first ``lax build`` names each one left behind (a stray
 
 **lax certify <target> [--relative-to <statement>...] [--run [--paranoid]]
 [--output <folder>]** writes a certificate bundle (see Certification) and
-prints the ``lake comparator`` command for it; ``--run`` runs the command,
-with ``--paranoid`` adding the toolchain's bundled external kernels, after
-holding the built Challenge to the theorems the bundle states (see
-Certification, Publication). The
+prints the ``lake comparator`` command for it; ``--run`` checks the
+certificate itself — the packages built from the records' captured sources
+in a fresh project, the built Challenge held to the theorems the bundle
+states, both exports handed to the comparator — with ``--paranoid``
+adding the toolchain's bundled external kernels (see Certification,
+Rerunning). The
 target is a ``lax-N`` id, whose per-submit bundle is fetched by its recorded
 digest, or regenerated from the record's telescopes when ``--relative-to``
 is given; a proof id, whose single edge is the certificate; or a statement
@@ -2481,7 +2505,8 @@ composed from the local database along the proof network's witness forest.
 A statement that is not proven relative to the given set is refused with
 the statements left open or cyclic, as ``lax generate-prooftree`` reports
 them. The command needs the local database and the target environment's
-toolchain and warm workspace (``lax doctor --env``); it needs no
+toolchain and warm workspace (``lax doctor --env``), and for ``--run``
+bubblewrap and the registry (for captures not yet cached); it needs no
 authentication. The bundle is written to ``--output`` (default: a folder
 under ``~/.lax/certificates/`` that the report names).
 

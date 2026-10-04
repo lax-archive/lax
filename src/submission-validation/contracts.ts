@@ -608,7 +608,7 @@ export interface InspectionResult {
 }
 
 /**
- * The certificate bundle (axiomfree-plan.md, "Certify" 4): the four generated
+ * The certificate bundle (axiomfree-plan.md, "Certify" 4): the five generated
  * files sealed into one deterministic tar, a further layer of the record's
  * OCI capture manifest beside the capture, the paper and the web bundle.
  * `registryBlob` is added by the publisher after the push and must carry

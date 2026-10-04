@@ -32,6 +32,7 @@ import {
   comparatorConfigText,
   conceptPackagesOf,
   lakefileText,
+  leanToolchainText,
   manifestDependencies,
   orderedProofs,
   proofPackageRoot,
@@ -258,6 +259,7 @@ export function planCertificate(record: CertifyRecord): CertifyPlan | undefined 
         "record",
       ),
       "lake-manifest.json": manifestText(record.warmPackages, manifestDependencies(manifestPackages)),
+      "lean-toolchain": leanToolchainText(record.environment),
     },
   };
 }

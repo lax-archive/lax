@@ -20,6 +20,7 @@ import {
   conceptPackagesOf,
   edgesOf,
   lakefileText,
+  leanToolchainText,
   manifestDependencies,
   theoremNamesOf,
   universes,
@@ -126,6 +127,7 @@ function generate(proofs: CertifiedProof[]): RecordBundle {
     "comparator.json": comparatorConfigText(proofs),
     "lakefile.toml": lakefileText(LIBRARIES, packages, "record"),
     "lake-manifest.json": manifestText(WARM_PACKAGES, manifestDependencies(packages)),
+    "lean-toolchain": leanToolchainText({ leanToolchain: "leanprover/lean4:v4.35.0" }),
   };
 }
 
@@ -205,7 +207,7 @@ describe("the certificate generator", () => {
     }
   });
 
-  it("seals a record's four files into a ustar archive that reads back", () => {
+  it("seals a record's five files into a ustar archive that reads back", () => {
     const files = generate(CASES.conditional!);
     const sealed = sealBundle(files);
     expect(sealed.tar.length % 10_240).toBe(0);
@@ -221,9 +223,11 @@ describe("the certificate generator", () => {
     const files = generate(CASES.conditional!);
     const relative = { ...files, "Solution.lean": "-- solution\n" };
     expect(bundleMembers(relative).map((member) => member.name)).toEqual([
-      "Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml",
+      "Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain",
     ]);
-    expect([...readBundle(sealBundle(relative).tar).keys()]).toHaveLength(5);
+    expect([...readBundle(sealBundle(relative).tar).keys()]).toHaveLength(6);
+    // the toolchain is sealed, one line, the environment's
+    expect(files["lean-toolchain"]).toBe("leanprover/lean4:v4.35.0\n");
     // any other set is neither shape
     const { ["comparator.json"]: _dropped, ...partial } = files;
     expect(() => bundleMembers(partial)).toThrow("a bundle holds");

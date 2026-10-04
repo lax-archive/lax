@@ -273,8 +273,18 @@ interface WarmManifestEntry {
  * inside the sandbox, where the same store is mounted read-only at
  * RUNTIME_PATHS.warmWorkspace — so the override dirs must be that
  * in-container path. Host builds omit it and get the host store path.
+ *
+ * `extra` are further path entries written ahead of the warm ones: a
+ * reader's `lax certify --run` points each record package of the bundle at
+ * the source tree it copied out of the record's verified capture
+ * (cli/certify-run.ts), so nothing of the bundle is fetched or cloned.
  */
-export function seedOverrides(warmWs: string, pkgDir: string, overrideBase?: string): void {
+export function seedOverrides(
+  warmWs: string,
+  pkgDir: string,
+  overrideBase?: string,
+  extra: ReadonlyArray<{ name: string; dir: string }> = [],
+): void {
   // resolve symlinks so the recorded dirs survive a re-linked LAX_HOME (test
   // homes symlink the warm base into a shared cache)
   const warm = fs.existsSync(warmWs) ? fs.realpathSync(warmWs) : warmWs;
@@ -282,13 +292,16 @@ export function seedOverrides(warmWs: string, pkgDir: string, overrideBase?: str
   const warmManifest = JSON.parse(
     fs.readFileSync(path.join(warm, "lake-manifest.json"), "utf8"),
   ) as { packages: WarmManifestEntry[] };
-  const packages = warmManifest.packages.map((pkg) => ({
-    type: "path",
-    name: pkg.name,
-    dir: path.join(base, ...leanFacts().lakePackagesDir, pkg.name),
-    inherited: pkg.inherited,
-    ...(pkg.scope === undefined ? {} : { scope: pkg.scope }),
-  }));
+  const packages = [
+    ...extra.map((pkg) => ({ type: "path", name: pkg.name, dir: pkg.dir, inherited: false })),
+    ...warmManifest.packages.map((pkg) => ({
+      type: "path",
+      name: pkg.name,
+      dir: path.join(base, ...leanFacts().lakePackagesDir, pkg.name),
+      inherited: pkg.inherited,
+      ...(pkg.scope === undefined ? {} : { scope: pkg.scope }),
+    })),
+  ];
   const lakeDir = path.join(pkgDir, leanFacts().lakeDir);
   fs.mkdirSync(lakeDir, { recursive: true });
   const target = path.join(lakeDir, "package-overrides.json");

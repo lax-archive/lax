@@ -19,7 +19,7 @@
 //
 // One step, three callers (ultracode review 2026-10-04, S2): container A2,
 // the host path behind `lax build` (certify/host.ts), and a reader's `lax
-// certify --run` (cli/certify-hold.ts), which holds a record's edges, one
+// certify --run` (cli/certify-run.ts), which holds a record's edges, one
 // edge, or a relative certificate's `Cert.<statement-id>` alike. Each runs
 // the per-environment inspector over its own built Challenge with
 // `challengeInspectorArguments` and hands the report here; what the

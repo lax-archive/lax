@@ -36,7 +36,7 @@
 //      package. No candidate code runs anywhere in Certify past A1: the
 //      proof package's code ran in Compile, and `leanexport` imports with
 //      extensions disabled.
-//   C  the judge: a fresh container with the bundle's four files read-only,
+//   C  the judge: a fresh container with the bundle's five files read-only,
 //      both exports read-only, the toolchain, the tools, and a read-only
 //      `git` shim — no capture, no warm store, no `/deps`, nothing writable
 //      but `/out` — running `lake comparator --challenge-from-export …

@@ -11,26 +11,31 @@
 // certificate: the implied edge `{--relative-to statements} → statement`,
 // discharged by the archive's proofs composed along the witness forest
 // `selectProofTree` picks (certify/compose.ts). The bundle's files — a
-// record's or a proof's four, a relative certificate's five, the two shapes
-// differing by its `Solution.lean` — plus a `lean-toolchain` land in a
-// folder; the command prints the `lake comparator`
-// line a reader runs there, or runs it with --run — sandboxed, as the tool
-// is: `--inadvisably-no-sandbox` is for lax's own build and is not offered
-// here, because this run is the author's trustworthy rerun. --run first
-// holds the built Challenge to the theorems the bundle states, with the
-// per-environment inspector (cli/certify-hold.ts), and judges against that
-// very export; without the inspector it says the Challenge's meaning was
-// not checked instead of "certified".
+// record's or a proof's five, a relative certificate's six, the two shapes
+// differing by its `Solution.lean`; `lean-toolchain` among them — land in a
+// folder; the command prints the `lake comparator` line a reader runs there
+// by hand, or with --run checks the certificate itself (cli/certify-run.ts):
+// in a fresh scratch project, from the records' verified captures and the
+// environment's warm workspace, the Challenge and the solution module
+// built and exported under bubblewrap, the Challenge held to the theorems
+// the bundle states with the per-environment inspector, and the comparator
+// handed both exports. `--inadvisably-no-sandbox` is for lax's own build
+// and is not offered here, because this run is the reader's trustworthy
+// rerun. Without the inspector it says the Challenge's meaning was not
+// checked instead of "certified". The folder's own `.lake` — a by-hand
+// run's — is never read: no host tool runs in a tree a sandbox could write.
 //
-// Needs the local archive copy, and for regeneration the environment's warm
-// workspace (its locked manifest is the bundle's `lake-manifest.json`); it
-// needs no authentication. Spec-1 records have no certificate: refused.
+// Needs the local archive copy, and for regeneration and for --run the
+// environment's warm workspace (its locked manifest is the bundle's
+// `lake-manifest.json`); --run also needs the registry for captures not yet
+// cached. It needs no authentication. Spec-1 records have no certificate:
+// refused.
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { SourceLocation } from "../shared/types.js";
+import { parsePublishedCapture } from "../submission-validation/artifact-schema.js";
 import { isObject, normalizeSubmissionId } from "../shared/validation.js";
 import { ArchiveSnapshot } from "../submission-validation/archive/snapshot.js";
 import { readBundle, sealBundle } from "../submission-validation/certify/bundle.js";
@@ -45,6 +50,7 @@ import {
   conceptPackagesOf,
   edgeTheorem,
   lakefileText,
+  leanToolchainText,
   manifestDependencies,
   orderedProofs,
   relativeCertificateFiles,
@@ -55,14 +61,22 @@ import {
   type RecordBundle,
 } from "../submission-validation/certify/generate.js";
 import { kernelsOf } from "../submission-validation/certify/project.js";
-import { interpretComparatorRun, type ComparatorVerdict } from "../submission-validation/certify/verdict.js";
-import { submissionIdForPackage, type ArchiveSourceRecord, type ProofEntry } from "../submission-validation/contracts.js";
+import type { ComparatorVerdict } from "../submission-validation/certify/verdict.js";
+import { submissionIdForPackage, type ArchiveSourceRecord, type ProofEntry, type PublishedCapture } from "../submission-validation/contracts.js";
 import { librariesOf, type ArchiveEnvironment } from "../submission-validation/environments.js";
-import { lakeBinary, lakePathEnv, toolchainBinDir } from "../submission-validation/host/leanenv.js";
-import { run } from "../submission-validation/host/proc.js";
+import { toolchainBinDir } from "../submission-validation/host/leanenv.js";
 import { manifestText, readWarmManifestPackages, warmDir, warmReady } from "../submission-validation/host/warmstore.js";
 import { expandRecordedBuildOutput } from "../submission-validation/recorded-shape.js";
-import { holdChallengeInSandbox, readBundleManifest, type ChallengeHold } from "./certify-hold.js";
+import { materializeCapture } from "./capture-cache.js";
+import {
+  buildSolutionInSandbox,
+  holdChallengeInSandbox,
+  judgeExports,
+  prepareRunProject,
+  readBundleManifest,
+  type ChallengeHold,
+  type RecordPackageSource,
+} from "./certify-run.js";
 import { databaseDirectory, tryRefreshDatabase } from "./database.js";
 import { toolVersion } from "./doctor.js";
 import { groupFindings } from "./findings.js";
@@ -98,6 +112,8 @@ interface IndexedRecord {
   proofs: ProofEntry[];
   requiredByConcepts: string[];
   requiredByProofs: string[];
+  /** The record's published capture, whose sources --run builds. */
+  capture?: PublishedCapture;
   certificate?: {
     digest: string;
     registryBlob?: string;
@@ -111,8 +127,9 @@ type Target =
   | { kind: "statement"; record: IndexedRecord; statement: StatementRef };
 
 /** The folder entries a certificate folder may already hold: a previous
- * write of the same bundle and the comparator's build tree. */
-const REUSABLE_ENTRIES = new Set<string>([...BUNDLE_FILES, "lean-toolchain", ".lake"]);
+ * write of a bundle, and the build tree a by-hand `lake comparator` left
+ * (never read by lax). */
+const REUSABLE_ENTRIES = new Set<string>([...BUNDLE_FILES, ".lake"]);
 
 export async function certify(targetInput: string, options: CertifyOptions = {}): Promise<number> {
   const database = databaseDirectory();
@@ -150,8 +167,9 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
   steps.add("bundle", options.fetch === true ? "Fetching the bundle" : target.kind === "statement" ? "Composing the certificate" : "Regenerating the bundle");
   steps.add("write", "Writing the bundle");
   if (options.run === true) {
+    steps.add("sources", "Taking the packages from the archive");
     steps.add("hold", "Holding the Challenge to the edges");
-    steps.add("run", "Running lake comparator");
+    steps.add("run", "Judging the solution module");
   }
 
   let verdict: ComparatorVerdict | undefined;
@@ -174,31 +192,24 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     for (const name of BUNDLE_FILES)
       if (!members.some((member) => member.name === name)) fs.rmSync(path.join(directory, name), { force: true });
     for (const { name, content } of members) fs.writeFileSync(path.join(directory, name), content, { mode: 0o644 });
-    fs.writeFileSync(path.join(directory, "lean-toolchain"), `${prepared.toolchain}\n`, { mode: 0o644 });
-    steps.settle("write", { label: `Wrote ${ui.tilde(directory)}`, detail: `${members.length} files + lean-toolchain` });
+    steps.settle("write", { label: `Wrote ${ui.tilde(directory)}`, detail: `${members.length} files` });
 
     if (options.run === true) {
       requireRunTools(environment);
-      const workspace = verifyCertificateWorkspace(directory, prepared.files["lake-manifest.json"]);
-      const freshness =
-        workspace.verified.length === 0
-          ? "fresh checkouts"
-          : `${ui.plural(workspace.verified.length, "checkout")} verified at the pinned revisions and clean, record build products removed`;
       const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "lax-certify-"));
       try {
-        hold = await holdChallengeInSandbox({
-          directory,
-          environment,
-          manifest: prepared.files["lake-manifest.json"],
-          theorems: prepared.theorems,
-          scratch,
-          echo: ui.isVerbose(),
-          onDetail: (text) => steps.detail("hold", text),
+        const sources = await recordSources(prepared.files["lake-manifest.json"], records, (id) => steps.detail("sources", `downloading ${id}'s capture`));
+        const project = prepareRunProject({ scratch, environment, files: prepared.files, sources });
+        steps.settle("sources", {
+          label: "Packages from the archive",
+          detail: `${ui.plural(sources.size, "record package")} from verified captures, built from source · libraries from the ${environment.id} workspace`,
         });
+        const run = { project, environment, theorems: prepared.theorems, scratch, echo: ui.isVerbose() };
+        hold = await holdChallengeInSandbox({ ...run, onDetail: (text) => steps.detail("hold", text) });
         if (hold.kind === "held") {
           steps.settle("hold", {
             label: "Challenge states the edges",
-            detail: `${ui.plural(prepared.theorems.length, "theorem")} read by the ${environment.id} inspector · built from ${freshness}`,
+            detail: `${ui.plural(prepared.theorems.length, "theorem")} read by the ${environment.id} inspector`,
           });
         } else if (hold.kind === "unchecked") {
           steps.settle("hold", { status: "warn", label: "Challenge meaning not checked", detail: "no inspector" });
@@ -209,26 +220,39 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
           );
         } else {
           verdict = hold.verdict;
-          steps.settle("hold", { status: "fail", label: verdict.kind === "violation" ? "Refused" : "Could not run", detail: `Challenge built from ${freshness}` });
+          steps.settle("hold", { status: "fail", label: verdict.kind === "violation" ? "Refused" : "Could not run" });
           steps.settle("run", { hidden: true });
         }
-        if (verdict === undefined) {
-          const ran = await runComparator(directory, environment, options.paranoid === true, hold.kind === "held" ? hold.challengeExport : undefined);
-          verdict = ran.verdict;
-          if (verdict.kind === "certified") {
-            steps.settle("run", {
-              label: hold.kind === "held" ? "Certified" : "Comparator accepted",
-              detail:
-                // the kernels the transcript says accepted, not the flag's promise
-                `${environment.leanToolchain} · kernels: ${(ran.kernels.length > 0 ? ran.kernels : kernelsOf(options.paranoid === true ? "paranoid" : "lean", environment)).join(", ")}` +
-                (hold.kind === "held" ? " · against the Challenge export read above" : ` · Challenge built from ${freshness}`),
-            });
+        if (hold.kind !== "refused") {
+          const solution = await buildSolutionInSandbox({ ...run, onDetail: (text) => steps.detail("run", text) }, solutionModuleOf(prepared.files));
+          if (solution.kind === "refused") {
+            verdict = solution.verdict;
           } else {
-            steps.settle("run", { status: "fail", label: verdict.kind === "violation" ? "Refused" : "Could not run", detail: `Challenge built from ${freshness}` });
+            steps.detail("run", "lake comparator");
+            const ran = await judgeExports({
+              scratch,
+              environment,
+              files: prepared.files,
+              challengeExport: hold.challengeExport,
+              solutionExport: solution.solutionExport,
+              paranoid: options.paranoid === true,
+              echo: ui.isVerbose(),
+            });
+            verdict = ran.verdict;
+            if (verdict.kind === "certified") {
+              steps.settle("run", {
+                label: hold.kind === "held" ? "Certified" : "Comparator accepted",
+                detail:
+                  // the kernels the transcript says accepted, not the flag's promise
+                  `${environment.leanToolchain} · kernels: ${(ran.kernels.length > 0 ? ran.kernels : kernelsOf(options.paranoid === true ? "paranoid" : "lean", environment)).join(", ")}` +
+                  " · against the two exports built above",
+              });
+            }
           }
+          if (verdict.kind !== "certified") steps.settle("run", { status: "fail", label: verdict.kind === "violation" ? "Refused" : "Could not run" });
         }
       } finally {
-        fs.rmSync(scratch, { recursive: true, force: true });
+        removeScratch(scratch);
       }
     }
   } finally {
@@ -238,10 +262,11 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
   const command = `lake comparator --config comparator.json${options.paranoid === true ? " --paranoid" : ""}`;
   if (verdict === undefined) {
     ui.blank();
-    ui.faint(`In ${ui.tilde(directory)}, with the ${environment.id} toolchain and git on PATH:`);
+    ui.faint(`In ${ui.tilde(directory)}, with elan and git on PATH (the bundle's lean-toolchain names ${environment.leanToolchain}):`);
     ui.verdict(command);
     ui.faint(`or ${ui.cmd(`lax certify ${[targetInput, ...(options.relativeTo ?? []).flatMap((id) => ["--relative-to", id])].join(" ")} --run`)}`);
-    ui.faint("the bare comparator does not check what the Challenge means; --run also holds it to the statements");
+    ui.faint("the bare comparator clones the records' packages from their authors' repositories and does not check what");
+    ui.faint("the Challenge means; --run builds them from the archive's captures and holds the Challenge to the statements");
     notes.print();
     ui.done();
     return 0;
@@ -261,7 +286,7 @@ export async function certify(targetInput: string, options: CertifyOptions = {})
     ui.problem(group.headline, group.body);
   } else {
     ui.problem(
-      hold?.kind === "refused" ? "the Challenge could not be held to the edges" : "`lake comparator` did not run to a verdict",
+      hold?.kind === "refused" ? "the Challenge could not be held to the edges" : "the certificate could not be judged",
       verdict.failure.message.split("\n"),
     );
   }
@@ -275,7 +300,6 @@ interface PreparedBundle {
   /** What the Challenge states: the theorems the bundle was generated from,
    * which --run holds the built Challenge to. */
   theorems: CertificateTheorem[];
-  toolchain: string;
   settled: string;
   detail: string;
   notes: Array<[string, ...string[]]>;
@@ -317,6 +341,12 @@ function indexRecord(record: ArchiveSourceRecord, archive: ArchiveSnapshot): Ind
           challenge: stored.challenge,
         }
       : undefined;
+  let capture: PublishedCapture | undefined;
+  try {
+    capture = parsePublishedCapture(output.capture);
+  } catch {
+    capture = undefined; // read leniently: only --run needs it, and says so
+  }
   const number = record.id.slice("lax-".length);
   const environment = archive.environmentOf(record);
   return {
@@ -330,6 +360,7 @@ function indexRecord(record: ArchiveSourceRecord, archive: ArchiveSnapshot): Ind
     proofs,
     requiredByConcepts: stringList(output.requiredByConcepts),
     requiredByProofs: stringList(output.requiredByProofs),
+    ...(capture === undefined ? {} : { capture }),
     ...(certificate === undefined ? {} : { certificate }),
   };
 }
@@ -453,6 +484,7 @@ function regenerateBundle(
       warm,
       manifestDependencies([own.concepts, own.proofs, ...closure.map((name) => gitSource(name, records))]),
     ),
+    "lean-toolchain": leanToolchainText(environment),
   };
   const notes: PreparedBundle["notes"] = [];
   let detail = `${ui.plural(proofs.length, "edge")}`;
@@ -483,7 +515,6 @@ function regenerateBundle(
   return {
     files,
     theorems: proofs.map(edgeTheorem),
-    toolchain: environment.leanToolchain,
     settled: target.kind === "record" ? "Regenerated the bundle" : "Generated the edge's bundle",
     detail,
     notes,
@@ -504,16 +535,17 @@ async function fetchStoredBundle(record: IndexedRecord, environment: ArchiveEnvi
   const members = readBundle(fs.readFileSync(file));
   const names = [...members.keys()];
   if (names.length !== RECORD_BUNDLE_FILES.length || RECORD_BUNDLE_FILES.some((name) => !members.has(name)))
-    throw new Error(`the fetched bundle holds ${names.join(", ") || "nothing"}, not a record's four certificate files`);
+    throw new Error(`the fetched bundle holds ${names.join(", ") || "nothing"}, not a record's five certificate files`);
   const files = Object.fromEntries(RECORD_BUNDLE_FILES.map((name) => [name, members.get(name)!])) as RecordBundle;
   if (files["Challenge.lean"] !== stored.challenge)
     throw new Error(`the fetched bundle's Challenge.lean is not the one ${record.id}'s record stores — the archive's record is inconsistent; report it`);
+  if (files["lean-toolchain"] !== leanToolchainText(environment))
+    throw new Error(`the fetched bundle's lean-toolchain is not ${environment.id}'s ${environment.leanToolchain} — the archive's record is inconsistent; report it`);
   return {
     files,
     // the fetched Challenge is the record's stored one, which the publisher
     // held to the record's own proofs
     theorems: orderedProofs(record.proofs.map(certifiedProof)).map(edgeTheorem),
-    toolchain: environment.leanToolchain,
     settled: "Fetched the bundle",
     detail: `digest ${stored.digest.slice(0, 12)} verified`,
     notes: [],
@@ -602,99 +634,96 @@ function composeCertificate(
       ...content,
       "lakefile.toml": lakefileText(librariesOf(environment), packages.map((name) => gitSource(name, records)), "relative"),
       "lake-manifest.json": manifestText(warm, manifestDependencies(closure.map((name) => gitSource(name, records)))),
+      "lean-toolchain": leanToolchainText(environment),
     },
     theorems: [composed.theorem],
-    toolchain: environment.leanToolchain,
     settled: "Composed the certificate",
     detail: `${composed.theorem.name} · ${ui.plural(composed.proofsUsed.length, "proof")} applied: ${composed.proofsUsed.join(", ")}`,
     notes: [],
   };
 }
 
-// ── the folder, and the comparator ───────────────────────────────────────
-
-/** A package the archive's records contribute — `Lax<id>` or `Lax<id>Proofs`
- * (contracts.ts packageNameForSubmission) — as opposed to the environment's
- * libraries and their closure. */
-const RECORD_PACKAGE = /^Lax[0-9]+(?:Proofs)?$/u;
+// ── the folder, and the run ──────────────────────────────────────────────
 
 /**
- * The certificate folder's `.lake` is kept between runs so that mathlib's
- * checkout and cache survive, and `lake comparator` builds the Challenge
- * before the solution module — but a proof package's elaboration-time IO in one
- * run can alter a dependency checkout inside `.lake`, and Lake accepts a
- * checkout at the required revision even when it is dirty (pinned
- * `Lake/Load/Materialize.lean`: a warning, not a refusal), so the next run's
- * Challenge would be built against the altered concept (codex review 2
- * 2026-10-04, finding 3). Before every run, therefore: every package
- * checkout the bundle's manifest pins is held to its revision and to a
- * clean tree, or the run is refused naming the package; and the record
- * packages' build products — theirs and the certificate project's own —
- * are removed so the Challenge and the solution module are rebuilt from the
- * verified sources, while the environment libraries' caches stay. A
- * checkout that does not exist yet is Lake's to clone, as on a first run.
+ * The source tree of every record package the bundle's manifest lists:
+ * the record's published capture, verified (cli/capture-cache.ts), at the
+ * package's own root inside it — and the commit the record names, which the
+ * capture must be of and the manifest must pin (cli/certify-run.ts
+ * prepareRunProject). A package of no record is the environment's, and is
+ * left to the warm workspace.
  */
-export function verifyCertificateWorkspace(directory: string, manifest: string): { verified: string[]; cleaned: string[] } {
-  const verified: string[] = [];
-  const cleaned: string[] = [];
-  const manifestRead = readBundleManifest(manifest);
-  const packagesDir = path.join(directory, manifestRead.packagesDir);
-  for (const entry of manifestRead.packages) {
-    if (entry.type !== "git" || entry.rev === undefined) continue;
-    const checkout = path.join(packagesDir, entry.name);
-    if (!fs.existsSync(checkout)) continue;
-    const head = git(checkout, ["rev-parse", "HEAD"]);
-    if (head.code !== 0 || head.output.trim() !== entry.rev) {
-      throw new Error(
-        `.lake/packages/${entry.name} is at ${head.output.trim() || "no commit"}, not the revision the bundle pins ` +
-          `(${entry.rev}); delete ${ui.tilde(checkout)} and rerun`,
-      );
-    }
-    // the checkout's sources and tracked files; its `.lake` is Lake's build
-    // state, not source — a checkout that does not ignore it would show as
-    // untracked — and is handled below: a record package's is removed, a
-    // library's kept.
-    // TODO(decision 10): a library's `.lake/build` survives between runs
-    // and a previous run's proof build could have planted oleans with
-    // matching traces there; closing that needs fresh library build trees
-    // per run (an unpack from the mathlib cache), which the first-run
-    // budget this check keeps does not allow for yet.
-    // `--ignored`: a git-ignored file a previous run left counts too; what
-    // does not count is Lake's own build state, `.lake` at any depth (a
-    // package laid out under `concepts/` keeps its `.lake` there)
-    const status = git(checkout, ["status", "--porcelain", "--ignored", "--", ".", ":(exclude,glob)**/.lake", ":(exclude,glob)**/.lake/**"]);
-    if (status.code !== 0 || status.output.trim() !== "") {
-      throw new Error(
-        `.lake/packages/${entry.name} has local changes a previous run may have made:\n${status.output.trim() || "(git status failed)"}\n` +
-          `delete ${ui.tilde(checkout)} and rerun`,
-      );
-    }
-    verified.push(entry.name);
-    if (RECORD_PACKAGE.test(entry.name)) {
-      const build = path.join(checkout, ".lake", "build");
-      if (fs.existsSync(build)) {
-        fs.rmSync(build, { recursive: true, force: true });
-        cleaned.push(entry.name);
+async function recordSources(
+  manifest: string,
+  records: Map<string, IndexedRecord>,
+  announce: (id: string) => void,
+): Promise<Map<string, RecordPackageSource>> {
+  const sources = new Map<string, RecordPackageSource>();
+  const roots = new Map<string, string>();
+  for (const entry of readBundleManifest(manifest)) {
+    if (submissionIdForPackage(entry.name) === undefined) continue;
+    const record = recordOfPackage(entry.name, records);
+    const capture = record.capture;
+    if (capture === undefined || capture.registryBlob === undefined)
+      throw new Error(`${record.id}'s record carries no published capture to take ${entry.name}'s sources from — the archive's record is inconsistent; report it`);
+    if (capture.sourceCommit !== record.source.commit)
+      throw new Error(`${record.id}'s capture is of ${capture.sourceCommit}, its record of ${record.source.commit} — the archive's record is inconsistent; report it`);
+    let root = roots.get(record.id);
+    if (root === undefined) {
+      try {
+        root = await materializeCapture(record.id, capture, () => announce(record.id));
+      } catch (error) {
+        throw new Error(`could not take ${record.id}'s capture ${capture.digest.slice(0, 12)} from the registry: ${(error as Error).message}`);
       }
+      roots.set(record.id, root);
     }
+    const dir = path.join(root, entry.name.endsWith("Proofs") ? "proofs" : "concepts", "package");
+    if (!fs.existsSync(dir)) throw new Error(`${record.id}'s capture holds no ${entry.name} package`);
+    sources.set(entry.name, { dir, rev: record.source.commit });
   }
-  const ownBuild = path.join(directory, ".lake", "build");
-  if (fs.existsSync(ownBuild)) {
-    fs.rmSync(ownBuild, { recursive: true, force: true });
-    cleaned.push("LaxCertificate");
-  }
-  return { verified, cleaned };
+  return sources;
 }
 
-function git(cwd: string, args: string[]): { code: number; output: string } {
-  const result = spawnSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error !== undefined) return { code: 127, output: result.error.message };
-  return { code: result.status ?? 1, output: `${result.stdout}${result.stderr}` };
+/** The bundle's solution module, from its `comparator.json`: a record's
+ * proof package root, or a relative certificate's `Solution`. */
+function solutionModuleOf(files: Bundle): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(files["comparator.json"]);
+  } catch {
+    throw new Error("the bundle's comparator.json is not JSON");
+  }
+  const module = isObject(parsed) ? parsed.solution_module : undefined;
+  if (typeof module !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(module))
+    throw new Error(`the bundle's comparator.json names no solution module lax can build: ${JSON.stringify(module)}`);
+  return module;
+}
+
+/** Remove a run's scratch folder. A build inside it may have left a
+ * directory unwritable; reopen directories (never through a link) and try
+ * again, and say so rather than fail the verdict when that is not enough. */
+function removeScratch(scratch: string): void {
+  try {
+    fs.rmSync(scratch, { recursive: true, force: true });
+    return;
+  } catch {
+    // reopened below
+  }
+  const reopen = (directory: string): void => {
+    try {
+      fs.chmodSync(directory, 0o700);
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true }))
+        if (entry.isDirectory() && !entry.isSymbolicLink()) reopen(path.join(directory, entry.name));
+    } catch {
+      // best effort
+    }
+  };
+  reopen(scratch);
+  try {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  } catch (error) {
+    ui.verbose(`could not remove ${scratch}: ${(error as Error).message}`);
+  }
 }
 
 function certificateFolder(folder: string): string {
@@ -710,48 +739,17 @@ function certificateFolder(folder: string): string {
 }
 
 /** What --run needs before anything runs: the environment's toolchain, and
- * git and bubblewrap on PATH — `lake comparator` resolves the bundle's git
- * requires inside its sandbox, and the Challenge is held in the same kind of
- * sandbox (cli/certify-hold.ts). Checked first so the refusal names the
- * tool rather than quoting the comparator's exit 2. */
+ * bubblewrap on PATH — every build and export runs under it
+ * (cli/certify-run.ts), and so do the comparator's kernels. git is not
+ * needed: nothing is cloned, and the comparator's probe for it finds a
+ * refusing shim. Checked first so the refusal names the tool rather than
+ * quoting a sandbox's failure. */
 function requireRunTools(environment: ArchiveEnvironment): void {
   if (!fs.existsSync(path.join(toolchainBinDir(environment), "lake")))
     throw new Error(`the ${environment.id} toolchain is not installed — run ${ui.cmd(`lax doctor --env ${environment.id}`)}`);
-  const missing: string[] = [];
-  if (toolVersion("git") === undefined) missing.push("git — `lake comparator` resolves the bundle's git requires inside its sandbox and needs git on PATH");
   if (toolVersion("bwrap") === undefined)
-    missing.push("bwrap — `lake comparator` builds inside a bubblewrap sandbox, which is what makes the rerun trustworthy; install bubblewrap");
-  if (missing.length > 0) throw new Error(`lax certify --run needs ${missing.length === 1 ? "a tool" : "tools"} it cannot find:\n${missing.join("\n")}`);
-}
-
-/**
- * `lake comparator --config comparator.json [--paranoid]` in the folder, with
- * the environment's own lake and its bin dir first on PATH — handed the
- * Challenge export that was held to the edges when there is one, so the
- * comparator judges against exactly the Challenge the inspector read and
- * builds only the solution module itself.
- */
-async function runComparator(
-  directory: string,
-  environment: ArchiveEnvironment,
-  paranoid: boolean,
-  challengeExport: string | undefined,
-): Promise<{ verdict: ComparatorVerdict; kernels: string[] }> {
-  const result = await run(
-    lakeBinary(environment),
-    [
-      "comparator",
-      "--config", "comparator.json",
-      ...(challengeExport === undefined ? [] : ["--challenge-from-export", challengeExport]),
-      ...(paranoid ? ["--paranoid"] : []),
-    ],
-    directory,
-    { echo: ui.isVerbose(), env: { PATH: lakePathEnv(environment) }, maxOutputBytes: 16 * 1024 * 1024 },
-  );
-  if (/unknown (?:sub)?command/iu.test(result.output) && /comparator/u.test(result.output))
-    throw new Error(`the toolchain ${environment.leanToolchain} has no \`lake comparator\`: ${result.output.trim()}`);
-  // `<kernel> kernel accepts the solution`, one line per kernel that ran
-  // (Lake/CLI/Check.lean runExternalKernel); the record's names for them
-  const accepted = [...result.output.matchAll(/^(.+?) kernel accepts the solution$/gmu)].map((match) => match[1]!);
-  return { verdict: interpretComparatorRun(result), kernels: accepted };
+    throw new Error(
+      "lax certify --run needs a tool it cannot find:\n" +
+        "bwrap — every build, export and kernel of the run is confined by bubblewrap, which is what makes the rerun trustworthy; install bubblewrap",
+    );
 }

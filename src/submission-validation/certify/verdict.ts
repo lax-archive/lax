@@ -11,10 +11,11 @@
 // one `error: …` line on stderr; exit 2 is "could not start": no manifest, no
 // export file, no configuration, no bubblewrap. The comparator's "solution"
 // is the solution module: a record's proof package itself, or a relative
-// certificate's composed `Solution`. Both archive paths hand the comparator
-// two finished exports, so it builds nothing there; the `Child exited`
-// shape is a comparator building the modules itself — a reader's `lax
-// certify --run`, or by hand. The validator has already accepted every proof
+// certificate's composed `Solution`. Every path lax runs — the trusted
+// containers, a local build, a reader's `lax certify --run` — hands the
+// comparator two finished exports, so it builds nothing there; the `Child
+// exited` shape is a comparator building the modules itself, a reader
+// running the bundle's own command by hand. The validator has already accepted every proof
 // the Challenge states, so an exit 1 is lax and the toolchain disagreeing: a
 // violation on the `certify` phase that names the edge and says so, so a
 // fixture dying in elaboration is noticed as such and never passes as a
@@ -53,6 +54,26 @@ function lines(output: string): string[] {
 /** The whole transcript, trimmed, for the message a finding carries. */
 function transcript(output: string): string {
   return output.trim();
+}
+
+/**
+ * The solution module did not build in a reader's `lax certify --run`
+ * (cli/certify-run.ts), which builds it from the records' captured sources
+ * before handing the comparator its export: the same reading as the
+ * comparator's own `Child exited with 1` — every module is lax's text or a
+ * package the archive built and validated, so a failure is lax or this
+ * machine disagreeing with the archive's records, never a verdict on a
+ * proof.
+ */
+export function solutionBuildViolation(solutionModule: string, output: string): Extract<ComparatorVerdict, { kind: "violation" }> {
+  return {
+    kind: "violation",
+    intent: "translation",
+    rule: "solution-build",
+    message:
+      `the solution module ${solutionModule} did not build from the records' captured sources — lax's generated ` +
+      `files or this machine disagree with the archive's records; ${REPORT}. The transcript:\n${transcript(output)}`,
+  };
 }
 
 export function interpretComparatorRun(result: { code: number; output: string }): ComparatorVerdict {

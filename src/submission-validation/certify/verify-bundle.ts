@@ -1,7 +1,7 @@
 // The trusted publisher's reading of a certificate bundle (codex review
 // 2026-10-03, finding 2): the published tar is not "some bytes with the
 // recorded digest" but the regeneration, from the record's own stored data,
-// of the four files `lake comparator` judged — re-sealed and held to the tar
+// of the five files `lake comparator` judged — re-sealed and held to the tar
 // byte for byte, and to `certificate.bundle.digest`. Credential-free, run
 // before any token is minted (workflows/submission.ts readSuccessfulArtifacts).
 //
@@ -14,6 +14,7 @@
 //                                                   database by validateDependencies)
 //   lake-manifest.json                              the same packages, plus the warm
 //                                                   workspace's locked closure
+//   lean-toolchain                                  the environment's toolchain
 //
 // The warm closure — mathlib's own transitive dependencies at the revs its
 // manifest pins — is the one input the publisher does not hold: it is read
@@ -126,7 +127,7 @@ function warmEntries(manifestText: string, skip: number, environment: ArchiveEnv
 
 /**
  * Hold a published certificate bundle to the record it belongs to: the tar
- * must be, byte for byte, the sealing of the four files the generator writes
+ * must be, byte for byte, the sealing of the five files the generator writes
  * for the record's proofs, packages, and environment, and its digest the
  * recorded one. Throws a ValidationError naming the first disagreement.
  */

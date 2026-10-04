@@ -4,8 +4,11 @@
 // registry and refused when the bytes differ; one edge; a statement proven
 // relative to others, composed along the witness forest; the refusals; and
 // --run against a fake toolchain whose `lake comparator` answers as the real
-// one does, so the verdict rendering is seen without Lean.
+// one does, so the verdict rendering is seen without Lean — with the
+// records' packages taken from their captures in the fake registry, in a
+// fresh run project, and never from the certificate folder's `.lake`.
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -14,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { certify } from "../../src/cli/certify.js";
 import * as ui from "../../src/cli/ui.js";
 import { CAPTURES_REPOSITORY } from "../../src/shared/constants.js";
-import { readBundle, sealBundle } from "../../src/submission-validation/certify/bundle.js";
+import { readBundle, sealBundle, sealTar } from "../../src/submission-validation/certify/bundle.js";
 import { BUNDLE_FILES, challengeText, certifiedProof, type RelativeBundle } from "../../src/submission-validation/certify/generate.js";
 import type { InspectorReport, ProofEntry } from "../../src/submission-validation/contracts.js";
 import { environment as environmentById, epoch } from "../../src/submission-validation/environments.js";
@@ -113,6 +116,39 @@ interface RecordInput {
   specVersion?: "1" | "2";
 }
 
+/** Each record's capture tar by digest: its two packages' sources, as the
+ * trusted pipeline seals them (`<kind>/package/…`), for --run to build. */
+const captures = new Map<string, Buffer>();
+
+function captureOf(number: string): Record<string, unknown> {
+  const members = [
+    { name: `concepts/package/Lax${number}.lean`, content: Buffer.from(`-- Lax${number}\n`) },
+    { name: "concepts/package/lakefile.toml", content: Buffer.from(`name = "Lax${number}"\n`) },
+    { name: `proofs/package/Lax${number}Proofs.lean`, content: Buffer.from(`-- Lax${number}Proofs\n`) },
+    { name: "proofs/package/lakefile.toml", content: Buffer.from(`name = "Lax${number}Proofs"\n`) },
+  ];
+  const sealed = sealTar(members);
+  captures.set(sealed.digest, sealed.tar);
+  return {
+    formatVersion: 1,
+    digest: sealed.digest,
+    registryBlob: `ghcr.io/${CAPTURES_REPOSITORY}@sha256:${sealed.digest}`,
+    sourceCommit: number.padStart(40, "0"),
+    bytes: sealed.tar.length,
+    fileCount: members.length,
+    // the references layer, never fetched here
+    references: { digest: "e".repeat(64), bytes: 1, registryBlob: `ghcr.io/${CAPTURES_REPOSITORY}@sha256:${"e".repeat(64)}` },
+  };
+}
+
+/** The fake registry, serving every capture written so far. */
+async function serveCaptures(): Promise<FakeGhcr> {
+  ghcr = await startFakeGhcr();
+  process.env.LAX_CAPTURE_REGISTRY_URL = ghcr.url;
+  for (const [digest, tar] of captures) ghcr.state.blobs.set(`sha256:${digest}`, tar);
+  return ghcr;
+}
+
 function writeRecord(input: RecordInput): void {
   const directory = path.join(home, "lax-database", input.id);
   fs.mkdirSync(directory, { recursive: true });
@@ -169,7 +205,7 @@ function writeRecord(input: RecordInput): void {
         },
       ],
       proofs: stored,
-      capture: { formatVersion: 1, digest: "d".repeat(64), sourceCommit: number.padStart(40, "0"), bytes: 3, fileCount: 1 },
+      capture: captureOf(number),
       ...(certificate === undefined ? {} : { certificate }),
     }),
   );
@@ -202,7 +238,7 @@ function writeChain(): void {
 function seedWarmStore(): void {
   const environment = withTestEnvironments([SPEC2], () => environmentById(SPEC2.id)!);
   const warm = warmDir(environment);
-  fs.mkdirSync(path.join(warm, ".lake", "packages"), { recursive: true });
+  for (const name of ["LaxCore", "mathlib"]) fs.mkdirSync(path.join(warm, ".lake", "packages", name), { recursive: true });
   const entry = (name: string, url: string, rev: string): Record<string, unknown> => ({
     url, type: "git", subDir: null, scope: "", rev, name, manifestFile: "lake-manifest.json", inputRev: rev, inherited: false, configFile: "lakefile.toml",
   });
@@ -217,8 +253,8 @@ function seedWarmStore(): void {
   fs.writeFileSync(path.join(warm, ".lax-warm-ok"), "");
 }
 
-/** The bundle files a folder holds: a record's four, or a relative
- * certificate's five (typed as the larger shape for the tests' reads). */
+/** The bundle files a folder holds: a record's five, or a relative
+ * certificate's six (typed as the larger shape for the tests' reads). */
 function bundleIn(directory: string): RelativeBundle {
   return Object.fromEntries(
     BUNDLE_FILES.filter((name) => fs.existsSync(path.join(directory, name))).map((name) => [name, fs.readFileSync(path.join(directory, name), "utf8")]),
@@ -266,6 +302,9 @@ function fakeToolchain(
     // the inspector's argument shape: --spec 2 <report> Challenge
     fs.writeFileSync(path.join(tool, "laxinspector"), `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify(tools.inspector)}' > "$3"\n`, { mode: 0o755 });
   }
+  // the capture cache extracts with the system's tar
+  const tar = spawnSync("sh", ["-c", "command -v tar"], { encoding: "utf8", env: { PATH: previous.path ?? "" } }).stdout.trim();
+  if (tar !== "") fs.symlinkSync(tar, path.join(fake, "tar"));
   // the fake dir alone: a real git or bwrap on the machine must not stand in
   process.env.PATH = fake;
 }
@@ -311,7 +350,7 @@ describe("lax certify", () => {
     const files = bundleIn(out);
     expect(files["Challenge.lean"]).toBe(challengeText([certifiedProof(EUCLID)]));
     // no Solution: the proof package is the solution module, its proof the theorem
-    expect(Object.keys(files)).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
+    expect(Object.keys(files)).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"]);
     expect(files["Challenge.lean"]).toContain("theorem Lax42Proofs.euclid.{«u»}\n");
     expect(JSON.parse(files["comparator.json"])).toMatchObject({ solution_module: "Lax42Proofs", theorem_names: ["Lax42Proofs.euclid"] });
     expect(files["lakefile.toml"]).toContain('defaultTargets = ["Challenge"]');
@@ -322,12 +361,14 @@ describe("lax certify", () => {
     expect(files["lakefile.toml"]).not.toContain("Lax261");
     const manifest = JSON.parse(files["lake-manifest.json"]) as { packages: Array<{ name: string }> };
     expect(manifest.packages.map((pkg) => pkg.name)).toEqual(["Lax42", "Lax42Proofs", "LaxCore", "mathlib"]);
-    expect(fs.readFileSync(path.join(out, "lean-toolchain"), "utf8")).toBe(`${TOOLCHAIN}\n`);
+    // the toolchain is a sealed bundle file, so elan picks it in the folder
+    expect(files["lean-toolchain"]).toBe(`${TOOLCHAIN}\n`);
     const output = printed(log);
     expect(output).toContain("Certificate for lax-42");
     expect(output).toContain("Regenerated the bundle");
     expect(output).toContain("lake comparator --config comparator.json");
-    expect(output).toContain("the bare comparator does not check what the Challenge means");
+    expect(output).toContain("the bare comparator clones the records' packages from their authors' repositories and does not check what");
+    expect(output).toContain("(the bundle's lean-toolchain names leanprover/lean4:");
     // the stored digest is a placeholder, so the note says the bundle is not the archive's
     expect(output).toContain("The regenerated bundle's digest is not the archive's (cccccccccccc).");
     expect(output).toContain("lax certify lax-42 --fetch");
@@ -474,11 +515,11 @@ describe("lax certify", () => {
     expect(relativeFiles["lakefile.toml"]).toContain('defaultTargets = ["Challenge", "Solution"]');
 
     // the folder reused for the record: the relative Solution.lean goes, so
-    // the folder holds exactly the record's four files
+    // the folder holds exactly the record's five files
     quiet();
     expect(await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out: relative }))).toBe(0);
     expect(fs.existsSync(path.join(relative, "Solution.lean"))).toBe(false);
-    expect(Object.keys(bundleIn(relative))).toHaveLength(4);
+    expect(Object.keys(bundleIn(relative))).toHaveLength(5);
   });
 
   it("refuses what it cannot certify, in the author's words", async () => {
@@ -517,9 +558,10 @@ describe("lax certify", () => {
     await expect(run("lax-42")).rejects.toThrow(/there is no local copy of the archive/u);
   });
 
-  it("--run holds the built Challenge to the edges, then judges against that export", async () => {
+  it("--run builds both modules from the captures in a fresh project, holds the Challenge, and judges the two exports", async () => {
     writeChain();
     seedWarmStore();
+    await serveCaptures();
     fakeToolchain('echo "Your solution is okay!"; exit 0', { inspector: challengeReport() });
     const log = quiet();
     const out = path.join(work, "run");
@@ -528,25 +570,33 @@ describe("lax certify", () => {
 
     expect(code).toBe(0);
     const output = printed(log);
+    expect(output).toContain("✓ Packages from the archive");
+    expect(output).toContain("2 record packages from verified captures, built from source · libraries from the v4.35.0 workspace");
     expect(output).toContain("✓ Challenge states the edges");
     expect(output).toContain("1 theorem read by the v4.35.0 inspector");
     expect(output).toContain("✓ Certified");
     expect(output).toContain(`${TOOLCHAIN} · kernels: lean`);
     expect(output).toContain("lax-42 is certified: lake comparator --config comparator.json accepted it, against a Challenge that states the edges.");
-    // resolved, then built, inside the sandbox; the comparator handed the
-    // export the inspector read, so it builds only the proof package
+    // nothing resolved: the Challenge, then the proof package, built; the
+    // comparator handed both exports, so it builds nothing
     const lakeArgs = fs.readFileSync(path.join(home, "lake-args"), "utf8").split("\n");
-    expect(lakeArgs.slice(0, 2)).toEqual(["resolve-deps", "build Challenge"]);
-    expect(lakeArgs[2]).toMatch(/^comparator --config comparator\.json --challenge-from-export \S+\/challenge\.export$/u);
-    // four sandboxed steps; only resolution has a network, and only
-    // resolution and the build have the folder's `.lake` writable
+    expect(lakeArgs.slice(0, 2)).toEqual(["build Challenge", "build Lax42Proofs"]);
+    expect(lakeArgs[2]).toMatch(/^comparator --config comparator\.json --challenge-from-export \S+\/challenge\.export --solution-from-export \S+\/solution\.export$/u);
+    // five sandboxed steps, none with a network; only the two builds have
+    // the run project's `.lake` writable, and the run project is not the folder
     const sandboxed = fs.readFileSync(path.join(home, "bwrap-args"), "utf8").trim().split("\n");
-    expect(sandboxed).toHaveLength(4);
-    expect(sandboxed.map((line) => line.includes("--share-net"))).toEqual([true, false, false, false]);
-    expect(sandboxed.map((line) => line.includes(`--bind ${path.join(out, ".lake")} `))).toEqual([true, true, false, false]);
-    expect(sandboxed[2]).toContain("leanexport Challenge -- Quot Quot.mk Quot.lift Quot.ind Lax42Proofs.euclid propext");
-    expect(sandboxed[3]).toMatch(/laxinspector --spec 2 \S+\/challenge-report\.json Challenge$/u);
-    expect(sandboxed[3]).toContain(`LEAN_PATH ${path.join(out, ".lake", "build", "lib", "lean")}:`);
+    expect(sandboxed).toHaveLength(5);
+    expect(sandboxed.some((line) => line.includes("--share-net"))).toBe(false);
+    expect(sandboxed.map((line) => /--bind \S+\/project\/\.lake /u.test(line))).toEqual([true, false, false, true, false]);
+    expect(sandboxed.some((line) => line.includes(out))).toBe(false);
+    expect(sandboxed[1]).toContain("leanexport Challenge -- Quot Quot.mk Quot.lift Quot.ind Lax42Proofs.euclid propext");
+    expect(sandboxed[2]).toMatch(/laxinspector --spec 2 \S+\/challenge-report\.json Challenge$/u);
+    expect(sandboxed[4]).toContain("leanexport Lax42Proofs -- Quot Quot.mk Quot.lift Quot.ind Lax42Proofs.euclid propext");
+    // the search path: the run project's tree, the captured packages' copies, the warm store's
+    expect(sandboxed[2]).toMatch(/LEAN_PATH \S+\/project\/\.lake\/build\/lib\/lean:\S+\/project\/\.lake\/sources\/Lax42\/\.lake\/build\/lib\/lean:/u);
+    // the captures are in lax's own store, verified, and nothing went to the folder but the bundle
+    expect(fs.readdirSync(path.join(home, "captures")).sort()).toEqual(["lax-42"]);
+    expect(fs.readdirSync(out).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"]);
 
     // a refusal is a finding on the certificate phase, with the comparator's words
     fs.rmSync(path.join(home, "bin"), { recursive: true });
@@ -558,12 +608,67 @@ describe("lax certify", () => {
     expect(refusal).toContain("certificate · illegal-axiom");
     expect(refusal).toContain("rest on the axiom sorryAx");
     // --paranoid went to the comparator's command line
-    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toMatch(/comparator --config comparator\.json --challenge-from-export \S+ --paranoid\n/u);
+    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toMatch(/comparator --config comparator\.json --challenge-from-export \S+ --solution-from-export \S+ --paranoid\n/u);
+  });
+
+  it("--run never runs a host tool in the folder's `.lake`: a planted core.fsmonitor stays unfired (S1)", async () => {
+    writeChain();
+    seedWarmStore();
+    await serveCaptures();
+    // a real git beside the fakes: the trap below fires under any host
+    // `git status` in the checkout
+    const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8", env: { PATH: previous.path ?? "" } }).stdout.trim();
+    expect(realGit).not.toBe("");
+    fakeToolchain('echo "Your solution is okay!"; exit 0', { inspector: challengeReport(), git: false });
+    process.env.PATH = `${process.env.PATH}${path.delimiter}${path.dirname(realGit)}`;
+    const out = path.join(work, "planted");
+    const checkout = path.join(out, ".lake", "packages", "Lax42");
+    fs.mkdirSync(checkout, { recursive: true });
+    const git = (...args: string[]) =>
+      spawnSync(realGit, args, { cwd: checkout, encoding: "utf8", env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" } });
+    expect(git("init", "-q").status).toBe(0);
+    // what a previous run's proof code could have written, HEAD and tree clean
+    const marker = path.join(home, "fsmonitor-fired");
+    expect(git("config", "core.fsmonitor", `touch ${marker}; false`).status).toBe(0);
+    quiet();
+
+    expect(await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true }))).toBe(0);
+    expect(fs.existsSync(marker)).toBe(false);
+    // the folder's `.lake` is left as it was: neither read nor cleaned
+    expect(fs.existsSync(path.join(checkout, ".git", "config"))).toBe(true);
+    // and the trap is live: one host `git status` there fires it
+    git("status", "--porcelain");
+    expect(fs.existsSync(marker)).toBe(true);
+  });
+
+  it("--run takes a record package only from a capture of the commit the bundle pins", async () => {
+    writeChain();
+    seedWarmStore();
+    await serveCaptures();
+    fakeToolchain('echo "Your solution is okay!"; exit 0', { inspector: challengeReport() });
+    quiet();
+    // the record's capture is of another commit than its source
+    const output = path.join(home, "lax-database", "lax-42", "build-output.json");
+    const stored = JSON.parse(fs.readFileSync(output, "utf8")) as { capture: { sourceCommit: string } };
+    stored.capture.sourceCommit = "f".repeat(40);
+    fs.writeFileSync(output, JSON.stringify(stored));
+    await expect(withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out: path.join(work, "run"), run: true }))).rejects.toThrow(
+      /lax-42's capture is of f{40}, its record of 0{38}42 — the archive's record is inconsistent/u,
+    );
+    // and a capture the registry does not hold is named, not built around
+    writeChain();
+    ghcr!.state.blobs.clear();
+    removeTree(path.join(home, "captures"));
+    await expect(withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out: path.join(work, "run"), run: true }))).rejects.toThrow(
+      /could not take lax-42's capture [0-9a-f]{12} from the registry/u,
+    );
+    expect(fs.existsSync(path.join(home, "lake-args"))).toBe(false);
   });
 
   it("--run refuses a Challenge that elaborated to something else, before the comparator runs", async () => {
     writeChain();
     seedWarmStore();
+    await serveCaptures();
     fakeToolchain('echo "Your solution is okay!"; exit 0', { inspector: challengeReport(true) });
     const log = quiet();
     const out = path.join(work, "run");
@@ -574,7 +679,8 @@ describe("lax certify", () => {
     expect(output).toContain("challenge-mismatch");
     expect(output).toContain("Lax42Proofs.euclid states the edge {Lax42.Primes.ExistsPrimeDivisor} → Lax42.Primes.InfinitelyManyPrimes.{u}.{u}");
     expect(output).toContain("elaborated to {} → True");
-    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).not.toContain("comparator");
+    // neither the proof package built nor the comparator run
+    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toBe("build Challenge\n");
 
     // a Challenge that does not build is the translation's finding, not a run failure
     fs.rmSync(path.join(home, "bin"), { recursive: true });
@@ -584,11 +690,26 @@ describe("lax certify", () => {
     expect(await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true }))).toBe(1);
     expect(printed(broken)).toContain("challenge-build");
     expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).not.toContain("comparator");
+
+    // a proof package that does not build from its captured sources is the
+    // translation's finding too, and the comparator never runs
+    fs.rmSync(path.join(home, "bin"), { recursive: true });
+    fs.rmSync(path.join(home, "lake-args"));
+    fakeToolchain('echo "Your solution is okay!"; exit 0', {
+      inspector: challengeReport(),
+      build: 'if [ "$2" = Lax42Proofs ]; then echo "error: unknown identifier" >&2; exit 1; fi',
+    });
+    const solution = quiet();
+    expect(await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true }))).toBe(1);
+    expect(printed(solution)).toContain("solution-build");
+    expect(printed(solution)).toContain("the solution module Lax42Proofs did not build from the records' captured sources");
+    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).not.toContain("comparator");
   });
 
   it("--run without an inspector says the Challenge's meaning was not checked, never certified", async () => {
     writeChain();
     seedWarmStore();
+    await serveCaptures();
     fakeToolchain('echo "Your solution is okay!"; exit 0');
     const log = quiet();
     const out = path.join(work, "run");
@@ -600,11 +721,13 @@ describe("lax certify", () => {
     expect(output).toContain("lax-42: comparator accepted; Challenge meaning not checked.");
     expect(output).not.toContain("is certified");
     expect(output).toContain("the v4.35.0 inspector could not be built here");
-    // the bundle's own command, nothing held: the inspector's build was the only other lake run
-    expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toBe("build\ncomparator --config comparator.json\n");
+    // the inspector's failed build, then both modules, then the comparator over both exports
+    const lakeArgs = fs.readFileSync(path.join(home, "lake-args"), "utf8").trim().split("\n");
+    expect(lakeArgs.slice(0, 3)).toEqual(["build", "build Challenge", "build Lax42Proofs"]);
+    expect(lakeArgs[3]).toMatch(/^comparator --config comparator\.json --challenge-from-export \S+ --solution-from-export \S+$/u);
   });
 
-  it("--run insists on git and bubblewrap, and on the toolchain", async () => {
+  it("--run insists on bubblewrap and on the toolchain", async () => {
     writeChain();
     seedWarmStore();
     quiet();
@@ -614,10 +737,10 @@ describe("lax certify", () => {
     );
     fakeToolchain("exit 0", { bwrap: false });
     await expect(withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true }))).rejects.toThrow(
-      /needs a tool it cannot find:\nbwrap — `lake comparator` builds inside a bubblewrap sandbox/u,
+      /needs a tool it cannot find:\nbwrap — every build, export and kernel of the run is confined by bubblewrap/u,
     );
     // the bundle was still written: the author can run it elsewhere
-    expect(readBundle(sealBundle(bundleIn(out)).tar).size).toBe(4);
+    expect(readBundle(sealBundle(bundleIn(out)).tar).size).toBe(5);
   });
 
   it("names a cache-only fetch failure when the registry is unreachable", async () => {
