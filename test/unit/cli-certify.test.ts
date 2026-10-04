@@ -588,6 +588,12 @@ describe("lax certify", () => {
     expect(sandboxed).toHaveLength(5);
     expect(sandboxed.some((line) => line.includes("--share-net"))).toBe(false);
     expect(sandboxed.map((line) => /--bind \S+\/project\/\.lake /u.test(line))).toEqual([true, false, false, true, false]);
+    // the proof package's copy lies beside the project: read-only while the
+    // Challenge — the concept packages' code — builds, writable only for its
+    // own build (A1: nothing of any proof package is writable there)
+    expect(sandboxed.map((line) => /--bind \S+\/proofs \S+\/proofs /u.test(line))).toEqual([false, false, false, true, false]);
+    expect(sandboxed[0]).toMatch(/--ro-bind \S+\/proofs \S+\/proofs /u);
+    expect(sandboxed[4]).toMatch(/LEAN_PATH \S+:\S+\/proofs\/Lax42Proofs\/\.lake\/build\/lib\/lean/u);
     expect(sandboxed.some((line) => line.includes(out))).toBe(false);
     expect(sandboxed[1]).toContain("leanexport Challenge -- Quot Quot.mk Quot.lift Quot.ind Lax42Proofs.euclid propext");
     expect(sandboxed[2]).toMatch(/laxinspector --spec 2 \S+\/challenge-report\.json Challenge$/u);
@@ -598,6 +604,9 @@ describe("lax certify", () => {
     expect(fs.readdirSync(path.join(home, "captures")).sort()).toEqual(["lax-42"]);
     expect(fs.readdirSync(out).sort()).toEqual(["Challenge.lean", "comparator.json", "lake-manifest.json", "lakefile.toml", "lean-toolchain"]);
 
+    // an older CLI's cache beside the current one is removed on the next pull
+    fs.mkdirSync(path.join(home, "prooftree-captures", "lax-7", "a".repeat(64)), { recursive: true });
+
     // a refusal is a finding on the certificate phase, with the comparator's words
     fs.rmSync(path.join(home, "bin"), { recursive: true });
     fakeToolchain(`echo "error: Illegal axiom detected: 'sorryAx'" >&2; exit 1`, { inspector: challengeReport() });
@@ -607,6 +616,8 @@ describe("lax certify", () => {
     expect(refusal).toContain("✗ Refused");
     expect(refusal).toContain("certificate · illegal-axiom");
     expect(refusal).toContain("rest on the axiom sorryAx");
+    expect(fs.existsSync(path.join(home, "prooftree-captures"))).toBe(false);
+    expect(fs.readdirSync(path.join(home, "captures"))).toEqual(["lax-42"]);
     // --paranoid went to the comparator's command line
     expect(fs.readFileSync(path.join(home, "lake-args"), "utf8")).toMatch(/comparator --config comparator\.json --challenge-from-export \S+ --solution-from-export \S+ --paranoid\n/u);
   });
@@ -739,6 +750,24 @@ describe("lax certify", () => {
     await expect(withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true }))).rejects.toThrow(
       /needs a tool it cannot find:\nbwrap — every build, export and kernel of the run is confined by bubblewrap/u,
     );
+    // the preflight checks the bubblewrap the run would start: COMPARATOR_BWRAP
+    // when set, whatever PATH holds
+    const alternative = path.join(home, "alt", "bwrap");
+    process.env.COMPARATOR_BWRAP = alternative;
+    try {
+      await expect(withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true }))).rejects.toThrow(
+        `needs a tool it cannot find:\n${alternative} — every build, export and kernel of the run is confined by bubblewrap, which is what makes the rerun trustworthy; COMPARATOR_BWRAP names it, and it did not run`,
+      );
+      fs.mkdirSync(path.dirname(alternative));
+      fs.writeFileSync(alternative, "#!/bin/sh\necho 'bubblewrap 0.9.0'\n", { mode: 0o755 });
+      const outcome = await withTestEnvironmentsAsync([SPEC2], () => certify("lax-42", { out, run: true })).then(
+        () => "",
+        (error: Error) => error.message,
+      );
+      expect(outcome).not.toContain("cannot find");
+    } finally {
+      delete process.env.COMPARATOR_BWRAP;
+    }
     // the bundle was still written: the author can run it elsewhere
     expect(readBundle(sealBundle(bundleIn(out)).tar).size).toBe(5);
   });

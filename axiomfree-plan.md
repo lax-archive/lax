@@ -970,3 +970,24 @@ publisher regenerates it with the rest. M1.4: the draft and the website
 now say the by-hand rerun needs the authors' repositories and `--run`
 needs the archive's captures, instead of "every certificate can be rerun
 from its bundle".
+
+2026-10-05, the S1/M1 re-review: the Challenge's build in `--run` had
+every record package's copy in its writable `.lake`, proof packages
+included, so concept-package code could rewrite a proof package's sources
+or plant its build products before the solution module was built (sound —
+the comparator kernel-checks whatever export comes out — but not A1's
+"nothing of any proof package is mounted"). Proof packages are now copied
+beside the project (`RecordPackageSource.kind`, read-only in the
+Challenge's build, writable only in the solution's), and the overrides and
+the project's `.lake/build` are rewritten and removed, never through a
+link, before the solution build; Lake still reads the proof packages'
+TOML configuration in the Challenge's build, which the draft says. Also:
+the preflight checks the bubblewrap the run starts (`COMPARATOR_BWRAP`
+when set, `bubblewrapCommand`); an older CLI's `~/.lax/prooftree-captures`
+is moved to `~/.lax/captures` or removed on the next pull; the
+`comparator-build` verdict branch is documented as by-hand parity only (no
+lax path asks the comparator to build); the website's trust note says what
+`--run` adds back (the captures hold the recorded commits' sources); and
+the dependents' side of the metadata-resubmission decision (their stored
+bundles pin the old commit, which `--fetch --run` refuses) is added to
+that TODO item.

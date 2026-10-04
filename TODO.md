@@ -301,10 +301,7 @@ of a Lax17-sized relative certificate (the composed Solution of a
   `private {module}` / `scoped {module}` / `realized {parent}` /
   `auxiliary {parent}`, each from Lean's own facts), every rule consults
   `origin` and none the display name; per-module bodies in the axiom
-  walk and hygiene before de-duplication; `lax certify --run` verifies
-  every manifest checkout at its pin and clean and removes the record
-  packages' build products (residual `TODO(decision 10)` in certify.ts:
-  a library's `.lake/build` survives between runs); `kernel-rejected`
+  walk and hygiene before de-duplication; `kernel-rejected`
   only for kernel exit 1; local `--replay` covers both packages. Kept
   for the record; the "Jan's decisions" sub-list is still open:
   - **Provenance-based ownership (finding 1, High).** `isInternalDetail`
@@ -330,17 +327,6 @@ of a Lax17-sized relative certificate (the composed Solution of a
     that, and apply hygiene before de-duplication; the duplicate
     exception then requires the inspector's `realized` origin (an
     `isReservedName` fact), not merely an absent `userName`.
-  - **`lax certify --run` reuses `.lake` (finding 3).** A proof build's
-    elaboration-time IO can alter the concept dependency checkout inside
-    `.lake`; the next run's Challenge is built against it and "Certified"
-    is printed. Before every run: verify each `.lake/packages/<pkg>` is at
-    its pinned revision and clean (`git rev-parse HEAD`, `git status
-    --porcelain` empty) or refuse; delete the record packages' build
-    products (keep mathlib's cache); and say in the output that the
-    Challenge was built from freshly verified checkouts. *Superseded
-    2026-10-05 (ultracode S1): that host `git status` was itself the hole
-    (a planted `core.fsmonitor`); `--run` now builds in a fresh scratch
-    project from the captures and never reads the folder's `.lake`.*
   - **Kernel crash vs rejection (incomplete fix of finding 6).** The
     comparator prints its rejection notice for *every* nonzero kernel
     exit, a crash included (Check.lean); read the kernel's own exit code
@@ -369,10 +355,18 @@ of a Lax17-sized relative certificate (the composed Solution of a
     - *Metadata-only resubmission keeps the certificate at the old
       commit (finding 5).* `record.source` moves to C2, the bundle's
       own-package require still names C1, so `lax certify` regenerates a
-      different digest than `--fetch` returns. Record the certified
-      source commit separately from the presentation source, or
-      regenerate the bundle on the metadata path under the "Lean sources
-      byte-identical" equivalence the comparison already proves.
+      different digest than `--fetch` returns. The same move breaks
+      every *dependent's* stored bundle under `lax certify --fetch --run`:
+      the dependent pins the record at C1, `metadataCandidate` moved its
+      `capture.sourceCommit` to C2, and `prepareRunProject`
+      (`src/cli/certify-run.ts`) refuses "the bundle pins X at C1, but
+      its record's capture is of C2" though the captured sources are
+      byte-identical (a by-hand rerun of such a bundle still works). Record
+      the certified source commit separately from the presentation source
+      (and have `--run` accept a capture whose certified commit is the
+      pin), or regenerate the record's bundle on the metadata path under
+      the "Lean sources byte-identical" equivalence the comparison already
+      proves — which still leaves the dependents' bundles at C1.
     - *Website trust note* (lax-website `shared.ts` ~244) says readers
       need not trust the pipeline; narrow it to what the Challenge and
       the bundle establish (the reader's checklist item above).

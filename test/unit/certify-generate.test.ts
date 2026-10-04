@@ -1,5 +1,5 @@
 // The certificate generator (axiomfree-plan.md, "Certify" 1; stage 3's
-// goldens): a record bundle's four files for an unconditional proof, a conditional one
+// goldens): a record bundle's five files for an unconditional proof, a conditional one
 // with a duplicated hypothesis, a polymorphic one, handwritten names with
 // keyword components and Lean's less common identifier characters, and a
 // polymorphic proof of the spec-2 inspector golden exactly as the inspector

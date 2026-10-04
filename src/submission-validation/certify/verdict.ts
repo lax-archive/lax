@@ -162,11 +162,16 @@ export function interpretComparatorRun(result: { code: number; output: string })
       };
     }
     const lean = errors.slice(0, -1);
-    // Every module it builds is lax's text — a record's regenerated bundle or
-    // a relative certificate's composition — or a package the archive built
-    // and validated: a failure is lax or the reader's checkout disagreeing
-    // with the archive's records (the translation's question), never a
-    // verdict on a proof — the archive's own judge builds nothing.
+    // No lax path reaches this: container C, the host path and `lax certify
+    // --run` all hand the comparator both exports, so it builds nothing.
+    // The shape is read for parity with the comparator's own output — a
+    // reader's by-hand `lake comparator` builds the Challenge and the
+    // solution module, and the e2e test drives such a run through this
+    // parser. Every module that run builds is lax's text — a record's
+    // regenerated bundle or a relative certificate's composition — or a
+    // package the archive built and validated: a failure is lax or the
+    // reader's checkout disagreeing with the archive's records (the
+    // translation's question), never a verdict on a proof.
     return {
       kind: "violation",
       intent: "translation",

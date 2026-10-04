@@ -665,6 +665,8 @@ end Lax38Proofs
           .toMatchObject({ kind: "violation", rule: "statement-mismatch" });
         expect(await judge("def Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := fun n => ⟨n + 1, Nat.lt_succ_self n⟩", "definition as target"))
           .toMatchObject({ kind: "violation", rule: "not-a-theorem" });
+        // a module that does not build: the by-hand comparator's shape, which
+        // no lax command produces (every one hands the comparator exports)
         const broken = await judge("theorem Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := noSuchProof", "does not build");
         expect(broken).toMatchObject({ kind: "violation", rule: "comparator-build", intent: "translation" });
         expect((broken as { message: string }).message).toContain("could not build");
@@ -1419,9 +1421,9 @@ end Lax41Proofs
           expect(code).toBe(0);
           expect(logged.join("\n")).toContain("Lax41.Chain.Downstream is certified: lake comparator --config comparator.json accepted it, against a Challenge that states the edges.");
           expect(logged.join("\n")).toContain("Challenge states the edges");
-          // and the record's own bundle, sandboxed: the comparator builds the
-          // proof package — a git dependency of the bundle — as the solution
-          // module inside bubblewrap
+          // and the record's own bundle, sandboxed: lax builds and exports
+          // the proof package from its capture's sources inside bubblewrap,
+          // and the comparator, handed both exports, builds nothing
           logged.length = 0;
           const recordStarted = performance.now();
           const recordCode = await certify("lax-41", { out: regenerated, run: true });

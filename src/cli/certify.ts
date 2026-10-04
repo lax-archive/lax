@@ -69,6 +69,7 @@ import { manifestText, readWarmManifestPackages, warmDir, warmReady } from "../s
 import { expandRecordedBuildOutput } from "../submission-validation/recorded-shape.js";
 import { materializeCapture } from "./capture-cache.js";
 import {
+  bubblewrapCommand,
   buildSolutionInSandbox,
   holdChallengeInSandbox,
   judgeExports,
@@ -677,9 +678,10 @@ async function recordSources(
       }
       roots.set(record.id, root);
     }
-    const dir = path.join(root, entry.name.endsWith("Proofs") ? "proofs" : "concepts", "package");
+    const kind = entry.name.endsWith("Proofs") ? "proofs" : "concepts";
+    const dir = path.join(root, kind, "package");
     if (!fs.existsSync(dir)) throw new Error(`${record.id}'s capture holds no ${entry.name} package`);
-    sources.set(entry.name, { dir, rev: record.source.commit });
+    sources.set(entry.name, { kind, dir, rev: record.source.commit });
   }
   return sources;
 }
@@ -739,7 +741,7 @@ function certificateFolder(folder: string): string {
 }
 
 /** What --run needs before anything runs: the environment's toolchain, and
- * bubblewrap on PATH — every build and export runs under it
+ * bubblewrap — `COMPARATOR_BWRAP` when set, else on PATH — every build and export runs under it
  * (cli/certify-run.ts), and so do the comparator's kernels. git is not
  * needed: nothing is cloned, and the comparator's probe for it finds a
  * refusing shim. Checked first so the refusal names the tool rather than
@@ -747,9 +749,11 @@ function certificateFolder(folder: string): string {
 function requireRunTools(environment: ArchiveEnvironment): void {
   if (!fs.existsSync(path.join(toolchainBinDir(environment), "lake")))
     throw new Error(`the ${environment.id} toolchain is not installed — run ${ui.cmd(`lax doctor --env ${environment.id}`)}`);
-  if (toolVersion("bwrap") === undefined)
+  const bwrap = bubblewrapCommand();
+  if (toolVersion(bwrap) === undefined)
     throw new Error(
       "lax certify --run needs a tool it cannot find:\n" +
-        "bwrap — every build, export and kernel of the run is confined by bubblewrap, which is what makes the rerun trustworthy; install bubblewrap",
+        `${bwrap} — every build, export and kernel of the run is confined by bubblewrap, which is what makes the rerun trustworthy; ` +
+        (process.env.COMPARATOR_BWRAP === undefined ? "install bubblewrap" : "COMPARATOR_BWRAP names it, and it did not run"),
     );
 }

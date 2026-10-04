@@ -26,6 +26,20 @@ function registryOrigin(): string {
 }
 
 /**
+ * The cache an older CLI kept under `~/.lax/prooftree-captures`, in the
+ * same `<id>/<digest>` layout: moved into place when there is no cache yet
+ * (each tree is held to its inventory on reuse, like any other), removed
+ * when there is — a capture can be up to 2 GiB, and nothing else reads it.
+ */
+function migrateLegacyCaptures(): void {
+  const legacy = path.join(laxHome(), "prooftree-captures");
+  if (!fs.existsSync(legacy)) return;
+  const target = path.join(laxHome(), "captures");
+  if (fs.existsSync(target)) fs.rmSync(legacy, { recursive: true, force: true });
+  else fs.renameSync(legacy, target);
+}
+
+/**
  * The verified tree of a record's capture, downloaded on a miss: under
  * `~/.lax/captures/<id>/<digest>`, written only by this module and never
  * mounted into any sandbox — a consumer that builds from it copies out of it
@@ -35,6 +49,7 @@ function registryOrigin(): string {
  */
 export async function materializeCapture(id: string, capture: PublishedCapture, announce: () => void = () => undefined): Promise<string> {
   if (capture.registryBlob === undefined) throw new Error(`${id}'s capture names no registry blob`);
+  migrateLegacyCaptures();
   const parent = path.join(laxHome(), "captures", id);
   const target = path.join(parent, capture.digest);
   const inventoryPath = captureInventoryPath(target);

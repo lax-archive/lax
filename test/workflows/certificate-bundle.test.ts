@@ -1,6 +1,6 @@
 // The publisher's reading of a certificate bundle (certify/verify-bundle.ts;
 // codex review 2026-10-03, finding 2): the published tar must be the
-// regeneration, from the record's own data, of the four files the judge
+// regeneration, from the record's own data, of the five files the judge
 // judged — not merely some bytes with the recorded digest. The forgeries
 // here are coherent: every digest is updated to match the swapped bytes, and
 // a telescope is edited together with its regenerated Challenge.

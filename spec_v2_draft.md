@@ -1974,10 +1974,18 @@ same ``translation`` violation as in A2 — then builds and exports the
 solution module (a build failure there is a ``translation`` finding,
 ``solution-build``), each step under bubblewrap with the arguments ``lake
 comparator`` gives its own children, ``.lake`` the only writable mount of a
-build, none for an export or the inspection. It hands both exports to
+build, none for an export or the inspection. A1's rule — nothing of any
+proof package is writable while concept-package code runs — holds as far
+as one Lake workspace allows: the proof packages' copies lie beside the
+project, read-only in the Challenge's build (Lake still reads their TOML
+configuration there, which A1 never mounts) and writable only in the
+solution module's, and the package overrides and the project's own build
+tree, which the Challenge's build could write, are written again and
+removed before it. It hands both exports to
 ``lake comparator --challenge-from-export … --solution-from-export …``,
 which builds and resolves nothing and runs its kernels in its own
-sandbox — container C's command on the reader's machine. Where the
+sandbox — container C's command on the reader's machine, with A1 and B
+replaced by builds from source. Where the
 inspector cannot be built, the Challenge is still exported and judged and
 the result is reported as "comparator accepted; Challenge meaning not
 checked", never as certified. Every certificate whose records' captures

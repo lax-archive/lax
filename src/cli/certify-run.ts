@@ -23,10 +23,13 @@
 //   the record packages          the *sources* of each record's published
 //                                capture (cli/capture-cache.ts: digest
 //                                verified, held to its inventory), copied
-//                                into the run's `.lake` and built there —
+//                                into the scratch folder and built there —
 //                                never the captured build products, which an
 //                                untrusted build produced (ultracode review
-//                                2026-10-04, M1)
+//                                2026-10-04, M1): concept packages into the
+//                                run's `.lake`, proof packages into a folder
+//                                beside the project that the Challenge's
+//                                build sees read-only
 //
 // so the run needs no network, no git, and no author repository: the
 // bundle's manifest still names the records' git sources, and each one is
@@ -36,7 +39,13 @@
 // the only writable mount of a build and none for an export or the
 // inspection; the host reads back only the two exports, streamed from the
 // exporter's stdout, and the report, written into a folder only the
-// inspector's own sandbox has writable. The search path is composed from
+// inspector's own sandbox has writable. A1's rule — nothing of any proof
+// package is writable while concept-package code runs — holds as far as one
+// Lake workspace allows: the bundle's lakefile requires the proof packages,
+// so Lake reads their (TOML) configuration in the Challenge's build, but it
+// can write neither their sources nor their build products, and the
+// overrides and the project's own build tree that build could write are
+// written again and removed before the solution module is built. The search path is composed from
 // the overrides lax wrote, never taken from `lake env`. The comparator then
 // runs its kernels in its own sandbox, in a judge folder holding the
 // bundle's files alone and a `git` that refuses (`mkContext` probes PATH for
@@ -103,6 +112,9 @@ export function readBundleManifest(manifest: string): ManifestPackage[] {
 
 /** A record package's source tree, from its record's verified capture. */
 export interface RecordPackageSource {
+  /** Which of the record's two packages: a proof package is laid out where
+   * the Challenge's build cannot write it (prepareRunProject). */
+  kind: "concepts" | "proofs";
   /** The package root to copy: the capture's `<kind>/package`. */
   dir: string;
   /** The record's source commit, which the manifest entry must pin. */
@@ -113,16 +125,24 @@ export interface RecordPackageSource {
  * sandbox must see read-only beyond it. */
 export interface RunProject {
   directory: string;
+  /** The folder beside the project holding the proof packages' copies:
+   * read-only in the Challenge's build, writable in the solution module's. */
+  proofs: string;
   /** The project's own lib dir, then each package root's, in manifest order. */
   libDirs: string[];
-  /** The warm store and each of its package roots, resolved. */
+  /** The warm store and each of its package roots, resolved, and the proof
+   * packages' folder. */
   readable: string[];
+  /** Writes `.lake/package-overrides.json` — again before the solution
+   * module's build, since the Challenge's build could rewrite it. */
+  writeOverrides: () => void;
 }
 
 /**
  * Lay the run project out under `scratch`: the bundle's files verbatim, a
- * fresh `.lake` holding a copy of every record package's captured sources,
- * and `.lake/package-overrides.json` pointing every package the manifest
+ * fresh `.lake` holding a copy of every concept package's captured sources,
+ * a copy of every proof package's beside the project, and
+ * `.lake/package-overrides.json` pointing every package the manifest
  * lists at those copies or at the warm workspace. A package the manifest
  * lists that neither covers, or pins at another revision than the record or
  * the warm workspace has, is refused here, before anything runs: Lake would
@@ -148,7 +168,9 @@ export function prepareRunProject(input: {
   const facts = leanFacts(environment);
   const directory = path.join(input.scratch, "project");
   const sourcesDir = path.join(directory, facts.lakeDir, "sources");
+  const proofsDir = path.join(input.scratch, "proofs");
   fs.mkdirSync(sourcesDir, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(proofsDir, { mode: 0o700 });
   for (const { name, content } of bundleMembers(input.files)) fs.writeFileSync(path.join(directory, name), content, { mode: 0o644 });
 
   const libDirs = [packageLibDir(directory)];
@@ -159,7 +181,7 @@ export function prepareRunProject(input: {
     if (source !== undefined) {
       if (entry.rev !== source.rev)
         throw new Error(`the bundle pins ${entry.name} at ${entry.rev ?? "no revision"}, but its record's capture is of ${source.rev}`);
-      const copy = path.join(sourcesDir, entry.name);
+      const copy = path.join(source.kind === "proofs" ? proofsDir : sourcesDir, entry.name);
       fs.cpSync(source.dir, copy, { recursive: true, verbatimSymlinks: true });
       // Lake writes the copy's own `.lake` beside its sources; a captured
       // tree may carry read-only directories
@@ -184,8 +206,9 @@ export function prepareRunProject(input: {
     // its own place too, or the sandbox would see a dangling link
     readable.push(fs.realpathSync(root));
   }
-  seedOverrides(warm, directory, undefined, extra);
-  return { directory, libDirs, readable: [...new Set(readable)] };
+  const writeOverrides = (): void => seedOverrides(warm, directory, undefined, extra);
+  writeOverrides();
+  return { directory, proofs: proofsDir, libDirs, readable: [...new Set([...readable, proofsDir])], writeOverrides };
 }
 
 /** Make every directory under `root` writable by its owner, never through
@@ -265,6 +288,13 @@ export interface RunInput {
   onDetail: (text: string) => void;
 }
 
+/** The bubblewrap every step runs under: `COMPARATOR_BWRAP` when set, as
+ * `lake comparator` reads it for its kernels, else `bwrap` on PATH. The one
+ * place both the preflight (cli/certify.ts) and the runner take it from. */
+export function bubblewrapCommand(): string {
+  return process.env.COMPARATOR_BWRAP ?? "bwrap";
+}
+
 /** The sandbox runner of one run: the toolchain and the warm store
  * readable, the project read-only. */
 function sandboxFor(input: RunInput): {
@@ -281,7 +311,7 @@ function sandboxFor(input: RunInput): {
       ...confined,
       readable: [project.directory, ...toolchainPaths, ...project.readable, ...(confined.readable ?? [])],
     });
-  const bwrap = process.env.COMPARATOR_BWRAP ?? "bwrap";
+  const bwrap = bubblewrapCommand();
   const opts = { echo: input.echo, maxOutputBytes: 16 * 1024 * 1024 };
   const pathEnv = lakePathEnv(environment);
   return {
@@ -294,16 +324,37 @@ function sandboxFor(input: RunInput): {
   };
 }
 
-/** `lake build <module>` in the sandbox, `.lake` the only writable mount and
- * no network: every package is on disk already. */
-async function buildModule(input: RunInput, module: string): Promise<RunResult> {
+/** `lake build <module>` in the sandbox, `.lake` — and, for the solution
+ * module, the proof packages' folder — the only writable mounts and no
+ * network: every package is on disk already. */
+async function buildModule(input: RunInput, module: string, writable: "challenge" | "solution"): Promise<RunResult> {
   const sandbox = sandboxFor(input);
   input.onDetail(`lake build ${module}`);
+  const lake = path.join(input.project.directory, leanFacts(input.environment).lakeDir);
   return sandbox.confined({
     cmd: lakeBinary(input.environment), args: ["build", module],
-    writable: [path.join(input.project.directory, leanFacts(input.environment).lakeDir)], tmpfs: FORBIDDEN, network: false,
+    writable: writable === "challenge" ? [lake] : [lake, input.project.proofs], tmpfs: FORBIDDEN, network: false,
     env: sandbox.buildEnv,
   });
+}
+
+/** Remove what a sandboxed build may have written, never through a link: the
+ * build has exited (`--die-with-parent`, its own pid namespace), so nothing
+ * changes the tree while it is walked. */
+function removeWritten(target: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    return;
+  }
+  if (!stat.isDirectory()) {
+    fs.unlinkSync(target);
+    return;
+  }
+  fs.chmodSync(target, 0o700);
+  for (const entry of fs.readdirSync(target)) removeWritten(path.join(target, entry));
+  fs.rmdirSync(target);
 }
 
 /** `leanexport <module> -- <targets>` over the built tree, nothing
@@ -324,8 +375,9 @@ async function exportModule(input: RunInput, module: string, file: string): Prom
 
 /**
  * The Challenge built, exported, and — with the inspector — read and held
- * to the theorems. The concept packages' code runs in the build; nothing of
- * that run is alive in the steps after it.
+ * to the theorems. The concept packages' code runs in the build, with the
+ * proof packages read-only; nothing of that run is alive in the steps after
+ * it.
  */
 export async function holdChallengeInSandbox(input: RunInput): Promise<ChallengeHold> {
   const { environment } = input;
@@ -337,7 +389,7 @@ export async function holdChallengeInSandbox(input: RunInput): Promise<Challenge
     unavailable = `the ${environment.id} inspector could not be built here: ${failureMessage(error)}`;
   }
   try {
-    const built = await buildModule(input, CHALLENGE_MODULE);
+    const built = await buildModule(input, CHALLENGE_MODULE, "challenge");
     // 3 is host/proc.ts's "terminated by a signal": never the author's
     if (built.code === 3) throw stepFailure(`building the ${CHALLENGE_MODULE}`, built);
     if (built.code !== 0) return { kind: "refused", verdict: challengeBuildViolation(built.output) };
@@ -369,12 +421,18 @@ export async function holdChallengeInSandbox(input: RunInput): Promise<Challenge
 /**
  * The solution module — a record's proof package, or a relative
  * certificate's composed `Solution` — built and exported, after the
- * Challenge's export exists outside every writable mount. The proof
- * packages' code runs in this build.
+ * Challenge's export exists outside every writable mount. What the
+ * Challenge's build could write and this build would read as the proof
+ * packages' — the overrides naming where they are, and the project's own
+ * build tree, where a relative certificate's `Solution` is built — is
+ * written again and removed first. The proof packages' code runs in this
+ * build.
  */
 export async function buildSolutionInSandbox(input: RunInput, solutionModule: string): Promise<SolutionBuild> {
   try {
-    const built = await buildModule(input, solutionModule);
+    input.project.writeOverrides();
+    removeWritten(path.join(input.project.directory, leanFacts(input.environment).lakeDir, "build"));
+    const built = await buildModule(input, solutionModule, "solution");
     if (built.code === 3) throw stepFailure(`building ${solutionModule}`, built);
     if (built.code !== 0) return { kind: "refused", verdict: solutionBuildViolation(solutionModule, built.output) };
     const solutionExport = path.join(input.scratch, "solution.export");
