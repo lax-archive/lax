@@ -90,6 +90,19 @@ describe("the Challenge held to the telescope", () => {
       "hypothesis 1 is Lax7.Primes.Other, not Lax7.Primes.ExistsPrimeDivisor",
     ],
     [
+      "a conclusion whose printed name is the recorded one but does not read back",
+      built({
+        telescope: {
+          hypotheses: [
+            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [] },
+            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]] },
+          ],
+          conclusion: { const: "Lax1.Infinite.InfinitelyManyPrimes", levels: [["param", "u"]], nonCanonical: true },
+        },
+      }),
+      "the conclusion is a constant printed Lax1.Infinite.InfinitelyManyPrimes that is not that name, not Lax1.Infinite.InfinitelyManyPrimes",
+    ],
+    [
       "hypotheses in another order",
       built({
         telescope: {

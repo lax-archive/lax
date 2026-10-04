@@ -549,6 +549,18 @@ const CASES: Case[] = [
     proofEntries: [],
   },
   {
+    // `Lax1.Claim.«A.B»._inaccessible` prints, unescaped, as the text of a
+    // different and canonical name; the flag, not the text, says which
+    name: "a proof over a constant whose printed name does not read back is a helper, even when the text is a statement's",
+    concepts: [statement("Lax1.Claim.A.B._inaccessible")],
+    proofs: [
+      decl({ name: "Lax1Proofs.lookalike", telescope: { hypotheses: [], conclusion: { const: "Lax1.Claim.A.B._inaccessible", levels: [], nonCanonical: true } } }),
+      decl({ name: "Lax1Proofs.genuine", telescope: chain([], ["Lax1.Claim.A.B._inaccessible"]) }),
+    ],
+    violations: [],
+    proofEntries: [{ id: "Lax1Proofs.genuine" }],
+  },
+  {
     name: "a proof or a universe parameter outside the archive's grammar is refused as an endpoint",
     concepts: [statement(A)],
     proofs: [

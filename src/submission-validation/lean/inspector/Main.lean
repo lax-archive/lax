@@ -479,7 +479,8 @@ review 2026-10-04, C3). It fails for a component carrying `»`, which the
 printer cannot quote, and for a name it prints unescaped — inaccessible
 (`x✝`, a trailing `_inaccessible`), macro-scoped, or rooted in `#`/`?`. A
 declaration so named is flagged `nonCanonical`; the validator refuses an
-authored one and lets Lean's own macro-scoped and auxiliary names pass.
+authored one and lets Lean's own macro-scoped and auxiliary names pass. A
+telescope link to such a constant is flagged too (`jsonOfLink`).
 Whether a canonical name may be an *endpoint* is the validator's question
 (contracts.ts `LEAN_NAME_PATTERN`). -/
 def isCanonicalName (n : Name) : Bool :=
@@ -522,16 +523,24 @@ partial def telescopeOf (e : Expr) (acc : Array TelescopeBinder := #[]) :
   | .const n ls => some (acc, n, ls)
   | _ => none
 
+/-- One link of a telescope: the constant as printed, its level arguments,
+and `nonCanonical` when the printed name does not read back as the constant
+(`isCanonicalName`) — `Lax1.C.«A.B»._inaccessible` prints as
+`Lax1.C.A.B._inaccessible`, the text of a different, canonical name. The
+validator compares links by their printed names, so such a link is told
+apart by the flag rather than by its text. -/
+def jsonOfLink (c : Name) (ls : List Level) : Json :=
+  Json.mkObj <|
+    [("const", Json.str c.toString),
+     ("levels", Json.arr (ls.toArray.map jsonOfLevel))] ++
+    (if isCanonicalName c then [] else [("nonCanonical", Json.bool true)])
+
 def jsonOfTelescope : Option (Array TelescopeBinder × Name × List Level) → Json
   | none => Json.null
   | some (binders, n, ls) =>
     Json.mkObj
-      [("hypotheses", Json.arr (binders.map fun b => Json.mkObj
-          [("const", Json.str b.const.toString),
-           ("levels", Json.arr (b.levels.toArray.map jsonOfLevel))])),
-       ("conclusion", Json.mkObj
-          [("const", Json.str n.toString),
-           ("levels", Json.arr (ls.toArray.map jsonOfLevel))])]
+      [("hypotheses", Json.arr (binders.map fun b => jsonOfLink b.const b.levels)),
+       ("conclusion", jsonOfLink n ls)]
 
 /-- The number of leading `∀`-binders of the stored type, metadata stripped:
 what a tagged definition that is not `Prop` is told about (`def P (n : Nat) :

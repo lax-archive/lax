@@ -788,5 +788,28 @@ helper). Coverage: the spec-2 golden (escaped `«定理».{«λ»}`, a flagged
 `«A.B»._inaccessible`), a unit test that every endpoint the classifier
 admits parses under the publication schema, and Lax38's `«at».{«fun»}`
 and `reflexive?` certified through the comparator on real Lean (e2e).
-Spec 1 changes only in the schema: names Lean prints bare that the old
-pattern refused (`!`, `?`, letterlike) now parse.
+Spec 1 changes in the schema — names Lean prints bare that the old
+pattern refused (`!`, `?`, letterlike) now parse — and, after the C3
+re-review below, by the same archive-name finding.
+
+2026-10-04, C3 re-review (five findings, all fixed). (1) lax-website
+linked pages as raw `<id>.html`, so a `get?` page was unreachable (the
+`?` began a query): every concept/proof href, canonical URL and sitemap
+entry now goes through one `entryPath`/`entryFile` that percent-encodes
+the id segment — byte-identical URLs for every existing id, the file on
+disk keeps the raw id. (2) No fixed keyword list is complete (`forall`,
+`return`, Mathlib's `lemma`), and a universe parameter stands alone, so
+the generator now always writes it quoted (`.{«u»}`, `leanLevel`);
+`RESERVED` only quotes familiar keywords inside dotted names. (3) The
+round trip covered only a declaration's own name: a telescope constant
+whose printed name does not read back (`«C.D»._inaccessible` prints as
+the canonical `C.D._inaccessible`) is now flagged `nonCanonical` on its
+link by the inspector; the classifier treats such a link as no
+statement (a helper) and the Challenge check never matches it to a
+recorded name. (4) `checkArchiveName` moved to inspect-common and also
+runs in the spec-1 classifier (no intent), so a spec-1 `«定理»` is a
+finding, not an infrastructure failure. (5) Comment and message wording.
+Coverage: the spec-2 golden (`overLookalike`, a flagged link), classifier,
+parser and Challenge-check cases, a spec-1 grammar test through the
+publication schema, the generator goldens, and a lax-website test with a
+`get?` proof.

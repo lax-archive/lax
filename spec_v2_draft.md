@@ -564,7 +564,7 @@ components each a plain Lean identifier (letters, digits, ``_``, ``'``,
 and Latin Extended-A letters, subscripts), never ``_`` alone. The archive
 records, links, and certifies an endpoint by that text; ``«定理»``,
 ``«A.B»`` and ``«λ»`` are refused as endpoints, and a constant outside the
-grammar is no statement.
+grammar, or one whose printed name does not read back, is no statement.
 Every user-level name is NFC, carries no combining mark or invisible format
 character, and uses one script per component (lower-case Greek beside
 Latin excepted): a Greek capital in a Latin word, or a Cyrillic letter, is
@@ -1124,7 +1124,7 @@ The ``certificate`` block:
       },
       "challengeExportSha256": "<sha256>",
       "solutionExportSha256": "<sha256>",
-      "challenge": "import Lax42.Colorings\nimport Lax261.Myconcept\n\ntheorem Cert.Lax261Proofs.Q.{u} ..."
+      "challenge": "import Lax42.Colorings\nimport Lax261.Myconcept\n\ntheorem Cert.Lax261Proofs.Q.{«u»} ..."
     }
 
 No edge list is stored: the edges are the proofs' telescopes, and every
@@ -1819,9 +1819,11 @@ lax installed.
 
 **The bundle.** From the record's telescopes and archive names, lax
 generates five files. Every name is an archive name, written as recorded
-with a keyword component quoted (``.{«fun»}``), since Lean's printer leaves
-keywords bare; a name outside the archive's grammar is refused before
-anything is generated (see Namespaces).
+with a familiar keyword component quoted (``Lax1.C.«fun»``), since Lean's
+printer leaves keywords bare; a universe parameter, which stands alone
+where any keyword of the imports would be read as that keyword, is always
+quoted (``.{«u»}``, which Lean reads as ``u``). A name outside the archive's
+grammar is refused before anything is generated (see Namespaces).
 
 1. ``lakefile.toml``: the environment's libraries at the row's pins, and
    every concept and proof package involved — the required ones at their

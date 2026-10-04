@@ -22,10 +22,11 @@ import {
   manifestDependencies,
   solutionText,
   theoremNamesOf,
+  universes,
   type BundleFile,
   type CertifiedProof,
 } from "../../src/submission-validation/certify/generate.js";
-import { leanName, LeanNameError } from "../../src/submission-validation/certify/lean-name.js";
+import { leanLevel, leanName, LeanNameError } from "../../src/submission-validation/certify/lean-name.js";
 import { manifestText } from "../../src/submission-validation/host/warmstore.js";
 import type { PinnedLibrary } from "../../src/submission-validation/environments.js";
 
@@ -173,6 +174,16 @@ describe("the certificate generator", () => {
     expect(leanName("fun")).toBe("«fun»");
     // `_` inside a name is an ordinary identifier character
     expect(leanName("Lax7._x._y_")).toBe("Lax7._x._y_");
+  });
+
+  it("writes a universe parameter always quoted, keyword or not", () => {
+    // the token table is open (`forall`, `return`, Mathlib's `lemma`), so a
+    // name standing alone is quoted whatever it is (ultracode review C3)
+    expect(leanLevel("u")).toBe("«u»");
+    expect(leanLevel("forall")).toBe("«forall»");
+    expect(leanLevel("lemma")).toBe("«lemma»");
+    expect(universes(["u", "return"])).toBe(".{«u», «return»}");
+    for (const name of ["Lax7.u", "«u»", "_", ""]) expect(() => leanLevel(name), name).toThrow(LeanNameError);
   });
 
   it("refuses, naming it, a name outside the archive's grammar", () => {

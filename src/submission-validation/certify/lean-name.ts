@@ -13,13 +13,18 @@
 // name is already Lean source, component by component. The one thing
 // `Name.toString` leaves to its caller is the token table: it prints a
 // keyword component bare (`Lax1.C.fun`), which Lean reads back inside a
-// dotted identifier but not alone (a universe parameter `fun`), so a keyword
-// component is quoted here. Nothing else is ever escaped or unescaped.
+// dotted identifier but not alone (a universe parameter `fun`). No fixed
+// list holds every keyword — any imported `syntax` declares more (`forall`,
+// `return`, Mathlib's `lemma`) — so a name that stands alone, a universe
+// parameter, is always written quoted (`leanLevel`: `«u»` reads as `u`),
+// and `RESERVED` only keeps a dotted name's familiar keyword components
+// quoted for the reader. Nothing else is ever escaped or unescaped.
 
 import { LEAN_NAME_PATTERN } from "../contracts.js";
 
-/** Lean's own reserved words and the command/term keywords a bare component
- * must never collide with. A superset is harmless (`«fun»` reads as `fun`). */
+/** Familiar Lean keywords, quoted inside a dotted name for the reader (Lean
+ * would read them bare there). Not every keyword: a name standing alone
+ * goes through `leanLevel`, which quotes whatever it is. */
 const RESERVED = new Set([
   "abbrev", "at", "attribute", "axiom", "by", "calc", "class", "deriving", "do", "else", "end",
   "example", "export", "extends", "fun", "from", "have", "if", "import", "in", "inductive",
@@ -58,4 +63,15 @@ export function leanName(name: string): string {
     .split(".")
     .map((component) => (RESERVED.has(component) ? `«${component}»` : component))
     .join(".");
+}
+
+/**
+ * A universe parameter as Lean source: always quoted. A level name stands
+ * alone (`.{u}`, `universe u`), where Lean reads any keyword of the
+ * Challenge's imports as that keyword, and the token table is open — so it
+ * is written `«u»`, which Lean reads as `u` whatever the imports declare.
+ */
+export function leanLevel(name: string): string {
+  if (!LEAN_NAME_PATTERN.test(name) || name.includes(".")) throw new LeanNameError(name);
+  return `«${name}»`;
 }

@@ -17,7 +17,6 @@
 
 import type { CertifiedProof, CertificateTheorem } from "./generate.js";
 import { packageOf, rootName, universes } from "./generate.js";
-import { leanName } from "./lean-name.js";
 
 /** A statement as the composition needs it: its id and universe parameters. */
 export interface StatementRef {
@@ -133,7 +132,7 @@ export function composeRelativeCertificate(input: ComposeInput): ComposedCertifi
     if (instances.length > 1) {
       throw new CompositionError(
         `${statement.id} is needed at ${instances.length} universe instances (${instances
-          .map((levels) => leanName(statement.id) + universes(levels))
+          .map((levels) => `${statement.id}.{${levels.join(", ")}}`)
           .join(", ")}); a hypothesis has one — certify each instance separately`,
       );
     }

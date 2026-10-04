@@ -16,7 +16,7 @@
 // holds every Solution theorem to its Challenge theorem, which this check
 // has just held to the telescope, so the Solution is held transitively.
 
-import type { InspectorDeclaration, InspectorReport, InspectorTelescope, LevelExpr, ProofEntry, ProofTelescope } from "../contracts.js";
+import type { InspectorDeclaration, InspectorLink, InspectorReport, InspectorTelescope, LevelExpr, ProofEntry, ProofTelescope } from "../contracts.js";
 import { renderLevel } from "../phases/inspect-spec2.js";
 import { CHALLENGE_MODULE, certifiedProof, orderedProofs, theoremNameOf } from "./generate.js";
 
@@ -64,17 +64,28 @@ function compareTelescope(built: InspectorTelescope, recorded: ProofTelescope): 
     return `${built.hypotheses.length} hypotheses where the record has ${recorded.hypotheses.length}`;
   for (const [index, hypothesis] of built.hypotheses.entries()) {
     const expected = recorded.hypotheses[index]!;
-    if (hypothesis.const !== expected.statement) return `hypothesis ${index + 1} is ${hypothesis.const}, not ${expected.statement}`;
+    if (!names(hypothesis, expected.statement)) return `hypothesis ${index + 1} is ${constant(hypothesis)}, not ${expected.statement}`;
     const levels = paramNames(hypothesis.levels);
     if (levels === undefined || !sameStrings(levels, expected.levels))
       return `hypothesis ${index + 1} instantiates ${hypothesis.const} at {${hypothesis.levels.map(renderLevel).join(", ")}}, not {${expected.levels.join(", ")}}`;
   }
-  if (built.conclusion.const !== recorded.conclusion.statement)
-    return `the conclusion is ${built.conclusion.const}, not ${recorded.conclusion.statement}`;
+  if (!names(built.conclusion, recorded.conclusion.statement))
+    return `the conclusion is ${constant(built.conclusion)}, not ${recorded.conclusion.statement}`;
   const levels = paramNames(built.conclusion.levels);
   if (levels === undefined || !sameStrings(levels, recorded.conclusion.levels))
     return `the conclusion instantiates ${built.conclusion.const} at {${built.conclusion.levels.map(renderLevel).join(", ")}}, not {${recorded.conclusion.levels.join(", ")}}`;
   return undefined;
+}
+
+/** Whether a built link is the recorded statement: its printed name is the
+ * statement's and reads back as the constant (a `nonCanonical` link's text
+ * names another constant than its own). */
+function names(link: InspectorLink, statement: string): boolean {
+  return link.nonCanonical !== true && link.const === statement;
+}
+
+function constant(link: InspectorLink): string {
+  return link.nonCanonical === true ? `a constant printed ${link.const} that is not that name` : link.const;
 }
 
 /** The parameter names of levels that are all parameters; `undefined` when

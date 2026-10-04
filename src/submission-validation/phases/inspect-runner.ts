@@ -6,6 +6,7 @@ import type {
   ContentSpecVersion,
   DeclarationOrigin,
   InspectorDeclaration,
+  InspectorLink,
   InspectorModule,
   InspectorReport,
   InspectorTelescope,
@@ -241,23 +242,22 @@ function parseOrigin(value: unknown, label: string): DeclarationOrigin {
 function parseTelescope(value: unknown, label: string): InspectorTelescope {
   const item = record(value, `${label} telescope`);
   exactKeys(item, ["hypotheses", "conclusion"], `${label} telescope`);
-  const hypotheses = array(item.hypotheses, `${label} telescope hypotheses`, 10_000).map((entry, index) => {
-    const binder = record(entry, `${label} telescope hypothesis ${index}`);
-    exactKeys(binder, ["const", "levels"], `${label} telescope hypothesis ${index}`);
-    return {
-      const: text(binder.const, "telescope constant"),
-      levels: parseLevels(binder.levels, `${label} telescope hypothesis ${index}`),
-    };
-  });
-  const conclusion = record(item.conclusion, `${label} telescope conclusion`);
-  exactKeys(conclusion, ["const", "levels"], `${label} telescope conclusion`);
   return {
-    hypotheses,
-    conclusion: {
-      const: text(conclusion.const, "telescope constant"),
-      levels: parseLevels(conclusion.levels, `${label} telescope conclusion`),
-    },
+    hypotheses: array(item.hypotheses, `${label} telescope hypotheses`, 10_000).map((entry, index) =>
+      parseLink(entry, `${label} telescope hypothesis ${index}`)),
+    conclusion: parseLink(item.conclusion, `${label} telescope conclusion`),
   };
+}
+
+function parseLink(value: unknown, label: string): InspectorLink {
+  const item = record(value, label);
+  exactKeys(item, item.nonCanonical === undefined ? ["const", "levels"] : ["const", "levels", "nonCanonical"], label);
+  const link: InspectorLink = { const: text(item.const, "telescope constant"), levels: parseLevels(item.levels, label) };
+  if (item.nonCanonical !== undefined) {
+    if (item.nonCanonical !== true) throw new Error(`${label} nonCanonical must be true when present`);
+    link.nonCanonical = true;
+  }
+  return link;
 }
 
 function parseLevels(value: unknown, label: string): LevelExpr[] {

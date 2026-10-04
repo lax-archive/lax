@@ -5,15 +5,16 @@
 // module is what keeps each rule in exactly one place rather than copied to
 // the other spec's loop (history/audit-20260903.md).
 
-import type {
-  AnnotationSection,
-  ConceptEntry,
-  FindingIntent,
-  InspectorDeclaration,
-  ModuleInventory,
-  ParsedDoc,
-  ProofEntry,
-  ResolutionResult,
+import {
+  LEAN_NAME_PATTERN,
+  type AnnotationSection,
+  type ConceptEntry,
+  type FindingIntent,
+  type InspectorDeclaration,
+  type ModuleInventory,
+  type ParsedDoc,
+  type ProofEntry,
+  type ResolutionResult,
 } from "../contracts.js";
 import type { FindingCollector } from "../findings.js";
 import { leanFacts } from "../lean-facts.js";
@@ -72,6 +73,35 @@ const SCRIPTS: ReadonlyArray<[string, RegExp]> = [
 ];
 const NEUTRAL = /[\p{Script=Common}\p{Script=Inherited}]/u;
 const LOWER_GREEK = /\p{Script=Greek}/u;
+
+/** The archive-name rule (ultracode review 2026-10-04, C3), both specs: a
+ * statement or a proof, and every universe parameter it declares, is
+ * recorded and linked — under spec 2 also written into the certificate — by
+ * the name Lean prints, so that name must be in the archive's grammar
+ * (contracts.ts LEAN_NAME_PATTERN): plain identifier components, none Lean
+ * prints in `«»`. A name outside it is refused here, as a finding, rather
+ * than by the publication schema after validation passed (an
+ * infrastructure failure). Spec 2 marks the finding `translation`; spec 1
+ * has no intents. Returns whether the endpoint may be recorded. */
+export function checkArchiveName(
+  declaration: InspectorDeclaration,
+  label: "statement" | "proof",
+  findings: FindingCollector,
+  intent?: FindingIntent,
+): boolean {
+  const outside = [declaration.name, ...(declaration.levelParams ?? [])].filter((name) => !LEAN_NAME_PATTERN.test(name));
+  if (outside.length === 0) return true;
+  const which = outside[0] === declaration.name ? "its name" : `its universe parameter ${outside[0]}`;
+  findings.violate(
+    label,
+    `${label} ${declaration.userName ?? declaration.name}: ${which} is not a plain Lean identifier; a statement or ` +
+      "proof and its universe parameters are named by dot-separated identifiers Lean prints without `«»` " +
+      "(ASCII, Latin-1 and Latin Extended-A letters, Greek but `λ`, `Π`, `Σ`, letterlike symbols, digits, " +
+      "subscripts, `_`, `'`, `!`, `?`) — rename it",
+    intent,
+  );
+  return false;
+}
 
 /** Why a canonical name is not one a reader can read as itself: not NFC, a
  * combining mark or format control anywhere, or a component mixing scripts.

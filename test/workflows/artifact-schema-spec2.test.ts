@@ -100,7 +100,7 @@ describe("the trusted parser on a spec-2 record", () => {
   it("holds the certificate's Challenge to the generator: a weakened conclusion is refused", () => {
     withTestEnvironments([spec2TestEnvironment()], () => {
       const { report, buildOutput } = stored();
-      const weakened = (buildOutput.certificate.challenge as string).replace("_root_.Lax42.Primes.InfinitelyManyPrimes.{u}", "True");
+      const weakened = (buildOutput.certificate.challenge as string).replace("_root_.Lax42.Primes.InfinitelyManyPrimes.{«u»}", "True");
       expect(weakened).not.toBe(buildOutput.certificate.challenge);
       buildOutput.certificate.challenge = weakened;
       (report.buildOutput as Record<string, any>).certificate.challenge = weakened;

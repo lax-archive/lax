@@ -105,4 +105,11 @@ theorem usesSorry : Closed := sorry
 `Spec2.Basic.A.B._inaccessible` does not read back: flagged `nonCanonical`. -/
 theorem «A.B»._inaccessible : True := trivial
 
+/-- A `Prop` constant printed the same way, `Spec2.Basic.C.D._inaccessible`. -/
+def «C.D»._inaccessible : Prop := True
+
+/-- A theorem over it: the telescope's conclusion is flagged `nonCanonical`, so
+the validator never reads its text as the name of a statement. -/
+theorem overLookalike : «C.D»._inaccessible := trivial
+
 end Spec2.Basic

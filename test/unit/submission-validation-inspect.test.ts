@@ -29,6 +29,8 @@ import {
 } from "../support/submission-validation.js";
 import { validateManifest } from "../../src/submission-validation/validators/manifest.js";
 import { FindingCollector } from "../../src/submission-validation/findings.js";
+import { parseSuccessfulValidationArtifacts } from "../../src/submission-validation/artifact-schema.js";
+import { successfulArtifacts, validationRequest } from "../support/validation-artifacts.js";
 
 afterEach(cleanupTemporary);
 
@@ -600,6 +602,53 @@ describe("inspection judgments retained from main", () => {
   });
 });
 
+describe("the archive name grammar under spec 1", () => {
+  // One name grammar for both specs (ultracode review 2026-10-04, C3): a
+  // statement or proof the classifier admits must parse under the
+  // publication schema — a name refused there instead is a non-retryable
+  // infrastructure failure after validation passed — and one it refuses is
+  // a finding. Spec 1 prints names with Lean's escaped `Name.toString` too.
+  it("records every name the schema admits and refuses every other one as a finding", () => {
+    const admitted = ["good?", "main!", "℘", "h₁", "étale", "α'", "_x"];
+    const refused = ["«定理»", "«A.B»", "«λ»", "«1st»"];
+    for (const component of [...admitted, ...refused]) {
+      const fixture = reports();
+      const statementId = `Lax1.Claim.${component}`;
+      const proofId = `Lax1Proofs.${component}`;
+      Object.assign(fixture.concepts.declarations[0]!, { name: statementId, userName: statementId, axioms: [statementId] });
+      const proof = fixture.proofs.declarations[0]!;
+      Object.assign(proof, { name: proofId, userName: proofId, doc: { ...proof.doc!, scalars: [["conclusion", statementId]] } });
+      const judged = judgeInspection(
+        fixture.concepts,
+        fixture.proofs,
+        fixture.conceptInventory,
+        fixture.proofInventory,
+        EMPTY_RESOLUTION,
+      );
+      if (refused.includes(component)) {
+        expect(judged.result.concepts.flatMap((concept) => concept.statements), component).toEqual([]);
+        expect(judged.result.proofs, component).toEqual([]);
+        expect(judged.findings.violations.map((finding) => `[${finding.rule}] ${finding.message}`), component).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining(`[statement] statement ${statementId}: its name is not a plain Lean identifier`),
+            expect.stringContaining(`[proof] proof ${proofId}: its name is not a plain Lean identifier`),
+          ]),
+        );
+        for (const finding of judged.findings.violations) expect(finding).not.toHaveProperty("intent");
+        continue;
+      }
+      expect(judged.findings.violations, component).toEqual([]);
+      const artifacts = successfulArtifacts();
+      artifacts.buildOutput.concepts = judged.result.concepts.map((concept) => ({ ...concept, sourceText: "axiom x : True\n" }));
+      artifacts.buildOutput.proofs = judged.result.proofs;
+      artifacts.report.buildOutput = artifacts.buildOutput;
+      expect(() =>
+        parseSuccessfulValidationArtifacts(artifacts.report, structuredClone(artifacts.buildOutput), validationRequest(), artifacts.report.runtime),
+      component).not.toThrow();
+    }
+  });
+});
+
 describe("inspector report size bound", () => {
   // A stand-in inspector that writes a report of the requested size into the
   // output mount, the way the real container does; the bytes are valid JSON
@@ -696,5 +745,16 @@ describe("inspector report shape", () => {
     const conclusion = golden();
     withTelescope(conclusion).telescope.conclusion.binder = "default";
     expect(() => parseInspectorReport(conclusion, 2)).toThrow(`inspector declaration ${index} telescope conclusion has an invalid shape`);
+  });
+
+  it("reads a link's nonCanonical flag, and only as true", () => {
+    const flagged = golden();
+    const { index, telescope } = withTelescope(flagged);
+    telescope.hypotheses[0].nonCanonical = true;
+    expect(parseInspectorReport(flagged, 2).declarations[index]!.telescope!.hypotheses[0]!.nonCanonical).toBe(true);
+    expect(parseInspectorReport(golden(), 2).declarations[index]!.telescope!.hypotheses[0]).not.toHaveProperty("nonCanonical");
+    const malformed = golden();
+    withTelescope(malformed).telescope.conclusion.nonCanonical = false;
+    expect(() => parseInspectorReport(malformed, 2)).toThrow(`inspector declaration ${index} telescope conclusion nonCanonical must be true when present`);
   });
 });

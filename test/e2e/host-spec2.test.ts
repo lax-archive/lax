@@ -477,14 +477,14 @@ end Lax38Proofs
       );
       expect(certificate.challenge).toContain("import Lax38\n");
       expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.hasSucc : _root_.Lax38.Order.HasSucc := sorry");
-      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.refl_of_hasSucc.{u}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{u} := sorry");
+      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.refl_of_hasSucc.{«u»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{«u»} := sorry");
       // the keyword names, as Lean's escaped printer reported them bare and
       // the generator quoted them — and Lean elaborated and the comparator
       // accepted them, since the whole build passed
       expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.reflexive?.{«fun»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.«at».{«fun»} := sorry");
       // a binder kind is not part of the edge: the implicit hypothesis is an
       // explicit one in the Challenge, and the Solution applies the proof with `@`
-      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.refl_of_implicit.{u}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{u} := sorry");
+      expect(certificate.challenge).toContain("theorem Cert.Lax38Proofs.refl_of_implicit.{«u»}\n    (h₁ : _root_.Lax38.Order.HasSucc)\n    : _root_.Lax38.Order.Refl.{«u»} := sorry");
       expect(certificate.challenge).not.toContain("Lax38Proofs.hasSucc h");
       console.log(`[certify timing] lax-38 whole build incl. certification: ${Math.round(performance.now() - started)} ms`);
       // the bundle sealed what ran, and the exports' digests are the files'
@@ -494,7 +494,7 @@ end Lax38Proofs
       expect([...members.keys()]).toEqual(["Challenge.lean", "Solution.lean", "comparator.json", "lake-manifest.json", "lakefile.toml"]);
       expect(members.get("lakefile.toml")).toContain('path = "packages/Lax38Proofs"');
       expect(members.get("Solution.lean")).toContain("@_root_.Lax38Proofs.reflexive?.{«fun»} h₁");
-      expect(members.get("Solution.lean")).toContain("@_root_.Lax38Proofs.refl_of_implicit.{u} h₁");
+      expect(members.get("Solution.lean")).toContain("@_root_.Lax38Proofs.refl_of_implicit.{«u»} h₁");
       expect(createHash("sha256").update(fs.readFileSync(path.join(jobDir, "certify", "challenge.export"))).digest("hex"))
         .toBe(certificate.challengeExportSha256);
       expect(createHash("sha256").update(fs.readFileSync(path.join(jobDir, "certify", "solution.export"))).digest("hex"))

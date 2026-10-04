@@ -21,7 +21,8 @@
 //
 // Pure: no filesystem, no environment. Deterministic by construction: proofs
 // are emitted in id order, imports sorted, and every name goes through
-// `leanName` (certify/lean-name.ts) — never interpolated from a raw string.
+// `leanName` — a universe parameter through `leanLevel` —
+// (certify/lean-name.ts), never interpolated from a raw string.
 // The trusted artifact parser regenerates the Challenge, the Solution, and
 // the configuration from a record's own `proofs` and holds the record to
 // them, which is why the three content files take the proofs alone.
@@ -31,7 +32,7 @@ import type { ProofEntry, ProofTelescope } from "../contracts.js";
 import type { PinnedLibrary } from "../environments.js";
 import { leanFacts } from "../lean-facts.js";
 import type { SeededDependency } from "../host/warmstore.js";
-import { leanName } from "./lean-name.js";
+import { leanLevel, leanName } from "./lean-name.js";
 
 /** A proof as the generator needs it: a spec-2 entry with its telescope. */
 export type CertifiedProof = Pick<ProofEntry, "id"> & {
@@ -130,11 +131,11 @@ export function proofPackagesOf(proofs: readonly CertifiedProof[]): string[] {
 
 const SUBSCRIPT_DIGITS = ["₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉"];
 
-/** `.{u, v}` for a level list, empty for none; every level is a parameter
- * name (never a concrete level — the universe rule) and goes through
- * `leanName`. */
+/** `.{«u», «v»}` for a level list, empty for none; every level is a
+ * parameter name (never a concrete level — the universe rule) and goes
+ * through `leanLevel`, quoted. */
 export function universes(levels: readonly string[]): string {
-  return levels.length === 0 ? "" : `.{${levels.map(leanName).join(", ")}}`;
+  return levels.length === 0 ? "" : `.{${levels.map(leanLevel).join(", ")}}`;
 }
 
 /**

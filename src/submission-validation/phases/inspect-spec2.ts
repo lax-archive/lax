@@ -43,6 +43,7 @@
 import {
   LEAN_NAME_PATTERN,
   type InspectorDeclaration,
+  type InspectorLink,
   type LevelExpr,
   type ProofEntry,
   type ProofTelescope,
@@ -52,6 +53,7 @@ import { leanName } from "../certify/lean-name.js";
 import type { FindingCollector } from "../findings.js";
 import {
   BACKGROUND_AXIOMS,
+  checkArchiveName,
   checkNamespace,
   isPrivateName,
   nameHygieneProblems,
@@ -84,7 +86,7 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
     const problems = statementProblems(declaration);
     for (const problem of problems) findings.violate("statement", `${display(declaration)} ${problem}`, "translation");
     if (problems.length > 0) continue;
-    if (!checkArchiveName(declaration, "statement", findings)) continue;
+    if (!checkArchiveName(declaration, "statement", findings, "translation")) continue;
     const entry = input.byModule.get(declaration.module);
     if (entry === undefined) continue; // the root module: the root-module rule has fired
     if (ownStatements.has(declaration.name)) continue; // a duplicate: refused by inspect.ts, registered once
@@ -114,9 +116,11 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
   // statement and the sibling's own build judges it.
   const siblingConcepts = new Set(input.siblings.proofs.filter((name) => !name.endsWith("Proofs")));
   // A constant outside the archive's name grammar is no statement anywhere:
-  // every recorded statement id is an archive name (`checkArchiveName`).
-  const statementOf = (name: string): "own" | "direct" | "transitive" | "none" =>
-    !LEAN_NAME_PATTERN.test(name) ? "none"
+  // every recorded statement id is an archive name (`checkArchiveName`). Nor
+  // is one whose printed name does not read back (`nonCanonical`): its text
+  // may be a statement's name, but the constant is another.
+  const statementOf = ({ const: name, nonCanonical }: InspectorLink): "own" | "direct" | "transitive" | "none" =>
+    nonCanonical === true || !LEAN_NAME_PATTERN.test(name) ? "none"
       : ownStatements.has(name) ? "own"
       : direct.has(name) || siblingConcepts.has(name.split(".")[0]!) ? "direct"
       : transitive.has(name) ? "transitive"
@@ -149,7 +153,7 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
     const chain = [...telescope.hypotheses, telescope.conclusion];
     // a definition of proof shape is a helper
     if (declaration.kind !== "theorem") continue;
-    const kinds = chain.map((link) => statementOf(link.const));
+    const kinds = chain.map(statementOf);
     // a chain over something that is no statement anywhere is a helper
     if (kinds.includes("none")) continue;
     // an endpoint: user-level, canonical, legible, or refused — or, if Lean
@@ -203,7 +207,7 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
       );
     }
     if (!ok) continue;
-    if (!checkArchiveName(declaration, "proof", findings)) continue;
+    if (!checkArchiveName(declaration, "proof", findings, "translation")) continue;
 
     const recorded: ProofTelescope = {
       hypotheses: telescope.hypotheses.map((hypothesis) => ({
@@ -351,34 +355,12 @@ function checkCanonicalName(declaration: InspectorDeclaration, label: "concept" 
   return false;
 }
 
-/** The archive-name rule (translation; ultracode review 2026-10-04, C3): a
- * statement or a proof, and every universe parameter it declares, is
- * recorded, linked, and written into the certificate by the name Lean
- * prints, so that name must be in the archive's grammar (contracts.ts
- * LEAN_NAME_PATTERN): plain identifier components, none Lean prints in
- * `«»`. A name outside it is refused here, as a finding, rather than by the
- * publication schema after validation passed. Returns whether the endpoint
- * may be recorded. */
-function checkArchiveName(declaration: InspectorDeclaration, label: "statement" | "proof", findings: FindingCollector): boolean {
-  const outside = [declaration.name, ...(declaration.levelParams ?? [])].filter((name) => !LEAN_NAME_PATTERN.test(name));
-  if (outside.length === 0) return true;
-  const which = outside[0] === declaration.name ? "its name" : `its universe parameter ${outside[0]}`;
-  findings.violate(
-    label,
-    `${label} ${display(declaration)}: ${which} is not a plain Lean identifier; a statement or proof and its ` +
-      "universe parameters are named by dot-separated identifiers Lean prints without `«»` (letters, digits, " +
-      "`_`, `'`, `!`, `?`, Greek, letterlike symbols, subscripts) — rename it",
-    "translation",
-  );
-  return false;
-}
-
 /** The name-hygiene rule (translation; fable review 2026-10-04, finding
  * 1.3): the Challenge text is the reader's audit surface, so a name a reader
  * cannot tell from another is refused — a non-NFC name, a combining mark or
  * a format control (an invisible joiner), or a component mixing scripts
- * (a Cyrillic `а` in a Latin word; a Greek capital, which the escaper
- * writes bare). Lower-case Greek beside Latin (`hα`) is what Lean authors
+ * (a Cyrillic `а` in a Latin word; a Greek capital, which Lean prints
+ * bare). Lower-case Greek beside Latin (`hα`) is what Lean authors
  * write and is admitted; the letterlike block (`ℕ`) is Common. Applies to
  * the names the certificate can carry — those with a user-level name — and
  * to universe parameters. Returns whether the declaration may be

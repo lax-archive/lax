@@ -16,6 +16,7 @@ import { FindingCollector } from "../findings.js";
 import { leanFacts } from "../lean-facts.js";
 import {
   BACKGROUND_AXIOMS,
+  checkArchiveName,
   checkFrontmatter,
   checkNamespace,
   list,
@@ -186,7 +187,7 @@ function classifySpec1(input: ClassificationInput): ProofEntry[] {
         findings.violate("axiom-free", `concept declaration ${declaration.name} depends on axiom ${axiom}`);
     if (declaration.doc?.hasFrontmatter)
       findings.violate("annotation", `concept declaration ${declaration.name} carries proof frontmatter`);
-    if (declaration.kind === "axiom") {
+    if (declaration.kind === "axiom" && checkArchiveName(declaration, "statement", findings)) {
       const entry = byModule.get(declaration.module);
       if (entry !== undefined) {
         ownStatements.add(declaration.name);
@@ -268,6 +269,7 @@ function classifySpec1(input: ClassificationInput): ProofEntry[] {
     if (claimed !== undefined && JSON.stringify([...new Set(claimed)].sort()) !== JSON.stringify(assumptions))
       findings.violate("proof", `${where}: declared assumptions do not match the inspected assumption set`);
     const body = splitSections(doc.description, where, findings);
+    if (!checkArchiveName(declaration, "proof", findings)) continue;
     proofs.push({
       id: declaration.name,
       path: proofInventory.paths.get(declaration.module) ?? "",

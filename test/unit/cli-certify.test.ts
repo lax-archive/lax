@@ -251,7 +251,7 @@ describe("lax certify", () => {
     expect(code).toBe(0);
     const files = bundleIn(out);
     expect(files["Challenge.lean"]).toBe(challengeText([certifiedProof(EUCLID)]));
-    expect(files["Solution.lean"]).toContain("@_root_.Lax42Proofs.euclid.{u} h₁");
+    expect(files["Solution.lean"]).toContain("@_root_.Lax42Proofs.euclid.{«u»} h₁");
     expect(files["lakefile.toml"]).toContain('name = "LaxCore"');
     expect(files["lakefile.toml"]).toContain(`name = "Lax42"\ngit = "https://github.com/alice/primes"\nrev = "${"42".padStart(40, "0")}"\nsubDir = "concepts"`);
     expect(files["lakefile.toml"]).toContain('name = "Lax42Proofs"\ngit = "https://github.com/alice/primes"');
@@ -381,11 +381,11 @@ describe("lax certify", () => {
     expect(await withTestEnvironmentsAsync([SPEC2], () => certify("Lax42.Primes.InfinitelyManyPrimes", { out: outright }))).toBe(0);
 
     const files = bundleIn(outright);
-    expect(files["Challenge.lean"]).toContain("import Lax42\n\ntheorem Cert.Lax42.Primes.InfinitelyManyPrimes.{u} : _root_.Lax42.Primes.InfinitelyManyPrimes.{u} := sorry\n");
+    expect(files["Challenge.lean"]).toContain("import Lax42\n\ntheorem Cert.Lax42.Primes.InfinitelyManyPrimes.{«u»} : _root_.Lax42.Primes.InfinitelyManyPrimes.{«u»} := sorry\n");
     expect(files["Solution.lean"]).toContain(
       "import Lax261Proofs\nimport Lax42Proofs\n\n" +
-        "theorem Cert.Lax42.Primes.InfinitelyManyPrimes.{u} : _root_.Lax42.Primes.InfinitelyManyPrimes.{u} := " +
-        "@_root_.Lax42Proofs.euclid.{u} (@_root_.Lax261Proofs.existsPrimeDivisor)\n",
+        "theorem Cert.Lax42.Primes.InfinitelyManyPrimes.{«u»} : _root_.Lax42.Primes.InfinitelyManyPrimes.{«u»} := " +
+        "@_root_.Lax42Proofs.euclid.{«u»} (@_root_.Lax261Proofs.existsPrimeDivisor)\n",
     );
     expect(JSON.parse(files["comparator.json"])).toMatchObject({ theorem_names: ["Cert.Lax42.Primes.InfinitelyManyPrimes"] });
     // concept packages first, then the proof packages on the path
@@ -400,9 +400,9 @@ describe("lax certify", () => {
     ).toBe(0);
     const relativeFiles = bundleIn(relative);
     expect(relativeFiles["Challenge.lean"]).toContain(
-      "theorem Cert.Lax42.Primes.InfinitelyManyPrimes.{u}\n    (h₁ : _root_.Lax42.Primes.ExistsPrimeDivisor)\n    : _root_.Lax42.Primes.InfinitelyManyPrimes.{u} := sorry\n",
+      "theorem Cert.Lax42.Primes.InfinitelyManyPrimes.{«u»}\n    (h₁ : _root_.Lax42.Primes.ExistsPrimeDivisor)\n    : _root_.Lax42.Primes.InfinitelyManyPrimes.{«u»} := sorry\n",
     );
-    expect(relativeFiles["Solution.lean"]).toContain(":= @_root_.Lax42Proofs.euclid.{u} h₁\n");
+    expect(relativeFiles["Solution.lean"]).toContain(":= @_root_.Lax42Proofs.euclid.{«u»} h₁\n");
     expect(relativeFiles["Solution.lean"]).not.toContain("Lax261Proofs");
   });
 

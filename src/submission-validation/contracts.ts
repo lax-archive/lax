@@ -443,8 +443,20 @@ export type LevelExpr =
  * question (phases/inspect-spec2.ts).
  */
 export interface InspectorTelescope {
-  hypotheses: Array<{ const: string; levels: LevelExpr[] }>;
-  conclusion: { const: string; levels: LevelExpr[] };
+  hypotheses: InspectorLink[];
+  conclusion: InspectorLink;
+}
+
+/** One link of an InspectorTelescope: the constant as Lean's escaped
+ * `Name.toString` prints it, its level arguments, and `nonCanonical` when
+ * that text does not read back as the constant (the inspector's
+ * `isCanonicalName`): such a link is never the constant its text names — the
+ * text may even be a different, canonical name — so it is no statement
+ * anywhere and matches no recorded name. */
+export interface InspectorLink {
+  const: string;
+  levels: LevelExpr[];
+  nonCanonical?: true;
 }
 
 /**
