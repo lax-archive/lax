@@ -546,6 +546,26 @@ const CASES: Case[] = [
     proofEntries: [],
   },
   {
+    // `private def f (h : A) : {n // A} := ⟨0, …⟩` abstracts into
+    // `_private.<module>.0.f._proof_1 : A → A`; the inspector reports it
+    // private with the parent it was generated for, so the private-proof
+    // rule — about theorems written `private` — never sees it (ultracode
+    // review 2026-10-04, I1 follow-up)
+    name: "a theorem of proof shape Lean generated under a private parent is a helper, not a private proof",
+    concepts: [statement(A)],
+    proofs: [
+      decl({ name: "_private.Lax1Proofs.Basic.0.Lax1Proofs.f", userName: "Lax1Proofs.f", kind: "def" }),
+      decl({
+        name: "_private.Lax1Proofs.Basic.0.Lax1Proofs.f._proof_1",
+        userName: undefined,
+        origin: { kind: "private", module: "Lax1Proofs.Basic", parent: "Lax1Proofs.f" },
+        telescope: chain([[A]], [A]),
+      }),
+    ],
+    violations: [],
+    proofEntries: [],
+  },
+  {
     name: "a theorem of proof shape under macro scopes or of an unreported origin is refused as an endpoint",
     concepts: [statement(A)],
     proofs: [
@@ -553,7 +573,7 @@ const CASES: Case[] = [
       decl({ name: "Lax1Proofs.q", origin: undefined, telescope: chain([], [A]) }),
     ],
     violations: [
-      ["proof", "proof declaration Lax1Proofs.p._@.Lax1Proofs.Basic._hyg.3 has the shape of a proof but is not an authored declaration — it carries macro scopes of Lax1Proofs.Basic"],
+      ["proof", "proof declaration Lax1Proofs.p._@.Lax1Proofs.Basic._hyg.3 has the shape of a proof but is not an authored declaration — it carries macro scopes of Lax1Proofs.Basic — a macro must give a proof a plain name (`mkIdent`)"],
       ["proof", "proof declaration Lax1Proofs.q has the shape of a proof but is not an authored declaration — its origin is unknown"],
     ],
     proofEntries: [],

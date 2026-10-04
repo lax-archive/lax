@@ -16,9 +16,10 @@
 // Proof: a theorem whose telescope is non-null and whose every constant is a
 // statement of the package's own concept package or of a concept package the
 // proof package requires directly. A statement reachable only transitively
-// is a violation ("require its package"); a private theorem of proof shape is
-// a violation, while one Lean generated (`f._proof_1`, an equation lemma) is
-// a helper the certificate never names; every level argument of every
+// is a violation ("require its package"); a theorem of proof shape written
+// `private` is a violation, while one Lean generated (`f._proof_1`, an
+// equation lemma — under a `private def` too) is a helper the certificate
+// never names; every level argument of every
 // statement in the chain is a universe parameter of the proof and the
 // conclusion's are pairwise distinct.
 // Everything else of theorem kind is a helper. Edge `{S₁..Sₖ} → C` with
@@ -386,11 +387,23 @@ function checkNameHygiene(declaration: InspectorDeclaration, label: "concept" | 
   return false;
 }
 
-/** Authored by the module's own syntax, or private (which has its own
- * rule and hint): what the authored rules — canonical, legible, endpoint —
- * apply to. Scoped, realized, and auxiliary declarations are Lean's. */
+/** Authored by the module's own syntax, or written `private` (which has
+ * its own rule and hint): what the authored rules — canonical, legible,
+ * endpoint — apply to. Scoped declarations and what Lean generated are
+ * not. */
 function isAuthoredOrigin(declaration: InspectorDeclaration): boolean {
-  return declaration.origin?.kind === "authored" || declaration.origin?.kind === "private";
+  const origin = declaration.origin;
+  return origin?.kind === "authored" || (origin?.kind === "private" && origin.parent === undefined);
+}
+
+/** The constant Lean generated a declaration for, by its origin: an
+ * `auxiliary` or `realized` one, or a private one the inspector reports
+ * with a parent (the nested proof of a `private def`) — privacy says whose
+ * module the name is in, not who wrote it. */
+function generatedFor(declaration: InspectorDeclaration): string | undefined {
+  const origin = declaration.origin;
+  if (origin?.kind === "auxiliary" || origin?.kind === "realized" || origin?.kind === "private") return origin.parent;
+  return undefined;
 }
 
 /** The endpoint gate (translation; codex review 2 2026-10-04, finding 1):
@@ -400,24 +413,26 @@ function isAuthoredOrigin(declaration: InspectorDeclaration): boolean {
  * honest package produces. A theorem Lean generated under a constant of
  * the package or an import — an abstracted nested proof
  * (`def f (h : A) : {n // C} := ⟨0, …⟩` yields `f._proof_1 : A → C`), an
- * equation lemma — has the shape of a proof whenever the abstracted
- * proposition is a chain of statements, so an `auxiliary` or `realized`
- * theorem is a helper: the certificate never names it, and refusing it
- * would add no soundness (ultracode review 2026-10-04, I1). A tag on what
- * Lean generated, and a proof shape under a macro-scoped name or an origin
- * the inspector did not report, come only from a forged or mistaken olean
- * and are refused rather than translated. */
+ * equation lemma, either under a `private def` — has the shape of a proof
+ * whenever the abstracted proposition is a chain of statements, so a
+ * theorem Lean generated (`generatedFor`) is a helper: the certificate
+ * never names it, and refusing it would add no soundness (ultracode review
+ * 2026-10-04, I1). A tag on what Lean generated is refused. So is a proof
+ * shape under a macro-scoped name — honest code produces one (a hygienic
+ * command macro's `theorem t` is `t._@.M._hyg.N`), but the certificate
+ * could not name it, and a macro must give a proof a plain name
+ * (`mkIdent`) — and one whose origin the inspector did not report. */
 function checkEndpointName(declaration: InspectorDeclaration, label: "concept" | "proof", findings: FindingCollector): boolean {
   if (isAuthoredOrigin(declaration)) return true;
-  const generated = declaration.origin?.kind === "auxiliary" || declaration.origin?.kind === "realized";
-  if (label === "proof" && generated) return false;
+  const generated = generatedFor(declaration);
+  if (label === "proof" && generated !== undefined) return false;
   const what = label === "concept" ? "carries @[lax_statement]" : "has the shape of a proof";
   const origin = declaration.origin;
   const why =
     origin === undefined ? "its origin is unknown"
       : origin.kind === "realized" ? `Lean realized it under ${origin.parent}`
-      : origin.kind === "auxiliary" ? `Lean generated it for ${origin.parent}`
-      : origin.kind === "scoped" ? `it carries macro scopes of ${origin.module}`
+      : generated !== undefined ? `Lean generated it for ${generated}`
+      : origin.kind === "scoped" ? `it carries macro scopes of ${origin.module} — a macro must give a proof a plain name (\`mkIdent\`)`
       : `its origin is ${origin.kind}`;
   findings.violate(
     label === "concept" ? "statement" : "proof",

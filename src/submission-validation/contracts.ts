@@ -500,13 +500,14 @@ export interface ConclusionFacts {
 
 /** Where a spec-2 declaration came from (lean/inspector/Main.lean
  * `Origin`): authored from the module's syntax; private, mangled with its
- * module; scoped, carrying macro scopes of its module; realized by Lean
+ * module — with the un-mangled parent when Lean generated it (the nested
+ * proof of a `private def`), without one when the author wrote it; scoped, carrying macro scopes of its module; realized by Lean
  * under an existing constant (reserved names, matcher realizations), its
  * parent; or an auxiliary Lean generated for an own declaration (recursors,
  * `casesOn`, matchers, `sizeOf` lemmas, abstracted proofs), its parent. */
 export type DeclarationOrigin =
   | { kind: "authored" }
-  | { kind: "private"; module: string }
+  | { kind: "private"; module: string; parent?: string }
   | { kind: "scoped"; module: string }
   | { kind: "realized"; parent: string }
   | { kind: "auxiliary"; parent: string };

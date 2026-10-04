@@ -224,9 +224,16 @@ rule reads its presence. The cases, in the order they are decided:
 * `scoped module` — a name carrying macro scopes (`hasMacroScopes`); the
   module is the one `extractMacroScopes` names (`scopeModule`).
   Decided first: such a name has numeric components whatever else it is.
-* `private module` — Lean's private mangling `_private.<module>.0.<rest>`
-  (`privatePrefix?`); the module is the mangling's own evidence, and it
-  settles ownership before anything Lean realized inside the name.
+* `private module parent?` — Lean's private mangling
+  `_private.<module>.0.<rest>` (`privatePrefix?`); the module is the
+  mangling's own evidence, and it settles ownership before anything Lean
+  realized inside the name. Privacy alone does not say who wrote the name,
+  so the case also carries the parent, un-mangled, when Lean generated it:
+  no range, and reserved, a matcher realization, or under an own parent
+  (by the mangled or the un-mangled name) — the nested proof of a
+  `private def f` is `_private.M.0.f._proof_1` (ultracode review
+  2026-10-04, I1 follow-up). An authored private name has its range and
+  no parent.
 * `realized parent` — a reserved name (`isReservedName`, persisted or
   un-mangled) or a matcher realization: a name Lean realizes under an
   existing constant and refuses an author (`checkNotAlreadyDeclared`);
@@ -247,7 +254,7 @@ are untrusted data: a forged range makes a generated name authored
 (never an endpoint, still held to its prefix). -/
 inductive Origin where
   | authored
-  | «private» (module : Name)
+  | «private» (module : Name) (parent : Option Name)
   | scoped (module : Name)
   | realized (parent : Name)
   | auxiliary (parent : Name)
@@ -287,7 +294,15 @@ def originOf (env : Environment) (matchers : NameSet) (packageNames : NameSet)
   -- then privacy: the mangling settles ownership before anything Lean
   -- realized inside the private name (a matcher's `splitter` is a private
   -- *definition*, which realized-def rules would otherwise refuse)
-  else if let some m := privateModule? n then .«private» m
+  else if let some m := privateModule? n then
+    let generated :=
+      if ranges.contains n then none
+      else if isReservedEither env n || isMatcherRealization matchers n || isMatcherRealization matchers u then
+        some u.getPrefix
+      else match ownParent? packageNames n with
+        | some p => some ((privateToUserName? p).getD p)
+        | none => ownParent? packageNames u
+    .«private» m generated
   else if isReservedEither env n || isMatcherRealization matchers n || isMatcherRealization matchers u then
     .realized u.getPrefix
   else if ranges.contains n then .authored
@@ -296,7 +311,9 @@ def originOf (env : Environment) (matchers : NameSet) (packageNames : NameSet)
 
 def jsonOfOrigin (canon : Name → String) : Origin → Json
   | .authored => Json.mkObj [("kind", Json.str "authored")]
-  | .«private» m => Json.mkObj [("kind", Json.str "private"), ("module", Json.str (canon m))]
+  | .«private» m none => Json.mkObj [("kind", Json.str "private"), ("module", Json.str (canon m))]
+  | .«private» m (some p) =>
+    Json.mkObj [("kind", Json.str "private"), ("module", Json.str (canon m)), ("parent", Json.str (canon p))]
   | .scoped m => Json.mkObj [("kind", Json.str "scoped"), ("module", Json.str (canon m))]
   | .realized p => Json.mkObj [("kind", Json.str "realized"), ("parent", Json.str (canon p))]
   | .auxiliary p => Json.mkObj [("kind", Json.str "auxiliary"), ("parent", Json.str (canon p))]

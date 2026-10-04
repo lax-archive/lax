@@ -253,9 +253,11 @@ case, not `C`); hypotheses may repeat a variable. Every edge is then
 universally quantified over universes and name-only composition is sound;
 the generated Challenge theorem copies the proof's level parameters. Anything
 else of theorem kind is a helper, and so is a theorem Lean generated
-(origin `auxiliary` or `realized`: an abstracted `f._proof_1 : A → C`, an
-equation lemma) whatever its shape — the endpoint gate excludes it; only a
-`scoped` or unreported origin of proof shape is refused (ultracode review
+(origin `auxiliary` or `realized`, or `private` with a parent: an
+abstracted `f._proof_1 : A → C`, under a `private def` too, an equation
+lemma) whatever its shape — the endpoint gate excludes it; only a `scoped`
+or unreported origin of proof shape is refused, honest hygienic macros
+included (a macro names a proof with `mkIdent`) (ultracode review
 2026-10-04, I1). A helper carrying docstring frontmatter
 is a violation (a spec-1 habit must fail loudly). Unused hypotheses are
 assumptions; section variables the elaborator dropped are not binders.
@@ -726,3 +728,15 @@ generated (`auxiliary`/`realized` origin, e.g. `f._proof_1` from
 `scoped` and unknown origins stay refused, the private-proof rule is
 unchanged. Real-Lean coverage: `withFacts._proof_1` in the lax-39
 realized-names e2e (`test/e2e/host-spec2.test.ts`).
+
+2026-10-04, I1 follow-up (review of the I1 fix): `originOf` decided
+privacy first, so the nested proof of a `private def`
+(`_private.M.0.f._proof_1`) was origin `private` and refused as a private
+proof. The `private` origin now carries the un-mangled parent when Lean
+generated the name (no range, and reserved, a matcher realization, or
+under an own parent); such a theorem is a helper, and the private-proof
+rule applies only to theorems written `private`. The namespace exemption
+is unchanged (still keyed on the module). Real-Lean coverage:
+`hiddenWithFacts._proof_1` in the same e2e. The "only a forged olean"
+wording for macro-scoped proof shapes was wrong (a hygienic command macro
+produces one) and is reworded; the refusal stays.

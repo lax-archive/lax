@@ -221,6 +221,13 @@ function parseOrigin(value: unknown, label: string): DeclarationOrigin {
       exactKeys(item, ["kind"], `${label} origin`);
       return { kind };
     case "private":
+      // with a parent when Lean generated the private name
+      if (item.parent === undefined) {
+        exactKeys(item, ["kind", "module"], `${label} origin`);
+        return { kind, module: text(item.module, `${label} origin module`) };
+      }
+      exactKeys(item, ["kind", "module", "parent"], `${label} origin`);
+      return { kind, module: text(item.module, `${label} origin module`), parent: text(item.parent, `${label} origin parent`) };
     case "scoped":
       exactKeys(item, ["kind", "module"], `${label} origin`);
       return { kind, module: text(item.module, `${label} origin module`) };

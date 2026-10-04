@@ -141,8 +141,9 @@ registered next year. Never escape with `_root_`. A `private` helper is
 fine anywhere, but a proof — a theorem whose type is a chain of statements
 — is never `private`: the certificate names it from another module, and
 `lax build` refuses one. What Lean generates on its own (the `f._proof_1`
-a definition's nested proof becomes, an equation lemma) is a helper
-whatever its type. Never `initialize` (nor `register_option`,
+a definition's nested proof becomes, a `private def`'s included, an
+equation lemma) is a helper whatever its type. A theorem a macro declares
+needs a plain name (`mkIdent`): a hygienic `theorem t` is refused. Never `initialize` (nor `register_option`,
 `register_simp_attr`, `declare_syntax_cat`): a registry keyed by name
 clashes at import. Write `scoped notation`, `scoped syntax`, `scoped
 macro_rules`, and `local attribute`, never the global forms — a global
