@@ -143,7 +143,7 @@ export function composeRelativeCertificate(input: ComposeInput): ComposedCertifi
           "so its hypothesis would have an arbitrary instance; drop it from --relative-to",
       );
     }
-    return { statement: statement.id, levels: instances[0] ?? [], binder: "default" as const };
+    return { statement: statement.id, levels: instances[0] ?? [] };
   });
   const names = new Map(input.given.map((statement, index) => [statement.id, `h${subscript(index + 1)}`]));
   const named = body.replace(/\u0000([^\u0000]+)\u0000/gu, (_match, statement: string) => names.get(statement)!);

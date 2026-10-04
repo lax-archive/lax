@@ -30,8 +30,9 @@ export interface ChallengeMismatch {
 /**
  * Every certificate theorem of the built Challenge, as the inspector read it,
  * against the record's telescopes: the same statement constants with the
- * same universe instances in the same binder positions with the same binder
- * kinds, the same conclusion, the same level parameters. The first
+ * same universe instances in the same binder positions, the same
+ * conclusion, the same level parameters (binder kinds are not part of an
+ * edge: the Solution applies the proof with `@`). The first
  * disagreement is the violation; `undefined` means the Challenge states
  * exactly the record's edges.
  */
@@ -64,7 +65,6 @@ function compareTelescope(built: InspectorTelescope, recorded: ProofTelescope): 
   for (const [index, hypothesis] of built.hypotheses.entries()) {
     const expected = recorded.hypotheses[index]!;
     if (hypothesis.const !== expected.statement) return `hypothesis ${index + 1} is ${hypothesis.const}, not ${expected.statement}`;
-    if (hypothesis.binder !== expected.binder) return `hypothesis ${index + 1} has binder kind ${hypothesis.binder}, not ${expected.binder}`;
     const levels = paramNames(hypothesis.levels);
     if (levels === undefined || !sameStrings(levels, expected.levels))
       return `hypothesis ${index + 1} instantiates ${hypothesis.const} at {${hypothesis.levels.map(renderLevel).join(", ")}}, not {${expected.levels.join(", ")}}`;

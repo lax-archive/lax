@@ -218,7 +218,6 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
       hypotheses: telescope.hypotheses.map((hypothesis) => ({
         statement: hypothesis.const,
         levels: hypothesis.levels.map(paramName),
-        binder: hypothesis.binder,
       })),
       conclusion: {
         statement: telescope.conclusion.const,

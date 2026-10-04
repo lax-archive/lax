@@ -37,7 +37,7 @@ const PROOFS: ProofEntry[] = [
     path: "proofs/Lax1Proofs/Basic.lean",
     levelParams: [],
     telescope: {
-      hypotheses: [{ statement: "Lax7.Primes.ExistsPrimeDivisor", levels: [], binder: "default" }],
+      hypotheses: [{ statement: "Lax7.Primes.ExistsPrimeDivisor", levels: [] }],
       conclusion: { statement: "Lax1.Infinite.InfinitelyManyPrimes", levels: [] },
     },
     conclusion: "Lax1.Infinite.InfinitelyManyPrimes",

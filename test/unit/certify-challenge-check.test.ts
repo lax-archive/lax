@@ -15,8 +15,8 @@ const EDGE: ProofEntry = {
   levelParams: ["u"],
   telescope: {
     hypotheses: [
-      { statement: "Lax7.Primes.ExistsPrimeDivisor", levels: [], binder: "default" },
-      { statement: "Lax1.Infinite.Poly", levels: ["u"], binder: "instImplicit" },
+      { statement: "Lax7.Primes.ExistsPrimeDivisor", levels: [] },
+      { statement: "Lax1.Infinite.Poly", levels: ["u"] },
     ],
     conclusion: { statement: "Lax1.Infinite.InfinitelyManyPrimes", levels: ["u"] },
   },
@@ -40,8 +40,8 @@ function built(overrides: Partial<InspectorDeclaration> = {}): InspectorDeclarat
     levelParams: ["u"],
     telescope: {
       hypotheses: [
-        { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [], binder: "default" },
-        { const: "Lax1.Infinite.Poly", levels: [["param", "u"]], binder: "instImplicit" },
+        { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [] },
+        { const: "Lax1.Infinite.Poly", levels: [["param", "u"]] },
       ],
       conclusion: { const: "Lax1.Infinite.InfinitelyManyPrimes", levels: [["param", "u"]] },
     },
@@ -81,8 +81,8 @@ describe("the Challenge held to the telescope", () => {
       built({
         telescope: {
           hypotheses: [
-            { const: "Lax7.Primes.Other", levels: [], binder: "default" },
-            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]], binder: "instImplicit" },
+            { const: "Lax7.Primes.Other", levels: [] },
+            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]] },
           ],
           conclusion: { const: "Lax1.Infinite.InfinitelyManyPrimes", levels: [["param", "u"]] },
         },
@@ -94,8 +94,8 @@ describe("the Challenge held to the telescope", () => {
       built({
         telescope: {
           hypotheses: [
-            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]], binder: "instImplicit" },
-            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [], binder: "default" },
+            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]] },
+            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [] },
           ],
           conclusion: { const: "Lax1.Infinite.InfinitelyManyPrimes", levels: [["param", "u"]] },
         },
@@ -103,25 +103,12 @@ describe("the Challenge held to the telescope", () => {
       "hypothesis 1 is Lax1.Infinite.Poly, not Lax7.Primes.ExistsPrimeDivisor",
     ],
     [
-      "another binder kind",
-      built({
-        telescope: {
-          hypotheses: [
-            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [], binder: "default" },
-            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]], binder: "default" },
-          ],
-          conclusion: { const: "Lax1.Infinite.InfinitelyManyPrimes", levels: [["param", "u"]] },
-        },
-      }),
-      "hypothesis 2 has binder kind default, not instImplicit",
-    ],
-    [
       "a hypothesis at a concrete universe",
       built({
         telescope: {
           hypotheses: [
-            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [], binder: "default" },
-            { const: "Lax1.Infinite.Poly", levels: [["succ", ["zero"]]], binder: "instImplicit" },
+            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [] },
+            { const: "Lax1.Infinite.Poly", levels: [["succ", ["zero"]]] },
           ],
           conclusion: { const: "Lax1.Infinite.InfinitelyManyPrimes", levels: [["param", "u"]] },
         },
@@ -133,8 +120,8 @@ describe("the Challenge held to the telescope", () => {
       built({
         telescope: {
           hypotheses: [
-            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [], binder: "default" },
-            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]], binder: "instImplicit" },
+            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [] },
+            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]] },
           ],
           conclusion: { const: "Lax1.Infinite.Weaker", levels: [["param", "u"]] },
         },
@@ -147,8 +134,8 @@ describe("the Challenge held to the telescope", () => {
         levelParams: ["u"],
         telescope: {
           hypotheses: [
-            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [], binder: "default" },
-            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]], binder: "instImplicit" },
+            { const: "Lax7.Primes.ExistsPrimeDivisor", levels: [] },
+            { const: "Lax1.Infinite.Poly", levels: [["param", "u"]] },
           ],
           conclusion: { const: "Lax1.Infinite.InfinitelyManyPrimes", levels: [["param", "v"]] },
         },

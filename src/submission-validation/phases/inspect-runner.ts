@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ValidationLimits } from "../config.js";
 import type {
-  BinderKind,
   ConclusionFacts,
   ContentSpecVersion,
   DeclarationOrigin,
@@ -147,7 +146,6 @@ export function parseInspectorReport(value: unknown, specVersion: ContentSpecVer
 }
 
 const SPEC2_FACTS = ["laxStatement", "isProp", "levelParams", "telescope"] as const;
-const BINDER_KINDS: readonly BinderKind[] = ["default", "implicit", "strictImplicit", "instImplicit"];
 
 function parseModule(value: unknown, index: number, specVersion: ContentSpecVersion): InspectorModule {
   const item = record(value, `inspector module ${index}`);
@@ -245,13 +243,10 @@ function parseTelescope(value: unknown, label: string): InspectorTelescope {
   exactKeys(item, ["hypotheses", "conclusion"], `${label} telescope`);
   const hypotheses = array(item.hypotheses, `${label} telescope hypotheses`, 10_000).map((entry, index) => {
     const binder = record(entry, `${label} telescope hypothesis ${index}`);
-    exactKeys(binder, ["const", "levels", "binder"], `${label} telescope hypothesis ${index}`);
-    if (!BINDER_KINDS.includes(binder.binder as BinderKind))
-      throw new Error(`${label} telescope hypothesis ${index} has an unknown binder kind`);
+    exactKeys(binder, ["const", "levels"], `${label} telescope hypothesis ${index}`);
     return {
       const: text(binder.const, "telescope constant"),
       levels: parseLevels(binder.levels, `${label} telescope hypothesis ${index}`),
-      binder: binder.binder as BinderKind,
     };
   });
   const conclusion = record(item.conclusion, `${label} telescope conclusion`);

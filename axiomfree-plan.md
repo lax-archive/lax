@@ -242,8 +242,9 @@ metadata stripped, is a chain of zero or more `forallE` nodes ending in a
 `const`, where every domain and the conclusion are `const` expressions
 naming statements of a concept package the proof package requires, or of
 its own concept package (transitive reachability does not qualify, as in
-spec 1). Binder info is irrelevant to proof-hood and is recorded so the
-generator applies the proof with `@`. Edge `{S₁..Sₖ} → C`; duplicates
+spec 1). Binder names and kinds are irrelevant to proof-hood, are not part
+of an edge, and are not recorded: the generator states every hypothesis as
+`(hᵢ : Sᵢ)` and applies the proof with `@`. Edge `{S₁..Sₖ} → C`; duplicates
 collapse in the graph but keep their positions in the telescope; `k = 0`
 is unconditional; a self-edge grounds nothing. **Universe rule**: every
 statement constant in the chain is instantiated with the proof's own
@@ -294,8 +295,8 @@ Core-only as today, no `initialize` block. It reads `LaxCore`'s attribute
 as data: the exported entries of the tag attribute's persistent extension,
 looked up by the extension's name in each module's `ModuleData.entries`.
 Per declaration it adds `laxStatement`, `isProp` (raw `Sort 0`),
-`levelParams`, and `telescope` (ordered binders, each the constant name,
-its level instantiation, and binder info; the conclusion constant; or
+`levelParams`, and `telescope` (ordered binders, each the constant name
+and its level instantiation; the conclusion constant; or
 `null`), plus the pretty-printed body of every tagged definition for the
 website. Environment reads only, no kernel work. One inspector source for
 both specs; the invocation passes the spec version; the golden fixture
@@ -740,3 +741,13 @@ is unchanged (still keyed on the module). Real-Lean coverage:
 `hiddenWithFacts._proof_1` in the same e2e. The "only a forged olean"
 wording for macro-scoped proof shapes was wrong (a hygienic command macro
 produces one) and is reworded; the refusal stays.
+
+2026-10-04, ultracode review C2: binder kinds are no longer recorded. The
+inspector's telescope, both validators, the record's `telescope`, the
+challenge check and the website carry statement and levels only; the
+generator states every hypothesis as `(hᵢ : Sᵢ)`, so no Challenge needs
+`checkBinderAnnotations false`. Proof-hood still accepts any binder kind
+(the golden keeps `instHyp`). The author guide's instance-binder advice was
+wrong (instance resolution never finds a `Prop` def that is not a class)
+and is gone. This revises the "preserve rather than normalize" resolution
+of Codex-intents finding 7.

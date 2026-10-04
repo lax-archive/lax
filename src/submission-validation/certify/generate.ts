@@ -6,7 +6,9 @@
 //   Challenge.lean    imports the concept packages the edges name and nothing
 //                     of any proof package; per proof one theorem
 //                     `Cert.<proof-id>.{us} (h₁ : S₁) … : C := sorry`, with
-//                     the proof's own binder kinds and level parameters
+//                     the proof's own level parameters; every hypothesis an
+//                     explicit binder, whatever kind the proof declared it
+//                     with — `@` below makes the kind irrelevant
 //   Solution.lean     imports the proof package; the same theorems, each
 //                     discharged by `@<proof-id>.{us} h₁ … hₖ`
 //   comparator.json   the theorem names, no definition holes, the three
@@ -25,7 +27,7 @@
 // them, which is why the three content files take the proofs alone.
 
 import { createHash } from "node:crypto";
-import type { BinderKind, ProofEntry, ProofTelescope } from "../contracts.js";
+import type { ProofEntry, ProofTelescope } from "../contracts.js";
 import type { PinnedLibrary } from "../environments.js";
 import { leanFacts } from "../lean-facts.js";
 import type { SeededDependency } from "../host/warmstore.js";
@@ -135,19 +137,6 @@ export function universes(levels: readonly string[]): string {
   return levels.length === 0 ? "" : `.{${levels.map(leanName).join(", ")}}`;
 }
 
-function binder(kind: BinderKind, name: string, type: string): string {
-  switch (kind) {
-    case "default":
-      return `(${name} : ${type})`;
-    case "implicit":
-      return `{${name} : ${type}}`;
-    case "strictImplicit":
-      return `⦃${name} : ${type}⦄`;
-    case "instImplicit":
-      return `[${name} : ${type}]`;
-  }
-}
-
 /**
  * A constant referenced from inside a certificate theorem. The theorem is
  * named `Cert.<proof-id>`, so its body elaborates in namespace
@@ -184,25 +173,21 @@ export function hypothesisName(index: number): string {
   return `h${String(index + 1).split("").map((digit) => SUBSCRIPT_DIGITS[Number(digit)]).join("")}`;
 }
 
-/** One theorem, statement only; `body` discharges it. An instance binder
- * over a statement — a `Prop` definition is no class — is refused by
- * Lean's binder-annotation check, which the proof package itself must have
- * switched off to declare it; the certificate copies the binder kind, so it
- * switches the check off for that theorem too. A body spanning several
- * lines (a composed relative certificate) goes under `:=` on its own lines;
- * a one-line body stays beside it, as every edge's does. */
+/** One theorem, statement only; `body` discharges it. Every hypothesis is
+ * an explicit binder `(hᵢ : Sᵢ)`: the proof is applied with `@`, and the
+ * kernel ignores binder info, so the kind the proof declared is irrelevant
+ * and not recorded. A body spanning several lines (a composed relative
+ * certificate) goes under `:=` on its own lines; a one-line body stays
+ * beside it, as every edge's does. */
 export function theoremText(statement: CertificateTheorem, body: string): string {
   const name = leanName(statement.name) + universes(statement.levelParams);
   const conclusion =
     rootName(statement.telescope.conclusion.statement) + universes(statement.telescope.conclusion.levels);
-  const guard = statement.telescope.hypotheses.some((hypothesis) => hypothesis.binder === "instImplicit")
-    ? "set_option checkBinderAnnotations false in\n"
-    : "";
   const discharge = body.includes("\n") ? `:=\n${body}` : `:= ${body}`;
-  if (statement.telescope.hypotheses.length === 0) return `${guard}theorem ${name} : ${conclusion} ${discharge}\n`;
+  if (statement.telescope.hypotheses.length === 0) return `theorem ${name} : ${conclusion} ${discharge}\n`;
   const binders = statement.telescope.hypotheses.map((hypothesis, index) =>
-    `    ${binder(hypothesis.binder, hypothesisName(index), rootName(hypothesis.statement) + universes(hypothesis.levels))}\n`);
-  return `${guard}theorem ${name}\n${binders.join("")}    : ${conclusion} ${discharge}\n`;
+    `    (${hypothesisName(index)} : ${rootName(hypothesis.statement) + universes(hypothesis.levels)})\n`);
+  return `theorem ${name}\n${binders.join("")}    : ${conclusion} ${discharge}\n`;
 }
 
 function theorem(proof: CertifiedProof, body: string): string {

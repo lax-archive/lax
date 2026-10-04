@@ -515,17 +515,12 @@ partial def jsonOfLevel : Level → Json
   | .param n => Json.arr #[Json.str "param", Json.str (canonStr n)]
   | .mvar _ => Json.arr #[Json.str "mvar"]
 
-/-- `Lean.BinderInfo`'s own constructor names. -/
-def jsonOfBinderInfo : BinderInfo → Json
-  | .default => Json.str "default"
-  | .implicit => Json.str "implicit"
-  | .strictImplicit => Json.str "strictImplicit"
-  | .instImplicit => Json.str "instImplicit"
-
+/-- One hypothesis of a telescope. The binder's name and kind are not part of
+an edge and are not recorded: the certificate applies the proof with `@`, and
+the kernel ignores binder info. -/
 structure TelescopeBinder where
   const : Name
   levels : List Level
-  binder : BinderInfo
 
 /-- The stored type as a chain of `∀`-binders over bare constants ending in a
 bare constant — metadata stripped at every node, nothing reduced — or `none`
@@ -535,9 +530,9 @@ type whose conclusion is a `Sort`. The walk is purely syntactic. -/
 partial def telescopeOf (e : Expr) (acc : Array TelescopeBinder := #[]) :
     Option (Array TelescopeBinder × Name × List Level) :=
   match e.consumeMData with
-  | .forallE _ d b bi =>
+  | .forallE _ d b _ =>
     match d.consumeMData with
-    | .const n ls => telescopeOf b (acc.push { const := n, levels := ls, binder := bi })
+    | .const n ls => telescopeOf b (acc.push { const := n, levels := ls })
     | _ => none
   | .const n ls => some (acc, n, ls)
   | _ => none
@@ -548,8 +543,7 @@ def jsonOfTelescope : Option (Array TelescopeBinder × Name × List Level) → J
     Json.mkObj
       [("hypotheses", Json.arr (binders.map fun b => Json.mkObj
           [("const", Json.str (canonStr b.const)),
-           ("levels", Json.arr (b.levels.toArray.map jsonOfLevel)),
-           ("binder", jsonOfBinderInfo b.binder)])),
+           ("levels", Json.arr (b.levels.toArray.map jsonOfLevel))])),
        ("conclusion", Json.mkObj
           [("const", Json.str (canonStr n)),
            ("levels", Json.arr (ls.toArray.map jsonOfLevel))])]

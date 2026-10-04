@@ -64,8 +64,8 @@ const GOLDENS: Golden[] = [
     modules: ["Golden", "Golden.Basic"],
   },
   // the spec-2 facts over a hook-less twin of LaxCore (see the fixture's
-  // LaxCore.lean): tagged declarations of every shape, telescopes of every
-  // binder kind, universe levels of every form
+  // LaxCore.lean): tagged declarations of every shape, telescopes over every
+  // binder kind (none recorded), universe levels of every form
   {
     fixture: "inspector-golden-spec2",
     spec: 2,

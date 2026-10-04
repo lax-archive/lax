@@ -555,7 +555,7 @@ end Lax38Proofs
           path: "proofs/Lax38Proofs/Basic.lean",
           levelParams: ["u"],
           telescope: {
-            hypotheses: [{ statement: "Lax38.Order.HasSucc", levels: [], binder: "default" }],
+            hypotheses: [{ statement: "Lax38.Order.HasSucc", levels: [] }],
             conclusion: { statement: "Lax38.Order.Refl", levels: ["u"] },
           },
           conclusion: "Lax38.Order.Refl",
@@ -568,7 +568,7 @@ end Lax38Proofs
           path: "proofs/Lax38Proofs/Basic.lean",
           levelParams: ["λ"],
           telescope: {
-            hypotheses: [{ statement: "Lax38.Order.HasSucc", levels: [], binder: "default" }],
+            hypotheses: [{ statement: "Lax38.Order.HasSucc", levels: [] }],
             conclusion: { statement: "Lax38.Order.定理", levels: ["λ"] },
           },
           conclusion: "Lax38.Order.定理",

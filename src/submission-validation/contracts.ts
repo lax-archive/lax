@@ -412,9 +412,6 @@ export type LevelExpr =
   | ["param", string]
   | ["mvar"];
 
-/** `Lean.BinderInfo`'s constructor names. */
-export type BinderKind = "default" | "implicit" | "strictImplicit" | "instImplicit";
-
 /**
  * The inspector's syntactic read of a stored type that is a chain of
  * `∀`-binders over bare constants ending in a bare constant: a fact, not a
@@ -422,7 +419,7 @@ export type BinderKind = "default" | "implicit" | "strictImplicit" | "instImplic
  * question (phases/inspect-spec2.ts).
  */
 export interface InspectorTelescope {
-  hypotheses: Array<{ const: string; levels: LevelExpr[]; binder: BinderKind }>;
+  hypotheses: Array<{ const: string; levels: LevelExpr[] }>;
   conclusion: { const: string; levels: LevelExpr[] };
 }
 
@@ -432,10 +429,11 @@ export interface InspectorTelescope {
  * level a universe parameter of the proof, so levels are parameter names.
  * Hypotheses keep binder order and duplicates; `ProofEntry.conclusion` and
  * `assumptions` are derived from it. Stage 3's certificate generator applies
- * the proof with `@` in exactly this order.
+ * the proof with `@` in exactly this order, so binder names and kinds are not
+ * part of an edge and are not recorded.
  */
 export interface ProofTelescope {
-  hypotheses: Array<{ statement: string; levels: string[]; binder: BinderKind }>;
+  hypotheses: Array<{ statement: string; levels: string[] }>;
   conclusion: { statement: string; levels: string[] };
 }
 

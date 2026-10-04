@@ -1,6 +1,6 @@
 // The certificate generator (axiomfree-plan.md, "Certify" 1; stage 3's
 // goldens): the five files for an unconditional proof, a conditional one
-// with every binder kind and a duplicated hypothesis, a polymorphic one, a
+// with a duplicated hypothesis, a polymorphic one, a
 // handwritten name Lean cannot read unbracketed, and the quoted proof of the
 // spec-2 inspector golden exactly as the inspector reports it — compared
 // byte for byte against test/fixtures/certify/<case>/. Regeneration from the
@@ -52,10 +52,10 @@ const CASES: Record<string, CertifiedProof[]> = {
       levelParams: [],
       telescope: {
         hypotheses: [
-          { statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [], binder: "default" },
-          { statement: "Lax261.Infinite.Auxiliary", levels: [], binder: "implicit" },
-          { statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [], binder: "instImplicit" },
-          { statement: "Lax261.Infinite.Auxiliary", levels: [], binder: "strictImplicit" },
+          { statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [] },
+          { statement: "Lax261.Infinite.Auxiliary", levels: [] },
+          { statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [] },
+          { statement: "Lax261.Infinite.Auxiliary", levels: [] },
         ],
         conclusion: { statement: "Lax261.Infinite.InfinitelyManyPrimes", levels: [] },
       },
@@ -68,15 +68,15 @@ const CASES: Record<string, CertifiedProof[]> = {
       levelParams: ["u", "v"],
       telescope: {
         hypotheses: [
-          { statement: "Lax38.Order.HasSucc", levels: [], binder: "default" },
-          { statement: "Lax38.Order.Refl", levels: ["v"], binder: "default" },
+          { statement: "Lax38.Order.HasSucc", levels: [] },
+          { statement: "Lax38.Order.Refl", levels: ["v"] },
         ],
         conclusion: { statement: "Lax38.Order.Both", levels: ["u", "v"] },
       },
     },
   ],
   escaping: [
-    { id: "Lax7Proofs.theorem.定理", levelParams: ["λ"], telescope: { hypotheses: [{ statement: "Lax7.Facts.fun", levels: [], binder: "default" }], conclusion: { statement: "Lax7.Facts.α'", levels: ["λ"] } } },
+    { id: "Lax7Proofs.theorem.定理", levelParams: ["λ"], telescope: { hypotheses: [{ statement: "Lax7.Facts.fun", levels: [] }], conclusion: { statement: "Lax7.Facts.α'", levels: ["λ"] } } },
   ],
   // the same shapes as the inspector itself reports them: the quoted proof
   // `«证明».{«λ»}` of the spec-2 golden fixture, taken from the real report
@@ -99,14 +99,14 @@ function inspectedProof(name: string): CertifiedProof {
     return level[1];
   });
   const telescope = declaration.telescope as {
-    hypotheses: Array<{ const: string; levels: Array<[string, string]>; binder: CertifiedProof["telescope"]["hypotheses"][number]["binder"] }>;
+    hypotheses: Array<{ const: string; levels: Array<[string, string]> }>;
     conclusion: { const: string; levels: Array<[string, string]> };
   };
   return {
     id: declaration.name as string,
     levelParams: declaration.levelParams as string[],
     telescope: {
-      hypotheses: telescope.hypotheses.map((hypothesis) => ({ statement: hypothesis.const, levels: levels(hypothesis.levels), binder: hypothesis.binder })),
+      hypotheses: telescope.hypotheses.map((hypothesis) => ({ statement: hypothesis.const, levels: levels(hypothesis.levels) })),
       conclusion: { statement: telescope.conclusion.const, levels: levels(telescope.conclusion.levels) },
     },
   };

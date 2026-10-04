@@ -80,7 +80,7 @@ const EUCLID: ProofEntry = {
   path: "proofs/Lax42Proofs/Primes.lean",
   levelParams: ["u"],
   telescope: {
-    hypotheses: [{ statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [], binder: "default" }],
+    hypotheses: [{ statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [] }],
     conclusion: { statement: "Lax42.Primes.InfinitelyManyPrimes", levels: ["u"] },
   },
   conclusion: "Lax42.Primes.InfinitelyManyPrimes",

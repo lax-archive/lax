@@ -50,7 +50,7 @@ const PROOFS: ProofEntry[] = [
     path: "proofs/Lax1Proofs/Basic.lean",
     levelParams: [],
     telescope: {
-      hypotheses: [{ statement: "Lax7.Primes.ExistsPrimeDivisor", levels: [], binder: "default" }],
+      hypotheses: [{ statement: "Lax7.Primes.ExistsPrimeDivisor", levels: [] }],
       conclusion: { statement: "Lax1.Infinite.InfinitelyManyPrimes", levels: [] },
     },
     conclusion: "Lax1.Infinite.InfinitelyManyPrimes",
@@ -89,7 +89,6 @@ function challengeReportFor(proofs: ProofEntry[]): InspectorReport {
         hypotheses: proof.telescope!.hypotheses.map((hypothesis) => ({
           const: hypothesis.statement,
           levels: hypothesis.levels.map((level) => ["param", level] as const),
-          binder: hypothesis.binder,
         })),
         conclusion: {
           const: proof.telescope!.conclusion.statement,

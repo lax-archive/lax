@@ -17,7 +17,7 @@ const proof = (
   id,
   levelParams,
   telescope: {
-    hypotheses: hypotheses.map(([statement, levels]) => ({ statement, levels, binder: "default" as const })),
+    hypotheses: hypotheses.map(([statement, levels]) => ({ statement, levels })),
     conclusion: { statement: conclusion[0], levels: conclusion[1] },
   },
 });
@@ -106,8 +106,8 @@ describe("composing a relative certificate", () => {
     });
     // the polymorphic given is demanded at `b`, the Cert theorem's own parameter
     expect(composed.theorem.telescope.hypotheses).toEqual([
-      { statement: "Lax42.Primes.InfinitelyManyPrimes", levels: ["b"], binder: "default" },
-      { statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [], binder: "default" },
+      { statement: "Lax42.Primes.InfinitelyManyPrimes", levels: ["b"] },
+      { statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [] },
     ]);
     expect(composed.body).toBe("@_root_.Lax261Proofs.corollary.{a, b} h₁ h₂ h₂");
     expect(composed.proofsUsed).toEqual(["Lax261Proofs.corollary"]);

@@ -134,7 +134,7 @@ export function spec2Artifacts(id = "lax-42"): SuccessfulValidationArtifacts {
       path: "proofs/Lax42Proofs/Basic.lean",
       levelParams: ["u"],
       telescope: {
-        hypotheses: [{ statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [], binder: "default" }],
+        hypotheses: [{ statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [] }],
         conclusion: { statement: "Lax42.Primes.InfinitelyManyPrimes", levels: ["u"] },
       },
       conclusion: "Lax42.Primes.InfinitelyManyPrimes",

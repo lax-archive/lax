@@ -18,7 +18,7 @@
  [{"userName": "Spec2.Basic.instHyp",
    "usedConstants": ["Spec2.Basic.Closed"],
    "telescope":
-   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed", "binder": "instImplicit"}],
+   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed"}],
     "conclusion": {"levels": [], "const": "Spec2.Basic.Closed"}},
    "startLine": 65,
    "origin": {"kind": "authored"},
@@ -33,7 +33,7 @@
   {"userName": "Spec2.Basic.privateProof",
    "usedConstants": ["Spec2.Basic.Closed"],
    "telescope":
-   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed", "binder": "default"}],
+   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed"}],
     "conclusion": {"levels": [], "const": "Spec2.Basic.Closed"}},
    "startLine": 89,
    "origin": {"module": "Spec2.Basic", "kind": "private"},
@@ -48,7 +48,7 @@
   {"userName": "Spec2.Basic.implicitHyp",
    "usedConstants": ["Spec2.Basic.Closed"],
    "telescope":
-   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed", "binder": "implicit"}],
+   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed"}],
     "conclusion": {"levels": [], "const": "Spec2.Basic.Closed"}},
    "startLine": 59,
    "origin": {"kind": "authored"},
@@ -64,8 +64,7 @@
    "usedConstants": ["Spec2.Basic.AimpC", "Spec2.Basic.Closed"],
    "telescope":
    {"hypotheses":
-    [{"levels": [], "const": "Spec2.Basic.Closed", "binder": "default"},
-     {"levels": [], "const": "Spec2.Basic.Closed", "binder": "default"}],
+    [{"levels": [], "const": "Spec2.Basic.Closed"}, {"levels": [], "const": "Spec2.Basic.Closed"}],
     "conclusion": {"levels": [], "const": "Spec2.Basic.AimpC"}},
    "startLine": 67,
    "origin": {"kind": "authored"},
@@ -98,7 +97,7 @@
   {"userName": "Spec2.Basic.strictHyp",
    "usedConstants": ["Spec2.Basic.Closed"],
    "telescope":
-   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed", "binder": "strictImplicit"}],
+   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed"}],
     "conclusion": {"levels": [], "const": "Spec2.Basic.Closed"}},
    "startLine": 61,
    "origin": {"kind": "authored"},
@@ -175,7 +174,7 @@
   {"userName": "Spec2.Basic.证明",
    "usedConstants": ["Spec2.Basic.Closed", "Spec2.Basic.定理"],
    "telescope":
-   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed", "binder": "default"}],
+   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed"}],
     "conclusion": {"levels": [["param", "λ"]], "const": "Spec2.Basic.定理"}},
    "startLine": 81,
    "origin": {"kind": "authored"},
@@ -252,7 +251,7 @@
   {"userName": "Spec2.Basic.concreteLevel",
    "usedConstants": ["Spec2.Basic.Closed", "Spec2.Basic.Poly"],
    "telescope":
-   {"hypotheses": [{"levels": [["zero"]], "const": "Spec2.Basic.Poly", "binder": "default"}],
+   {"hypotheses": [{"levels": [["zero"]], "const": "Spec2.Basic.Poly"}],
     "conclusion": {"levels": [], "const": "Spec2.Basic.Closed"}},
    "startLine": 73,
    "origin": {"kind": "authored"},
@@ -303,7 +302,7 @@
   {"userName": "Spec2.Basic.explicitHyp",
    "usedConstants": ["Spec2.Basic.AimpC", "Spec2.Basic.Closed"],
    "telescope":
-   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed", "binder": "default"}],
+   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed"}],
     "conclusion": {"levels": [], "const": "Spec2.Basic.AimpC"}},
    "startLine": 57,
    "origin": {"kind": "authored"},
@@ -318,7 +317,7 @@
   {"userName": "Spec2.Basic.selfEdge",
    "usedConstants": ["Spec2.Basic.Closed"],
    "telescope":
-   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed", "binder": "default"}],
+   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed"}],
     "conclusion": {"levels": [], "const": "Spec2.Basic.Closed"}},
    "startLine": 69,
    "origin": {"kind": "authored"},
@@ -434,7 +433,7 @@
   {"userName": "Spec2.Basic.polyProof",
    "usedConstants": ["Spec2.Basic.Poly"],
    "telescope":
-   {"hypotheses": [{"levels": [["param", "w"]], "const": "Spec2.Basic.Poly", "binder": "default"}],
+   {"hypotheses": [{"levels": [["param", "w"]], "const": "Spec2.Basic.Poly"}],
     "conclusion": {"levels": [["param", "w"]], "const": "Spec2.Basic.Poly"}},
    "startLine": 71,
    "origin": {"kind": "authored"},
@@ -508,7 +507,7 @@
   {"userName": "Spec2.Basic.defOfProofShape",
    "usedConstants": ["Spec2.Basic.Closed"],
    "telescope":
-   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed", "binder": "default"}],
+   {"hypotheses": [{"levels": [], "const": "Spec2.Basic.Closed"}],
     "conclusion": {"levels": [], "const": "Spec2.Basic.Closed"}},
    "startLine": 87,
    "origin": {"kind": "authored"},

@@ -4,10 +4,9 @@ import Lax261Proofs
 
 theorem Cert.Lax261Proofs.aux : _root_.Lax261.Infinite.Auxiliary := @_root_.Lax261Proofs.aux
 
-set_option checkBinderAnnotations false in
 theorem Cert.Lax261Proofs.euclid
     (h₁ : _root_.Lax42.Primes.ExistsPrimeDivisor)
-    {h₂ : _root_.Lax261.Infinite.Auxiliary}
-    [h₃ : _root_.Lax42.Primes.ExistsPrimeDivisor]
-    ⦃h₄ : _root_.Lax261.Infinite.Auxiliary⦄
+    (h₂ : _root_.Lax261.Infinite.Auxiliary)
+    (h₃ : _root_.Lax42.Primes.ExistsPrimeDivisor)
+    (h₄ : _root_.Lax261.Infinite.Auxiliary)
     : _root_.Lax261.Infinite.InfinitelyManyPrimes := @_root_.Lax261Proofs.euclid h₁ h₂ h₃ h₄

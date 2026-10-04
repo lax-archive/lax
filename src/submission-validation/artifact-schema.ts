@@ -19,7 +19,6 @@ import { leanFacts } from "./lean-facts.js";
 import { derivedEdge } from "./recorded-shape.js";
 import type {
   AnnotationSection,
-  BinderKind,
   BuildOutputPayload,
   CaptureManifest,
   CapturedFile,
@@ -832,8 +831,6 @@ function levelParameters(value: unknown, label: string): string[] {
   return stringArray(value, label, 1_000, 256).map((name, index) => identifier(name, `${label}[${index}]`, 256));
 }
 
-const BINDER_KINDS: readonly BinderKind[] = ["default", "implicit", "strictImplicit", "instImplicit"];
-
 /** A recorded proof telescope (contracts.ts ProofTelescope): every level a
  * parameter of the proof, the conclusion's pairwise distinct — the universe
  * rule the validator applied, repeated here fail-closed because stage 3's
@@ -850,12 +847,10 @@ function parseTelescope(value: unknown, label: string, levelParams: Set<string>)
   const hypotheses = boundedArray(value.hypotheses, `${label} hypotheses`, MAX_ENTRIES).map((entry, index) => {
     const where = `${label} hypothesis ${index + 1}`;
     if (!isObject(entry)) throw new ValidationError(`${where} must be an object`);
-    requireExactKeys(entry, ["statement", "levels", "binder"], where);
-    if (!BINDER_KINDS.includes(entry.binder as BinderKind)) throw new ValidationError(`${where} has an unknown binder kind`);
+    requireExactKeys(entry, ["statement", "levels"], where);
     return {
       statement: identifier(entry.statement, `${where} statement`, 2_048),
       levels: levels(entry.levels, where),
-      binder: entry.binder as BinderKind,
     };
   });
   const conclusion = value.conclusion;

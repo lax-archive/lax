@@ -6,7 +6,6 @@
 
 import { describe, expect, it } from "vitest";
 import type {
-  BinderKind,
   InspectorDeclaration,
   InspectorReport,
   InspectorTelescope,
@@ -80,11 +79,11 @@ function statement(name: string, overrides: Partial<InspectorDeclaration> = {}):
   });
 }
 
-type Link = [string, LevelExpr[]?, BinderKind?];
+type Link = [string, LevelExpr[]?];
 
 function chain(hypotheses: Link[], conclusion: [string, LevelExpr[]?]): InspectorTelescope {
   return {
-    hypotheses: hypotheses.map(([name, levels, binder]) => ({ const: name, levels: levels ?? [], binder: binder ?? "default" })),
+    hypotheses: hypotheses.map(([name, levels]) => ({ const: name, levels: levels ?? [] })),
     conclusion: { const: conclusion[0], levels: conclusion[1] ?? [] },
   };
 }
@@ -320,11 +319,11 @@ const CASES: Case[] = [
     proofEntries: [{ id: "Lax1Proofs.aimpc", conclusion: AIMPC, assumptions: [], telescope: { hypotheses: [], conclusion: { statement: AIMPC, levels: [] } } }],
   },
   {
-    name: "explicit, implicit, strict-implicit, and instance binders are recorded in order",
+    name: "hypotheses are recorded in binder order, with no binder kind",
     concepts: [statement(A), statement(B), statement(C), statement(AIMPC)],
     proofs: [decl({
       name: "Lax1Proofs.binders",
-      telescope: chain([[C, [], "default"], [B, [], "implicit"], [A, [], "strictImplicit"], [AIMPC, [], "instImplicit"]], [C]),
+      telescope: chain([[C], [B], [A], [AIMPC]], [C]),
     })],
     violations: [],
     proofEntries: [{
@@ -333,10 +332,10 @@ const CASES: Case[] = [
       assumptions: [A, AIMPC, B, C],
       telescope: {
         hypotheses: [
-          { statement: C, levels: [], binder: "default" },
-          { statement: B, levels: [], binder: "implicit" },
-          { statement: A, levels: [], binder: "strictImplicit" },
-          { statement: AIMPC, levels: [], binder: "instImplicit" },
+          { statement: C, levels: [] },
+          { statement: B, levels: [] },
+          { statement: A, levels: [] },
+          { statement: AIMPC, levels: [] },
         ],
         conclusion: { statement: C, levels: [] },
       },
@@ -350,7 +349,7 @@ const CASES: Case[] = [
     proofEntries: [{
       id: "Lax1Proofs.dup",
       assumptions: [A],
-      telescope: { hypotheses: [{ statement: A, levels: [], binder: "default" }, { statement: A, levels: [], binder: "default" }], conclusion: { statement: C, levels: [] } },
+      telescope: { hypotheses: [{ statement: A, levels: [] }, { statement: A, levels: [] }], conclusion: { statement: C, levels: [] } },
     }],
   },
   {
@@ -393,7 +392,7 @@ const CASES: Case[] = [
       id: "Lax1Proofs.poly",
       levelParams: ["a", "b"],
       telescope: {
-        hypotheses: [{ statement: POLY, levels: ["a"], binder: "default" }, { statement: POLY, levels: ["b"], binder: "default" }],
+        hypotheses: [{ statement: POLY, levels: ["a"] }, { statement: POLY, levels: ["b"] }],
         conclusion: { statement: POLY2, levels: ["a", "b"] },
       },
       assumptions: [POLY],
@@ -712,7 +711,7 @@ describe("spec-2 classification", () => {
       id: "Lax1Proofs.q",
       path: "proofs/Lax1Proofs/Basic.lean",
       levelParams: [],
-      telescope: { hypotheses: [{ statement: A, levels: [], binder: "default" }], conclusion: { statement: C, levels: [] } },
+      telescope: { hypotheses: [{ statement: A, levels: [] }], conclusion: { statement: C, levels: [] } },
       conclusion: C,
       assumptions: [A],
       description: "By hand.",
