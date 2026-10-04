@@ -137,8 +137,12 @@ case, not the statement, and `lax build` refuses it.
 every concept's declarations under its module name): the archive imports
 any set of its records into one Lean environment when it composes
 certificates, and a name outside your prefix can collide with a record
-registered next year. Never escape with `_root_`; a `private` helper is
-fine anywhere. Never `initialize` (nor `register_option`,
+registered next year. Never escape with `_root_`. A `private` helper is
+fine anywhere, but a proof — a theorem whose type is a chain of statements
+— is never `private`: the certificate names it from another module, and
+`lax build` refuses one. What Lean generates on its own (the `f._proof_1`
+a definition's nested proof becomes, an equation lemma) is a helper
+whatever its type. Never `initialize` (nor `register_option`,
 `register_simp_attr`, `declare_syntax_cat`): a registry keyed by name
 clashes at import. Write `scoped notation`, `scoped syntax`, `scoped
 macro_rules`, and `local attribute`, never the global forms — a global

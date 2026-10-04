@@ -17,8 +17,10 @@
 // statement of the package's own concept package or of a concept package the
 // proof package requires directly. A statement reachable only transitively
 // is a violation ("require its package"); a private theorem of proof shape is
-// a violation; every level argument of every statement in the chain is a
-// universe parameter of the proof and the conclusion's are pairwise distinct.
+// a violation, while one Lean generated (`f._proof_1`, an equation lemma) is
+// a helper the certificate never names; every level argument of every
+// statement in the chain is a universe parameter of the proof and the
+// conclusion's are pairwise distinct.
 // Everything else of theorem kind is a helper. Edge `{S₁..Sₖ} → C` with
 // duplicates collapsed in `assumptions` while `telescope` keeps every
 // position; `k = 0` is unconditional; a self-edge is a proof like any other.
@@ -159,7 +161,8 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
     const kinds = chain.map((link) => statementOf(link.const));
     // a chain over something that is no statement anywhere is a helper
     if (kinds.includes("none")) continue;
-    // an endpoint: user-level, canonical, legible, or refused
+    // an endpoint: user-level, canonical, legible, or refused — or, if Lean
+    // generated it, a helper
     if (!checkEndpointName(declaration, "proof", findings) || !userLevel) continue;
 
     const where = `theorem ${display(declaration)}`;
@@ -393,12 +396,21 @@ function isAuthoredOrigin(declaration: InspectorDeclaration): boolean {
 /** The endpoint gate (translation; codex review 2 2026-10-04, finding 1):
  * a statement or a proof is an authored declaration — by the inspector's
  * `origin`, the one provenance fact, never by the shape of its name or the
- * presence of a display name. What Lean generated (a realization, an
- * auxiliary `proof_1`, a macro-scoped name) can carry the tag or the shape
- * of a proof only through a forged or mistaken olean, and is refused
- * rather than translated. */
+ * presence of a display name. The gate excludes; it refuses only what no
+ * honest package produces. A theorem Lean generated under a constant of
+ * the package or an import — an abstracted nested proof
+ * (`def f (h : A) : {n // C} := ⟨0, …⟩` yields `f._proof_1 : A → C`), an
+ * equation lemma — has the shape of a proof whenever the abstracted
+ * proposition is a chain of statements, so an `auxiliary` or `realized`
+ * theorem is a helper: the certificate never names it, and refusing it
+ * would add no soundness (ultracode review 2026-10-04, I1). A tag on what
+ * Lean generated, and a proof shape under a macro-scoped name or an origin
+ * the inspector did not report, come only from a forged or mistaken olean
+ * and are refused rather than translated. */
 function checkEndpointName(declaration: InspectorDeclaration, label: "concept" | "proof", findings: FindingCollector): boolean {
   if (isAuthoredOrigin(declaration)) return true;
+  const generated = declaration.origin?.kind === "auxiliary" || declaration.origin?.kind === "realized";
+  if (label === "proof" && generated) return false;
   const what = label === "concept" ? "carries @[lax_statement]" : "has the shape of a proof";
   const origin = declaration.origin;
   const why =

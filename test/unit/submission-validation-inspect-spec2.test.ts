@@ -531,10 +531,31 @@ const CASES: Case[] = [
     proofEntries: [],
   },
   {
-    name: "a theorem of proof shape that Lean generated is refused as an endpoint by its origin",
+    // `def f (h : A) : {n // A} := ⟨0, …⟩` abstracts its nested proof into
+    // `f._proof_1 : A → A`; an equation lemma can have the same shape. The
+    // certificate never names either, so the gate excludes rather than
+    // refuses (ultracode review 2026-10-04, I1)
+    name: "a theorem of proof shape that Lean generated or realized is a helper, never an edge and never refused",
     concepts: [statement(A)],
-    proofs: [decl({ name: "Lax1Proofs.p.proof_1", userName: undefined, origin: { kind: "auxiliary", parent: "Lax1Proofs.p" }, telescope: chain([], [A]) })],
-    violations: [["proof", "proof declaration Lax1Proofs.p.proof_1 has the shape of a proof but is not an authored declaration — Lean generated it for Lax1Proofs.p"]],
+    proofs: [
+      decl({ name: "Lax1Proofs.f", kind: "def" }),
+      decl({ name: "Lax1Proofs.f._proof_1", userName: undefined, origin: { kind: "auxiliary", parent: "Lax1Proofs.f" }, telescope: chain([[A]], [A]) }),
+      decl({ name: "Lax1Proofs.f.eq_1", userName: undefined, origin: { kind: "realized", parent: "Lax1Proofs.f" }, telescope: chain([], [A]) }),
+    ],
+    violations: [],
+    proofEntries: [],
+  },
+  {
+    name: "a theorem of proof shape under macro scopes or of an unreported origin is refused as an endpoint",
+    concepts: [statement(A)],
+    proofs: [
+      decl({ name: "Lax1Proofs.p._@.Lax1Proofs.Basic._hyg.3", userName: undefined, nonCanonical: true, origin: { kind: "scoped", module: "Lax1Proofs.Basic" }, telescope: chain([], [A]) }),
+      decl({ name: "Lax1Proofs.q", origin: undefined, telescope: chain([], [A]) }),
+    ],
+    violations: [
+      ["proof", "proof declaration Lax1Proofs.p._@.Lax1Proofs.Basic._hyg.3 has the shape of a proof but is not an authored declaration — it carries macro scopes of Lax1Proofs.Basic"],
+      ["proof", "proof declaration Lax1Proofs.q has the shape of a proof but is not an authored declaration — its origin is unknown"],
+    ],
     proofEntries: [],
   },
   {

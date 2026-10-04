@@ -252,7 +252,11 @@ arguments are pairwise distinct (a proof of `C.{u,u}` proves a special
 case, not `C`); hypotheses may repeat a variable. Every edge is then
 universally quantified over universes and name-only composition is sound;
 the generated Challenge theorem copies the proof's level parameters. Anything
-else of theorem kind is a helper; a helper carrying docstring frontmatter
+else of theorem kind is a helper, and so is a theorem Lean generated
+(origin `auxiliary` or `realized`: an abstracted `f._proof_1 : A → C`, an
+equation lemma) whatever its shape — the endpoint gate excludes it; only a
+`scoped` or unreported origin of proof shape is refused (ultracode review
+2026-10-04, I1). A helper carrying docstring frontmatter
 is a violation (a spec-1 habit must fail loudly). Unused hypotheses are
 assumptions; section variables the elaborator dropped are not binders.
 
@@ -715,3 +719,10 @@ for the read-only-export layout inside the existing docker sandbox; the
 module system dropped; the scheduled run, verdict format, concept gate,
 integration branch, per-workstream plan files, and governance section
 dropped or deferred.
+
+2026-10-04, ultracode review I1: a theorem of proof shape that Lean
+generated (`auxiliary`/`realized` origin, e.g. `f._proof_1` from
+`abstractNestedProofs`) is a helper instead of a `translation` violation;
+`scoped` and unknown origins stay refused, the private-proof rule is
+unchanged. Real-Lean coverage: `withFacts._proof_1` in the lax-39
+realized-names e2e (`test/e2e/host-spec2.test.ts`).

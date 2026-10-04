@@ -728,7 +728,13 @@ Rules:
 > the shape announces an intent the archive would otherwise drop silently.
 
 - **Helpers.** Any other declaration — theorems of other shapes, definitions,
-  instances, structures — is a helper. A helper may carry an ordinary
+  instances, structures — is a helper. So is a theorem Lean generated
+  (origin ``auxiliary`` or ``realized``, see Namespaces) whatever its type:
+  ``def f (h : A) : {n : Nat // C} := ⟨0, …⟩`` abstracts its nested proof
+  into ``f._proof_1 : A → C``, which has the shape of a proof, but the
+  certificate never names it and nothing is lost by excluding it. A theorem
+  of proof shape under macro scopes, or of an origin the inspector did not
+  report, can only come from a forged olean and is a violation. A helper may carry an ordinary
   docstring; a helper whose docstring carries yaml frontmatter is a violation
   (see Annotations), so a spec-1 proof ported without its type being
   rewritten fails loudly instead of silently becoming a helper.
