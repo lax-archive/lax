@@ -673,11 +673,14 @@ export const JUDGE_TOOLS = [
 export type JudgeTool = (typeof JUDGE_TOOLS)[number];
 
 /** The probes of the judge self-test (certify/self-test.ts), in the order the
- * record lists them. The first three are one-line Lean modules lax owns,
+ * record lists them. The first four are one-line Lean modules lax owns,
  * built, exported, and judged through the same containers as the record: a
  * matching pair the comparator must accept, a mismatched pair it must reject,
- * and the matching Solution export with its proof term replaced by its
- * statement, which Lean's kernel must refuse. The rest probe the judge's
+ * a Solution proven by `sorry` it must reject for the axiom `sorryAx` — the
+ * property that makes a proof's `pending` flag no soundness input (a proof
+ * not flagged is judged, and its `sorry` refused) — and the matching
+ * Solution export with its proof term replaced by its statement, which
+ * Lean's kernel must refuse. The rest probe the judge's
  * confinement from inside: a canary the host wrote under the job directory
  * and under its `/tmp` is invisible, there is no network interface but `lo`,
  * `which leanchecker` resolves to the toolchain's binary, and neither the
@@ -687,6 +690,7 @@ export type JudgeTool = (typeof JUDGE_TOOLS)[number];
 export const SELF_TEST_PROBES = [
   "comparator-accepts",
   "comparator-rejects-mismatch",
+  "comparator-rejects-sorry",
   "kernel-rejects-forged",
   "canary-invisible",
   "network-absent",

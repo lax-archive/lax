@@ -1084,10 +1084,11 @@ end Lax49Proofs
   // The judge self-test (certify/self-test.ts), rehearsed on the host with
   // the real tool script: the three core-only modules built and exported in
   // one export step, the Solution export forged by the host, and the real
-  // comparator asked three times — accept, reject the mismatch, and let
-  // Lean's kernel refuse the forgery. The confinement probe is the
-  // container's and is not rehearsed here.
-  it("rehearses the judge self-test with the real tool script: accept, mismatch, forged", async () => {
+  // comparator asked four times — accept, reject the mismatch, refuse the
+  // Challenge's own `sorry` for `sorryAx`, and let Lean's kernel refuse the
+  // forgery. The confinement probe is the container's and is not rehearsed
+  // here.
+  it("rehearses the judge self-test with the real tool script: accept, mismatch, sorry, forged", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;
       const root = tmpDir("lax-self-test-");
@@ -1157,10 +1158,16 @@ end Lax49Proofs
           toolchainBin,
           home: path.join(root, "home"),
         }));
-        return interpretComparatorRun(await runTool(planFile, `S3-5 (${label})`));
+        const result = await runTool(planFile, `S3-6 (${label})`);
+        return { ...interpretComparatorRun(result), output: result.output };
       };
-      expect(await judge("accept", exports.solution)).toEqual({ kind: "certified" });
+      expect(await judge("accept", exports.solution)).toMatchObject({ kind: "certified" });
       expect(await judge("mismatch", exports.mismatch)).toMatchObject({ kind: "violation", rule: "statement-mismatch" });
+      // the probe that keeps `pending` out of the trust base: the statements
+      // match, and the axiom check refuses the `sorry` by name
+      const sorry = await judge("sorry", exports.challenge);
+      expect(sorry).toMatchObject({ kind: "violation", rule: "illegal-axiom" });
+      expect(sorry.output).toContain("error: Illegal axiom detected: 'sorryAx'");
       expect(await judge("forged", forged)).toMatchObject({ kind: "violation", rule: "kernel-rejected" });
       console.log(`[certify timing] self-test rehearsal total: ${Math.round(performance.now() - started)} ms`);
     });

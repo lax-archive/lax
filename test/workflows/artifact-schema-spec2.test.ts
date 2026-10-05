@@ -9,6 +9,7 @@ import {
   parsePublishedBuildOutputPayload,
   parseSuccessfulValidationArtifacts,
 } from "../../src/submission-validation/artifact-schema.js";
+import { certifiedProofs, challengeText } from "../../src/submission-validation/certify/generate.js";
 import { expandRecordedBuildOutput, recordedBuildOutput } from "../../src/submission-validation/recorded-shape.js";
 import { spec2TestEnvironment, withTestEnvironments } from "../support/environments.js";
 import { spec2Artifacts, successfulArtifacts, validationRequest } from "../support/validation-artifacts.js";
@@ -200,6 +201,49 @@ describe("the trusted parser on a spec-2 record", () => {
       const malformed = stored();
       for (const output of [malformed.buildOutput, malformed.report.buildOutput as Record<string, any>]) output.proofs[0].pending = false;
       expect(() => parse(malformed.report, malformed.buildOutput)).toThrow("pending must be true when present");
+    });
+  });
+
+  // R1 of the 2026-10-05 Codex review: the publisher cannot rerun the judge,
+  // so a pending flag must not be a soundness input. Absent, the proof is a
+  // theorem of the Challenge the judge holds to the background axioms (and
+  // the self-test's `comparator-rejects-sorry` proves the judge refuses
+  // `sorryAx` there); present, the proof is out of the Challenge and only
+  // blocks registration. Either way the flag and the Challenge must agree.
+  it("binds the pending flags to the Challenge both ways: an unflagged proof is stated in it, a flagged one is not", () => {
+    withTestEnvironments([spec2TestEnvironment()], () => {
+      const stub = {
+        id: "Lax42Proofs.stub",
+        path: "proofs/Lax42Proofs/Basic.lean",
+        levelParams: [],
+        telescope: { hypotheses: [], conclusion: { statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [] } },
+        description: "",
+      };
+      const withStub = (pending: boolean, challenge?: string) => {
+        const artifacts = stored();
+        for (const output of [artifacts.buildOutput, artifacts.report.buildOutput as Record<string, any>]) {
+          output.proofs.push(structuredClone(pending ? { ...stub, pending: true } : stub));
+          if (challenge !== undefined) output.certificate.challenge = challenge;
+        }
+        return artifacts;
+      };
+      // the Challenge the generator writes when the stub is judged too
+      const flagged = parse(withStub(true).report, withStub(true).buildOutput).buildOutput;
+      const judgedToo = challengeText(certifiedProofs(flagged.proofs.map(({ pending: _pending, ...proof }) => proof)));
+      expect(judgedToo).toContain("Lax42Proofs.stub");
+      expect(flagged.certificate!.challenge).not.toContain("Lax42Proofs.stub");
+
+      // a flag the artifact dropped, with the Challenge left as it was: refused
+      const dropped = withStub(false);
+      expect(() => parse(dropped.report, dropped.buildOutput)).toThrow("not what the generator writes for the record's proofs");
+      // dropped, and the Challenge restated to match: it parses — the edge is
+      // now one the judge was handed under the background axioms, which is
+      // where a `sorry` behind it is refused
+      const restated = withStub(false, judgedToo);
+      expect(parse(restated.report, restated.buildOutput).buildOutput.certificate!.challenge).toBe(judgedToo);
+      // a flagged proof the Challenge states anyway: refused
+      const both = withStub(true, judgedToo);
+      expect(() => parse(both.report, both.buildOutput)).toThrow("not what the generator writes for the record's proofs");
     });
   });
 

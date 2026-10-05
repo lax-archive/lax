@@ -291,7 +291,12 @@ export class Publisher {
       }
       // A registered record states no edge it has not proven (decision 12):
       // a draft's pending edges block registration, read from the record at
-      // the CAS snapshot.
+      // the CAS snapshot. This reads the flags the validate job recorded and
+      // cannot re-derive them, and need not (Codex night review 2026-10-05,
+      // R1): a flag is no soundness input. Missing, the proof is stated in
+      // the certificate's Challenge (parseCertificate regenerates it from
+      // the flags), so the judge was handed it under the background axioms
+      // and refused any `sorryAx` behind it; present, it only lands here.
       const pending = pendingProofIds(current.files.buildOutput);
       if (pending.length > 0) problems.push(pendingEdgesRefusal(request.id, pending));
       // Registration is where a supersedes claim binds, so it is checked at

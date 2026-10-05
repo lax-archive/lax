@@ -113,7 +113,7 @@ interface Scenario {
    * then checks that no later container can reach any of them writable. */
   hostileChallenge?: boolean;
   /** The judge self-test's runs, each overridable: the build, the export
-   * step, the three judge runs, the probe; `probes` overrides what the
+   * step, the four judge runs, the probe; `probes` overrides what the
    * probe tool reports; `exportWithoutTheorem` makes the Solution export
    * one the host cannot forge. */
   selfTest?: {
@@ -121,6 +121,7 @@ interface Scenario {
     export?: ContainerResult;
     accept?: ContainerResult;
     mismatch?: ContainerResult;
+    sorry?: ContainerResult;
     kernel?: ContainerResult;
     probe?: ContainerResult;
     probes?: Partial<ProbeReport>;
@@ -131,12 +132,13 @@ interface Scenario {
   toolChangesUnderJudge?: boolean;
 }
 
-/** The labels of the self-test's six runs, in order. */
+/** The labels of the self-test's seven runs, in order. */
 const SELF_TEST_LABELS = [
   "certify-self-test-build",
   "certify-self-test-export",
   "certify-self-test-judge-comparator-accepts",
   "certify-self-test-judge-comparator-rejects-mismatch",
+  "certify-self-test-judge-comparator-rejects-sorry",
   "certify-self-test-judge-kernel-rejects-forged",
   "certify-self-test-probe",
 ];
@@ -151,6 +153,7 @@ const SELF_TEST_EXPORT = [
   "",
 ].join("\n");
 const MISMATCH_OUTPUT = "error: Challenge and solution theorem statement do not match: 'Cert.selfTest'\n";
+const SORRY_OUTPUT = "error: Illegal axiom detected: 'sorryAx'\n";
 const KERNEL_OUTPUT = "Running Lean default kernel on solution\nerror: Lean default exited with 1\nLean default kernel rejected the solution\n";
 
 function harness(scenario: Scenario = {}): {
@@ -212,6 +215,7 @@ function harness(scenario: Scenario = {}): {
       }
       if (invocation.label === "certify-self-test-judge-comparator-accepts") return selfTest.accept ?? { code: 0, output: "Your solution is okay!\n", timedOut: false };
       if (invocation.label === "certify-self-test-judge-comparator-rejects-mismatch") return selfTest.mismatch ?? { code: 1, output: MISMATCH_OUTPUT, timedOut: false };
+      if (invocation.label === "certify-self-test-judge-comparator-rejects-sorry") return selfTest.sorry ?? { code: 1, output: SORRY_OUTPUT, timedOut: false };
       if (invocation.label === "certify-self-test-judge-kernel-rejects-forged") return selfTest.kernel ?? { code: 1, output: KERNEL_OUTPUT, timedOut: false };
       if (invocation.label === "certify-self-test-probe") {
         if (out === undefined) throw new Error("no /out mount");
@@ -293,7 +297,7 @@ function harness(scenario: Scenario = {}): {
   };
 }
 
-/** The record's four runs, after the self-test's six. */
+/** The record's four runs, after the self-test's seven. */
 const recordRuns = (invocations: ContainerInvocation[]) => invocations.slice(SELF_TEST_LABELS.length);
 
 const mountsOf = (invocation: ContainerInvocation) => invocation.mounts ?? [];
@@ -606,12 +610,12 @@ describe("the trusted Certify phase", () => {
     expect(mountsOf(solution).map((mount) => mount.target).some((target) => target.endsWith("/package"))).toBe(false);
   });
 
-  it("proves the judge first: the self-test's six runs precede the record's, through the judge runtime, with the record's mount discipline", async () => {
+  it("proves the judge first: the self-test's seven runs precede the record's, through the judge runtime, with the record's mount discipline", async () => {
     const { input, invocations, jobDir } = harness();
     const result = await certifyInContainer(input);
     expect(result.kind).toBe("certified");
-    const [build, exported, accept, mismatch, kernel, probe] = invocations.slice(0, 6) as ContainerInvocation[];
-    for (const invocation of invocations.slice(0, 6)) {
+    const [build, exported, accept, mismatch, sorry, kernel, probe] = invocations.slice(0, 7) as ContainerInvocation[];
+    for (const invocation of invocations.slice(0, 7)) {
       expect(invocation!.runtime).toBe("judge");
       expect(invocation!.args).toEqual(["node", "/opt/lax/bin/run-certify.mjs", expect.stringMatching(/plan\.json$/u)]);
       // nothing of the record is mounted into the self-test: no capture, no deps, no warm store
@@ -641,17 +645,19 @@ describe("the trusted Certify phase", () => {
     expect((exportPlan.targets as string[]).slice(8)).toContain("Nat.add");
     // the forgery: the host set the theorem's value to its type
     expect(fs.readFileSync(path.join(outDir, "forged.export"), "utf8")).toContain('"type":1,"value":1');
-    // S3–S5 like C: each export a single read-only file, nothing writable but `/out`, the shim first
-    for (const [run, solution] of [[accept, "solution.export"], [mismatch, "mismatch.export"], [kernel, "forged.export"]] as const) {
+    // S3–S6 like C: each export a single read-only file, nothing writable but `/out`, the shim first;
+    // S5's solution is the Challenge's own export, its theorem proven by `sorry`
+    for (const [run, solution] of [[accept, "solution.export"], [mismatch, "mismatch.export"], [sorry, "challenge.export"], [kernel, "forged.export"]] as const) {
       expect(writableTargets(run!)).toEqual([CERTIFY_PATHS.out]);
       expect(mountsOf(run!).find((mount) => mount.target === CERTIFY_PATHS.solutionExport)!.source).toBe(path.join(outDir, solution));
       expect(fs.statSync(mountsOf(run!).find((mount) => mount.target === CERTIFY_PATHS.challengeExport)!.source).isFile()).toBe(true);
       const judgeOut = mountsOf(run!).find((mount) => mount.target === CERTIFY_PATHS.out)!.source;
       expect(JSON.parse(fs.readFileSync(path.join(judgeOut, "plan.json"), "utf8"))).toMatchObject({ tool: "comparator", config: "comparator.json", paranoid: false });
       const judgeProject = mountsOf(run!).find((mount) => mount.target === CERTIFY_PATHS.project)!.source;
-      expect(JSON.parse(fs.readFileSync(path.join(judgeProject, "comparator.json"), "utf8"))).toMatchObject({ challenge_module: "SelfChallenge", solution_module: "SelfSolution", theorem_names: ["Cert.selfTest"] });
+      // and the record's permitted axioms, the background three: what S5 holds `sorryAx` to
+      expect(JSON.parse(fs.readFileSync(path.join(judgeProject, "comparator.json"), "utf8"))).toMatchObject({ challenge_module: "SelfChallenge", solution_module: "SelfSolution", theorem_names: ["Cert.selfTest"], permitted_axioms: ["propext", "Classical.choice", "Quot.sound"] });
     }
-    // S6: the probe reads the judge's project and shim read-only and writes its report to `/out`
+    // S7: the probe reads the judge's project and shim read-only and writes its report to `/out`
     expect(writableTargets(probe!)).toEqual([CERTIFY_PATHS.out]);
     const probeOut = mountsOf(probe!).find((mount) => mount.target === CERTIFY_PATHS.out)!.source;
     const probePlan = JSON.parse(fs.readFileSync(path.join(probeOut, "plan.json"), "utf8")) as { tool: string; absent: string[]; leanchecker: string };
@@ -670,6 +676,10 @@ describe("the trusted Certify phase", () => {
       ["forgery", { selfTest: { exportWithoutTheorem: true } }, "forged-export probe cannot be prepared"],
       ["accept", { selfTest: { accept: { code: 1, output: MISMATCH_OUTPUT, timedOut: false } } }, "probe comparator-accepts failed"],
       ["mismatch", { selfTest: { mismatch: { code: 0, output: "Your solution is okay!\n", timedOut: false } } }, "probe comparator-rejects-mismatch failed"],
+      ["sorry accepted", { selfTest: { sorry: { code: 0, output: "Your solution is okay!\n", timedOut: false } } }, "probe comparator-rejects-sorry failed"],
+      // refused, but not for `sorryAx`: the probe names the axiom it proves
+      ["sorry for another axiom", { selfTest: { sorry: { code: 1, output: "error: Illegal axiom detected: 'Lean.ofReduceBool'\n", timedOut: false } } }, "probe comparator-rejects-sorry failed"],
+      ["sorry as mismatch", { selfTest: { sorry: { code: 1, output: MISMATCH_OUTPUT, timedOut: false } } }, "probe comparator-rejects-sorry failed"],
       ["kernel", { selfTest: { kernel: { code: 0, output: "Your solution is okay!\n", timedOut: false } } }, "probe kernel-rejects-forged failed"],
       ["kernel crash", { selfTest: { kernel: { code: 1, output: "Running Lean default kernel on solution\nerror: Lean default exited with 134\nLean default kernel rejected the solution\n", timedOut: false } } }, "probe kernel-rejects-forged failed"],
       ["probe tool", { selfTest: { probe: { code: 2, output: "", timedOut: false } } }, "confinement probe did not run"],

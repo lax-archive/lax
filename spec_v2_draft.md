@@ -1354,8 +1354,13 @@ draft record without rebuilding it. Every Archive dependency recorded in its
 current build output must already be registered, and no proof it records
 may be pending; the refusal names the pending edges, and the author proves
 them, submits, and registers. The CLI checks both against the local copy
-of the archive first, and the trusted publisher repeats both. A
-``supersedes`` claim binds here (see Successors).
+of the archive first, and the trusted publisher repeats both. The
+publisher reads the pending flags validation recorded and cannot re-derive
+them, and need not: a flag is no soundness input. A proof recorded without
+it is a theorem of the Challenge (the parser holds the two together), which
+the judge holds to the background axioms, so a ``sorry`` behind it is
+refused, never certified; a flag recorded wrongly only blocks registration.
+A ``supersedes`` claim binds here (see Successors).
 
 **Delete.** ``lax delete`` posts ``/lax delete`` and permanently replaces an
 init or draft record with a tombstone. Registration and deletion are separate,
@@ -1587,9 +1592,10 @@ This is the sole proof-validity check for a certified edge; nothing else in
 the pipeline contributes to it, and nothing else may claim to. Before it
 judges anything of the record, the judge proves itself: the same containers
 build, export and judge three one-line modules lax owns — a matching pair
-the comparator must accept, a mismatched pair it must reject, and a Solution
-export whose proof term was replaced by its statement, which the kernel must
-refuse — and probe the judge's confinement from inside (a canary the host
+the comparator must accept, a mismatched pair it must reject, the
+Challenge's own ``sorry`` as a solution, which it must refuse for
+``sorryAx``, and a Solution export whose proof term was replaced by its
+statement, which the kernel must refuse — and probe the judge's confinement from inside (a canary the host
 wrote is invisible, there is no network interface, ``which leanchecker`` is
 the toolchain's, nothing but ``/out`` is writable). The host digests the
 judge's binaries before the first container and holds them to the same

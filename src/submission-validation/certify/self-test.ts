@@ -13,11 +13,18 @@
 //   S3 the judge over (Challenge, Solution): must accept;
 //   S4 the judge over (Challenge, Mismatch): the comparison must reject
 //      (`Challenge and solution theorem statement do not match`);
-//   S5 the judge over (Challenge, Forged) — the Solution export with the
+//   S5 the judge over (Challenge, Challenge) — the Challenge's own export as
+//      the solution, its theorem proven by `sorry`: the statements match, and
+//      the axiom check must reject (`Illegal axiom detected: 'sorryAx'`).
+//      This is the property that keeps a proof's `pending` flag out of the
+//      trust base (codex night review 2026-10-05, R1): a sorry-backed proof
+//      the validator failed to flag lands in the Challenge the judge holds to
+//      the background axioms, and is refused here rather than certified;
+//   S6 the judge over (Challenge, Forged) — the Solution export with the
 //      theorem's proof term replaced by its own statement, an edit the host
 //      makes on the export's NDJSON (lean4export 3.1.0, pinned by the
 //      toolchain): Lean's kernel must refuse it;
-//   S6 a probe in the judge runtime: a canary the host wrote under the job
+//   S7 a probe in the judge runtime: a canary the host wrote under the job
 //      directory and under its own `/tmp` is invisible, `/proc/net/dev` lists
 //      no interface but `lo`, `which leanchecker` on the judge's PATH resolves
 //      to the toolchain's binary, and neither the project nor the toolchain
@@ -302,7 +309,7 @@ export async function runJudgeSelfTest(input: SelfTestInput): Promise<JudgeSelfT
   const forgedExport = path.join(outDir, "forged.export");
   fs.writeFileSync(forgedExport, forgeKernelRejection(readExport(solutionExport, "Solution"), SELF_TEST_THEOREM), { mode: 0o600 });
 
-  // S3–S5: the judge, like C — the project and shim read-only, each export a single read-only file
+  // S3–S6: the judge, like C — the project and shim read-only, each export a single read-only file
   const judgeDir = path.join(root, "judge");
   const judgeProject = path.join(judgeDir, "project");
   const shimsDir = path.join(judgeDir, "shims");
@@ -314,7 +321,10 @@ export async function runJudgeSelfTest(input: SelfTestInput): Promise<JudgeSelfT
   }
   fs.writeFileSync(path.join(judgeProject, "comparator.json"), selfTestComparatorConfig(), { mode: 0o444 });
   fs.writeFileSync(path.join(shimsDir, "git"), GIT_SHIM, { mode: 0o555 });
-  const judge = async (probe: SelfTestProbe, solution: string, expectation: string) => {
+  // `reason`, where given, is the comparator's own error line the refusal
+  // must end on: a rule names a class of refusal, and S5 must be refused for
+  // `sorryAx` in particular, not for some other axiom of the export
+  const judge = async (probe: SelfTestProbe, solution: string, expectation: string, reason?: string) => {
     const judgeOut = path.join(judgeDir, `out-${probe}`);
     fs.mkdirSync(judgeOut, { recursive: true, mode: 0o700 });
     fs.writeFileSync(
@@ -341,12 +351,15 @@ export async function runJudgeSelfTest(input: SelfTestInput): Promise<JudgeSelfT
     const verdict = interpretComparatorRun(result);
     const summary = verdict.kind === "failure" ? `failure: ${verdict.failure.message}` : verdict.kind === "violation" ? `${verdict.kind} ${verdict.rule}` : verdict.kind;
     if (summary !== expectation) fail(probe, `expected ${expectation}, the judge answered ${summary}:\n${result.output.trim()}`);
+    if (reason !== undefined && !result.output.split(/\r?\n/u).some((line) => line.trim() === `error: ${reason}`))
+      fail(probe, `expected the refusal \`${reason}\`, the judge said:\n${result.output.trim()}`);
   };
   await judge("comparator-accepts", solutionExport, "certified");
   await judge("comparator-rejects-mismatch", mismatchExport, "violation statement-mismatch");
+  await judge("comparator-rejects-sorry", challengeExport, "violation illegal-axiom", "Illegal axiom detected: 'sorryAx'");
   await judge("kernel-rejects-forged", forgedExport, "violation kernel-rejected");
 
-  // S6: the confinement, from inside the judge runtime
+  // S7: the confinement, from inside the judge runtime
   const canaryJob = path.join(root, `canary-${randomUUID()}`);
   const canaryTmp = path.join(os.tmpdir(), `lax-canary-${randomUUID()}`);
   fs.writeFileSync(canaryJob, "canary\n", { mode: 0o600 });
