@@ -47,6 +47,17 @@ machine that never ran lax, the spec reconciliation of `spec_v2_draft.md`).
 Pending edges (decision 12) landed in lax and lax-website 2026-10-05;
 the renderer re-pin at merge carries the pending display into `lax
 serve`.
+
+- **Triage the Codex night review** (`spike/axiomfree/codex-review-night-20261005.md`,
+  2026-10-05; recorded, not fixed). New: R1 (high), where the publisher takes the
+  comparator verdict and the absence of `pending` from the validate artifacts
+  and never re-establishes either. R5 (low, a spec-1 regression), where the
+  line-only `nested` test in the unused-lemma rule hides a theorem that shares
+  a line with a definition. R6 (low), where the guide's statement example does
+  not compile with only `LaxCore` imported. Already tracked: R2 (revalidation
+  vs. dependent certificates), R3 (metadata resubmission vs. rerun). R4: the
+  website's judgment card drops universe instantiations.
+
 Stage-4 items for Jan: the sandboxed `lax certify --run`
 against a *real* record (since the ultracode review's S1/M1 it builds in a
 fresh scratch project from the records' captures in the registry and the

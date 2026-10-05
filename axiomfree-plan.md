@@ -1193,3 +1193,13 @@ draft's "Pending edges" now says a pending edge stays in the network but
 never fires (only `lax generate-prooftree` drops it) and states the
 generated-declaration exemption; the `metadataCandidate` docstring says
 "a proof that is not pending".
+
+2026-10-05, Codex night review (gpt-6-astra, xhigh) of d964e38..7dc36dd
+and the lax-website commits of 2026-10-04/05, saved verbatim as
+`spike/axiomfree/codex-review-night-20261005.md`. The first run was stopped by
+OpenAI's cybersecurity filter. A retry, reworded as a correctness review,
+finished. There are six findings, and none is fixed yet. The main one is R1: the
+publisher re-derives the Challenge and bundle but takes the comparator verdict and
+`pending` flags from the validate artifacts. That bears on decision 10 and decision
+12's registration rule. Three cited lines were spot-checked and are accurate. Triage is
+in TODO.md.
