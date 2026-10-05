@@ -175,9 +175,20 @@ describe("CLI compatibility surface", () => {
     expect(draft.stderr).toBe("# v4.99.0 follows spec 2; this is its draft specification, normative once reconciled into spec.md\n");
     expect(cli(["print", "spec", "--env", "v9.9.9"]).code).toBe(1);
 
+    // each spec has its own guide, chosen like the specification: the
+    // epoch's by default, a spec-2 row's with `--env`
     const instructions = cli(["print", "instructions"]);
     expect(instructions.code).toBe(0);
-    expect(instructions.output).toContain("lax print spec");
+    expect(instructions.stdout).toBe(fs.readFileSync(path.join(root, "assets", "instructions.md"), "utf8"));
+    expect(cli(["print", "instructions", "--env", "v4.33.0"]).stdout).toBe(instructions.stdout);
+    const spec2 = cli(["print", "instructions", "--env", "v4.99.0"], {
+      LAX_TEST_ENVIRONMENTS: JSON.stringify([{ id: "v4.99.0", specVersion: 2, libraries: [{ name: "LaxCore", commit: "b".repeat(40) }] }]),
+    });
+    expect(spec2.code).toBe(0);
+    expect(spec2.stdout).toBe(fs.readFileSync(path.join(root, "assets", "instructions-spec2.md"), "utf8"));
+    expect(spec2.stderr).toBe("");
+    expect(spec2.stdout).not.toBe(instructions.stdout);
+    expect(cli(["print", "instructions", "--env", "v9.9.9"]).code).toBe(1);
   });
 
   it("reports an error as an error, with no command-name prefix", () => {

@@ -45,9 +45,8 @@ spec 2 once the mathlib tag exists, epoch flip, close `v4.33.0`, the Lax17
 hand-port, the production round trip with a `--paranoid` rerun on a
 machine that never ran lax, the spec reconciliation of `spec_v2_draft.md`).
 Pending edges (decision 12) landed in lax and lax-website 2026-10-05;
-next, `assets/instructions.md` gains the stub-first workflow (left
-untouched for now), and the renderer re-pin at merge carries the pending
-display into `lax serve`.
+the renderer re-pin at merge carries the pending display into `lax
+serve`.
 Stage-4 items for Jan: the sandboxed `lax certify --run`
 against a *real* record (since the ultracode review's S1/M1 it builds in a
 fresh scratch project from the records' captures in the registry and the
@@ -210,11 +209,7 @@ of a Lax17-sized relative certificate (the composed Solution of a
     Refines the worker's rule from the Codex review.
   - Optional hygiene the reviewer listed, Jan decides: forbid `export`
     into a namespace outside the package (C3); forbid `@[extern]`/
-    `@[export]`, `unsafe`, `partial` (I1, I2); author phrasing for
-    `assets/instructions.md` ("put everything under `namespace
-    LaxNNNProofs`; never `_root_`; never `initialize`; `scoped
-    notation`/`local attribute`; avoid `bv_decide`/`bv_normalize` on
-    enums you did not define").
+    `@[export]`, `unsafe`, `partial` (I1, I2).
   - **Eager composition guard** (open question 3): a scheduled job that
     builds one file importing every proof package of an environment;
     catches every clash class except attribute drift, before the first
@@ -402,14 +397,7 @@ of a Lax17-sized relative certificate (the composed Solution of a
   own high-priority scoped `syntax` can still make a statement's source
   read differently from what it means; only the recorded `body` shows it,
   and lax-website carries `body` without showing it. Options: show
-  `body` beside the source when it differs, or accept the gap. Also owed:
-  the author phrasing in `assets/instructions.md` (macros and elaborators
-  extend only the package's own `syntax`).
-- `assets/instructions.md` (~152) still lists `declare_syntax_cat` as
-  `initialize` sugar a record never uses; spec 2 now admits a proof
-  package's category under its own namespace (`declare_syntax_cat
-  Lax3Proofs.fo`) and refuses one in a concept package (plan Record
-  2026-10-05). Rephrase in the instructions pass.
+  `body` beside the source when it differs, or accept the gap.
 - The transitively-reachable-statement e2e stage 2 only table-tested is
   still owed; the chain e2e of stage 3 (`host-spec2.test.ts`, lax-41 over
   lax-38) covers the direct require only.

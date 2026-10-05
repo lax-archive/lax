@@ -33,9 +33,19 @@ export function specDocument(environment: ArchiveEnvironment): { file: string; b
   return { file: "spec.md" };
 }
 
-/** The brief a user pastes into their agent: how to formalize a result here. */
-export function printInstructions(): void {
-  process.stdout.write(fs.readFileSync(packagedFile("assets", "instructions.md"), "utf8"));
+/**
+ * The brief a user pastes into their agent: how to formalize a result here.
+ * Each spec has its own guide, chosen like the specification: by `--env`,
+ * else the epoch's.
+ */
+export function printInstructions(options: { env?: string } = {}): void {
+  const environment = options.env === undefined ? epoch() : supportedEnvironment(options.env);
+  process.stdout.write(fs.readFileSync(packagedFile("assets", instructionsDocument(environment)), "utf8"));
+}
+
+/** Which bundled guide (under `assets/`) speaks for the environment's spec. */
+export function instructionsDocument(environment: ArchiveEnvironment): string {
+  return environment.specVersion === 2 ? "instructions-spec2.md" : "instructions.md";
 }
 
 /** A file shipped beside `dist/` — all of these are in package.json's `files`. */

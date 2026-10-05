@@ -1168,3 +1168,19 @@ record pages are the renderer's, so they follow once the renderer is
 re-pinned. Coverage: loader cases, the projection/SVG (dashed classes,
 identical layout input), and a site test with a pending-only draft beside
 a mixed record.
+
+2026-10-05, the spec-2 author guide (Jan's request). Each spec now has
+its own guide: `assets/instructions-spec2.md` holds the spec-2 workflow and
+what used to be `assets/instructions.md`'s spec-2 section, which shrinks to
+a one-paragraph pointer. The workflow is stub-first (decision 12): scope →
+concepts *and* every edge stubbed `:= sorry` → `lax submit` a draft → the
+user reviews statements and edges on the website and signs off, freezing
+both (an edge's signature then changes only with explicit confirmation,
+like a concept) → proofs → no pending edge left before `lax register`. The
+guide also takes the two owed phrasings: a syntax category only in the
+proof package under its namespace, and macros/elaborators only over the
+package's own `syntax`. `lax print instructions --env <id>` picks the
+guide as `lax print spec --env` picks the spec (the epoch's by default,
+`instructionsDocument` in `src/cli/spec.ts`); `assets/` already ships
+whole in the package. The draft's "Print" passage records the choice and
+drops its open note.

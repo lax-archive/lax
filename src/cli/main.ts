@@ -315,8 +315,9 @@ print
   .action((options: { env?: string }) => { printSpec({ env: options.env }); });
 print
   .command("instructions")
+  .option("--env <id>", "the environment whose author guide to print (default: v4.33.0)")
   .description("how to drive lax when formalizing a result")
-  .action(() => { printInstructions(); });
+  .action((options: { env?: string }) => { printInstructions({ env: options.env }); });
 
 program
   .command("login")

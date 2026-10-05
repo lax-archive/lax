@@ -2639,15 +2639,14 @@ authority. **lax logout** revokes both stored tokens with GitHub before removing
 them locally. Without a terminal, or with ``LAX_GITHUB_APP_USER_TOKEN`` set,
 no command signs in on its own.
 
-**lax print spec** prints this specification and **lax print instructions**
-the guide to creating a submission. Both are bundled with the CLI, so the
-printed text is exactly the one shipped in that release, and both print
-verbatim: their reader is an agent.
-
-> draft note: with two spec versions live, ``lax print spec`` has to choose.
-> Options: print the spec of the epoch, with a flag for the other; print
-> both; or print the spec of the submission folder's environment when run
-> inside one. The plan does not say.
+**lax print spec** prints the specification and **lax print instructions**
+the guide to creating a submission, each for one environment's spec:
+``--env <id>`` names the environment, and the epoch's is the default. A
+spec-1 environment prints spec.md and the spec-1 guide; a spec-2 one prints
+this specification (announced on stderr as a draft until it is reconciled)
+and the spec-2 guide. Both are bundled with the CLI, so the printed text is
+exactly the one shipped in that release, and both print verbatim: their
+reader is an agent.
 
 
 ## GitHub Actions
