@@ -175,7 +175,7 @@ function parseDeclaration(value: unknown, index: number, specVersion: ContentSpe
   const label = `inspector declaration ${index}`;
   const allowed = [
     "name", "kind", "module", "axioms", "usedConstants", "userName", "doc", "conclusionFacts",
-    "signature", "startLine", "endLine",
+    "signature", "startLine", "endLine", "startColumn", "endColumn",
     ...(specVersion === 2 ? [...SPEC2_FACTS, "binders", "body", "nonCanonical", "initializer", "instance", "origin"] : []),
   ];
   for (const key of Object.keys(item))
@@ -193,6 +193,8 @@ function parseDeclaration(value: unknown, index: number, specVersion: ContentSpe
   if (item.signature !== undefined) declaration.signature = text(item.signature, "declaration signature", 4 * 1024 * 1024);
   if (item.startLine !== undefined) declaration.startLine = natural(item.startLine, "declaration startLine");
   if (item.endLine !== undefined) declaration.endLine = natural(item.endLine, "declaration endLine");
+  if (item.startColumn !== undefined) declaration.startColumn = natural(item.startColumn, "declaration startColumn");
+  if (item.endColumn !== undefined) declaration.endColumn = natural(item.endColumn, "declaration endColumn");
   if (specVersion === 2) {
     for (const flag of ["nonCanonical", "initializer", "instance"] as const) {
       if (item[flag] === undefined) continue;

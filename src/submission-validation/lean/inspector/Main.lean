@@ -665,9 +665,9 @@ unsafe def moduleDocsOf (data : ModuleData) : Array ModuleDoc := Id.run do
   return out
 
 -- `declarationRangesOf` casts each `Lean.declRangeExt` entry to
--- `Name × DeclarationRanges` and reads two line numbers out of it. The
--- extension's own type is guarded as well: `MapDeclarationExtension α` is what
--- makes its persisted entries `Name × α`.
+-- `Name × DeclarationRanges` and reads the range's start and end positions
+-- (line and column) out of it. The extension's own type is guarded as well:
+-- `MapDeclarationExtension α` is what makes its persisted entries `Name × α`.
 run_cmd do
   ShapeGuard.checkConst "declarationRangesOf" `Lean.declRangeExt
     "(Lean.MapDeclarationExtension Lean.DeclarationRanges)"
@@ -1091,10 +1091,17 @@ unsafe def main (args : List String) : IO UInt32 := do
         fields := fields ++ [("initializer", Json.bool true)]
       if instances.contains declName then
         fields := fields ++ [("instance", Json.bool true)]
+      -- the full range, start and end, as positions: the unused-helper rule
+      -- (phases/inspect.ts) asks whether one declaration lies inside
+      -- another's, and two declarations can share a line — a definition and
+      -- an unrelated theorem written side by side — so a line alone cannot
+      -- answer it. Columns count codepoints from 0, as `Lean.Position` does.
       if let some ranges := declarationRanges.find? declName then
         fields := fields ++ [
           ("startLine", toJson ranges.range.pos.line),
-          ("endLine", toJson ranges.range.endPos.line)]
+          ("endLine", toJson ranges.range.endPos.line),
+          ("startColumn", toJson ranges.range.pos.column),
+          ("endColumn", toJson ranges.range.endPos.column)]
       if let some parsed := parsed? then
         fields := fields ++ [("doc", jsonOfParsedDoc parsed)]
         -- kernel facts for candidate proofs: any frontmatter with a `conclusion`

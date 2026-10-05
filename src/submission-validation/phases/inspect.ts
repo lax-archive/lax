@@ -292,7 +292,13 @@ function classifySpec1(input: ClassificationInput): ProofEntry[] {
  * spec 1, which reports no origin, it has a userName. Neither spec counts a
  * theorem whose range lies inside another declaration's of its module: a
  * structure's Prop-valued fields and `@[ext]`'s `ext`/`ext_iff`, which Lean
- * generates with the structure's own range, and a `where` helper.
+ * ranges at the field and at the `ext` attribute inside the structure, and a
+ * `where` helper. Inside is by position, line and column, not by line: a
+ * theorem written on the line of an unrelated definition sits beside it, not
+ * in it, and still warns (measured under v4.33.0: `def two : Nat := 2
+ * theorem beside …` on one line ranges `two` at 3:0–3:18 and `beside` at
+ * 3:20–3:52, while `@[ext] structure Q where x : Nat` ranges `Q` at
+ * 13:0–13:32 and `Q.ext` at 13:2–13:5).
  */
 function warnAboutUnusedLemmas(
   declarations: InspectorDeclaration[],
@@ -318,13 +324,15 @@ function warnAboutUnusedLemmas(
   const ranged = declarations.filter((declaration) => declaration.startLine !== undefined && declaration.endLine !== undefined);
   const nested = (declaration: InspectorDeclaration): boolean =>
     declaration.startLine !== undefined && declaration.endLine !== undefined &&
-    ranged.some((outer) =>
-      outer !== declaration &&
-      outer.module === declaration.module &&
-      outer.startLine! <= declaration.startLine! &&
-      declaration.endLine! <= outer.endLine! &&
+    ranged.some((outer) => {
+      if (outer === declaration || outer.module !== declaration.module) return false;
+      const columns = hasColumns(outer) && hasColumns(declaration);
+      const [outerStart, outerEnd] = positions(outer, columns);
+      const [start, end] = positions(declaration, columns);
+      if (comparePositions(outerStart, start) > 0 || comparePositions(end, outerEnd) > 0) return false;
       // two theorems sharing one range (a `@[to_additive]` pair) are peers
-      (outer.kind !== "theorem" || outer.startLine! < declaration.startLine! || declaration.endLine! < outer.endLine!));
+      return outer.kind !== "theorem" || comparePositions(outerStart, start) < 0 || comparePositions(end, outerEnd) < 0;
+    });
   const unused = declarations
     .filter((declaration) =>
       declaration.kind === "theorem" &&
@@ -342,6 +350,27 @@ function warnAboutUnusedLemmas(
         "theorem in this submission; keep it only if this is intentional",
     );
   }
+}
+
+/** A ranged declaration's start and end as (line, column) positions. Lines
+ * alone cannot tell a theorem written beside a definition on one line from
+ * one generated inside it, so the columns decide whenever both sides carry
+ * them; a declaration without them (`columns` false) compares by line, the
+ * column read as 0 on both sides. */
+function positions(declaration: InspectorDeclaration, columns: boolean): [[number, number], [number, number]] {
+  return [
+    [declaration.startLine!, columns ? declaration.startColumn! : 0],
+    [declaration.endLine!, columns ? declaration.endColumn! : 0],
+  ];
+}
+
+function hasColumns(declaration: InspectorDeclaration): boolean {
+  return declaration.startColumn !== undefined && declaration.endColumn !== undefined;
+}
+
+/** Lexicographic: the line first, the column on a tie. */
+function comparePositions(a: [number, number], b: [number, number]): number {
+  return a[0] - b[0] || a[1] - b[1];
 }
 
 function checkReportShape(report: InspectorReport, label: string, findings: FindingCollector): void {

@@ -56,7 +56,10 @@ interface Golden {
 }
 
 const GOLDENS: Golden[] = [
-  // the spec-1 contract, byte-identical since before spec 2 existed
+  // the spec-1 contract, byte-identical since before spec 2 existed until
+  // 2026-10-05, when every ranged declaration gained `startColumn` and
+  // `endColumn` beside its lines (the unused-helper rule's containment test,
+  // R5 of spike/axiomfree/codex-review-night-20261005.md) — nothing else moved
   {
     fixture: "inspector-golden",
     spec: 1,

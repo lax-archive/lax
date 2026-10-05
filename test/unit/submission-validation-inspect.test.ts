@@ -434,6 +434,58 @@ describe("inspection judgments retained from main", () => {
     );
   });
 
+  it("compares ranges by position, so a theorem beside a definition on one line still warns", () => {
+    const fixture = reports();
+    // columns as the v4.33.0 inspector reports them for a probe module
+    const ranged = (name: string, kind: string, start: [number, number], end: [number, number]) => ({
+      name,
+      userName: name,
+      kind,
+      module: "Lax1Proofs.Basic",
+      axioms: [],
+      usedConstants: [],
+      startLine: start[0],
+      startColumn: start[1],
+      endLine: end[0],
+      endColumn: end[1],
+    });
+    fixture.proofs.declarations.push(
+      // `def two : Nat := 2  theorem beside : True := trivial` on one line
+      ranged("Lax1Proofs.two", "def", [3, 0], [3, 18]),
+      ranged("Lax1Proofs.beside", "theorem", [3, 20], [3, 52]),
+      // `@[ext] structure Q where x : Nat`: the lemmas range at `ext`
+      ranged("Lax1Proofs.Q", "inductive", [13, 0], [13, 32]),
+      ranged("Lax1Proofs.Q.ext", "theorem", [13, 2], [13, 5]),
+      ranged("Lax1Proofs.Q.ext_iff", "theorem", [13, 2], [13, 5]),
+      // `theorem outer : True := inner where inner : True := trivial`
+      ranged("Lax1Proofs.outer", "theorem", [20, 0], [20, 59]),
+      ranged("Lax1Proofs.outer.inner", "theorem", [20, 36], [20, 59]),
+    );
+    // a report without columns compares by line, as before
+    fixture.proofs.declarations.push(
+      { ...ranged("Lax1Proofs.five", "def", [30, 0], [30, 10]), startColumn: undefined, endColumn: undefined },
+      { ...ranged("Lax1Proofs.byLine", "theorem", [30, 12], [30, 40]), startColumn: undefined, endColumn: undefined },
+    );
+    fixture.proofs.modules[1]!.declCount = fixture.proofs.declarations.length;
+
+    const judged = judgeInspection(
+      fixture.concepts,
+      fixture.proofs,
+      fixture.conceptInventory,
+      fixture.proofInventory,
+      EMPTY_RESOLUTION,
+    );
+
+    expect(judged.findings.violations).toEqual([]);
+    expect(judged.findings.warnings.map((warning) => warning.message)).toEqual(
+      ["Lax1Proofs.beside", "Lax1Proofs.outer"].map(
+        (name) =>
+          `helper lemma ${name} is not used, directly or transitively, by any proof ` +
+          "theorem in this submission; keep it only if this is intentional",
+      ),
+    );
+  });
+
   it("collects independent root, import, annotation, namespace, axiom, and proof failures", () => {
     const fixture = reports();
     fixture.concepts.modules[0]!.imports = [];

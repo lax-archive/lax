@@ -498,6 +498,27 @@ const CASES: Case[] = [
       `helper lemma ${name} is not used, directly or transitively, by any proof theorem in this submission; keep it only if this is intentional`),
   },
   {
+    // R5 of the 2026-10-05 Codex review: containment is by position, so a
+    // theorem written beside an unrelated definition on its line is no
+    // generated declaration; columns as the v4.33.0 inspector reports them
+    name: "a theorem beside a definition on one line warns as unused; one ranged inside a declaration does not",
+    concepts: [statement(A)],
+    proofs: [
+      decl({ name: "Lax1Proofs.two", kind: "def", startLine: 3, startColumn: 0, endLine: 3, endColumn: 18 }),
+      decl({ name: "Lax1Proofs.beside", startLine: 3, startColumn: 20, endLine: 3, endColumn: 52 }),
+      decl({ name: "Lax1Proofs.Q", kind: "inductive", startLine: 13, startColumn: 0, endLine: 13, endColumn: 32 }),
+      decl({ name: "Lax1Proofs.Q.ext", startLine: 13, startColumn: 2, endLine: 13, endColumn: 5 }),
+      decl({ name: "Lax1Proofs.Q.ext_iff", startLine: 13, startColumn: 2, endLine: 13, endColumn: 5 }),
+      // two theorems sharing one exact range stay peers
+      decl({ name: "Lax1Proofs.twin", startLine: 30, startColumn: 0, endLine: 31, endColumn: 20 }),
+      decl({ name: "Lax1Proofs.twin_add", startLine: 30, startColumn: 0, endLine: 31, endColumn: 20 }),
+    ],
+    violations: [],
+    proofEntries: [],
+    warnings: ["Lax1Proofs.beside", "Lax1Proofs.twin", "Lax1Proofs.twin_add"].map((name) =>
+      `helper lemma ${name} is not used, directly or transitively, by any proof theorem in this submission; keep it only if this is intentional`),
+  },
+  {
     name: "frontmatter on any proof-package declaration names the spec-1 habit",
     concepts: [statement(A)],
     proofs: [

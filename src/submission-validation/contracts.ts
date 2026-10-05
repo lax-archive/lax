@@ -577,6 +577,11 @@ export interface InspectorDeclaration {
   signature?: string;
   startLine?: number;
   endLine?: number;
+  /** The range's start and end columns (codepoints from 0), beside its
+   * lines: two declarations can share a line, and only the full position
+   * says whether one lies inside the other (the unused-helper rule). */
+  startColumn?: number;
+  endColumn?: number;
   /** The four spec-2 facts (lean/inspector/Main.lean, "Spec-2 facts"):
    * present on every declaration of a `--spec 2` report, absent from a
    * spec-1 one — parseInspectorReport holds the report to that. */
