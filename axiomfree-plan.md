@@ -201,10 +201,11 @@ spec.md: the spec-2 text is a draft Jan reconciles.
       `Cert.p : True`, axiom-free, and both exports agree — so every
       syntax extension and attribute application in a record is `scoped`
       or `local`, and (2026-10-05) every macro and elaborator, scoped
-      included, is keyed on a syntax kind its own package declares. E1 is a *provenance* hole, not a style one, and the
-      rule alone is not the defence: the trusted Certify phase holds the
-      exported Challenge's theorem types to the recorded telescopes
-      (constants, level instances, level parameters), which is also the
+      included, is keyed on a syntax kind its own package declares. E1
+      is a *provenance* hole, not a style one, and the rule alone is not
+      the defence: the trusted Certify phase holds the exported
+      Challenge's theorem types to the recorded telescopes (constants,
+      level instances, level parameters), which is also the
       independent structural check the Codex intents review asked for —
       and, since the ultracode review's S2, so do the host path and a
       reader's `lax certify --run`, relative certificates included.
@@ -1029,3 +1030,22 @@ it to anything (verified on rc3 with a `(priority := high)` `syntax` of
 `local`. The website carries `body` but does not show it (lax-website
 `StatementEntry.body`), so neither residual is visible to a reader yet;
 TODO.md has the decision.
+
+2026-10-05, the retargeting rule's re-review. Two holes, both verified
+on rc3. (1) The declared kinds were every parser-extension `kind` entry
+of the package, but a parser registers every kind it collects,
+transitively: `scoped syntax "yy" «term_∈_» : term` wrote core's
+`«term_∈_»` into the package's olean, and the `∈` retarget passed again.
+A kind now counts only when it is also a constant of the package (a
+`syntax`'s node kind is its parser constant's name, and the namespace
+rule keeps those apart from every other record's and Lean's). (2) Only
+the macro and the term/command/tactic elaborator attributes were read; a
+`@[scoped doElem_elab Lean.Parser.Term.doReturn]` took over `return`
+inside the namespace unseen, and `inductive_elab`, `try_tactic`, and
+grind's keyed attributes were equally missed. The inspector now treats
+as a syntax extension every extension whose constant has type
+`KeyedDeclsAttribute _`, apart from the pretty printer's
+(`Lean.PrettyPrinter.*`: delaborators, unexpanders, formatters,
+parenthesizers), for both `globalSyntax` and `retargetedSyntax`; the
+shape guard pins `KeyedDeclsAttribute` itself. `host-spec2.test.ts`
+covers both.

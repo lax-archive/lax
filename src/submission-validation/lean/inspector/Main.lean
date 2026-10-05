@@ -766,15 +766,25 @@ unsafe def initializersOf (data : ModuleData) : NameSet := Id.run do
         out := out.insert decl
   return out
 
-/-- The extensions that hold a module's syntax, macro, and elaborator
-registrations: `syntax`/`notation`/`infix` tokens and parsers,
-`macro`/`macro_rules`/`notation` expansions, `elab`/`elab_rules` for terms,
-commands, and tactics. Every one is a `ScopedEnvExtension`, and the olean
-keeps each entry's scope: `global`, or `scoped` under a namespace
-(a `local` one is not persisted at all). -/
-def syntaxExtensions : List Name :=
-  [`Lean.Parser.parserExtension, `Lean.Elab.macroAttribute, `Lean.Elab.Term.termElabAttribute,
-   `Lean.Elab.Command.commandElabAttribute, `Lean.Elab.Tactic.tacticElabAttribute]
+/-- Whether an extension holds a module's syntax, macro, or elaborator
+registrations: the parser extension (`syntax`/`notation`/`infix` tokens and
+parsers) or a `KeyedDeclsAttribute` — `macro`/`macro_rules`/`notation`
+expansions, `elab`/`elab_rules` for terms, commands, and tactics, and every
+other keyed elaborator Lean or a dependency defines (`doElem_elab`,
+`inductive_elab`, `try_tactic`, grind's, …). A keyed attribute's extension is
+named by the constant that holds the attribute, so the attribute is found by
+that constant's type, not by a list that misses the next one (the E1
+follow-up's re-review, 2026-10-05). The pretty printer's keyed attributes
+(delaborators, unexpanders, formatters, parenthesizers) change only how a
+term prints and are not syntax extensions. Every one is a
+`ScopedEnvExtension`, and the olean keeps each entry's scope: `global`, or
+`scoped` under a namespace (a `local` one is not persisted at all). -/
+def isSyntaxExtension (env : Environment) (name : Name) : Bool :=
+  name == `Lean.Parser.parserExtension ||
+    (!(`Lean.PrettyPrinter).isPrefixOf name &&
+      match env.find? name with
+      | some info => info.type.getAppFn.constName? == some `Lean.KeyedDeclsAttribute
+      | none => false)
 
 -- `globalSyntaxOf` casts each entry of those extensions to
 -- `ScopedEnvExtension.Entry` and reads its constructor, and a parser
@@ -792,11 +802,11 @@ package turns `theorem Cert.p : 1 = 2 := sorry` into `Cert.p : True` with
 both exports agreeing (spike/axiomfree/namespace-review-20261004.md, E1) —
 and two records' global tokens collide for every later author. A record
 declares every syntax extension `scoped` or `local` (spec 2). -/
-unsafe def globalSyntaxOf (data : ModuleData) : Array Name := Id.run do
+unsafe def globalSyntaxOf (env : Environment) (data : ModuleData) : Array Name := Id.run do
   let mut out : Array Name := #[]
   for (extName, entries) in data.entries do
     let name := (privateToUserName? extName).getD extName
-    if syntaxExtensions.contains name then
+    if isSyntaxExtension env name then
       let global := entries.any fun e =>
         match (unsafeCast e : ScopedEnvExtension.Entry NonScalar) with
         | .global a =>
@@ -815,20 +825,28 @@ unsafe def globalSyntaxOf (data : ModuleData) : Array Name := Id.run do
 
 -- `retargetedSyntaxOf` casts each entry of the macro and elaborator
 -- attributes' extensions, global or scoped, to `KeyedDeclsAttribute.OLeanEntry`
--- for the syntax kind it is keyed on; the attributes' types are guarded so
--- the cast stays the one `KeyedDeclsAttribute` persists.
+-- for the syntax kind it is keyed on; `KeyedDeclsAttribute` itself is guarded
+-- so its extension stays the one that persists that entry.
 run_cmd do
   ShapeGuard.checkType "retargetedSyntaxOf" `Lean.KeyedDeclsAttribute.OLeanEntry
     "Lean.KeyedDeclsAttribute.OLeanEntry.mk : (explicit key : Lean.KeyedDeclsAttribute.Key) -> (explicit declName : Lean.Name) -> Lean.KeyedDeclsAttribute.OLeanEntry"
-  ShapeGuard.checkConst "retargetedSyntaxOf" `Lean.Elab.macroAttribute "(Lean.KeyedDeclsAttribute Lean.Macro)"
-  ShapeGuard.checkConst "retargetedSyntaxOf" `Lean.Elab.Term.termElabAttribute "(Lean.KeyedDeclsAttribute Lean.Elab.Term.TermElab)"
-  ShapeGuard.checkConst "retargetedSyntaxOf" `Lean.Elab.Command.commandElabAttribute "(Lean.KeyedDeclsAttribute Lean.Elab.Command.CommandElab)"
-  ShapeGuard.checkConst "retargetedSyntaxOf" `Lean.Elab.Tactic.tacticElabAttribute "(Lean.KeyedDeclsAttribute Lean.Elab.Tactic.Tactic)"
+  ShapeGuard.checkType "retargetedSyntaxOf" `Lean.KeyedDeclsAttribute
+    "Lean.KeyedDeclsAttribute.mk : (implicit γ : Sort) -> (explicit defn : (Lean.KeyedDeclsAttribute.Def #0)) -> (explicit tableRef : (IO.Ref (Lean.KeyedDeclsAttribute.Table #1))) -> (explicit ext : (Lean.KeyedDeclsAttribute.Extension #2)) -> (Lean.KeyedDeclsAttribute #3)"
 
 /-- The syntax kinds a package declares: every `syntax` (and the `notation`,
-`macro`, `elab` that expand to one) registers its node kind as a global
-parser-extension entry (global, `scoped` or not). -/
+`macro`, `elab` that expand to one) declares a parser constant named by its
+node kind and registers that kind as a global parser-extension entry
+(`scoped` or not). The entries alone overcount: a parser registers every
+kind it collects, transitively, so `scoped syntax "yy" «term_∈_» : term`
+writes core's `«term_∈_»` into the package's olean (the E1 follow-up's
+re-review, 2026-10-05). A kind counts only when it is also a constant of
+the package — which the namespace rule keeps under the package's own
+namespaces, apart from every kind Lean or another record declares. -/
 unsafe def declaredSyntaxKindsOf (datas : Array ModuleData) : NameSet := Id.run do
+  let mut consts : NameSet := {}
+  for data in datas do
+    for n in data.constNames do
+      consts := consts.insert n
   let mut out : NameSet := {}
   for data in datas do
     for (extName, entries) in data.entries do
@@ -838,7 +856,7 @@ unsafe def declaredSyntaxKindsOf (datas : Array ModuleData) : NameSet := Id.run 
             | .global a => a
             | .scoped _ a => a
           if let .kind k := (unsafeCast a : Parser.ParserExtension.OLeanEntry) then
-            out := out.insert k
+            if consts.contains k then out := out.insert k
   return out
 
 /-- The syntax kinds a module keys a macro or elaborator on — global or
@@ -848,11 +866,12 @@ a statement whose source reads `3 ∈ NP` elaborates to `True`
 (spike/axiomfree/ultracode-review-20261004.md, E1 follow-up). A `local`
 rule is not persisted and cannot be seen here; it shows only in the
 statement's elaborated body. -/
-unsafe def retargetedSyntaxOf (data : ModuleData) (declared : NameSet) : Array Name := Id.run do
+unsafe def retargetedSyntaxOf (env : Environment) (data : ModuleData) (declared : NameSet) :
+    Array Name := Id.run do
   let mut out : Array Name := #[]
   for (extName, entries) in data.entries do
     let name := (privateToUserName? extName).getD extName
-    if name != `Lean.Parser.parserExtension && syntaxExtensions.contains name then
+    if name != `Lean.Parser.parserExtension && isSyntaxExtension env name then
       for e in entries do
         let entry : KeyedDeclsAttribute.OLeanEntry :=
           match (unsafeCast e : ScopedEnvExtension.Entry NonScalar) with
@@ -940,8 +959,8 @@ unsafe def main (args : List String) : IO UInt32 := do
     -- the module-level spec-2 facts: the syntax extensions this module
     -- registers globally; the declarations it marks `@[init]` are flagged
     -- per declaration below
-    let globalSyntax := if spec == 2 then globalSyntaxOf data else #[]
-    let retargetedSyntax := if spec == 2 then retargetedSyntaxOf data declaredKinds else #[]
+    let globalSyntax := if spec == 2 then globalSyntaxOf env data else #[]
+    let retargetedSyntax := if spec == 2 then retargetedSyntaxOf env data declaredKinds else #[]
     let initializers := if spec == 2 then initializersOf data else {}
     moduleJsons := moduleJsons.push <| Json.mkObj <|
       [("name", Json.str (nameStr m)),

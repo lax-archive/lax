@@ -1591,12 +1591,31 @@ end Lax77Proofs
 
       // core's \`∈\` read as \`True\` inside the namespace: the source says
       // \`3 ∈ NP\`, false, and the statement means \`True\` (E1 follow-up)
-      const refused = await buildOnHost(submission("scoped macro_rules | \`($_a ∈ $_b) => \`(True)"), { id: "lax-77" });
-      expect(refused.ok).toBe(false);
-      expect(rules(refused), messages(refused)).toEqual(new Set(["retarget-syntax"]));
-      expect(refused.violations.map((violation) => violation.intent)).toEqual(["standards"]);
-      expect(messages(refused)).toContain(
-        "concept module Lax77.Cx keys a macro or elaborator on syntax its package does not declare («term_∈_»)",
+      const retarget = "scoped macro_rules | \`($_a ∈ $_b) => \`(True)";
+      // a package syntax that merely mentions \`∈\` registers core's kind in
+      // the package's olean too, and declares nothing (re-review 2026-10-05)
+      for (const extra of ["", 'scoped syntax "yy" «term_∈_» : term']) {
+        const refused = await buildOnHost(submission(`${extra}\n${retarget}`), { id: "lax-77" });
+        expect(refused.ok).toBe(false);
+        expect(rules(refused), messages(refused)).toEqual(new Set(["retarget-syntax"]));
+        expect(refused.violations.map((violation) => violation.intent)).toEqual(["standards"]);
+        expect(messages(refused)).toContain(
+          "concept module Lax77.Cx keys a macro or elaborator on syntax its package does not declare («term_∈_»)",
+        );
+      }
+
+      // every keyed elaborator counts, not only the four the commands
+      // expand to: a do-element elaborator takes over \`return\` in the namespace
+      const doElab = await buildOnHost(
+        submission(
+          "@[scoped doElem_elab Lean.Parser.Term.doReturn] def evil : Lean.Elab.Do.DoElab := fun _ dec => dec.continueWithUnit",
+        ),
+        { id: "lax-77" },
+      );
+      expect(doElab.ok).toBe(false);
+      expect(rules(doElab), messages(doElab)).toEqual(new Set(["retarget-syntax"]));
+      expect(messages(doElab)).toContain(
+        "concept module Lax77.Cx keys a macro or elaborator on syntax its package does not declare (Lean.Parser.Term.doReturn)",
       );
 
       const accepted = await buildOnHost(submission(""), { id: "lax-77" });

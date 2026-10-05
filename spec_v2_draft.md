@@ -554,10 +554,12 @@ importer, the archive's generated Challenge included. Scope is not enough
 on its own: a ``scoped macro_rules`` for Lean's ``∈`` makes a statement
 whose source reads ``(3 : Nat) ∈ NP`` mean ``True`` inside the package's
 namespace. So every macro and elaborator a record registers
-(``macro_rules``, ``elab_rules``, and the macro and elaborator attributes
-the ``macro``, ``notation`` and ``elab`` commands expand to), global or
-scoped, is keyed on a syntax kind a ``syntax`` of the same package
-declares; extending Lean's syntax or another record's is refused
+(``macro_rules``, ``elab_rules``, the macro and elaborator attributes the
+``macro``, ``notation`` and ``elab`` commands expand to, and every other
+keyed elaborator attribute, such as ``doElem_elab``), global or scoped, is
+keyed on a syntax kind a ``syntax`` of the same package declares — the
+name of a parser the package itself defines, not a kind its parsers
+merely mention; extending Lean's syntax or another record's is refused
 (``retarget-syntax``, standards). A ``local`` rule is not persisted in the
 olean and cannot be inspected; it can still change how a statement in its
 own file reads, and what the statement means is its recorded elaborated
