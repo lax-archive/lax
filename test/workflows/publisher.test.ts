@@ -381,6 +381,28 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.website.request).not.toHaveBeenCalled();
   });
 
+  it("register refuses a record with pending edges and names them (decision 12)", async () => {
+    const texts = initialFiles("lax-42", issue, alice, "2026-07-30T10:00:00Z");
+    const output = JSON.parse(texts["build-output.json"]!) as Record<string, unknown>;
+    texts["build-output.json"] = jsonFile({
+      ...output,
+      proofs: [{ id: "Lax42Proofs.done" }, { id: "Lax42Proofs.stub", pending: true }, { id: "Lax42Proofs.alsoStub", pending: true }],
+    });
+    const current = loaded(texts);
+    const harness = publisherHarness(current, current, () => undefined);
+    await expect(
+      harness.publisher.publish(
+        request({ action: "register", commentId: 79, command: { action: "register" }, preconditions: current.preconditions }),
+        run,
+      ),
+    ).rejects.toThrow(
+      "lax-42 has 2 pending edges — Lax42Proofs.alsoStub, Lax42Proofs.stub use `sorry`; a draft may state an edge " +
+        "before it is proven, a registered record may not",
+    );
+    // the gate runs at the CAS snapshot, before the ref update; nothing was dispatched
+    expect(harness.website.request).not.toHaveBeenCalled();
+  });
+
   it("register refuses deleted and missing dependencies without a register hint", async () => {
     const current = loadedWithRequires(["Lax7"], ["Lax9"]);
     const harness = publisherHarness(current, current, () => undefined, {

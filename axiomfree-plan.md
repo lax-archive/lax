@@ -254,6 +254,37 @@ spec.md: the spec-2 text is a draft Jan reconciles.
       certify --run`, which builds from the archive's captured sources, is
       the durable path, and the reader-facing text (draft, README, website
       trust note) says so.
+12. **Pending edges** (Jan, 2026-10-04; numbered 12 because 11 was taken).
+    A draft may carry *pending edges*, a registered record may not. The
+    workflow it serves: an agent writes the concepts and edge stubs
+    (`theorem p (hA : A) : C := sorry`), submits a draft, a human reviews
+    the statements *and* the edges' types on the website, and the agent
+    fills in the proofs. Kept small — one recorded flag, one refusal:
+    - A pending edge is a proof (structural proof-hood, unchanged) whose
+      axiom cone contains `sorryAx`; a `sorry` helper makes every edge
+      using it pending. Validation records `pending: true` on the proof
+      entry and warns (`pending-edge`, naming them); in the proof package
+      `sorryAx` is admitted exactly in the cones of pending edges (the
+      package-local `usedConstants` closure). Every other non-background
+      axiom stays refused, on a pending edge too.
+    - *A `sorry` no edge reaches stays a standards violation*, in a draft
+      too. It states nothing a reviewer reads (the reason the relaxation
+      exists), decision 10 keeps whole-package sorry-freedom a hard
+      standard, and admitting it would give registration a second fact to
+      look for beside the one recorded list. What Lean generated under a
+      `sorry` declaration (an equation lemma) is judged through its
+      parent. The concept package admits no `sorry` at all.
+    - Certify judges only the complete edges (`certifiedProofs`, the one
+      boundary every generator caller goes through); a pending edge is in
+      no bundle file, gets no verdict, and is no edge of `lax certify`'s or
+      `lax generate-prooftree`'s network. A record with only pending edges
+      has no certificate.
+    - Registration refuses a record with any pending edge, naming them:
+      `lax register`'s preflight and the trusted publisher
+      (credential-free, at the CAS snapshot, trust rule 2) read the same
+      `pendingProofIds`; a maintainer revalidation of a registered record
+      may not bring one in. `lax submit` of a draft is unchanged; `lax
+      build` shows "N pending" and the warning. Spec 1 is unchanged.
 
 ## Design
 
@@ -299,7 +330,8 @@ assumptions; section variables the elaborator dropped are not binders.
 
 Hygiene, both packages. The `axiom` declaration kind is a violation. The
 axiom set of every declaration is a subset of the background three:
-`sorryAx` and the native-computation axioms are not background. This is
+`sorryAx` and the native-computation axioms are not background — save
+`sorryAx` in the cone of a draft's pending edge (decision 12). This is
 the existing walk (`phases/inspect.ts`) with the "statements of required
 packages" branch deleted, run over Replay-authenticated oleans as today.
 Under decision 10 this is an archive standard, not a correctness input:
@@ -1098,3 +1130,23 @@ namespace rule judges its name. The lax-78 e2e gains the in-namespace
 case. The same review added a spec-1 unit case for the unused-lemma range
 rule and corrected the entry above: spec 1's Prop-class instances still
 warn too.
+
+2026-10-05, decision 12 (pending edges) implemented on the lax side. The
+classifier marks a proof whose axioms contain `sorryAx` `pending: true`,
+admits `sorryAx` in the pending edges' package-local cone, refuses it on
+any other authored declaration (`axiom-free`, "no edge uses it"), and warns
+`pending-edge`; the trusted parser admits `pending` (only `true`, spec 2
+only) and requires a certificate exactly when some proof is not pending;
+`certifiedProofs` (certify/generate.ts) is the one filter, so the plan,
+the publisher's bundle check, `lax certify` and the Challenge regeneration
+all leave pending edges out, and `certifiedProof` refuses one;
+`pendingProofIds`/`pendingEdgesRefusal` (contracts.ts) are read by the
+register publisher, the submit publisher's revalidation of a registered
+record, and `lax register`'s preflight; `lax generate-prooftree` drops
+pending edges from its network. No inspector, container, or tool-script
+change. Coverage: classifier cases (stub, through a helper, dead `sorry`,
+`sorry` plus a native axiom), the parser, the generator filter, the
+register publisher's and the CLI preflight's refusals, the revalidation
+refusal, and the lax-43 real-Lean e2e in `host-spec2.test.ts` (two pending
+edges beside a certified one; a dead `sorry` refused). The website side
+is next (TODO.md).

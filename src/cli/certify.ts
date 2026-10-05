@@ -46,6 +46,7 @@ import {
   bundleMembers,
   challengeText,
   certifiedProof,
+  certifiedProofs,
   comparatorConfigText,
   conceptPackagesOf,
   edgeTheorem,
@@ -459,8 +460,11 @@ function regenerateBundle(
   environment: ArchiveEnvironment,
 ): PreparedBundle {
   const { record } = target;
-  if (record.proofs.length === 0) throw new Error(`${record.id} has no proofs, so the archive certified nothing for it: there is no bundle`);
-  const all = orderedProofs(record.proofs.map(certifiedProof));
+  if (target.kind === "proof" && target.proof.pending === true)
+    throw new Error(`${target.proof.id} is a pending edge — its proof uses \`sorry\` — so no certificate judges it`);
+  const all = orderedProofs(certifiedProofs(record.proofs));
+  if (all.length === 0)
+    throw new Error(`${record.id} has no ${record.proofs.length === 0 ? "proofs" : "proof that is not pending"}, so the archive certified nothing for it: there is no bundle`);
   const proofs = target.kind === "proof" ? all.filter((proof) => proof.id === target.proof.id) : all;
   const referenced = conceptPackagesOf(proofs).filter((name) => name !== record.conceptsPackage);
   for (const name of referenced) {
@@ -542,7 +546,7 @@ async function fetchStoredBundle(record: IndexedRecord, environment: ArchiveEnvi
     throw new Error(`the fetched bundle's Challenge.lean is not the one ${record.id}'s record stores — the archive's record is inconsistent; report it`);
   // comparator.json decides which theorems the comparator holds and which
   // axioms it permits: it must be the one the record's proofs give
-  const theorems = orderedProofs(record.proofs.map(certifiedProof));
+  const theorems = orderedProofs(certifiedProofs(record.proofs));
   if (files["comparator.json"] !== comparatorConfigText(theorems))
     throw new Error(`the fetched bundle's comparator.json is not the one ${record.id}'s proofs give — the archive's record is inconsistent; report it`);
   if (files["lean-toolchain"] !== leanToolchainText(environment))
@@ -586,7 +590,7 @@ function composeCertificate(
       try {
         proof = certifiedProof(entry);
       } catch {
-        continue; // a spec-1 shaped entry on a spec-2 island: not a proof this certificate can apply
+        continue; // a spec-1 shaped entry on a spec-2 island, or a pending edge: not a proof this certificate can apply
       }
       certified.set(proof.id, proof);
       // a given statement is a hypothesis, never proven: its proofs are left out

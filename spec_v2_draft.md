@@ -27,11 +27,12 @@ the container limits); Inspection Scaffolding;
 Inspection Internals; the new Certification subsection with the worked
 example; Site Generator; CLI (`lax init`, `lax build`, `lax port`, the new
 `lax certify`, `lax doctor`); GitHub Actions (validation isolation, the
-bundle); Distribution and Deployment (admission).
+bundle); Distribution and Deployment (admission); Lifecycle and Actions
+(pending edges block registration, decision 12).
 
 **Sections verbatim:** Vision; Concepts and Proofs; Versioning; File
-Structure; Namespaces; Papers; The Archival Layer; Lifecycle; Successors;
-Actions; Implementation (the list); Database Repository; Environment
+Structure; Namespaces; Papers; The Archival Layer; Successors;
+Implementation (the list); Database Repository; Environment
 variables; Tests; The Social Layer.
 
 **Not in this draft:** the concept dialect (`spec_conceptdialect.md`) stays a
@@ -790,14 +791,34 @@ Rules:
 - **No axioms, axiom-free.** The ``axiom`` declaration kind is a violation
   anywhere in the proof package. The axiom set of every declaration of the
   proof package — proof or helper — is a subset of the three background
-  axioms; ``sorryAx`` and the native-computation axioms are not background.
+  axioms (save ``sorryAx`` in a pending edge's cone, below); ``sorryAx`` and
+  the native-computation axioms are not background.
   A statement never appears in an axiom set, because it is a definition: the
   only way to rest on an unproven statement is to assume it as a hypothesis,
   which is visible in the type and recorded as an edge. Both rules are
   archive standards (see "The three questions"): the judge re-checks every
   edge's whole cone and refuses a ``sorry`` or a stray axiom there on its
   own; what the standard adds is the helper no edge reaches, which is
-  harmless to the graph and misleading to a reader.
+  harmless to the graph and misleading to a reader. One relaxation follows.
+
+- **Pending edges.** A proof whose axiom set contains ``sorryAx`` is a
+  **pending edge**: its type is stated and its proof is not yet written
+  (``theorem p (hA : A) : C := sorry``), or it rests on a helper that is
+  ``sorry``. Validation accepts it and records it (``"pending": true`` on
+  its proof entry, see Archive Database); ``sorryAx`` is then admitted in
+  its cone — the edge itself and every declaration of the proof package it
+  uses, directly or transitively — and nowhere else: a ``sorry`` no edge
+  reaches is still a violation, and a pending edge resting on any other
+  non-background axiom is refused as before. Certification judges only the
+  complete edges; a pending edge is no edge of the proof network and is
+  never certified. A draft may carry pending edges; registration refuses a
+  record with any (see Lifecycle), so a registered record is sorry-free as
+  before. The point is review: an author, or an agent, writes the concepts
+  and the edges' types first, submits a draft, has the statements *and*
+  the edges read on the website, and fills in the proofs afterwards.
+  ``lax build`` reports pending edges as a warning naming them, never as
+  a violation. The concept package admits no ``sorry`` at all: a
+  statement's meaning is its elaborated body.
 
 - **Namespace.** Every name declared in the proof package carries the
   prefix ``Lax261Proofs``, as for concepts.
@@ -1124,6 +1145,7 @@ Each entry of ``proofs``:
       },
       "conclusion": "Lax261.Myconcept.X",
       "assumptions": ["Lax42.Colorings.Somestatement"],
+      "pending": true,
       "description": "...",
       "sections": [{ "title": "Strategy", "markdown": "..." }]
     }
@@ -1135,6 +1157,8 @@ and ``assumptions`` are derived from it — the conclusion constant, and the
 hypothesis constants as a sorted set without duplicates — so that readers of
 spec-1 records read spec-2 records unchanged. Proof entries carry no
 ``sourceText``: the website lists proofs, it does not display their code.
+``pending`` is present, and ``true``, exactly on a pending edge (see
+Proofs); a complete proof carries no key.
 
 > draft note: the plan fixes the telescope's content (ordered binders with
 > constant and levels; the conclusion) and that ``conclusion`` and
@@ -1177,8 +1201,9 @@ time: host-recorded provenance a rerun compares its own exports against.
 ``challenge`` is the generated ``Challenge.lean`` source verbatim: the one
 artifact that states, in Lean, exactly what was certified, so the website
 shows it without fetching anything; the trusted parser holds it to the
-generator's regeneration from the telescopes. A record with no proofs has
-no ``certificate`` key: nothing ran.
+generator's regeneration from the telescopes of the complete proofs. A
+record with no proof that is not pending has no ``certificate`` key:
+nothing ran.
 
 > draft note: the plan says a later run with more kernels "is the same
 > command on the same bundle, published as a new attestation beside the old
@@ -1222,9 +1247,11 @@ nothing has been uploaded yet.
 **draft:** visible on the website, overwritable by its owners, not citable,
 not reviewable, not usable as a dependency. A re-draft moves the record's
 source triple; since the archive validates a dependent only against frozen
-sources, no registered pin can go stale.
+sources, no registered pin can go stale. A draft may carry pending edges
+(see Proofs).
 
 **registered:** immutable, citable, reviewable. The normal published state.
+A registered record carries no pending edge.
 
 **deleted:** a permanent tombstone. The id, issue binding, owner list, and
 timestamps remain, while source and validated content are removed. Deleted ids
@@ -1317,8 +1344,11 @@ set.
 
 **Register.** ``lax register`` posts ``/lax register`` and freezes an init or
 draft record without rebuilding it. Every Archive dependency recorded in its
-current build output must already be registered. A ``supersedes`` claim binds
-here (see Successors).
+current build output must already be registered, and no proof it records
+may be pending; the refusal names the pending edges, and the author proves
+them, submits, and registers. The CLI checks both against the local copy
+of the archive first, and the trusted publisher repeats both. A
+``supersedes`` claim binds here (see Successors).
 
 **Delete.** ``lax delete`` posts ``/lax delete`` and permanently replaces an
 init or draft record with a tombstone. Registration and deletion are separate,
@@ -1329,7 +1359,8 @@ from the numeric account ids listed in the archive's source, bypasses the
 owner, open-issue, and state gates. ``revalidate`` re-runs the whole pipeline
 over a draft or registered record's recorded source and republishes its
 build output and captures under its current state; a ``supersedes`` claim
-must come out unchanged. ``reset-draft`` returns a registered record to
+must come out unchanged, and a registered record must come out with no
+pending edge. ``reset-draft`` returns a registered record to
 draft, refused while a registered successor claims it or a registered record
 builds on it; a chain is reset top-down, dependents first. ``delete``
 tombstones a record in any state. ``owners`` replaces the owner list outright. Every
@@ -1515,7 +1546,8 @@ over-long text is elided with `` […] ``.
   judge it — a build and an export container per side, then a clean judge
   over the two read-only exports — see Certification below. The
   comparator's own rejection diagnostics are violations reported per edge;
-  a record with no proofs runs nothing.
+  pending edges are left out, and a record with no complete proof runs
+  nothing.
 
 - **Paper** (only for a declared paper, concurrently with Compile through
   Certify): the marker gate, the PDF compile, and the web derivation of the
@@ -1601,7 +1633,8 @@ to the published record.
 *Conformity with archive standards* is the inspector's and its TypeScript
 rules': what the archive requires because it wants its records a certain
 way, enforced whether or not correctness needs it — the namespace rule
-(composition), the whole-package axiom-free and ``sorry``-free rule, the
+(composition), the whole-package axiom-free and ``sorry``-free rule (save
+a draft's pending edges, see Proofs), the
 frontmatter rules, the import rule, root-module exactness, the unused-lemma
 warning, docstrings. Every such finding is a rejection, labelled as a
 standard. Inspect reads what Compile's oleans say; Compile is where
@@ -1751,7 +1784,10 @@ else. The spec-1 branch that admitted "statements of required concept
 packages" in the proof run is gone, because a statement is no longer an
 axiom and cannot appear in the set. Anything outside the background set is a
 violation — a ``sorry``, an unexpected axiom arriving through a library, a
-native-computation axiom. A declaration of axiom *kind* is a violation on
+native-computation axiom — with one exception in the proof run: ``sorryAx``
+in the cone of a pending edge, which the validator computes from the
+package-local references the inspector reports and records on the edge
+(see Proofs). A declaration of axiom *kind* is a violation on
 its own, before any set is compared.
 
 **Statement-hood.** A declaration is a statement iff it is user-level, of
@@ -1899,7 +1935,7 @@ grammar is refused before anything is generated (see Namespaces).
 4. ``comparator.json``: ``challenge_module: "Challenge"``,
    ``solution_module`` — the proof package's root module, which imports
    every module of the package (the root-module rule), so its export
-   reaches every proof — ``theorem_names`` — the proofs' archive names in
+   reaches every proof — ``theorem_names`` — the complete proofs' archive names in
    the record's edge order — ``definition_names: []`` always, and
    ``permitted_axioms`` — the three background axioms.
 5. ``lean-toolchain``: the environment's toolchain, one line, so ``lake``
@@ -1917,8 +1953,9 @@ the same as one without: the exporter drops every ``mdata`` node unless
 asked for ``--export-mdata``, on lax's exports and on the comparator's own,
 and the inspector's telescope reading consumes it the same way.
 
-A record with no proofs has no bundle and no ``certificate`` block:
-nothing runs.
+The bundle states the record's complete proofs only: a pending edge is in
+no generated file. A record with no complete proof has no bundle and no
+``certificate`` block: nothing runs.
 
 **Four containers, after the self-test.** The judge self-test runs first
 (see "The three questions"): the same container shapes over three one-line

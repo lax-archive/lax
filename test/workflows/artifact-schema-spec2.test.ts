@@ -126,12 +126,12 @@ describe("the trusted parser on a spec-2 record", () => {
       const missing = stored();
       delete missing.buildOutput.certificate;
       delete (missing.report.buildOutput as Record<string, any>).certificate;
-      expect(() => parse(missing.report, missing.buildOutput)).toThrow("carries a certificate exactly when it has proofs");
+      expect(() => parse(missing.report, missing.buildOutput)).toThrow("carries a certificate exactly when it has a proof that is not pending");
 
       const noProofs = stored();
       noProofs.buildOutput.proofs = [];
       (noProofs.report.buildOutput as Record<string, any>).proofs = [];
-      expect(() => parse(noProofs.report, noProofs.buildOutput)).toThrow("carries a certificate exactly when it has proofs");
+      expect(() => parse(noProofs.report, noProofs.buildOutput)).toThrow("carries a certificate exactly when it has a proof that is not pending");
       delete noProofs.buildOutput.certificate;
       delete (noProofs.report.buildOutput as Record<string, any>).certificate;
       expect(parse(noProofs.report, noProofs.buildOutput).buildOutput.certificate).toBeUndefined();
@@ -164,6 +164,42 @@ describe("the trusted parser on a spec-2 record", () => {
         mutate((report.buildOutput as Record<string, any>).certificate);
         expect(() => parse(report, buildOutput), expected).toThrow(expected);
       }
+    });
+  });
+
+  // decision 12: a pending edge is recorded and never judged
+  it("records a pending edge, leaves it out of the certificate's Challenge, and needs no certificate when every edge is pending", () => {
+    withTestEnvironments([spec2TestEnvironment()], () => {
+      const pendingProof = {
+        id: "Lax42Proofs.stub",
+        path: "proofs/Lax42Proofs/Basic.lean",
+        levelParams: [],
+        telescope: { hypotheses: [], conclusion: { statement: "Lax42.Primes.ExistsPrimeDivisor", levels: [] } },
+        pending: true,
+        description: "",
+      };
+      const both = stored();
+      for (const output of [both.buildOutput, both.report.buildOutput as Record<string, any>]) output.proofs.push(structuredClone(pendingProof));
+      const parsed = parse(both.report, both.buildOutput).buildOutput;
+      expect(parsed.proofs.map((proof) => [proof.id, proof.pending])).toEqual([["Lax42Proofs.euclid", undefined], ["Lax42Proofs.stub", true]]);
+      // the stored Challenge is the complete edge's alone
+      expect(parsed.certificate!.challenge).not.toContain("stub");
+      // stored between the telescope and the description, and parsed back
+      const restored = (recordedBuildOutput(parsed).proofs as Record<string, unknown>[])[1]!;
+      expect(Object.keys(restored)).toEqual(["id", "path", "levelParams", "telescope", "pending", "description"]);
+      expect(restored).toEqual(both.buildOutput.proofs[1]);
+
+      const onlyPending = stored();
+      for (const output of [onlyPending.buildOutput, onlyPending.report.buildOutput as Record<string, any>]) {
+        output.proofs = [structuredClone(pendingProof)];
+      }
+      expect(() => parse(onlyPending.report, onlyPending.buildOutput)).toThrow("exactly when it has a proof that is not pending");
+      for (const output of [onlyPending.buildOutput, onlyPending.report.buildOutput as Record<string, any>]) delete output.certificate;
+      expect(parse(onlyPending.report, onlyPending.buildOutput).buildOutput.certificate).toBeUndefined();
+
+      const malformed = stored();
+      for (const output of [malformed.buildOutput, malformed.report.buildOutput as Record<string, any>]) output.proofs[0].pending = false;
+      expect(() => parse(malformed.report, malformed.buildOutput)).toThrow("pending must be true when present");
     });
   });
 

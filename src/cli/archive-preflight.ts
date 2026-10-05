@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { compareSubmissionIds, requiredSubmissionIds } from "../submission-validation/contracts.js";
+import { compareSubmissionIds, pendingEdgesRefusal, pendingProofIds, requiredSubmissionIds } from "../submission-validation/contracts.js";
 import { SUBMISSION_ID_PATTERN } from "../shared/constants.js";
 import { databaseDirectory, type DatabaseRefreshResult } from "./database.js";
 import { cmd, tilde } from "./ui.js";
@@ -14,6 +14,8 @@ interface LocalRecord {
   owners: number[];
   /** The successor claim in the record's build output, when it carries one. */
   supersedes?: string;
+  /** The proofs the record's build output marks pending (decision 12). */
+  pending: string[];
 }
 
 /**
@@ -145,6 +147,11 @@ export function checkRegisterLocally(id: string, refresh: DatabaseRefreshResult)
       current.state === "registered"
         ? `${id} is already registered`
         : `${id} is deleted and its id is retired`;
+    if (!stale) return { refusal: message, warnings };
+    warnings.push({ text: message });
+  }
+  if (current.pending.length > 0) {
+    const message = pendingEdgesRefusal(id, current.pending);
     if (!stale) return { refusal: message, warnings };
     warnings.push({ text: message });
   }
@@ -326,6 +333,7 @@ function readRecords(root: string): LocalRecord[] {
         requiredIds: requiredSubmissionIds(output, entry.name),
         owners: readLocalOwners(directory),
         ...(supersedes === undefined ? {} : { supersedes }),
+        pending: pendingProofIds(output),
       };
     });
 }

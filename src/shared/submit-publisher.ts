@@ -18,6 +18,7 @@ import type {
   PublishedCapture,
   ResolvedDependency,
 } from "../submission-validation/contracts.js";
+import { pendingEdgesRefusal, pendingProofIds } from "../submission-validation/contracts.js";
 import type { SuccessfulValidationArtifacts } from "../submission-validation/artifact-schema.js";
 import { parsePublishedCapture } from "../submission-validation/artifact-schema.js";
 import {
@@ -249,6 +250,11 @@ export class SubmitPublisher {
       if (artifacts.buildOutput.inputs.manifest.supersedes !== recorded) {
         problems.push("a revalidation may not change the recorded supersedes claim");
       }
+      // a registered record stays one, so it may not gain a pending edge
+      // (decision 12) — registration would have refused it
+      const pending = pendingProofIds(artifacts.buildOutput);
+      if (current.files.record.state === "registered" && pending.length > 0)
+        problems.push(pendingEdgesRefusal(request.id, pending));
     } else {
       // The claim only binds at registration, but a submit that can never
       // register is refused here, where the author still holds a fresh build.

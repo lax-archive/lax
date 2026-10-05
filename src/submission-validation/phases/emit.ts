@@ -29,10 +29,11 @@ export function emitBuildOutput(
   if (paper !== undefined && staticResult.manifest.paper === undefined) {
     throw new Error("cannot emit build output: a paper result for a manifest that declares none");
   }
-  // A certificate exists exactly for a spec-2 record with proofs (the Certify
-  // phase runs for nothing else); the trusted parser holds the record to it.
-  if ((certificate !== undefined) !== (staticResult.manifest.specVersion === "2" && inspection.proofs.length > 0)) {
-    throw new Error("cannot emit build output: a certificate is recorded exactly for a spec-2 record with proofs");
+  // A certificate exists exactly for a spec-2 record with a proof that is
+  // not pending (the Certify phase judges nothing else); the trusted parser
+  // holds the record to it.
+  if ((certificate !== undefined) !== (staticResult.manifest.specVersion === "2" && inspection.proofs.some((proof) => proof.pending !== true))) {
+    throw new Error("cannot emit build output: a certificate is recorded exactly for a spec-2 record with a proof that is not pending");
   }
   const concepts = inspection.concepts.map((concept) => ({
     ...concept,

@@ -12,7 +12,12 @@ import {
   type ArchiveFilename,
 } from "./archive-schema.js";
 import type { ArchiveSnapshot, LoadedSubmission } from "./archive.js";
-import { compareSubmissionIds, requiredSubmissionIds } from "../submission-validation/contracts.js";
+import {
+  compareSubmissionIds,
+  pendingEdgesRefusal,
+  pendingProofIds,
+  requiredSubmissionIds,
+} from "../submission-validation/contracts.js";
 import { ADMIN_GITHUB_IDS, WEBSITE_REPOSITORY } from "./constants.js";
 import { repositoryPath } from "./github.js";
 import { AUTHOR_MUTABLE_STATES, recordGateProblems, requireCurrentRecord } from "./record-gates.js";
@@ -284,6 +289,11 @@ export class Publisher {
               : `dependency ${dependency} is ${state}; registration admits only registered dependencies — register ${dependency} first`,
         );
       }
+      // A registered record states no edge it has not proven (decision 12):
+      // a draft's pending edges block registration, read from the record at
+      // the CAS snapshot.
+      const pending = pendingProofIds(current.files.buildOutput);
+      if (pending.length > 0) problems.push(pendingEdgesRefusal(request.id, pending));
       // Registration is where a supersedes claim binds, so it is checked at
       // the same CAS-consistent snapshot as the dependency states.
       let claim: string | undefined;

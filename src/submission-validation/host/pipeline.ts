@@ -631,12 +631,15 @@ export async function validateSubmissionOnHost(
       violations.push({ phase: "certify", rule: certified.rule, message: certified.message, intent: certified.intent });
       return report(false);
     }
+    const pending = inspection.result.proofs.filter((proof) => proof.pending === true).length;
+    const judged = inspection.result.proofs.length - pending;
     options.onDetail?.(
       "certify",
-      certified.kind === "nothing"
-        ? "no proofs, nothing to certify"
-        : `${inspection.result.proofs.length === 1 ? "1 edge" : `${inspection.result.proofs.length} edges`} · ` +
-          `lake comparator, ${certified.certificate.kernels.join(", ")} · informational: the archive certifies again on submit`,
+      (certified.kind === "nothing"
+        ? pending === 0 ? "no proofs, nothing to certify" : "no complete proof, nothing to certify"
+        : `${judged === 1 ? "1 edge" : `${judged} edges`} · ` +
+          `lake comparator, ${certified.certificate.kernels.join(", ")} · informational: the archive certifies again on submit`) +
+        (pending === 0 ? "" : ` · ${pending} pending, not judged`),
     );
     return {
       inspection: inspection.result,

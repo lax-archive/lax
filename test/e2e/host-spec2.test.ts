@@ -654,7 +654,7 @@ end Lax38Proofs
   // last case shows — so the comparator's own refusals are driven
   // directly, exactly as the plan asks: "each asserting the phase so a
   // fixture that dies in elaboration is noticed".
-  it("refuses, in the comparator, a sorry, a weakened conclusion, an extra hypothesis, a definition, and a solution module that does not build", async () => {
+  it("refuses, in the comparator, a sorry, a weakened conclusion, an extra hypothesis, a definition, and a solution module that does not build; records pending edges", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;
       expect(lax38, "the lax-38 build above must have run").toBeDefined();
@@ -707,29 +707,37 @@ end Lax38Proofs
         fs.rmSync(path.join(project, "stand-in.json"), { force: true });
       }
 
-      // and the one the walk catches first: a proof whose body rests on a
-      // helper's sorry fails in Inspect, before any certificate exists
-      const root = makeHostSubmission(
-        "lax-43",
-        {
-          "concepts/Lax43.lean": "import Lax43.Claim\n",
-          "concepts/Lax43/Claim.lean": `import LaxCore
+      // pending edges (decision 12): a stub `sorry` edge and an edge through
+      // a `sorry` helper are recorded pending, beside a complete edge the
+      // certificate judges alone; a `sorry` no edge reaches still fails
+      const concepts = {
+        "concepts/Lax43.lean": "import Lax43.Claim\n",
+        "concepts/Lax43/Claim.lean": `import LaxCore
 
 /-!
 ---
 title: A claim
 type: theorem
 ---
-One statement.
+Three statements.
 -/
 
 namespace Lax43.Claim
 
 @[lax_statement] def Holds : Prop := 0 = 0
 
+@[lax_statement] def Also : Prop := 1 = 1
+
+@[lax_statement] def Hard : Prop := ∀ n : Nat, n + 0 = n
+
 end Lax43.Claim
 `,
-          "proofs/Lax43Proofs.lean": "import Lax43Proofs.Basic\n",
+        "proofs/Lax43Proofs.lean": "import Lax43Proofs.Basic\n",
+      };
+      const pendingRoot = makeHostSubmission(
+        "lax-43",
+        {
+          ...concepts,
           "proofs/Lax43Proofs/Basic.lean": `import Lax43.Claim
 
 namespace Lax43Proofs
@@ -738,16 +746,55 @@ theorem helper : 0 = 0 := sorry
 
 theorem holds : Lax43.Claim.Holds := helper
 
+theorem stub (h : Lax43.Claim.Holds) : Lax43.Claim.Hard := sorry
+
+theorem also : Lax43.Claim.Also := rfl
+
 end Lax43Proofs
 `,
         },
         undefined,
         { environment },
       );
-      const report = await buildOnHost(root, { id: "lax-43" });
+      const pendingReport = await buildOnHost(pendingRoot, { id: "lax-43" });
+      expect(pendingReport.violations).toEqual([]);
+      expect(pendingReport.ok).toBe(true);
+      expect(pendingReport.buildOutput!.proofs.map((proof) => [proof.id, proof.pending ?? false])).toEqual([
+        ["Lax43Proofs.also", false],
+        ["Lax43Proofs.holds", true],
+        ["Lax43Proofs.stub", true],
+      ]);
+      expect(pendingReport.warnings.find((warning) => warning.rule === "pending-edge")?.message)
+        .toContain("2 edges are pending — Lax43Proofs.holds, Lax43Proofs.stub use `sorry`");
+      // the comparator judged the complete edge alone
+      const challenge = pendingReport.buildOutput!.certificate!.challenge;
+      expect(challenge).toContain("Lax43Proofs.also");
+      expect(challenge).not.toContain("Lax43Proofs.stub");
+      expect(challenge).not.toContain("Lax43Proofs.holds");
+
+      const deadRoot = makeHostSubmission(
+        "lax-43",
+        {
+          ...concepts,
+          "proofs/Lax43Proofs/Basic.lean": `import Lax43.Claim
+
+namespace Lax43Proofs
+
+theorem dead : 0 = 0 := sorry
+
+theorem stub : Lax43.Claim.Hard := sorry
+
+end Lax43Proofs
+`,
+        },
+        undefined,
+        { environment },
+      );
+      const report = await buildOnHost(deadRoot, { id: "lax-43" });
       expect(report.ok).toBe(false);
       expect([...new Set(report.violations.map((violation) => violation.phase))]).toEqual(["inspect"]);
-      expect(messages(report)).toContain("depends on axiom sorryAx");
+      expect(messages(report)).toContain("Lax43Proofs.dead depends on axiom sorryAx, and no edge uses it");
+      expect(messages(report)).not.toContain("Lax43Proofs.stub");
       expect(report.buildOutput).toBeUndefined();
     });
   }, 600_000);

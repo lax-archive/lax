@@ -44,6 +44,13 @@ lax-website branch `axiomfree` (not merged, not released). Next: stage 6
 spec 2 once the mathlib tag exists, epoch flip, close `v4.33.0`, the Lax17
 hand-port, the production round trip with a `--paranoid` rerun on a
 machine that never ran lax, the spec reconciliation of `spec_v2_draft.md`).
+Pending edges (decision 12) landed on the lax side 2026-10-05; next, the
+lax-website side: accept `pending: true` on spec-2 proof entries and a
+record whose proofs are all pending without a `certificate`, show a
+pending edge's type marked "pending" on the record page, and leave it out
+of the proof network's provenness and the certified mark. Then
+`assets/instructions.md` gains the stub-first workflow (left untouched
+for now).
 Stage-4 items for Jan: the sandboxed `lax certify --run`
 against a *real* record (since the ultracode review's S1/M1 it builds in a
 fresh scratch project from the records' captures in the registry and the

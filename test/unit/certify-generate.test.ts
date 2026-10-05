@@ -15,6 +15,8 @@ import { readBundle, sealBundle, sealTar } from "../../src/submission-validation
 import {
   RECORD_BUNDLE_FILES,
   bundleMembers,
+  certifiedProof,
+  certifiedProofs,
   challengeText,
   comparatorConfigText,
   conceptPackagesOf,
@@ -29,6 +31,7 @@ import {
 } from "../../src/submission-validation/certify/generate.js";
 import { leanLevel, leanName, LeanNameError } from "../../src/submission-validation/certify/lean-name.js";
 import { manifestText } from "../../src/submission-validation/host/warmstore.js";
+import type { ProofEntry } from "../../src/submission-validation/contracts.js";
 import type { PinnedLibrary } from "../../src/submission-validation/environments.js";
 
 const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "certify");
@@ -166,6 +169,24 @@ describe("the certificate generator", () => {
       hypotheses: ["Lax42.Primes.ExistsPrimeDivisor", "Lax261.Infinite.Auxiliary", "Lax42.Primes.ExistsPrimeDivisor", "Lax261.Infinite.Auxiliary"],
       conclusion: "Lax261.Infinite.InfinitelyManyPrimes",
     });
+  });
+
+  it("judges only the complete proofs: a pending edge is left out, and refused if asked for alone (decision 12)", () => {
+    const entry = (id: string, pending?: true): ProofEntry => ({
+      id,
+      path: "proofs/Lax38Proofs/Basic.lean",
+      levelParams: [],
+      telescope: { hypotheses: [], conclusion: { statement: "Lax38.Order.HasSucc", levels: [] } },
+      conclusion: "Lax38.Order.HasSucc",
+      assumptions: [],
+      description: "",
+      ...(pending === undefined ? {} : { pending }),
+    });
+    const proofs = [entry("Lax38Proofs.hasSucc"), entry("Lax38Proofs.stub", true)];
+    expect(certifiedProofs(proofs).map((proof) => proof.id)).toEqual(["Lax38Proofs.hasSucc"]);
+    expect(challengeText(certifiedProofs(proofs))).toBe(challengeText(CASES.unconditional!));
+    expect(certifiedProofs([proofs[1]!])).toEqual([]);
+    expect(() => certifiedProof(proofs[1]!)).toThrow("Lax38Proofs.stub is pending");
   });
 
   it("writes an archive name as recorded, quoting only a keyword component", () => {

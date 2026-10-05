@@ -499,6 +499,12 @@ export interface ProofEntry {
   /** Spec 2 only: the proof's type as a chain of statements; see
    * ProofTelescope. Absent from a spec-1 record. */
   telescope?: ProofTelescope;
+  /** Spec 2 only (decision 12): the proof's axiom cone contains `sorryAx` —
+   * the edge is stated and awaits its proof. A draft may carry pending
+   * edges; registration refuses a record with any (`pendingProofIds`), and
+   * the certificate judges only the others (certify/generate.ts
+   * `certifiedProofs`). Absent on a complete proof. */
+  pending?: true;
   conclusion: string;
   assumptions: string[];
   description: string;
@@ -881,4 +887,30 @@ export function requiredSubmissionIds(buildOutput: unknown, self: string): strin
     }
   }
   return [...ids].sort(compareSubmissionIds);
+}
+
+/**
+ * The pending edges of a build output (decision 12): the ids of the proofs
+ * it records as `pending`, sorted. Read leniently, like
+ * `requiredSubmissionIds`, from a blob the caller may not have parsed — but
+ * fail closed: any `pending` key counts, since only `true` is ever stored.
+ * Registration refuses a record for which this is non-empty, in the trusted
+ * publisher and in `lax register`'s preflight alike (`pendingEdgesRefusal`).
+ */
+export function pendingProofIds(buildOutput: unknown): string[] {
+  const proofs = isObject(buildOutput) ? buildOutput.proofs : undefined;
+  if (!Array.isArray(proofs)) return [];
+  return proofs
+    .filter((proof) => isObject(proof) && proof.pending !== undefined)
+    .map((proof) => String((proof as Record<string, unknown>).id))
+    .sort();
+}
+
+/** Why a record with pending edges cannot be registered, naming them. */
+export function pendingEdgesRefusal(id: string, pending: readonly string[]): string {
+  return (
+    `${id} has ${pending.length === 1 ? "a pending edge" : `${pending.length} pending edges`} — ` +
+    `${pending.join(", ")} ${pending.length === 1 ? "uses" : "use"} \`sorry\`; a draft may state an edge ` +
+    "before it is proven, a registered record may not: prove each, submit again, then register"
+  );
 }

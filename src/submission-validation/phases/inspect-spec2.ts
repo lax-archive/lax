@@ -28,8 +28,11 @@
 //
 // Hygiene, both packages: the `axiom` kind is a violation; every axiom set is
 // a subset of the background three (`sorryAx` and the native-computation
-// axioms are not background). Frontmatter anywhere in the proof package is a
-// violation naming the spec-1 habit.
+// axioms are not background) — save one relaxation for drafts: a proof
+// resting on `sorryAx` is a *pending* edge, recorded and never judged, and
+// `sorryAx` is admitted in its cone (decision 12, `checkPendingEdges`).
+// Frontmatter anywhere in the proof package is a violation naming the
+// spec-1 habit.
 //
 // Every finding here carries its intent (decision 10): the statement and
 // proof rules decide what edge a theorem is — `translation`, the one
@@ -133,7 +136,8 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
       exemptPrivateOf: input.ownModules.proofs,
       ownsCategories: true,
     });
-    checkAxiomHygiene(declaration, "proof", findings);
+    // `sorryAx` is judged below, once the pending edges are known
+    checkAxiomHygiene(declaration, "proof", findings, true);
     checkInitializer(declaration, "proof", findings);
     const userLevel = checkCanonicalName(declaration, "proof", findings) && checkNameHygiene(declaration, "proof", findings);
     // a house rule, not a reading: the classifier never takes a statement
@@ -232,11 +236,56 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
       telescope: recorded,
       conclusion: recorded.conclusion.statement,
       assumptions: [...new Set(recorded.hypotheses.map((hypothesis) => hypothesis.statement))].sort(),
+      ...(declaration.axioms.includes(SORRY) ? { pending: true as const } : {}),
       description: body.description,
       ...(body.sections === undefined ? {} : { sections: body.sections }),
     });
   }
+  checkPendingEdges(input.proofDeclarations, proofs, findings);
   return proofs;
+}
+
+const SORRY = "sorryAx";
+
+/** Pending edges (decision 12): a proof whose axiom cone contains `sorryAx`
+ * is recorded `pending` — stated, shown, never judged — and the record that
+ * carries one stays a draft (registration refuses it, contracts.ts
+ * `pendingProofIds`). So in a proof package `sorryAx` is admitted exactly in
+ * the cone of a pending edge: the edge itself and whatever it uses, through
+ * the package-local `usedConstants`, a `sorry` helper included. A `sorry`
+ * that no edge reaches stays the standards violation it always was — it
+ * states nothing a reviewer reads, and admitting it would leave registration
+ * a second thing to look for. What Lean generated carries its parent's
+ * `sorry` (an equation lemma of a `sorry` def) and is judged through the
+ * parent, so only authored declarations are named. */
+function checkPendingEdges(declarations: InspectorDeclaration[], proofs: ProofEntry[], findings: FindingCollector): void {
+  const pending = proofs.filter((proof) => proof.pending === true).map((proof) => proof.id);
+  const byName = new Map<string, InspectorDeclaration[]>();
+  for (const declaration of declarations) byName.set(declaration.name, [...(byName.get(declaration.name) ?? []), declaration]);
+  const cone = new Set<string>();
+  const queue = [...pending];
+  while (queue.length > 0) {
+    const name = queue.pop()!;
+    if (cone.has(name)) continue;
+    cone.add(name);
+    for (const declaration of byName.get(name) ?? []) for (const used of declaration.usedConstants) if (byName.has(used)) queue.push(used);
+  }
+  for (const declaration of declarations) {
+    if (!declaration.axioms.includes(SORRY) || cone.has(declaration.name) || !isAuthoredOrigin(declaration)) continue;
+    findings.violate(
+      "axiom-free",
+      `proof declaration ${display(declaration)} depends on axiom ${SORRY}, and no edge uses it; spec 2 admits only ` +
+        `the background axioms ${[...BACKGROUND_AXIOMS].join(", ")} — a draft may leave an edge's proof as \`sorry\` ` +
+        "(a pending edge), never a declaration no edge reaches",
+    );
+  }
+  if (pending.length > 0)
+    findings.warn(
+      "pending-edge",
+      `${pending.length === 1 ? "1 edge is" : `${pending.length} edges are`} pending — ${pending.join(", ")} ` +
+        `${pending.length === 1 ? "uses" : "use"} \`sorry\`: a draft may carry ${pending.length === 1 ? "it" : "them"}, ` +
+        "the certificate judges only the other edges, and registration refuses the record until each is proven",
+    );
 }
 
 /** Why a tagged declaration is not a statement: one message per failing
@@ -299,6 +348,7 @@ function checkAxiomHygiene(
   declaration: InspectorDeclaration,
   label: "concept" | "proof",
   findings: FindingCollector,
+  deferSorry = false,
 ): void {
   if (declaration.kind === "axiom")
     findings.violate(
@@ -309,6 +359,7 @@ function checkAxiomHygiene(
   for (const axiom of declaration.axioms) {
     if (BACKGROUND_AXIOMS.has(axiom)) continue;
     if (declaration.kind === "axiom" && axiom === declaration.name) continue;
+    if (deferSorry && axiom === SORRY) continue; // checkPendingEdges
     findings.violate(
       "axiom-free",
       `${label} declaration ${display(declaration)} depends on axiom ${axiom}; spec 2 admits only the background ` +

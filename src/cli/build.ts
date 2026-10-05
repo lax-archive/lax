@@ -272,12 +272,15 @@ export async function buildSubmission(
       outcome.concepts = report.buildOutput.concepts.length;
       outcome.proofs = report.buildOutput.proofs.length;
       outcome.requiredIds = requiredSubmissionIds(report.buildOutput, id);
+      const pending = report.buildOutput.proofs.filter((proof) => proof.pending === true).length;
       // The last row's answer is the inventory it just inspected.
       details.set(
         "statements",
         [
           ui.plural(outcome.concepts, "concept"),
           ...(scope === "concepts" ? [] : [ui.plural(outcome.proofs ?? 0, "proof")]),
+          // decision 12: stated, not proven — the pending-edge warning says why it matters
+          ...(pending === 0 ? [] : [`${ui.count(pending)} pending`]),
         ].join(" · "),
       );
     }

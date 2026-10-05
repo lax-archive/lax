@@ -127,6 +127,20 @@ describe("local command preflights", () => {
     });
   });
 
+  it("refuses a registration with pending edges, naming them (decision 12)", () => {
+    const home = temporary("lax-home-");
+    process.env.LAX_HOME = home;
+    const database = databaseDirectory();
+    writeRecord(database, "lax-7", "draft", [], { proofs: [{ id: "Lax7Proofs.done" }, { id: "Lax7Proofs.stub", pending: true }] });
+
+    expect(checkRegisterLocally("lax-7", "refreshed")).toEqual({
+      refusal:
+        "lax-7 has a pending edge — Lax7Proofs.stub uses `sorry`; a draft may state an edge before it is proven, " +
+        "a registered record may not: prove each, submit again, then register",
+      warnings: [],
+    });
+  });
+
   it("names deleted and missing dependencies without a register hint", () => {
     const home = temporary("lax-home-");
     process.env.LAX_HOME = home;
@@ -457,7 +471,7 @@ function writeRecord(
   id: string,
   state: string,
   requirements: string[],
-  options: { owners?: number[]; supersedes?: string } = {},
+  options: { owners?: number[]; supersedes?: string; proofs?: Record<string, unknown>[] } = {},
 ): void {
   const directory = path.join(root, id);
   fs.mkdirSync(directory, { recursive: true });
@@ -467,6 +481,7 @@ function writeRecord(
     JSON.stringify({
       requiredByConcepts: requirements,
       requiredByProofs: [],
+      ...(options.proofs === undefined ? {} : { proofs: options.proofs }),
       ...(options.supersedes === undefined
         ? {}
         : { inputs: { manifest: { supersedes: options.supersedes } } }),

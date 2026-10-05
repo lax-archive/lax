@@ -410,7 +410,8 @@ function loadArchive(directory: string): Map<string, ArchiveSubmission> {
         statements.push(requiredString(statement.id, `${entry.name} statement id`));
       }
     }
-    const proofs = objectArray(output.proofs, `${entry.name} proofs`).map((proof): NetworkProof => ({
+    // a pending edge (decision 12) is stated, not proven: no edge of the network
+    const proofs = objectArray(output.proofs, `${entry.name} proofs`).filter((proof) => proof.pending === undefined).map((proof): NetworkProof => ({
       id: requiredString(proof.id, `${entry.name} proof id`),
       submissionId: entry.name,
       path: requiredString(proof.path, `${entry.name} proof path`),

@@ -13,7 +13,7 @@ import {
   ValidationError,
 } from "../shared/validation.js";
 import { PAPER_CAPS, limitsFor } from "./config.js";
-import { certifiedProof, challengeText } from "./certify/generate.js";
+import { certifiedProofs, challengeText } from "./certify/generate.js";
 import { environment as environmentById } from "./environments.js";
 import { leanFacts } from "./lean-facts.js";
 import { derivedEdge } from "./recorded-shape.js";
@@ -343,14 +343,14 @@ function parseBuildOutputPayload(
     .map((entry, index) => parseProof(entry, index, spec));
   requireUnique(concepts.map((entry) => entry.id), "generated concept ids");
   requireUnique(proofs.map((entry) => entry.id), "generated proof ids");
-  // A certificate is recorded exactly for a spec-2 record with proofs; the
-  // Challenge it carries is held to the generator's regeneration from the
-  // very proofs parsed above — the fail-closed check that binds the shown
-  // artifact to the stored telescopes.
-  if ((object.certificate !== undefined) !== (spec === 2 && proofs.length > 0)) {
+  // A certificate is recorded exactly for a spec-2 record with a proof that
+  // is not pending (decision 12); the Challenge it carries is held to the
+  // generator's regeneration from the very proofs parsed above — the
+  // fail-closed check that binds the shown artifact to the stored telescopes.
+  if ((object.certificate !== undefined) !== (spec === 2 && proofs.some((proof) => proof.pending !== true))) {
     throw new ValidationError(
       spec === 2
-        ? "a spec-2 build output carries a certificate exactly when it has proofs"
+        ? "a spec-2 build output carries a certificate exactly when it has a proof that is not pending"
         : "a spec-1 build output carries no certificate",
     );
   }
@@ -443,7 +443,7 @@ export function parseCertificate(
     registryBlob = bundle.registryBlob;
   }
   const challenge = text(object.challenge, "generated certificate challenge", 4 * 1024 * 1024, true, false);
-  if (challenge !== challengeText(proofs.map(certifiedProof))) {
+  if (challenge !== challengeText(certifiedProofs(proofs))) {
     throw new ValidationError("generated certificate challenge is not what the generator writes for the record's proofs");
   }
   return {
@@ -800,9 +800,11 @@ function parseProof(value: unknown, index: number, spec: ContentSpecVersion): Bu
   requireExactKeys(value, [
     "id", "path",
     ...(spec === 2 ? ["levelParams", "telescope"] : ["conclusion", "assumptions"]),
+    ...(spec === 2 && value.pending !== undefined ? ["pending"] : []),
     "description",
     ...(value.sections === undefined ? [] : ["sections"]),
   ], label);
+  if (value.pending !== undefined && value.pending !== true) throw new ValidationError(`${label} pending must be true when present`);
   let edge: Pick<ProofEntry, "levelParams" | "telescope" | "conclusion" | "assumptions">;
   if (spec === 2) {
     const levelParams = levelParameters(value.levelParams, `${label} levelParams`);
@@ -818,6 +820,7 @@ function parseProof(value: unknown, index: number, spec: ContentSpecVersion): Bu
     id: identifier(value.id, `${label} id`, 2_048),
     path: relativeFile(value.path, `${label} path`),
     ...edge,
+    ...(value.pending === true ? { pending: true as const } : {}),
     description: text(value.description, `${label} description`, 1024 * 1024, true),
     ...(value.sections === undefined ? {} : { sections: parseSections(value.sections, label) }),
   };

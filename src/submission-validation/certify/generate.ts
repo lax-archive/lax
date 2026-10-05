@@ -111,7 +111,15 @@ export function leanToolchainText(environment: Pick<ArchiveEnvironment, "leanToo
 export function certifiedProof(proof: ProofEntry): CertifiedProof {
   if (proof.telescope === undefined || proof.levelParams === undefined)
     throw new Error(`proof ${proof.id} carries no telescope; only a spec-2 record is certified`);
+  if (proof.pending === true) throw new Error(`proof ${proof.id} is pending (it uses \`sorry\`); no certificate judges it`);
   return { id: proof.id, levelParams: proof.levelParams, telescope: proof.telescope };
+}
+
+/** The proofs a record's certificate judges: every proof that is not
+ * pending (decision 12), narrowed. A pending edge is stated and shown, never
+ * judged; a record whose proofs are all pending has no certificate. */
+export function certifiedProofs(proofs: readonly ProofEntry[]): CertifiedProof[] {
+  return proofs.filter((proof) => proof.pending !== true).map(certifiedProof);
 }
 
 /** Proofs in the order every generated file lists them: by id. */

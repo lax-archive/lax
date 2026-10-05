@@ -27,7 +27,7 @@ import {
   CHALLENGE_MODULE,
   RECORD_BUNDLE_FILES,
   challengeText,
-  certifiedProof,
+  certifiedProofs,
   comparatorExportTargets,
   comparatorConfigText,
   conceptPackagesOf,
@@ -191,15 +191,16 @@ function localSource(name: string): CertifyPackage {
 }
 
 /**
- * The plan for a record, or undefined when it has no proofs: nothing to
- * certify, nothing runs, and the record carries no `certificate`. Throws
+ * The plan for a record, or undefined when it has no complete proof (none,
+ * or only pending ones): nothing to certify, nothing runs, and the record
+ * carries no `certificate`. Throws
  * when the proofs name a package the record does not require directly (the
  * classifier admitted only direct requires, so that is a lax bug) and, from
  * the generator, a LeanNameError for a name it cannot write.
  */
 export function planCertificate(record: CertifyRecord): CertifyPlan | undefined {
-  if (record.proofs.length === 0) return undefined;
-  const proofs = orderedProofs(record.proofs.map(certifiedProof));
+  const proofs = orderedProofs(certifiedProofs(record.proofs));
+  if (proofs.length === 0) return undefined;
   // The one source of the solution module: what comparator.json names, and
   // what container B and the host export.
   const solutionModule = proofPackageRoot(proofs);

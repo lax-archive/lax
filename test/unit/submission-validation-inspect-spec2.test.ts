@@ -521,17 +521,45 @@ const CASES: Case[] = [
     proofEntries: [],
   },
   {
-    name: "sorry through a helper and a native-computation axiom are not background",
+    name: "a native-computation axiom is not background, on an edge too",
+    concepts: [statement(A)],
+    proofs: [decl({ name: "Lax1Proofs.native", telescope: chain([], [A]), axioms: ["Lean.ofReduceBool"] })],
+    violations: [["axiom-free", "proof declaration Lax1Proofs.native depends on axiom Lean.ofReduceBool; spec 2 admits only the background axioms propext, Classical.choice, Quot.sound"]],
+  },
+  // ── pending edges (decision 12) ──
+  {
+    name: "a proof resting on sorry is a pending edge, and so is one through a sorry helper; the helpers in its cone are admitted",
+    concepts: [statement(A), statement(B), statement(C)],
+    proofs: [
+      decl({ name: "Lax1Proofs.stub", telescope: chain([[A]], [C]), axioms: ["sorryAx"] }),
+      decl({ name: "Lax1Proofs.leaky", axioms: ["sorryAx"], usedConstants: ["Lax1Proofs.leakier"] }),
+      decl({ name: "Lax1Proofs.leakier", kind: "def", axioms: ["sorryAx"] }),
+      decl({ name: "Lax1Proofs.viaLeaky", telescope: chain([], [B]), usedConstants: ["Lax1Proofs.leaky"], axioms: ["propext", "sorryAx"] }),
+      decl({ name: "Lax1Proofs.done", telescope: chain([], [A]), axioms: ["propext"] }),
+      // what Lean generated under a sorry def no edge uses is judged through its parent
+      decl({ name: "Lax1Proofs.leakier.eq_1", userName: undefined, origin: { kind: "realized", parent: "Lax1Proofs.leakier" }, axioms: ["sorryAx"] }),
+    ],
+    violations: [],
+    proofEntries: [
+      { id: "Lax1Proofs.done" }, // not pending: the warning names the other two
+      { id: "Lax1Proofs.stub", pending: true },
+      { id: "Lax1Proofs.viaLeaky", pending: true },
+    ],
+    warnings: [
+      "2 edges are pending — Lax1Proofs.stub, Lax1Proofs.viaLeaky use `sorry`: a draft may carry them, the certificate " +
+        "judges only the other edges, and registration refuses the record until each is proven",
+    ],
+  },
+  {
+    name: "a sorry no edge reaches stays a violation, and a pending edge relaxes no other axiom",
     concepts: [statement(A)],
     proofs: [
-      decl({ name: "Lax1Proofs.leaky", axioms: ["sorryAx"] }),
-      decl({ name: "Lax1Proofs.viaLeaky", telescope: chain([], [A]), usedConstants: ["Lax1Proofs.leaky"], axioms: ["propext", "sorryAx"] }),
-      decl({ name: "Lax1Proofs.native", telescope: chain([], [A]), axioms: ["Lean.ofReduceBool"] }),
+      decl({ name: "Lax1Proofs.dead", axioms: ["sorryAx"] }),
+      decl({ name: "Lax1Proofs.stub", telescope: chain([], [A]), axioms: ["sorryAx", "Lean.ofReduceBool"] }),
     ],
     violations: [
-      ["axiom-free", "proof declaration Lax1Proofs.leaky depends on axiom sorryAx; spec 2 admits only the background axioms propext, Classical.choice, Quot.sound"],
-      ["axiom-free", "proof declaration Lax1Proofs.viaLeaky depends on axiom sorryAx"],
-      ["axiom-free", "proof declaration Lax1Proofs.native depends on axiom Lean.ofReduceBool"],
+      ["axiom-free", "proof declaration Lax1Proofs.dead depends on axiom sorryAx, and no edge uses it; spec 2 admits only the background axioms"],
+      ["axiom-free", "proof declaration Lax1Proofs.stub depends on axiom Lean.ofReduceBool"],
     ],
   },
   {

@@ -496,6 +496,18 @@ describe("maintainer revalidation", () => {
     ).rejects.toThrow("may not change the recorded supersedes claim");
     // the target is not re-admitted: no ownership walk of a claim that is already bound
     expect(changed.listRegisteredSuperseders).not.toHaveBeenCalled();
+
+    // a registered record stays one, so its revalidation may not bring a
+    // pending edge (decision 12)
+    const pending = successfulArtifacts();
+    pending.buildOutput.proofs.push({
+      id: "Lax42Proofs.stub", path: "proofs/Lax42Proofs/Basic.lean", conclusion: "Lax42.A", assumptions: [], description: "", pending: true,
+    });
+    const gaining = submitHarness(new Map([["lax-42", current]]), false, [], maintainers);
+    await expect(
+      gaining.publisher.publish(revalidation(current), pending, "/capture.tar", run),
+    ).rejects.toThrow("lax-42 has a pending edge — Lax42Proofs.stub uses `sorry`");
+    expect(gaining.captureStore.promote).not.toHaveBeenCalled();
   });
 
   it("keeps an ordinary submit on the ordinary gates", async () => {
