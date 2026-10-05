@@ -168,7 +168,14 @@ export function checkNamespace(
   prefix: string,
   label: string,
   findings: FindingCollector,
-  options: { exemptPrivateOf?: ReadonlySet<string>; intent?: FindingIntent } = {},
+  options: {
+    exemptPrivateOf?: ReadonlySet<string>;
+    intent?: FindingIntent;
+    /** Spec 2, proof packages: the constant `declare_syntax_cat` defines
+     * for a category named under the prefix, `Lean.Parser.Category.<prefix>.…`,
+     * is the package's own (inspect.ts `checkGlobalSyntax`). */
+    ownsCategories?: boolean;
+  } = {},
 ): void {
   // Spec 2 (`exemptPrivateOf` given): every declaration the package
   // contributes is held to the prefix on its persisted name, and the one
@@ -193,6 +200,7 @@ export function checkNamespace(
   }
   const name = origin !== undefined ? (origin.kind === "private" ? unmangledName(declaration.name) : declaration.name) : declaration.userName;
   if (name === undefined || name === prefix || name.startsWith(`${prefix}.`)) return;
+  if (options.ownsCategories === true && name.startsWith(`Lean.Parser.Category.${prefix}.`)) return;
   if (origin?.kind === "realized") {
     // a definition Lean realized under an imported constant's namespace
     // (B2 in spike/axiomfree/namespace-review-20261004.md): `finalizeImport`

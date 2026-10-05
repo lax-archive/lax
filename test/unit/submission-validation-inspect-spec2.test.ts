@@ -836,6 +836,31 @@ describe("spec-2 classification", () => {
     expect(judgeInspection(quiet.concepts, quiet.proofs, CONCEPT_INVENTORY, PROOF_INVENTORY, EMPTY_RESOLUTION, "both", undefined, LIBRARY_ROOTS, 2).findings.violations).toEqual([]);
   });
 
+  it("a proof package owns the syntax categories under its own namespace; a concept package declares none", () => {
+    const category = (name: string): InspectorDeclaration =>
+      decl({ name: `Lean.Parser.Category.${name}`, kind: "def", origin: { kind: "authored" } });
+    const owned = reports(
+      [statement(A)],
+      [decl({ name: "Lax1Proofs.helper" }), category("Lax1Proofs.fo"), decl({ name: "Lax1Proofs.fo.quot", kind: "def" })],
+    );
+    owned.proofs.modules[1]!.syntaxCategories = ["Lax1Proofs.fo"];
+    expect(judgeInspection(owned.concepts, owned.proofs, CONCEPT_INVENTORY, PROOF_INVENTORY, EMPTY_RESOLUTION, "both", undefined, LIBRARY_ROOTS, 2).findings.violations).toEqual([]);
+
+    // an unprefixed category, or another package's, collides at import; a
+    // concept package keeps the ban whatever the name
+    const foreign = reports([statement(A), category("Lax1.fo")], [category("fo"), category("Lax1.Claim.fo")]);
+    foreign.proofs.modules[1]!.syntaxCategories = ["fo", "Lax1.Claim.fo"];
+    foreign.concepts.modules[1]!.syntaxCategories = ["Lax1.fo"];
+    const judged = judgeInspection(foreign.concepts, foreign.proofs, CONCEPT_INVENTORY, PROOF_INVENTORY, EMPTY_RESOLUTION, "both", undefined, LIBRARY_ROOTS, 2);
+    expect(judged.findings.violations.map((finding) => `[${finding.rule}] ${finding.message}`)).toEqual([
+      "[global-syntax] concept module Lax1.Claim declares syntax category Lax1.fo; a concept package declares no `declare_syntax_cat` — a category is global, and two records that declare the same one cannot be imported together",
+      "[global-syntax] proof module Lax1Proofs.Basic declares syntax categories fo, Lax1.Claim.fo; a proof package names every category under its own namespace (`declare_syntax_cat Lax1Proofs.…`) — a category is global, and two records that declare the same one cannot be imported together",
+      "[namespace] concept declaration Lean.Parser.Category.Lax1.fo does not carry namespace Lax1.Claim",
+      "[namespace] proof declaration Lean.Parser.Category.fo does not carry namespace Lax1Proofs",
+      "[namespace] proof declaration Lean.Parser.Category.Lax1.Claim.fo does not carry namespace Lax1Proofs",
+    ]);
+  });
+
   it("a macro or elaborator keyed on syntax the package does not declare is a violation, scoped or not (E1 follow-up)", () => {
     const fixture = reports([statement(A)], [decl({ name: "Lax1Proofs.helper" })]);
     fixture.concepts.modules[1]!.retargetedSyntax = ["Lean.«term_∈_»"];

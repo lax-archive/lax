@@ -525,6 +525,11 @@ export interface InspectorModule {
   /** Spec 2: the syntax kinds this module keys a macro or elaborator on —
    * global or `scoped` — that its own package declares no `syntax` for. */
   retargetedSyntax?: string[];
+  /** Spec 2: the syntax categories this module declares
+   * (`declare_syntax_cat`). A category, and the quotation parser and tokens
+   * Lean generates for it, are global whatever the scope, so they are
+   * reported here and not in `globalSyntax`. */
+  syntaxCategories?: string[];
 }
 
 export interface ConclusionFacts {

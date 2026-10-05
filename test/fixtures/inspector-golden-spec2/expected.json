@@ -1,11 +1,13 @@
 {"modules":
- [{"retargetedSyntax": [],
+ [{"syntaxCategories": [],
+   "retargetedSyntax": [],
    "name": "Spec2",
    "moduleDocs": [],
    "imports": ["Init", "Init", "Spec2.Basic"],
    "globalSyntax": [],
    "declCount": 0},
-  {"retargetedSyntax": [],
+  {"syntaxCategories": [],
+   "retargetedSyntax": [],
    "name": "Spec2.Basic",
    "moduleDocs":
    [{"scalars": [["title", "Spec-2 golden fixture"], ["type", "definition"]],

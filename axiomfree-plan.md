@@ -1063,3 +1063,26 @@ range rule needs no new fact and applies to spec 1 too; spec 1 keeps
 `userName` in place of the origin and has no instance flag, so its
 `mk.inj` family still warns (TODO.md). Real-Lean coverage: the lax-39
 e2e in `host-spec2.test.ts`.
+
+2026-10-05, syntax categories in proof packages. `declare_syntax_cat
+Lax3Proofs.fo` defines `Lean.Parser.Category.Lax3Proofs.fo`, which failed
+the prefix test, and writes global parser-extension entries (the
+category, a `term` parser `Lax3Proofs.fo.quot`, tokens `` `(fo| `` and
+`)`) that failed `global-syntax` — so a proof package could not have a
+category at all. Exempting every category would admit two records that
+both declare `fo`, which cannot be imported together (`environment already
+contains 'fo.quot'`, verified on rc3), so the rule is by name: the
+inspector reports a module's categories as a new spec-2 fact
+`syntaxCategories` and drops from `globalSyntax` the entries
+`declare_syntax_cat` writes for them — the quotation parser only when its
+value is the one the elaborator generates (`generatedQuotation`), so a
+category registered by hand with an author's `<cat>.quot` stays global
+syntax (verified with a forged `registerParserCategory`). A proof package
+may declare categories under its own namespace, and the namespace rule
+admits `Lean.Parser.Category.<ProofsPrefix>.…`; a concept package keeps
+the ban. Two prefixed categories (`Lax3Proofs.fo`, `Lax4Proofs.fo`)
+co-import on rc3. The claim that the initializer check catches
+`declare_syntax_cat` was wrong — it marks nothing `@[init]` — and is gone
+from Main.lean, inspect-spec2.ts, and the draft; `assets/instructions.md`
+still makes it (TODO.md). Coverage: a unit case and the lax-78 e2e in
+`host-spec2.test.ts`.

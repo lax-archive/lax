@@ -129,7 +129,10 @@ export function classifySpec2(input: ClassificationInput): ProofEntry[] {
   const proofs: ProofEntry[] = [];
   const proofIds = new Set<string>();
   for (const declaration of input.proofDeclarations) {
-    checkNamespace(declaration, proofInventory.packageName, "proof", findings, { exemptPrivateOf: input.ownModules.proofs });
+    checkNamespace(declaration, proofInventory.packageName, "proof", findings, {
+      exemptPrivateOf: input.ownModules.proofs,
+      ownsCategories: true,
+    });
     checkAxiomHygiene(declaration, "proof", findings);
     checkInitializer(declaration, "proof", findings);
     const userLevel = checkCanonicalName(declaration, "proof", findings) && checkNameHygiene(declaration, "proof", findings);
@@ -317,16 +320,17 @@ function checkAxiomHygiene(
 /** No `initialize` in a record (standards; F1 in
  * spike/axiomfree/namespace-review-20261004.md): an initializer registers a
  * name-keyed global registry — a persistent extension, an option, a simp
- * attribute, a syntax category — that Lean refuses at import when two
- * records chose the same name, which no name rule can see, and it runs
- * arbitrary IO in every importer's `lean`, a reader's `lax certify --run`
- * included. The inspector flags every declaration a module marks `@[init]`. */
+ * attribute — that Lean refuses at import when two records chose the same
+ * name, which no name rule can see, and it runs arbitrary IO in every
+ * importer's `lean`, a reader's `lax certify --run` included. The inspector
+ * flags every declaration a module marks `@[init]`. `declare_syntax_cat`
+ * marks none; a category is judged by inspect.ts `checkGlobalSyntax`. */
 function checkInitializer(declaration: InspectorDeclaration, label: "concept" | "proof", findings: FindingCollector): void {
   if (declaration.initializer !== true) return;
   findings.violate(
     "initialize",
     `${label} module ${declaration.module} declares an initializer (${display(declaration)}); a record declares no ` +
-      "`initialize`, `register_option`, `register_simp_attr`, `declare_syntax_cat`, or persistent extension — " +
+      "`initialize`, `register_option`, `register_simp_attr`, or persistent extension — " +
       "two records registering the same name cannot be imported together",
   );
 }

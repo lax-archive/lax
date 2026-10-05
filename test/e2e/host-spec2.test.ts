@@ -1653,6 +1653,74 @@ end Lax77Proofs
     });
   }, 600_000);
 
+  it("admits a proof package's syntax category under its own namespace, and refuses any other", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const submission = (conceptExtra: string, category: string) =>
+        makeHostSubmission(
+          "lax-78",
+          {
+            "concepts/Lax78.lean": "import Lax78.Cx\n",
+            "concepts/Lax78/Cx.lean": `import LaxCore
+
+/-!
+---
+title: Holds
+type: theorem
+---
+A statement a proof reaches through its own syntax.
+-/
+
+${conceptExtra}
+
+namespace Lax78.Cx
+
+@[lax_statement] def Holds : Prop := True
+
+end Lax78.Cx
+`,
+            "proofs/Lax78Proofs.lean": "import Lax78Proofs.Basic\n",
+            "proofs/Lax78Proofs/Basic.lean": `import Lax78.Cx
+
+declare_syntax_cat ${category}
+
+namespace Lax78Proofs
+
+scoped syntax "tt" : ${category}
+scoped syntax "[fo|" ${category} "]" : term
+scoped macro_rules | \`([fo| tt]) => \`(trivial)
+
+theorem holds : Lax78.Cx.Holds := [fo| tt]
+
+end Lax78Proofs
+`,
+          },
+          undefined,
+          { environment },
+        );
+
+      // the category, its \`.quot\` parser and the quotation's tokens are
+      // global whatever the scope; under the proof package's own namespace
+      // they are as unique as its other names
+      const accepted = await buildOnHost(submission("", "Lax78Proofs.fo"), { id: "lax-78" });
+      expect(accepted.ok, messages(accepted)).toBe(true);
+
+      // an unprefixed category: two records that both declare \`fo\` cannot
+      // be imported together
+      const bare = await buildOnHost(submission("", "fo"), { id: "lax-78" });
+      expect(bare.ok).toBe(false);
+      expect(rules(bare), messages(bare)).toEqual(new Set(["global-syntax", "namespace"]));
+      expect(messages(bare)).toContain("proof module Lax78Proofs.Basic declares syntax category fo; a proof package names every category under its own namespace");
+      expect(messages(bare)).toContain("proof declaration Lean.Parser.Category.fo does not carry namespace Lax78Proofs");
+
+      // a concept package keeps the ban, prefixed or not
+      const concept = await buildOnHost(submission("declare_syntax_cat Lax78.Cx.fo", "Lax78Proofs.fo"), { id: "lax-78" });
+      expect(concept.ok).toBe(false);
+      expect(rules(concept), messages(concept)).toEqual(new Set(["global-syntax", "namespace"]));
+      expect(messages(concept)).toContain("concept module Lax78.Cx declares syntax category Lax78.Cx.fo; a concept package declares no `declare_syntax_cat`");
+    });
+  }, 600_000);
+
   it("a tagged private def never reaches Inspect: LaxCore's hook refuses it at compile time", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;

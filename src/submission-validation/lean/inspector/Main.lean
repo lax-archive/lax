@@ -750,12 +750,14 @@ run_cmd do
 
 /-- The declarations a module marks `@[init …]`/`@[builtin_init …]` — every
 `initialize`, `builtin_initialize`, and their sugar (`register_option`,
-`register_simp_attr`, `declare_syntax_cat`, a persistent extension) — read
+`register_simp_attr`, a persistent extension) — read
 from the raw olean entries as `moduleDocsOf` reads module docs. A record
 declares none (spec 2): an initializer registers a name-keyed global
 registry that clashes at import when two records pick the same name, and
 runs arbitrary IO in every importer's `lean`
-(spike/axiomfree/namespace-review-20261004.md, F1). -/
+(spike/axiomfree/namespace-review-20261004.md, F1). `declare_syntax_cat` is
+not among them: it marks nothing `@[init]` (v4.35.0-rc3) and registers its
+category as a parser-extension entry, read by `syntaxCategoriesOf`. -/
 unsafe def initializersOf (data : ModuleData) : NameSet := Id.run do
   let mut out : NameSet := {}
   for (extName, entries) in data.entries do
@@ -822,6 +824,49 @@ run_cmd do
   ShapeGuard.checkType "globalSyntaxOf" `Lean.ScopedEnvExtension.Entry
     "Lean.ScopedEnvExtension.Entry.global : (implicit α : Sort) -> (explicit a._@._internal._hyg.0 : #0) -> (Lean.ScopedEnvExtension.Entry #1)\nLean.ScopedEnvExtension.Entry.scoped : (implicit α : Sort) -> (explicit a._@._internal._hyg.0 : Lean.Name) -> (explicit a._@._internal._hyg.0 : #1) -> (Lean.ScopedEnvExtension.Entry #2)"
 
+/-- The value `declare_syntax_cat` gives the quotation parser it defines for a
+category (`cat ++ \`quot`, the term parser behind `` `(suffix| …) ``),
+spelled as the elaborator spells it — checked identical under v4.35.0-rc3.
+A parser so named that is anything else is the author's, not Lean's. -/
+def generatedQuotation (cat : Name) (suffix : String) : Expr :=
+  let sym (s : String) := mkApp (mkConst ``ParserDescr.symbol) (mkStrLit s)
+  let andthen (a b : Expr) := mkApp3 (mkConst ``ParserDescr.binary) (toExpr `andthen) a b
+  mkApp3 (mkConst ``ParserDescr.node) (toExpr ``Parser.Term.quot) (mkNatLit Parser.maxPrec) <|
+    mkApp3 (mkConst ``ParserDescr.node) (toExpr (cat ++ `quot)) (mkNatLit Parser.maxPrec) <|
+      andthen (sym ("`(" ++ suffix ++ "| "))
+        (andthen (mkApp2 (mkConst ``ParserDescr.cat) (toExpr cat) (mkNatLit 0)) (sym ")"))
+
+/-- The syntax categories a module declares: a global parser-extension
+`category` entry whose declaration is the constant `declare_syntax_cat`
+defines for it (`Lean.Parser.Category ++ cat`). A category is registered
+globally whatever the scope, and is keyed by its name alone — two records
+that both declare `fo` cannot be imported together — so it is reported
+apart from `globalSyntax`, for the validator to judge by its name. -/
+unsafe def syntaxCategoriesOf (data : ModuleData) : Array Name := Id.run do
+  let mut out : Array Name := #[]
+  for (extName, entries) in data.entries do
+    if (privateToUserName? extName).getD extName == `Lean.Parser.parserExtension then
+      for e in entries do
+        if let .global a := (unsafeCast e : ScopedEnvExtension.Entry NonScalar) then
+          if let .category c d _ := (unsafeCast a : Parser.ParserExtension.OLeanEntry) then
+            if d == `Lean.Parser.Category ++ c && !out.contains c then out := out.push c
+  return out
+
+/-- Whether a global parser-extension entry is one `declare_syntax_cat`
+writes for one of the module's categories: the category itself, its
+quotation parser (`generatedQuotation`, compared by value, so a hand-made
+`@[term_parser] def <cat>.quot` is not excused), and that parser's tokens
+`` `(suffix| `` and `)`. Verified on v4.35.0-rc3. -/
+def isCategoryEntry (env : Environment) (cats : Array Name) : Parser.ParserExtension.OLeanEntry → Bool
+  | .category c d _ => cats.contains c && d == `Lean.Parser.Category ++ c
+  | .token t => cats.any fun c => match c with
+    | .str _ s => t == "`(" ++ s ++ "|" || t == ")"
+    | _ => false
+  | .parser `term d _ => cats.any fun c => match c with
+    | .str _ s => d == c ++ `quot && (env.find? d).bind (·.value?) == some (generatedQuotation c s)
+    | _ => false
+  | _ => false
+
 /-- The syntax extensions a module contributes a *global* entry to. A global
 `syntax`, `macro_rules`, or `elab` rewrites every importer — the archive's
 generated Challenge included: a `macro_rules` for `theorem` in a concept
@@ -830,6 +875,7 @@ both exports agreeing (spike/axiomfree/namespace-review-20261004.md, E1) —
 and two records' global tokens collide for every later author. A record
 declares every syntax extension `scoped` or `local` (spec 2). -/
 unsafe def globalSyntaxOf (env : Environment) (data : ModuleData) : Array Name := Id.run do
+  let cats := syntaxCategoriesOf data
   let mut out : Array Name := #[]
   for (extName, entries) in data.entries do
     let name := (privateToUserName? extName).getD extName
@@ -840,11 +886,12 @@ unsafe def globalSyntaxOf (env : Environment) (data : ModuleData) : Array Name :
           -- a syntax node *kind* is registered globally by every `syntax`,
           -- `scoped` or not (kinds are names under the declaring namespace
           -- and clash with nothing); what rewrites an importer is a token,
-          -- a parser, or a category
+          -- a parser, or a category — a category and what Lean generates
+          -- for it are reported as `syntaxCategories` instead
           if name == `Lean.Parser.parserExtension then
             match (unsafeCast a : Parser.ParserExtension.OLeanEntry) with
             | .kind _ => false
-            | _ => true
+            | entry => !isCategoryEntry env cats entry
           else true
         | .scoped _ _ => false
       if global then out := out.push name
@@ -991,6 +1038,7 @@ unsafe def main (args : List String) : IO UInt32 := do
     -- per declaration below
     let globalSyntax := if spec == 2 then globalSyntaxOf env data else #[]
     let retargetedSyntax := if spec == 2 then retargetedSyntaxOf env data declaredKinds else #[]
+    let syntaxCategories := if spec == 2 then syntaxCategoriesOf data else #[]
     let initializers := if spec == 2 then initializersOf data else {}
     moduleJsons := moduleJsons.push <| Json.mkObj <|
       [("name", Json.str (nameStr m)),
@@ -998,7 +1046,8 @@ unsafe def main (args : List String) : IO UInt32 := do
        ("moduleDocs", moduleDocsJson),
        ("declCount", toJson data.constNames.size)] ++
       (if spec == 2 then [("globalSyntax", Json.arr (globalSyntax.map fun n => Json.str (nameStr n))),
-                          ("retargetedSyntax", Json.arr (retargetedSyntax.map fun n => Json.str (nameStr n)))] else [])
+                          ("retargetedSyntax", Json.arr (retargetedSyntax.map fun n => Json.str (nameStr n))),
+                          ("syntaxCategories", Json.arr (syntaxCategories.map fun n => Json.str (nameStr n)))] else [])
 
     -- the module's own constants, as its olean stores them: `env.find?`
     -- would return the merged environment's copy, which for a theorem two

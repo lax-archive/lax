@@ -152,7 +152,7 @@ function parseModule(value: unknown, index: number, specVersion: ContentSpecVers
   const item = record(value, `inspector module ${index}`);
   exactKeys(
     item,
-    ["name", "imports", "moduleDocs", "declCount", ...(specVersion === 2 ? ["globalSyntax", "retargetedSyntax"] : [])],
+    ["name", "imports", "moduleDocs", "declCount", ...(specVersion === 2 ? ["globalSyntax", "retargetedSyntax", "syntaxCategories"] : [])],
     `inspector module ${index}`,
   );
   return {
@@ -164,6 +164,7 @@ function parseModule(value: unknown, index: number, specVersion: ContentSpecVers
       ? {
           globalSyntax: array(item.globalSyntax, "module globalSyntax", 100).map((name) => text(name, "module globalSyntax")),
           retargetedSyntax: array(item.retargetedSyntax, "module retargetedSyntax", 10_000).map((kind) => text(kind, "module retargetedSyntax")),
+          syntaxCategories: array(item.syntaxCategories, "module syntaxCategories", 10_000).map((name) => text(name, "module syntaxCategories")),
         }
       : {}),
   };

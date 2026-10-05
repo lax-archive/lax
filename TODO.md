@@ -401,6 +401,11 @@ of a Lax17-sized relative certificate (the composed Solution of a
   `body` beside the source when it differs, or accept the gap. Also owed:
   the author phrasing in `assets/instructions.md` (macros and elaborators
   extend only the package's own `syntax`).
+- `assets/instructions.md` (~152) still lists `declare_syntax_cat` as
+  `initialize` sugar a record never uses; spec 2 now admits a proof
+  package's category under its own namespace (`declare_syntax_cat
+  Lax3Proofs.fo`) and refuses one in a concept package (plan Record
+  2026-10-05). Rephrase in the instructions pass.
 - The transitively-reachable-statement e2e stage 2 only table-tested is
   still owed; the chain e2e of stage 3 (`host-spec2.test.ts`, lax-41 over
   lax-38) covers the direct require only.

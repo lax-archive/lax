@@ -74,7 +74,7 @@ const DEPENDENCY: ResolvedDependency = {
  * record's edges — what container A leaves in `/out` beside the export. */
 function challengeReportFor(proofs: ProofEntry[]): InspectorReport {
   return {
-    modules: [{ name: "Challenge", imports: ["Lax1", "Lax7"], moduleDocs: [], declCount: proofs.length, globalSyntax: [], retargetedSyntax: [] }],
+    modules: [{ name: "Challenge", imports: ["Lax1", "Lax7"], moduleDocs: [], declCount: proofs.length, globalSyntax: [], retargetedSyntax: [], syntaxCategories: [] }],
     declarations: proofs.map((proof) => ({
       name: proof.id,
       kind: "theorem",

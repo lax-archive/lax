@@ -313,7 +313,7 @@ function fakeToolchain(
  * or — a global macro's work — something else under the same name. */
 function challengeReport(rewritten = false): InspectorReport {
   return {
-    modules: [{ name: "Challenge", imports: ["Lax42"], moduleDocs: [], declCount: 1, globalSyntax: [], retargetedSyntax: [] }],
+    modules: [{ name: "Challenge", imports: ["Lax42"], moduleDocs: [], declCount: 1, globalSyntax: [], retargetedSyntax: [], syntaxCategories: [] }],
     declarations: [
       {
         name: EUCLID.id,

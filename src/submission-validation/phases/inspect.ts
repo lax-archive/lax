@@ -81,7 +81,7 @@ export function judgeInspection(
   };
   checkReportShape(conceptReport, "concept", findings);
   checkRootModule(conceptReport, conceptInventory, findings);
-  if (specVersion === 2) checkGlobalSyntax(conceptReport, "concept", findings);
+  if (specVersion === 2) checkGlobalSyntax(conceptReport, "concept", findings, undefined);
   checkImports(
     conceptReport,
     conceptInventory,
@@ -99,7 +99,7 @@ export function judgeInspection(
     }
     checkReportShape(proofReport, "proof", findings);
     checkRootModule(proofReport, proofInventory, findings);
-    if (specVersion === 2) checkGlobalSyntax(proofReport, "proof", findings);
+    if (specVersion === 2) checkGlobalSyntax(proofReport, "proof", findings, proofInventory.packageName);
     checkImports(
       proofReport,
       proofInventory,
@@ -365,9 +365,36 @@ function checkReportShape(report: InspectorReport, label: string, findings: Find
  * record keys every macro and elaborator on a syntax kind its own package
  * declares; the inspector reports, per module, the kinds it keys one on
  * that the package does not. A `local` rule is not persisted and is not
- * seen; it shows only in the statement's elaborated body. */
-function checkGlobalSyntax(report: InspectorReport, label: string, findings: FindingCollector): void {
+ * seen; it shows only in the statement's elaborated body.
+ *
+ * A syntax category (`declare_syntax_cat`) is global whatever the scope,
+ * with a constant `Lean.Parser.Category.<cat>`, a quotation parser
+ * `<cat>.quot`, and the quotation's tokens, and two records that declare
+ * the same category cannot be imported together. A proof package may
+ * declare one under its own namespace (`Lax3Proofs.fo`; the namespace rule
+ * admits its `Lean.Parser.Category.Lax3Proofs.…` constant); a concept
+ * package declares none. */
+function checkGlobalSyntax(
+  report: InspectorReport,
+  label: string,
+  findings: FindingCollector,
+  /** The package that may name categories under its own namespace: the
+   * proof package's; none for a concept package. */
+  categoryOwner: string | undefined,
+): void {
   for (const module of report.modules) {
+    const foreign = (module.syntaxCategories ?? []).filter(
+      (category) => categoryOwner === undefined || !category.startsWith(`${categoryOwner}.`),
+    );
+    if (foreign.length > 0)
+      findings.violate(
+        "global-syntax",
+        `${label} module ${module.name} declares syntax categor${foreign.length === 1 ? "y" : "ies"} ${foreign.join(", ")}; ` +
+          (categoryOwner === undefined
+            ? "a concept package declares no `declare_syntax_cat`"
+            : `a proof package names every category under its own namespace (\`declare_syntax_cat ${categoryOwner}.…\`)`) +
+          " — a category is global, and two records that declare the same one cannot be imported together",
+      );
     const extensions = module.globalSyntax ?? [];
     if (extensions.length > 0)
       findings.violate(
