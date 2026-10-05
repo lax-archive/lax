@@ -1049,3 +1049,17 @@ as a syntax extension every extension whose constant has type
 parenthesizers), for both `globalSyntax` and `retargetedSyntax`; the
 shape guard pins `KeyedDeclsAttribute` itself. `host-spec2.test.ts`
 covers both.
+
+2026-10-05, unused-lemma noise: the warning filtered on `userName`, which
+the inspector reports on every generated theorem too, so a real author got
+~50 spurious warnings (`mk.inj`, `mk.injEq`, `sizeOf_spec`, `@[ext]`'s
+`ext`/`ext_iff`, Prop-valued structure fields, instances). A candidate is
+now a theorem whose origin is authored (or `private` without a parent),
+that is not an instance — a new spec-2 report flag `instance`, read from
+the package's persisted `Lean.Meta.instanceExtension` entries behind a
+shape guard (identical v4.33–v4.35-rc3) — and whose range lies inside no
+other declaration's of its module (equal-range theorems are peers). The
+range rule needs no new fact and applies to spec 1 too; spec 1 keeps
+`userName` in place of the origin and has no instance flag, so its
+`mk.inj` family still warns (TODO.md). Real-Lean coverage: the lax-39
+e2e in `host-spec2.test.ts`.

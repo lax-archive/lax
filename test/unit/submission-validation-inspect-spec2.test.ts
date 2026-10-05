@@ -468,6 +468,36 @@ const CASES: Case[] = [
     ],
   },
   {
+    // what Lean generates beside an author's declarations, as the v4.35
+    // inspector reports it: structure/inductive lemmas are auxiliary,
+    // Prop-valued fields and `@[ext]`'s lemmas are authored but carry a
+    // range inside the structure's, and an instance carries `instance`
+    name: "the theorems Lean generates and instances never warn as unused; an authored helper does, dot-named or not",
+    concepts: [statement(A)],
+    proofs: [
+      decl({ name: "Lax1Proofs.Pair", kind: "inductive", startLine: 3, endLine: 5 }),
+      decl({ name: "Lax1Proofs.Pair.mk", kind: "ctor", startLine: 3, endLine: 3 }),
+      ...["mk.inj", "mk.injEq", "mk.sizeOf_spec"].map((suffix) =>
+        decl({ name: `Lax1Proofs.Pair.${suffix}`, origin: { kind: "auxiliary", parent: "Lax1Proofs.Pair.mk" } })),
+      decl({ name: "Lax1Proofs.Bounded", kind: "inductive", startLine: 7, endLine: 9 }),
+      decl({ name: "Lax1Proofs.Bounded.lo", startLine: 8, endLine: 8 }),
+      // a one-line `@[ext] structure`: its lemmas share the structure's range
+      decl({ name: "Lax1Proofs.Pt", kind: "inductive", startLine: 11, endLine: 11 }),
+      decl({ name: "Lax1Proofs.Pt.ext", startLine: 11, endLine: 11 }),
+      decl({ name: "Lax1Proofs.Pt.ext_iff", startLine: 11, endLine: 11 }),
+      decl({ name: "Lax1Proofs.goodZero", instance: true, startLine: 22, endLine: 22 }),
+      decl({ name: "Lax1Proofs.Pair.swap_a", startLine: 26, endLine: 26 }),
+      decl({ name: "Lax1Proofs.helper", startLine: 28, endLine: 28 }),
+      // two theorems sharing one range (`@[to_additive]`) are peers, not nested
+      decl({ name: "Lax1Proofs.twin", startLine: 30, endLine: 31 }),
+      decl({ name: "Lax1Proofs.twin_add", startLine: 30, endLine: 31 }),
+    ],
+    violations: [],
+    proofEntries: [],
+    warnings: ["Lax1Proofs.helper", "Lax1Proofs.Pair.swap_a", "Lax1Proofs.twin", "Lax1Proofs.twin_add"].map((name) =>
+      `helper lemma ${name} is not used, directly or transitively, by any proof theorem in this submission; keep it only if this is intentional`),
+  },
+  {
     name: "frontmatter on any proof-package declaration names the spec-1 habit",
     concepts: [statement(A)],
     proofs: [

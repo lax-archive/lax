@@ -175,7 +175,7 @@ function parseDeclaration(value: unknown, index: number, specVersion: ContentSpe
   const allowed = [
     "name", "kind", "module", "axioms", "usedConstants", "userName", "doc", "conclusionFacts",
     "signature", "startLine", "endLine",
-    ...(specVersion === 2 ? [...SPEC2_FACTS, "binders", "body", "nonCanonical", "initializer", "origin"] : []),
+    ...(specVersion === 2 ? [...SPEC2_FACTS, "binders", "body", "nonCanonical", "initializer", "instance", "origin"] : []),
   ];
   for (const key of Object.keys(item))
     if (!allowed.includes(key)) throw new Error(`${label} has unknown key ${key}`);
@@ -193,7 +193,7 @@ function parseDeclaration(value: unknown, index: number, specVersion: ContentSpe
   if (item.startLine !== undefined) declaration.startLine = natural(item.startLine, "declaration startLine");
   if (item.endLine !== undefined) declaration.endLine = natural(item.endLine, "declaration endLine");
   if (specVersion === 2) {
-    for (const flag of ["nonCanonical", "initializer"] as const) {
+    for (const flag of ["nonCanonical", "initializer", "instance"] as const) {
       if (item[flag] === undefined) continue;
       if (item[flag] !== true) throw new Error(`${label} ${flag} must be true when present`);
       declaration[flag] = true;

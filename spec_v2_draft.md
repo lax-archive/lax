@@ -792,9 +792,12 @@ Rules:
 - **Namespace.** Every name declared in the proof package carries the
   prefix ``Lax261Proofs``, as for concepts.
 
-- **Unused helpers.** A user-level helper of theorem kind that no proof of
+- **Unused helpers.** An authored helper of theorem kind that no proof of
   the package uses, directly or transitively, produces a warning
-  (``unused-lemma``), never a violation.
+  (``unused-lemma``), never a violation. What Lean generates beside an
+  author's declarations is not a helper the author wrote: ``mk.inj``,
+  ``sizeOf_spec``, a structure's Prop-valued fields, ``@[ext]``'s
+  ``ext``/``ext_iff``, and instances never warn.
 
 Together, the proofs weave the statements of the archive into the **proof
 network**: the directed hypergraph over all statements with a hyperedge
@@ -1808,10 +1811,17 @@ still inspected (and, in the concept package, replayed), and a root import
 naming a module outside the inventory fails exactness directly.
 
 **Unused helpers.** The reported constant references form a graph over the
-package. The validator walks it from the proofs; a user-level
-theorem-kind declaration it does not reach is an unused helper. Generated and
-internal declarations are excluded, and ``lemma`` and ``theorem`` are alike
-because both are theorem kind to the kernel.
+package. The validator walks it from the proofs; a theorem-kind
+declaration it does not reach is an unused helper when the author wrote it as
+one: its origin is ``authored`` (or ``private`` without a parent), it is not
+an instance (the report flags ``instance``: the package registers it, read
+from the persisted instance-extension entries, and resolution uses it by no
+name), and its declaration range does not lie inside another declaration's
+of its module — a structure's Prop-valued fields and ``@[ext]``'s lemmas
+carry a range inside the structure's, and a ``where`` helper inside its
+theorem's; two theorems sharing one range (a ``@[to_additive]`` pair) are
+peers. ``lemma`` and ``theorem`` are alike because both are theorem kind to
+the kernel.
 
 **The pipeline never parses Lean.** Every unit the report contains is
 environment data: a concept is a module, a statement is a definition

@@ -766,6 +766,33 @@ unsafe def initializersOf (data : ModuleData) : NameSet := Id.run do
         out := out.insert decl
   return out
 
+-- `instancesOf` casts each entry of `Lean.Meta.instanceExtension` to
+-- `ScopedEnvExtension.Entry InstanceEntry` (its type guarded below, the
+-- `Entry` constructors by `globalSyntaxOf`'s guard) and reads `globalName?`.
+run_cmd do
+  ShapeGuard.checkConst "instancesOf" `Lean.Meta.instanceExtension
+    "((Lean.SimpleScopedEnvExtension Lean.Meta.InstanceEntry) Lean.Meta.Instances)"
+  ShapeGuard.checkType "instancesOf" `Lean.Meta.InstanceEntry
+    "Lean.Meta.InstanceEntry.mk : (explicit keys : (Array Lean.Meta.InstanceKey)) -> (explicit val : Lean.Expr) -> (explicit priority : Nat) -> (explicit globalName? : (Option Lean.Name)) -> (explicit synthOrder : (Array Nat)) -> (explicit attrKind : Lean.AttributeKind) -> Lean.Meta.InstanceEntry"
+
+/-- The declarations the package's modules register as instances, global or
+`scoped` (a `local` one is not persisted), read from the raw olean entries
+as `moduleDocsOf` reads module docs. Read over the whole package, since
+`attribute [instance]` may sit in another module than the declaration. An
+instance is used by instance resolution, not by name, so it is never an
+unused helper (spec 2). -/
+unsafe def instancesOf (datas : Array ModuleData) : NameSet := Id.run do
+  let mut out : NameSet := {}
+  for data in datas do
+    for (extName, entries) in data.entries do
+      if (privateToUserName? extName).getD extName == `Lean.Meta.instanceExtension then
+        for e in entries do
+          let entry : Meta.InstanceEntry := match (unsafeCast e : ScopedEnvExtension.Entry Meta.InstanceEntry) with
+            | .global a => a
+            | .scoped _ a => a
+          if let some n := entry.globalName? then out := out.insert n
+  return out
+
 /-- Whether an extension holds a module's syntax, macro, or elaborator
 registrations: the parser extension (`syntax`/`notation`/`infix` tokens and
 parsers) or a `KeyedDeclsAttribute` — `macro`/`macro_rules`/`notation`
@@ -915,10 +942,13 @@ unsafe def main (args : List String) : IO UInt32 := do
   -- Filtering here prevents ubiquitous Mathlib dependencies from inflating
   -- the untrusted JSON report.
   let mut packageNames : NameSet := {}
+  let packageDatas := modNames.toArray.filterMap fun m => idxMap[m]?.map (datas[·]!)
   -- the syntax kinds the package's own modules declare, for the spec-2
   -- retargeting fact
-  let declaredKinds := if spec == 2 then
-    declaredSyntaxKindsOf (modNames.toArray.filterMap fun m => idxMap[m]?.map (datas[·]!)) else {}
+  let declaredKinds := if spec == 2 then declaredSyntaxKindsOf packageDatas else {}
+  -- and the declarations they register as instances, for the unused-helper
+  -- check
+  let instances := if spec == 2 then instancesOf packageDatas else {}
   for m in modNames do
     if let some idx := idxMap[m]? then
       for declName in datas[idx]!.constNames do
@@ -1008,6 +1038,8 @@ unsafe def main (args : List String) : IO UInt32 := do
         fields := fields ++ [("origin", jsonOfOrigin (originOf env matchers packageNames declarationRanges declName))]
       if initializers.contains declName then
         fields := fields ++ [("initializer", Json.bool true)]
+      if instances.contains declName then
+        fields := fields ++ [("instance", Json.bool true)]
       if let some ranges := declarationRanges.find? declName then
         fields := fields ++ [
           ("startLine", toJson ranges.range.pos.line),

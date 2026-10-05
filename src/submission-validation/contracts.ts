@@ -596,6 +596,9 @@ export interface InspectorDeclaration {
   /** Spec 2: the declaration is marked `@[init]` — an `initialize` or its
    * sugar — which a record may not declare. */
   initializer?: true;
+  /** Spec 2: the package registers the declaration as an instance (global
+   * or `scoped`); the unused-helper warning skips it. */
+  instance?: true;
   /** Tagged definitions only: the pretty-printed body. */
   body?: string;
 }

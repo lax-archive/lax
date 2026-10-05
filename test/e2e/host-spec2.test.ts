@@ -288,6 +288,33 @@ body would yield \`withFacts._proof_1\` again) -/
 private def hiddenWithFacts (h h' : Lax39.Shapes.Facts) : {_n : Nat // Lax39.Shapes.Facts} :=
   ⟨0, (⟨h, h'⟩ : Lax39.Shapes.Facts ∧ Lax39.Shapes.Facts).left⟩
 
+/-! What Lean generates beside these is no unused helper: \`mk.inj\`,
+\`mk.injEq\`, \`sizeOf_spec\`, Prop-valued fields, \`@[ext]\`'s \`ext\` and
+\`ext_iff\`, and instances. The dot-named helper is the one warning. -/
+structure Pair where
+  a : Nat
+  b : Nat
+
+structure Ordered : Prop where
+  lo : 0 < 1
+  hi : 1 < 2
+
+@[ext] structure Pt where
+  x : Nat
+  y : Nat
+
+inductive Tree where
+  | leaf
+  | node (l r : Tree)
+
+class Good (n : Nat) : Prop where
+  ok : n = n
+
+instance goodZero : Good 0 := ⟨rfl⟩
+instance : Nonempty Pair := ⟨⟨0, 0⟩⟩
+
+theorem Pair.a_self (p : Pair) : p.a = p.a := rfl
+
 end Lax39Proofs
 `,
         },
@@ -299,6 +326,9 @@ end Lax39Proofs
       expect(messages(report)).toBe("");
       expect(report.ok).toBe(true);
       expect(report.buildOutput!.proofs.map((proof) => proof.id)).toEqual(["Lax39Proofs.facts"]);
+      expect(report.warnings.filter((warning) => warning.rule === "unused-lemma").map((warning) => warning.message)).toEqual([
+        "helper lemma Lax39Proofs.Pair.a_self is not used, directly or transitively, by any proof theorem in this submission; keep it only if this is intentional",
+      ]);
       // what the proof package's oleans actually carry: the realized names
       // under Lax39.Shapes, reported without a userName, and the rule silent
       const inspected = JSON.parse(fs.readFileSync(path.join(jobDir, "checks", "inspect-proofs", "report.json"), "utf8")) as {

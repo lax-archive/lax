@@ -460,7 +460,9 @@ owed:
   renders the first 1,000. 1,712 of them name compiler-generated
   `mk.inj`/`mk.injEq`/`mk.sizeOf_spec` lemmas that `userLevelName?` in the
   inspector should drop: on v4.33 Lean no longer marks them reserved, so
-  the filter needs a v4.33 rule (and a golden-fixture case). Consider also
+  the filter needs a v4.33 rule (and a golden-fixture case). Spec 2 is
+  fixed by its `origin` and `instance` facts (axiomfree-plan.md Record,
+  2026-10-05); spec 1 got only the range rule (structure fields, `ext`). Consider also
   folding the warnings into one per module, or capping them in the
   collector, before another large submission trips the artifact bound.
 

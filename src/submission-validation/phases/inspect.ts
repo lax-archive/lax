@@ -27,7 +27,7 @@ import {
   type Classifier,
   type SiblingPackages,
 } from "./inspect-common.js";
-import { classifySpec2 } from "./inspect-spec2.js";
+import { classifySpec2, isAuthoredOrigin } from "./inspect-spec2.js";
 
 export type { SiblingPackages } from "./inspect-common.js";
 
@@ -286,8 +286,13 @@ function classifySpec1(input: ClassificationInput): ProofEntry[] {
  * A proof-package theorem without proof frontmatter is a helper lemma. Keep it
  * quiet when an annotated proof theorem uses it, directly or through other
  * helpers; otherwise make the ignored declaration visible without rejecting
- * the submission. Generated/internal theorem declarations have no userName
- * and are deliberately excluded from the author-facing warning.
+ * the submission. Only a theorem the author wrote as one is a candidate:
+ * under spec 2 its origin is authored (not Lean's `mk.inj`, `sizeOf_spec`,
+ * …), and it is not an instance (used by resolution, not by name); under
+ * spec 1, which reports no origin, it has a userName. Neither spec counts a
+ * theorem whose range lies inside another declaration's of its module: a
+ * structure's Prop-valued fields and `@[ext]`'s `ext`/`ext_iff`, which Lean
+ * generates with the structure's own range, and a `where` helper.
  */
 function warnAboutUnusedLemmas(
   declarations: InspectorDeclaration[],
@@ -310,12 +315,25 @@ function warnAboutUnusedLemmas(
     }
   }
 
+  const ranged = declarations.filter((declaration) => declaration.startLine !== undefined && declaration.endLine !== undefined);
+  const nested = (declaration: InspectorDeclaration): boolean =>
+    declaration.startLine !== undefined && declaration.endLine !== undefined &&
+    ranged.some((outer) =>
+      outer !== declaration &&
+      outer.module === declaration.module &&
+      outer.startLine! <= declaration.startLine! &&
+      declaration.endLine! <= outer.endLine! &&
+      // two theorems sharing one range (a `@[to_additive]` pair) are peers
+      (outer.kind !== "theorem" || outer.startLine! < declaration.startLine! || declaration.endLine! < outer.endLine!));
   const unused = declarations
     .filter((declaration) =>
       declaration.kind === "theorem" &&
       declaration.userName !== undefined &&
+      (declaration.origin === undefined || isAuthoredOrigin(declaration)) &&
+      declaration.instance !== true &&
       !declaration.doc?.hasFrontmatter &&
-      !reachable.has(declaration.name))
+      !reachable.has(declaration.name) &&
+      !nested(declaration))
     .sort((a, b) => a.userName!.localeCompare(b.userName!));
   for (const declaration of unused) {
     findings.warn(

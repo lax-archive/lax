@@ -385,7 +385,7 @@ function checkNameHygiene(declaration: InspectorDeclaration, label: "concept" | 
  * its own rule and hint): what the authored rules — canonical, legible,
  * endpoint — apply to. Scoped declarations and what Lean generated are
  * not. */
-function isAuthoredOrigin(declaration: InspectorDeclaration): boolean {
+export function isAuthoredOrigin(declaration: InspectorDeclaration): boolean {
   const origin = declaration.origin;
   return origin?.kind === "authored" || (origin?.kind === "private" && origin.parent === undefined);
 }
