@@ -38,7 +38,7 @@ import {
   type CertifyRecord,
 } from "./project.js";
 import { toolDigests } from "./self-test.js";
-import { interpretComparatorRun } from "./verdict.js";
+import { validationVerdict } from "./verdict.js";
 
 export interface HostCertifyInput {
   record: CertifyRecord;
@@ -191,7 +191,7 @@ export async function certifyOnHost(input: HostCertifyInput): Promise<CertifyRes
     // row — a table bug, never a verdict on the submission.
     if (/unknown (?:sub)?command/iu.test(result.output) && /comparator/u.test(result.output))
       throw infrastructureFailure(`the toolchain ${environment.leanToolchain} has no \`lake comparator\`: ${result.output.trim()}`);
-    return interpretComparatorRun(result);
+    return validationVerdict(result);
   });
   if (verdict.kind === "failure") throw verdict.failure;
   if (verdict.kind === "violation") return verdict;

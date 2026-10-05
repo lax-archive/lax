@@ -5,7 +5,7 @@
 // including the one that is really a Lean error in the generated Solution.
 
 import { describe, expect, it } from "vitest";
-import { interpretComparatorRun } from "../../src/submission-validation/certify/verdict.js";
+import { interpretComparatorRun, validationVerdict } from "../../src/submission-validation/certify/verdict.js";
 
 const transcript = (...lines: string[]): string => `${lines.join("\n")}\n`;
 
@@ -22,6 +22,25 @@ describe("the comparator verdict", () => {
     expect(verdict).toMatchObject({ kind: "violation", rule: "statement-mismatch", intent: "judge" });
     expect((verdict as { message: string }).message).toContain("Lax38Proofs.hasSucc");
     expect((verdict as { message: string }).message).toContain("report it as a lax bug");
+  });
+
+  it("makes validation's sorryAx refusal the archive's failure, and leaves every other reading as it is", () => {
+    // validation judges only proofs the inspector did not record pending, so
+    // a `sorryAx` refusal there is the inspector and the judge disagreeing
+    const sorry = validationVerdict({ code: 1, output: transcript("error: Illegal axiom detected: 'sorryAx'") });
+    expect(sorry).toMatchObject({ kind: "failure", failure: { kind: "infrastructure", message: expect.stringContaining("did not record as pending") } });
+    expect((sorry as { failure: { message: string } }).failure.message).toContain("this is a lax bug, not a fault of the submission");
+    // an author's own axiom stays the author's refusal
+    expect(validationVerdict({ code: 1, output: transcript("error: Illegal axiom detected: 'Lax38Proofs.cheat'") }))
+      .toMatchObject({ kind: "violation", rule: "illegal-axiom", message: expect.stringContaining("Lax38Proofs.cheat") });
+    // only the last error line is the verdict: a sorryAx mentioned earlier is not it
+    expect(validationVerdict({
+      code: 1,
+      output: transcript("error: Illegal axiom detected: 'sorryAx'", "error: Challenge and solution theorem statement do not match: 'Lax38Proofs.hasSucc'"),
+    })).toMatchObject({ kind: "violation", rule: "statement-mismatch" });
+    for (const output of ["Your solution is okay!\n", transcript("error: Child exited with 134")]) {
+      for (const code of [0, 1]) expect(validationVerdict({ code, output })).toEqual(interpretComparatorRun({ code, output }));
+    }
   });
 
   it("names the illegal axiom, the shadowed constant, and a target that is no theorem", () => {

@@ -19,7 +19,8 @@
 // the Challenge states, so an exit 1 is lax and the toolchain disagreeing: a
 // violation on the `certify` phase that names the edge and says so, so a
 // fixture dying in elaboration is noticed as such and never passes as a
-// content verdict.
+// content verdict. Validation reads the result through `validationVerdict`,
+// which makes one refusal, `sorryAx`, the archive's failure (see there).
 
 import type { FindingIntent } from "../contracts.js";
 import { infrastructureFailure, type PipelineFailure } from "../failures.js";
@@ -74,6 +75,37 @@ export function solutionBuildViolation(solutionModule: string, output: string): 
       `the solution module ${solutionModule} did not build from the records' captured sources — lax's generated ` +
       `files or this machine disagree with the archive's records; ${REPORT}. The transcript:\n${transcript(output)}`,
   };
+}
+
+/** The axiom `sorry` elaborates to: what a pending edge rests on. */
+const SORRY_AXIOM = "sorryAx";
+
+/**
+ * The verdict as validation reads it: the trusted Certify phase and local
+ * `lax build` (certify/host.ts), which judge only the proofs the inspector
+ * did not record pending (decision 12). There a refusal for `sorryAx` is
+ * lax's inspector and the judge disagreeing: the proof uses `sorry`, which a
+ * draft may, and the inspector should have recorded its edge pending. The
+ * build still fails (an edge is never relabelled pending on the judge's
+ * word: one of the two checks is wrong, and that must be seen), but as the
+ * archive's failure, not a finding against the author. A reader's `lax
+ * certify --run` reads `interpretComparatorRun` itself, where the same
+ * refusal is plain: the stored certificate does not hold.
+ */
+export function validationVerdict(result: { code: number; output: string }): ComparatorVerdict {
+  const verdict = interpretComparatorRun(result);
+  const last = errorLines(result.output).at(-1);
+  if (verdict.kind === "violation" && verdict.rule === "illegal-axiom" && last === `Illegal axiom detected: '${SORRY_AXIOM}'`) {
+    return {
+      kind: "failure",
+      failure: infrastructureFailure(
+        `the judge found \`${SORRY_AXIOM}\` under a proof the inspector did not record as pending — a draft may ` +
+          "carry a `sorry` edge, which is then pending and never judged, so the inspector and the judge disagree; " +
+          `this is a lax bug, not a fault of the submission — report it, quoting this message: \`${last}\``,
+      ),
+    };
+  }
+  return verdict;
 }
 
 export function interpretComparatorRun(result: { code: number; output: string }): ComparatorVerdict {

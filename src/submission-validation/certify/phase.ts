@@ -89,7 +89,7 @@ import {
   type StagedOwnPackage,
 } from "./project.js";
 import { runJudgeSelfTest, toolDigests, verifyToolDigests } from "./self-test.js";
-import { interpretComparatorRun } from "./verdict.js";
+import { validationVerdict } from "./verdict.js";
 
 export type CertifyResult =
   | { kind: "nothing" }
@@ -422,7 +422,7 @@ export async function certifyInContainer(input: CertifyPhaseInput): Promise<Cert
     });
     const failure = boundary(result, "judging the certificate");
     if (failure !== undefined) throw failure;
-    return interpretComparatorRun(result);
+    return validationVerdict(result);
   });
   if (verdict.kind === "failure") throw verdict.failure;
   if (verdict.kind === "violation") return verdict;

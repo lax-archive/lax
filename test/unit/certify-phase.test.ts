@@ -717,7 +717,7 @@ describe("the trusted Certify phase", () => {
   it("turns the comparator's exit-1 shapes into certify violations and stops before any bundle", async () => {
     for (const [output, rule] of [
       ["error: Challenge and solution theorem statement do not match: 'Lax1Proofs.euclid'", "statement-mismatch"],
-      ["error: Illegal axiom detected: 'sorryAx'", "illegal-axiom"],
+      ["error: Illegal axiom detected: 'Lax1Proofs.cheat'", "illegal-axiom"],
       ["error: Const does not match between challenge and target 'Lax7.Primes.ExistsPrimeDivisor'", "constant-mismatch"],
       ["error: Challenge and solution constant kind don't match: 'Lax1Proofs.euclid'", "not-a-theorem"],
       ["Lean default kernel rejected the solution\nerror: Lean default exited with 1", "kernel-rejected"],
@@ -728,6 +728,13 @@ describe("the trusted Certify phase", () => {
       expect(recordRuns(invocations)).toHaveLength(4);
       expect(fs.existsSync(path.join(jobDir, "certify", "certificate.tar"))).toBe(false);
     }
+  });
+
+  it("fails as the archive's own when the judge finds sorryAx under a proof not recorded pending, and stops before any bundle", async () => {
+    const { input, invocations, jobDir } = harness({ judge: { code: 1, output: "error: Illegal axiom detected: 'sorryAx'\n", timedOut: false } });
+    await expect(certifyInContainer(input)).rejects.toMatchObject({ kind: "infrastructure", message: expect.stringContaining("did not record as pending") });
+    expect(recordRuns(invocations)).toHaveLength(4);
+    expect(fs.existsSync(path.join(jobDir, "certify", "certificate.tar"))).toBe(false);
   });
 
   it("reports a Challenge that did not build as a lax bug, and never exports it or runs B", async () => {

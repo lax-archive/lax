@@ -1359,7 +1359,9 @@ publisher reads the pending flags validation recorded and cannot re-derive
 them, and need not: a flag is no soundness input. A proof recorded without
 it is a theorem of the Challenge (the parser holds the two together), which
 the judge holds to the background axioms, so a ``sorry`` behind it is
-refused, never certified; a flag recorded wrongly only blocks registration.
+refused, never certified (validation then fails as the archive's own
+fault, never the author's: a draft may use ``sorry``, and the edge should
+have been recorded pending); a flag recorded wrongly only blocks registration.
 A ``supersedes`` claim binds here (see Successors).
 
 **Delete.** ``lax delete`` posts ``/lax delete`` and permanently replaces an
