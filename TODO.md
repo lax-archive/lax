@@ -50,11 +50,8 @@ serve`.
 
 - **Codex night review, what remains** (`spike/axiomfree/codex-review-night-20261005.md`,
   2026-10-05). R1, R5 and R6 are fixed (`bff1799`, `45dea7b`, `9625f9a`).
-  R4, where the website's judgment card drops universe instantiations, is
-  being fixed in lax-website by another worker. That repo's
-  `test/fixtures/spec2/lax-38/build-output.json` still lists the old seven
-  self-test probes; the new `comparator-rejects-sorry` probe is missing. It
-  is cosmetic, because the website does not parse the probes. R2
+  R4 (the website's judgment card dropped universe instantiations) is
+  fixed in lax-website (`a69ae0eb4f`, fixture probes `453bd394ef`). R2
   (revalidation vs. dependent certificates) and R3 (metadata resubmission
   vs. rerun) remain Jan's decisions, tracked under "Jan's decisions from
   this review" below.
