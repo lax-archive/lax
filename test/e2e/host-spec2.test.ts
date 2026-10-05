@@ -1537,6 +1537,73 @@ end Lax39Proofs
     });
   }, 600_000);
 
+  it("refuses a scoped macro_rules that retargets core syntax, and accepts a package's own scoped syntax", async () => {
+    await withTestEnvironmentsAsync([SPEC2], async () => {
+      const environment = environmentById(SPEC2.id)!;
+      const concept = (retarget: string) => `import LaxCore
+
+/-!
+---
+title: Membership
+type: theorem
+---
+A statement whose source must say what it means.
+-/
+
+namespace Lax77.Cx
+
+def NP : Nat → Prop := fun _ => False
+
+instance : Membership Nat (Nat → Prop) := ⟨fun p n => p n⟩
+
+-- the package's own syntax, scoped: a notation and a macro on its own kind
+scoped notation:50 a " ∈' " b => Membership.mem b a
+scoped syntax "lax_true" : term
+scoped macro_rules | \`(lax_true) => \`(True)
+
+${retarget}
+
+@[lax_statement] def Holds : Prop := lax_true
+
+@[lax_statement] def ThreeInNP : Prop := (3 : Nat) ∈ NP
+
+end Lax77.Cx
+`;
+      const submission = (retarget: string) =>
+        makeHostSubmission(
+          "lax-77",
+          {
+            "concepts/Lax77.lean": "import Lax77.Cx\n",
+            "concepts/Lax77/Cx.lean": concept(retarget),
+            "proofs/Lax77Proofs.lean": "import Lax77Proofs.Basic\n",
+            "proofs/Lax77Proofs/Basic.lean": `import Lax77.Cx
+
+namespace Lax77Proofs
+
+theorem holds : Lax77.Cx.Holds := trivial
+
+end Lax77Proofs
+`,
+          },
+          undefined,
+          { environment },
+        );
+
+      // core's \`∈\` read as \`True\` inside the namespace: the source says
+      // \`3 ∈ NP\`, false, and the statement means \`True\` (E1 follow-up)
+      const refused = await buildOnHost(submission("scoped macro_rules | \`($_a ∈ $_b) => \`(True)"), { id: "lax-77" });
+      expect(refused.ok).toBe(false);
+      expect(rules(refused), messages(refused)).toEqual(new Set(["retarget-syntax"]));
+      expect(refused.violations.map((violation) => violation.intent)).toEqual(["standards"]);
+      expect(messages(refused)).toContain(
+        "concept module Lax77.Cx keys a macro or elaborator on syntax its package does not declare («term_∈_»)",
+      );
+
+      const accepted = await buildOnHost(submission(""), { id: "lax-77" });
+      expect(accepted.ok, messages(accepted)).toBe(true);
+    });
+  }, 600_000);
+
   it("a tagged private def never reaches Inspect: LaxCore's hook refuses it at compile time", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;

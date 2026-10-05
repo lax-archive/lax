@@ -550,8 +550,21 @@ extension): such a registry is keyed by a name the namespace rule cannot
 see, and two records choosing the same one cannot be imported together.
 And every ``syntax``, ``notation``, ``macro``, ``macro_rules``, and ``elab``
 a record declares is ``scoped`` or ``local``: a global one rewrites every
-importer, the archive's generated Challenge included. The inspector reads
-both facts from the olean's extension entries with extensions disabled.
+importer, the archive's generated Challenge included. Scope is not enough
+on its own: a ``scoped macro_rules`` for Lean's ``∈`` makes a statement
+whose source reads ``(3 : Nat) ∈ NP`` mean ``True`` inside the package's
+namespace. So every macro and elaborator a record registers
+(``macro_rules``, ``elab_rules``, and the macro and elaborator attributes
+the ``macro``, ``notation`` and ``elab`` commands expand to), global or
+scoped, is keyed on a syntax kind a ``syntax`` of the same package
+declares; extending Lean's syntax or another record's is refused
+(``retarget-syntax``, standards). A ``local`` rule is not persisted in the
+olean and cannot be inspected; it can still change how a statement in its
+own file reads, and what the statement means is its recorded elaborated
+``body``, not its source text. Delaborators and
+unexpanders change only how an editor prints, never what a term is, and
+are not restricted. The inspector reads these facts from the olean's
+extension entries with extensions disabled.
 The rule is not the whole defence for the second: the certificate is also
 held to the archive's reading of each edge (see Certification).
 

@@ -522,6 +522,9 @@ export interface InspectorModule {
    * elaborator) this module registers a *global* entry in — a `syntax`,
    * `notation`, `macro_rules`, or `elab` without `scoped`/`local`. */
   globalSyntax?: string[];
+  /** Spec 2: the syntax kinds this module keys a macro or elaborator on —
+   * global or `scoped` — that its own package declares no `syntax` for. */
+  retargetedSyntax?: string[];
 }
 
 export interface ConclusionFacts {

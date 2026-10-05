@@ -339,16 +339,31 @@ function checkReportShape(report: InspectorReport, label: string, findings: Find
  * `macro_rules` for `theorem` can turn the stated edge into `True` with both
  * exports agreeing — and two records' tokens collide for every later
  * author. The inspector reports, per module, the extensions it registered
- * a global entry in (a syntax node kind is always global and is not one). */
+ * a global entry in (a syntax node kind is always global and is not one).
+ *
+ * Scope alone is not enough: a `scoped macro_rules` for core's `∈` retargets
+ * that syntax inside the package's namespace, so a statement whose source
+ * reads `3 ∈ NP` elaborates to `True` (`retarget-syntax`, standards). A
+ * record keys every macro and elaborator on a syntax kind its own package
+ * declares; the inspector reports, per module, the kinds it keys one on
+ * that the package does not. A `local` rule is not persisted and is not
+ * seen; it shows only in the statement's elaborated body. */
 function checkGlobalSyntax(report: InspectorReport, label: string, findings: FindingCollector): void {
   for (const module of report.modules) {
     const extensions = module.globalSyntax ?? [];
-    if (extensions.length === 0) continue;
-    findings.violate(
-      "global-syntax",
-      `${label} module ${module.name} registers global syntax (${extensions.map(describeSyntaxExtension).join(", ")}); ` +
-        "a record declares every `syntax`, `notation`, `macro`, `macro_rules`, and `elab` as `scoped` or `local`",
-    );
+    if (extensions.length > 0)
+      findings.violate(
+        "global-syntax",
+        `${label} module ${module.name} registers global syntax (${extensions.map(describeSyntaxExtension).join(", ")}); ` +
+          "a record declares every `syntax`, `notation`, `macro`, `macro_rules`, and `elab` as `scoped` or `local`",
+      );
+    const kinds = module.retargetedSyntax ?? [];
+    if (kinds.length > 0)
+      findings.violate(
+        "retarget-syntax",
+        `${label} module ${module.name} keys a macro or elaborator on syntax its package does not declare (${kinds.join(", ")}); ` +
+          "a record's `macro_rules`, `elab_rules`, and macro or elaborator attributes extend only syntax its own package declares, never Lean's or another record's",
+      );
   }
 }
 

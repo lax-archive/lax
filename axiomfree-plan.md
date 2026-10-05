@@ -200,7 +200,8 @@ spec.md: the spec-2 text is a draft Jan reconciles.
       concept-package macro turns `theorem Cert.p : 1 = 2 := sorry` into
       `Cert.p : True`, axiom-free, and both exports agree — so every
       syntax extension and attribute application in a record is `scoped`
-      or `local`. E1 is a *provenance* hole, not a style one, and the
+      or `local`, and (2026-10-05) every macro and elaborator, scoped
+      included, is keyed on a syntax kind its own package declares. E1 is a *provenance* hole, not a style one, and the
       rule alone is not the defence: the trusted Certify phase holds the
       exported Challenge's theorem types to the recorded telescopes
       (constants, level instances, level parameters), which is also the
@@ -1006,3 +1007,25 @@ refuses it; `lax certify --fetch` holds the fetched `comparator.json` to
 `comparatorConfigText` of the record's proofs, as it holds the Challenge
 and `lean-toolchain`; the draft calls `Solution.lean` the sixth file;
 stale TODO lines about the draft's containers and `_root_` are gone.
+
+2026-10-05, the scoped-retargeting gap closed. Verified on rc3 through
+the host pipeline: a concept module's `scoped macro_rules` rewriting core's `∈`
+to `True` inside its own namespace made `@[lax_statement] def
+ThreeInNP : Prop := (3 : Nat) ∈ NP` (with `NP` false everywhere) elaborate
+to `True`, and a `trivial` proof passed, because `globalSyntaxOf` treated
+every `scoped` entry as harmless. The inspector now reports per module
+`retargetedSyntax`: the kinds a macro or term/command/tactic elaborator
+entry (global or scoped) is keyed on that no module of the package
+declares as a parser-extension `kind`; the validator refuses any
+(`retarget-syntax`, standards). `local` rules leave no olean entry (checked
+with `readModuleData`), so they are not seen; the draft says so and names
+the elaborated body as the statement's meaning. Delaborators and
+unexpanders are left alone (a scoped `notation` over an imported constant
+generates an unexpander keyed on that constant, and printing is not
+meaning). Not closed: a package's *own* scoped `syntax` at high priority
+can overlay a source form (`(3 : Nat) ∈ NP` as its own atoms) and expand
+it to anything (verified on rc3 with a `(priority := high)` `syntax` of
+`num` and `&"NP"` atoms); only the elaborated body shows that, as for
+`local`. The website carries `body` but does not show it (lax-website
+`StatementEntry.body`), so neither residual is visible to a reader yet;
+TODO.md has the decision.

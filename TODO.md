@@ -392,6 +392,15 @@ of a Lax17-sized relative certificate (the composed Solution of a
   `VALIDATION_CERTIFICATE_PATH` in both publish steps, the certificate
   layer's push before the CAS commit, a spec-2 record landing in the
   database in its new shape.
+- **Source text versus elaborated meaning** (Jan decides; plan Record
+  2026-10-05). `retarget-syntax` refuses a macro or elaborator keyed on
+  syntax the package does not declare, but a `local` rule and a package's
+  own high-priority scoped `syntax` can still make a statement's source
+  read differently from what it means; only the recorded `body` shows it,
+  and lax-website carries `body` without showing it. Options: show
+  `body` beside the source when it differs, or accept the gap. Also owed:
+  the author phrasing in `assets/instructions.md` (macros and elaborators
+  extend only the package's own `syntax`).
 - The transitively-reachable-statement e2e stage 2 only table-tested is
   still owed; the chain e2e of stage 3 (`host-spec2.test.ts`, lax-41 over
   lax-38) covers the direct require only.

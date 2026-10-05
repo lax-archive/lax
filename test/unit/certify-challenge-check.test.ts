@@ -57,7 +57,7 @@ function built(overrides: Partial<InspectorDeclaration> = {}): InspectorDeclarat
 
 function report(...declarations: InspectorDeclaration[]): InspectorReport {
   return {
-    modules: [{ name: "Challenge", imports: ["Lax1", "Lax7"], moduleDocs: [], declCount: declarations.length, globalSyntax: [] }],
+    modules: [{ name: "Challenge", imports: ["Lax1", "Lax7"], moduleDocs: [], declCount: declarations.length, globalSyntax: [], retargetedSyntax: [] }],
     declarations,
   };
 }

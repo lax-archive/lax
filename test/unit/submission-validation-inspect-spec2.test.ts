@@ -806,6 +806,19 @@ describe("spec-2 classification", () => {
     expect(judgeInspection(quiet.concepts, quiet.proofs, CONCEPT_INVENTORY, PROOF_INVENTORY, EMPTY_RESOLUTION, "both", undefined, LIBRARY_ROOTS, 2).findings.violations).toEqual([]);
   });
 
+  it("a macro or elaborator keyed on syntax the package does not declare is a violation, scoped or not (E1 follow-up)", () => {
+    const fixture = reports([statement(A)], [decl({ name: "Lax1Proofs.helper" })]);
+    fixture.concepts.modules[1]!.retargetedSyntax = ["Lean.«term_∈_»"];
+    fixture.proofs.modules[1]!.retargetedSyntax = ["Lean.Parser.Tactic.exact", "Lax1.Claim.term_⊗_"];
+    const judged = judgeInspection(fixture.concepts, fixture.proofs, CONCEPT_INVENTORY, PROOF_INVENTORY, EMPTY_RESOLUTION, "both", undefined, LIBRARY_ROOTS, 2);
+    const actual = judged.findings.violations.map((finding) => `[${finding.rule}] ${finding.message}`);
+    expect(actual).toEqual([
+      "[retarget-syntax] concept module Lax1.Claim keys a macro or elaborator on syntax its package does not declare (Lean.«term_∈_»); a record's `macro_rules`, `elab_rules`, and macro or elaborator attributes extend only syntax its own package declares, never Lean's or another record's",
+      "[retarget-syntax] proof module Lax1Proofs.Basic keys a macro or elaborator on syntax its package does not declare (Lean.Parser.Tactic.exact, Lax1.Claim.term_⊗_); a record's `macro_rules`, `elab_rules`, and macro or elaborator attributes extend only syntax its own package declares, never Lean's or another record's",
+    ]);
+    for (const finding of judged.findings.violations) expect(finding.intent).toBe("standards");
+  });
+
   it("records a proof entry in the documented key order with levelParams and telescope", () => {
     const fixture = reports([statement(A), statement(C)], [decl({
       name: "Lax1Proofs.q",

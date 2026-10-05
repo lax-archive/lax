@@ -813,6 +813,55 @@ unsafe def globalSyntaxOf (data : ModuleData) : Array Name := Id.run do
       if global then out := out.push name
   return out
 
+-- `retargetedSyntaxOf` casts each entry of the macro and elaborator
+-- attributes' extensions, global or scoped, to `KeyedDeclsAttribute.OLeanEntry`
+-- for the syntax kind it is keyed on; the attributes' types are guarded so
+-- the cast stays the one `KeyedDeclsAttribute` persists.
+run_cmd do
+  ShapeGuard.checkType "retargetedSyntaxOf" `Lean.KeyedDeclsAttribute.OLeanEntry
+    "Lean.KeyedDeclsAttribute.OLeanEntry.mk : (explicit key : Lean.KeyedDeclsAttribute.Key) -> (explicit declName : Lean.Name) -> Lean.KeyedDeclsAttribute.OLeanEntry"
+  ShapeGuard.checkConst "retargetedSyntaxOf" `Lean.Elab.macroAttribute "(Lean.KeyedDeclsAttribute Lean.Macro)"
+  ShapeGuard.checkConst "retargetedSyntaxOf" `Lean.Elab.Term.termElabAttribute "(Lean.KeyedDeclsAttribute Lean.Elab.Term.TermElab)"
+  ShapeGuard.checkConst "retargetedSyntaxOf" `Lean.Elab.Command.commandElabAttribute "(Lean.KeyedDeclsAttribute Lean.Elab.Command.CommandElab)"
+  ShapeGuard.checkConst "retargetedSyntaxOf" `Lean.Elab.Tactic.tacticElabAttribute "(Lean.KeyedDeclsAttribute Lean.Elab.Tactic.Tactic)"
+
+/-- The syntax kinds a package declares: every `syntax` (and the `notation`,
+`macro`, `elab` that expand to one) registers its node kind as a global
+parser-extension entry (global, `scoped` or not). -/
+unsafe def declaredSyntaxKindsOf (datas : Array ModuleData) : NameSet := Id.run do
+  let mut out : NameSet := {}
+  for data in datas do
+    for (extName, entries) in data.entries do
+      if ((privateToUserName? extName).getD extName) == `Lean.Parser.parserExtension then
+        for e in entries do
+          let a : NonScalar := match (unsafeCast e : ScopedEnvExtension.Entry NonScalar) with
+            | .global a => a
+            | .scoped _ a => a
+          if let .kind k := (unsafeCast a : Parser.ParserExtension.OLeanEntry) then
+            out := out.insert k
+  return out
+
+/-- The syntax kinds a module keys a macro or elaborator on — global or
+`scoped` — that its package does not declare. A `scoped macro_rules` for
+core's `∈` retargets the existing syntax inside the package's namespace, so
+a statement whose source reads `3 ∈ NP` elaborates to `True`
+(spike/axiomfree/ultracode-review-20261004.md, E1 follow-up). A `local`
+rule is not persisted and cannot be seen here; it shows only in the
+statement's elaborated body. -/
+unsafe def retargetedSyntaxOf (data : ModuleData) (declared : NameSet) : Array Name := Id.run do
+  let mut out : Array Name := #[]
+  for (extName, entries) in data.entries do
+    let name := (privateToUserName? extName).getD extName
+    if name != `Lean.Parser.parserExtension && syntaxExtensions.contains name then
+      for e in entries do
+        let entry : KeyedDeclsAttribute.OLeanEntry :=
+          match (unsafeCast e : ScopedEnvExtension.Entry NonScalar) with
+          | .global a => unsafeCast a
+          | .scoped _ a => unsafeCast a
+        if !declared.contains entry.key && !out.contains entry.key then
+          out := out.push entry.key
+  return out
+
 def usage : IO UInt32 := do
   IO.eprintln "usage: laxinspector --spec <1|2> <out.json> <module> [<module>...]"
   return 1
@@ -847,6 +896,10 @@ unsafe def main (args : List String) : IO UInt32 := do
   -- Filtering here prevents ubiquitous Mathlib dependencies from inflating
   -- the untrusted JSON report.
   let mut packageNames : NameSet := {}
+  -- the syntax kinds the package's own modules declare, for the spec-2
+  -- retargeting fact
+  let declaredKinds := if spec == 2 then
+    declaredSyntaxKindsOf (modNames.toArray.filterMap fun m => idxMap[m]?.map (datas[·]!)) else {}
   for m in modNames do
     if let some idx := idxMap[m]? then
       for declName in datas[idx]!.constNames do
@@ -888,13 +941,15 @@ unsafe def main (args : List String) : IO UInt32 := do
     -- registers globally; the declarations it marks `@[init]` are flagged
     -- per declaration below
     let globalSyntax := if spec == 2 then globalSyntaxOf data else #[]
+    let retargetedSyntax := if spec == 2 then retargetedSyntaxOf data declaredKinds else #[]
     let initializers := if spec == 2 then initializersOf data else {}
     moduleJsons := moduleJsons.push <| Json.mkObj <|
       [("name", Json.str (nameStr m)),
        ("imports", importsJson),
        ("moduleDocs", moduleDocsJson),
        ("declCount", toJson data.constNames.size)] ++
-      (if spec == 2 then [("globalSyntax", Json.arr (globalSyntax.map fun n => Json.str (nameStr n)))] else [])
+      (if spec == 2 then [("globalSyntax", Json.arr (globalSyntax.map fun n => Json.str (nameStr n))),
+                          ("retargetedSyntax", Json.arr (retargetedSyntax.map fun n => Json.str (nameStr n)))] else [])
 
     -- the module's own constants, as its olean stores them: `env.find?`
     -- would return the merged environment's copy, which for a theorem two
