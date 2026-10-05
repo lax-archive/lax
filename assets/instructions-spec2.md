@@ -82,6 +82,7 @@ concept module that imports `LaxCore`:
 
 ```lean
 import LaxCore
+import Mathlib.Data.Nat.Prime.Defs
 
 namespace Lax42.Primes
 
@@ -108,20 +109,27 @@ requires directly. No frontmatter: the shape *is* the declaration.
 ```lean
 import Lax42.Primes
 import Lax261.Infinite
+import Mathlib.Data.Nat.Factorial.Basic
 
 namespace Lax261Proofs
+
+open Nat
 
 /-- Euclid's argument, assuming that every `n > 1` has a prime divisor. -/
 theorem euclid (h : Lax42.Primes.ExistsPrimeDivisor) :
     Lax261.Infinite.InfinitelyManyPrimes := fun n => by
-  obtain ⟨p, hp, hd⟩ := h (n.factorial + 1) (one_lt_factorial_succ n)
-  exact ⟨p, hp, prime_dvd_factorial_succ_gt hp hd⟩
+  obtain ⟨p, hp, hd⟩ := h (n ! + 1) (succ_lt_succ (factorial_pos n))
+  refine ⟨p, hp, lt_of_not_ge fun hpn => hp.not_dvd_one ?_⟩
+  exact (Nat.dvd_add_iff_right (dvd_factorial hp.pos hpn)).2 hd
 
 end Lax261Proofs
 ```
 
-This is the edge `{ExistsPrimeDivisor} → InfinitelyManyPrimes`; a theorem
-with no hypotheses proves its statement outright. Before its proof is
+Here `Lax261.Infinite.InfinitelyManyPrimes` is the statement
+`∀ n : ℕ, ∃ p, Nat.Prime p ∧ n < p`, declared like the one above, and
+mathlib is imported where it is used: requiring it in the lakefile imports
+nothing into a module. This is the edge
+`{ExistsPrimeDivisor} → InfinitelyManyPrimes`; a theorem with no hypotheses proves its statement outright. Before its proof is
 written it is the stub `theorem euclid (h : …) : … := sorry`, with the same
 signature. Every other theorem is a helper, and a helper must not carry
 frontmatter — a spec-1 habit that fails loudly here. When several proofs
