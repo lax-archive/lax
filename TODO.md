@@ -52,9 +52,11 @@ serve`.
   2026-10-05). R1, R5 and R6 are fixed (`bff1799`, `45dea7b`, `9625f9a`).
   R4 (the website's judgment card dropped universe instantiations) is
   fixed in lax-website (`a69ae0eb4f`, fixture probes `453bd394ef`). R2
-  (revalidation vs. dependent certificates) and R3 (metadata resubmission
-  vs. rerun) remain Jan's decisions, tracked under "Jan's decisions from
-  this review" below.
+  (revalidation vs. dependent certificates) is accepted by Jan (2026-10-05):
+  `/lax admin revalidate` is a deliberate admin act, and the footgun is
+  documented in `scripts/admin/README.md`. R3 (metadata resubmission vs.
+  rerun) remains Jan's decision, under "Jan's decisions from this review"
+  below.
 
 Stage-4 items for Jan: the sandboxed `lax certify --run`
 against a *real* record (since the ultracode review's S1/M1 it builds in a
@@ -343,17 +345,6 @@ of a Lax17-sized relative certificate (the composed Solution of a
   - **`src/cli/certify.ts` ~191 drops `verdict.intent`** when building the
     reader CLI finding; keep it.
   - **Jan's decisions from this review:**
-    - *Revalidation semantics (finding 2, High).* `/lax admin
-      revalidate` of a concept record replaces its capture while
-      dependents keep certificates judged against the old one; a
-      statement whose body changed (compile-time code with a date
-      threshold passes concept Replay) is then shown as proven. Options:
-      refuse a revalidation whose concept capture digest changes while
-      registered dependents exist; or make it a new version under the
-      supersedes mechanism; and in every case record the dependency
-      capture digests in the certificate (`verify-bundle.ts` has them in
-      the manifest already) and have the website resolve a certified
-      edge's endpoints by (statement id, capture digest).
     - *Metadata-only resubmission keeps the certificate at the old
       commit (finding 5).* `record.source` moves to C2, the bundle's
       own-package require still names C1, so `lax certify` regenerates a

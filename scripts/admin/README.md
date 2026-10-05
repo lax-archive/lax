@@ -52,6 +52,15 @@ supersedes claim must come out identical (same commit, same manifest).
 The driver follows the run like `lax submit` does and prints the findings
 if validation fails; the record is untouched in that case.
 
+Revalidating a *concept* record is a deliberate footgun. Rebuilding the
+same commit can, in rare cases, elaborate a statement to a different body
+(compile-time code that reads the date, say). The dependents' spec-2
+certificates were judged against the old body and are not touched, yet
+the website now shows their certified edges against the new one. Before
+revalidating a concept with registered dependents, compare its statement
+bodies in `build-output.json` before and after. If one changed, revalidate
+or supersede the dependents too.
+
 **delete** — the ordinary tombstone, admitted in any state. On a
 registered record this is the takedown power and it strands every
 dependent, which the preview lists. Put the rationale in a comment on the
