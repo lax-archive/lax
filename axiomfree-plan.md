@@ -1203,3 +1203,18 @@ publisher re-derives the Challenge and bundle but takes the comparator verdict a
 `pending` flags from the validate artifacts. That bears on decision 10 and decision
 12's registration rule. Three cited lines were spot-checked and are accurate. Triage is
 in TODO.md.
+
+2026-10-05, Codex night review R1, R5 and R6 fixed. R1 (`bff1799`): the
+reasoning held. The validate job's judge and the publisher's regenerated
+bundle both build `comparator.json` from `certifiedProofs(proofs)`, with
+the background three as `permitted_axioms`, and `parseCertificate` holds the
+Challenge to the same regeneration. A `sorry`-backed proof that was not
+flagged therefore reaches the judge, whose `checkAxioms`
+(`Lake/Check/Axioms.lean`) refuses `sorryAx`. A wrongly present flag only
+blocks registration. A new self-test probe, `comparator-rejects-sorry`
+(S5), judges the Challenge's own export as the solution and requires
+`Illegal axiom detected: 'sorryAx'`. The docker smoke (`spec2-certify`,
+v4.35.0-rc3 over real mathlib) passed in 53 s, with the new probe at 848 ms.
+R5 (`45dea7b`): the inspector reports range columns, and unused-helper
+nesting compares positions. R6 (`9625f9a`): the guide's examples import the
+mathlib modules they use.

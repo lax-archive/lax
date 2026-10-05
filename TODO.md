@@ -48,15 +48,16 @@ Pending edges (decision 12) landed in lax and lax-website 2026-10-05;
 the renderer re-pin at merge carries the pending display into `lax
 serve`.
 
-- **Triage the Codex night review** (`spike/axiomfree/codex-review-night-20261005.md`,
-  2026-10-05; recorded, not fixed). New: R1 (high), where the publisher takes the
-  comparator verdict and the absence of `pending` from the validate artifacts
-  and never re-establishes either. R5 (low, a spec-1 regression), where the
-  line-only `nested` test in the unused-lemma rule hides a theorem that shares
-  a line with a definition. R6 (low), where the guide's statement example does
-  not compile with only `LaxCore` imported. Already tracked: R2 (revalidation
-  vs. dependent certificates), R3 (metadata resubmission vs. rerun). R4: the
-  website's judgment card drops universe instantiations.
+- **Codex night review, what remains** (`spike/axiomfree/codex-review-night-20261005.md`,
+  2026-10-05). R1, R5 and R6 are fixed (`bff1799`, `45dea7b`, `9625f9a`).
+  R4, where the website's judgment card drops universe instantiations, is
+  being fixed in lax-website by another worker. That repo's
+  `test/fixtures/spec2/lax-38/build-output.json` still lists the old seven
+  self-test probes; the new `comparator-rejects-sorry` probe is missing. It
+  is cosmetic, because the website does not parse the probes. R2
+  (revalidation vs. dependent certificates) and R3 (metadata resubmission
+  vs. rerun) remain Jan's decisions, tracked under "Jan's decisions from
+  this review" below.
 
 Stage-4 items for Jan: the sandboxed `lax certify --run`
 against a *real* record (since the ultracode review's S1/M1 it builds in a
