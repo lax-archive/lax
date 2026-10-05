@@ -391,6 +391,49 @@ describe("inspection judgments retained from main", () => {
     ]);
   });
 
+  it("keeps a theorem nested in another declaration's range quiet, but not equal-range theorem peers", () => {
+    const fixture = reports();
+    const theorem = (name: string, startLine: number, endLine: number, kind = "theorem") => ({
+      name,
+      userName: name,
+      kind,
+      module: "Lax1Proofs.Basic",
+      axioms: [],
+      usedConstants: [],
+      startLine,
+      endLine,
+    });
+    fixture.proofs.declarations.push(
+      // a structure's Prop field and its `@[ext]` lemma sit inside the structure's range
+      theorem("Lax1Proofs.Bounded", 3, 5, "inductive"),
+      theorem("Lax1Proofs.Bounded.lo", 4, 4),
+      theorem("Lax1Proofs.Pt", 7, 7, "inductive"),
+      theorem("Lax1Proofs.Pt.ext", 7, 7),
+      // a `@[to_additive]` pair shares one range: both are the author's
+      theorem("Lax1Proofs.mul_one'", 9, 10),
+      theorem("Lax1Proofs.add_zero'", 9, 10),
+      theorem("Lax1Proofs.helper", 12, 13),
+    );
+    fixture.proofs.modules[1]!.declCount = fixture.proofs.declarations.length;
+
+    const judged = judgeInspection(
+      fixture.concepts,
+      fixture.proofs,
+      fixture.conceptInventory,
+      fixture.proofInventory,
+      EMPTY_RESOLUTION,
+    );
+
+    expect(judged.findings.violations).toEqual([]);
+    expect(judged.findings.warnings.map((warning) => warning.message)).toEqual(
+      ["Lax1Proofs.add_zero'", "Lax1Proofs.helper", "Lax1Proofs.mul_one'"].map(
+        (name) =>
+          `helper lemma ${name} is not used, directly or transitively, by any proof ` +
+          "theorem in this submission; keep it only if this is intentional",
+      ),
+    );
+  });
+
   it("collects independent root, import, annotation, namespace, axiom, and proof failures", () => {
     const fixture = reports();
     fixture.concepts.modules[0]!.imports = [];

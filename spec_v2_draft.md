@@ -554,9 +554,10 @@ Lean generates for it are global whatever the scope. A concept package
 declares none. A proof package names each under its own namespace
 (``declare_syntax_cat Lax3Proofs.fo``), and the namespace rule admits the
 category's constant ``Lean.Parser.Category.Lax3Proofs.fo`` as the
-package's own; the quotation parser is recognised by its value, so a
-parser of the author's own under that name is global syntax like any
-other.
+package's own; the quotation parser is recognised by its value, not its
+name (declared inside a ``namespace`` block, Lean prefixes it with that
+namespace), so a parser of the author's own under that name is global
+syntax like any other.
 And every ``syntax``, ``notation``, ``macro``, ``macro_rules``, and ``elab``
 a record declares is ``scoped`` or ``local``: a global one rewrites every
 importer, the archive's generated Challenge included. Scope is not enough

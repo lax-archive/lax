@@ -855,15 +855,17 @@ unsafe def syntaxCategoriesOf (data : ModuleData) : Array Name := Id.run do
 /-- Whether a global parser-extension entry is one `declare_syntax_cat`
 writes for one of the module's categories: the category itself, its
 quotation parser (`generatedQuotation`, compared by value, so a hand-made
-`@[term_parser] def <cat>.quot` is not excused), and that parser's tokens
-`` `(suffix| `` and `)`. Verified on v4.35.0-rc3. -/
+`@[term_parser] def <cat>.quot` is not excused; its name is not compared,
+since Lean prefixes it with the current namespace when the category is
+declared inside one, and the namespace rule judges that name), and that
+parser's tokens `` `(suffix| `` and `)`. Verified on v4.35.0-rc3. -/
 def isCategoryEntry (env : Environment) (cats : Array Name) : Parser.ParserExtension.OLeanEntry → Bool
   | .category c d _ => cats.contains c && d == `Lean.Parser.Category ++ c
   | .token t => cats.any fun c => match c with
     | .str _ s => t == "`(" ++ s ++ "|" || t == ")"
     | _ => false
   | .parser `term d _ => cats.any fun c => match c with
-    | .str _ s => d == c ++ `quot && (env.find? d).bind (·.value?) == some (generatedQuotation c s)
+    | .str _ s => (env.find? d).bind (·.value?) == some (generatedQuotation c s)
     | _ => false
   | _ => false
 

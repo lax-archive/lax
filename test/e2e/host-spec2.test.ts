@@ -1656,7 +1656,7 @@ end Lax77Proofs
   it("admits a proof package's syntax category under its own namespace, and refuses any other", async () => {
     await withTestEnvironmentsAsync([SPEC2], async () => {
       const environment = environmentById(SPEC2.id)!;
-      const submission = (conceptExtra: string, category: string) =>
+      const submission = (conceptExtra: string, category: string, inNamespace = false) =>
         makeHostSubmission(
           "lax-78",
           {
@@ -1682,9 +1682,11 @@ end Lax78.Cx
             "proofs/Lax78Proofs.lean": "import Lax78Proofs.Basic\n",
             "proofs/Lax78Proofs/Basic.lean": `import Lax78.Cx
 
-declare_syntax_cat ${category}
+${inNamespace ? "" : `declare_syntax_cat ${category}`}
 
 namespace Lax78Proofs
+
+${inNamespace ? `declare_syntax_cat ${category}` : ""}
 
 scoped syntax "tt" : ${category}
 scoped syntax "[fo|" ${category} "]" : term
@@ -1704,6 +1706,12 @@ end Lax78Proofs
       // they are as unique as its other names
       const accepted = await buildOnHost(submission("", "Lax78Proofs.fo"), { id: "lax-78" });
       expect(accepted.ok, messages(accepted)).toBe(true);
+
+      // declared inside the namespace block, Lean names the quotation parser
+      // \`Lax78Proofs.Lax78Proofs.fo.quot\` (the category's own constant is
+      // \`_root_\`-anchored); its value still marks it as generated
+      const nested = await buildOnHost(submission("", "Lax78Proofs.fo", true), { id: "lax-78" });
+      expect(nested.ok, messages(nested)).toBe(true);
 
       // an unprefixed category: two records that both declare \`fo\` cannot
       // be imported together

@@ -1061,7 +1061,7 @@ shape guard (identical v4.33–v4.35-rc3) — and whose range lies inside no
 other declaration's of its module (equal-range theorems are peers). The
 range rule needs no new fact and applies to spec 1 too; spec 1 keeps
 `userName` in place of the origin and has no instance flag, so its
-`mk.inj` family still warns (TODO.md). Real-Lean coverage: the lax-39
+`mk.inj` family and Prop-class instances still warn (TODO.md). Real-Lean coverage: the lax-39
 e2e in `host-spec2.test.ts`.
 
 2026-10-05, syntax categories in proof packages. `declare_syntax_cat
@@ -1086,3 +1086,15 @@ co-import on rc3. The claim that the initializer check catches
 from Main.lean, inspect-spec2.ts, and the draft; `assets/instructions.md`
 still makes it (TODO.md). Coverage: a unit case and the lax-78 e2e in
 `host-spec2.test.ts`.
+
+2026-10-05, the category re-review. A category declared inside a
+namespace block (`namespace Lax78Proofs` then `declare_syntax_cat
+Lax78Proofs.fo`) was refused: Lean names the quotation parser with a bare
+`mkIdent`, so it becomes `Lax78Proofs.Lax78Proofs.fo.quot` (the category's
+own constant is `_root_`-anchored), and `isCategoryEntry` excused only
+`<cat>.quot`. The name test is gone — the value comparison with
+`generatedQuotation` is what proves Lean generated the parser, and the
+namespace rule judges its name. The lax-78 e2e gains the in-namespace
+case. The same review added a spec-1 unit case for the unused-lemma range
+rule and corrected the entry above: spec 1's Prop-class instances still
+warn too.
