@@ -1218,3 +1218,12 @@ v4.35.0-rc3 over real mathlib) passed in 53 s, with the new probe at 848 ms.
 R5 (`45dea7b`): the inspector reports range columns, and unused-helper
 nesting compares positions. R6 (`9625f9a`): the guide's examples import the
 mathlib modules they use.
+
+2026-10-05, after the night review's fixes: Jan accepted R2 (`/lax admin
+revalidate` is a deliberate admin act; the footgun is documented in
+`scripts/admin/README.md`). Jan also decided that a `sorryAx` refusal in
+validation fails the build as the archive's fault, never relabelling the
+edge pending (`f28e960`, `validationVerdict`). Codex round 2 (the fixes) found no
+defects; round 3 (`f28e960`) found one low doc gap in the spec draft's
+Verdict, now fixed. Both are in `spike/axiomfree/codex-review-fixes-20261005.md`.
+R3 remains Jan's decision.

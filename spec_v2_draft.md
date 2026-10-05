@@ -1559,9 +1559,10 @@ over-long text is elided with `` […] ``.
   inspected telescopes and have the environment's own ``lake comparator``
   judge it — a build and an export container per side, then a clean judge
   over the two read-only exports — see Certification below. The
-  comparator's own rejection diagnostics are violations reported per edge;
-  pending edges are left out, and a record with no complete proof runs
-  nothing.
+  comparator's own rejection diagnostics are violations reported per edge,
+  save a refusal for ``sorryAx``, which is the archive's failure (see
+  Verdict); pending edges are left out, and a record with no complete
+  proof runs nothing.
 
 - **Paper** (only for a declared paper, concurrently with Compile through
   Certify): the marker gate, the PDF compile, and the web derivation of the
@@ -2024,7 +2025,13 @@ changed.
 own diagnostics is a violation reported per edge, labelled ``judge`` — the
 theorem whose statement differs between the two exports, the illegal
 axiom, or a kernel's rejection, which the comparator reports only for the
-kernel's own exit 1. A Challenge that does not
+kernel's own exit 1. One illegal axiom is the exception: validation judges
+only proofs the inspector did not record pending, so a refusal for
+``sorryAx`` there means the inspector and the judge disagree. Validation
+still fails, and the edge is never relabelled pending on the judge's word,
+but the failure is the archive's, naming a lax bug, not a finding against
+the author. A reader's ``lax certify --run`` reports the same refusal
+plainly: there the stored certificate does not hold. A Challenge that does not
 build in A1 is a ``translation`` finding, since no proof code is present
 there — its cause is lax's generator or, under decision 8's trust in
 concept authors, the concept package's own build. Everything else — the
