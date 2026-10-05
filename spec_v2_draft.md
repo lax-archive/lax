@@ -811,7 +811,10 @@ Rules:
   reaches is still a violation, and a pending edge resting on any other
   non-background axiom is refused as before. Certification judges only the
   complete edges; a pending edge is no edge of the proof network and is
-  never certified. A draft may carry pending edges; registration refuses a
+  never certified. The website still shows its type — on its card and in
+  the network figure, dashed and marked "pending (proof contains sorry)",
+  with no certified mark — and never counts it toward a statement being
+  proven. A draft may carry pending edges; registration refuses a
   record with any (see Lifecycle), so a registered record is sorry-free as
   before. The point is review: an author, or an agent, writes the concepts
   and the edges' types first, submits a draft, has the statements *and*

@@ -1150,3 +1150,21 @@ register publisher's and the CLI preflight's refusals, the revalidation
 refusal, and the lax-43 real-Lean e2e in `host-spec2.test.ts` (two pending
 edges beside a certified one; a dead `sorry` refused). The website side
 is next (TODO.md).
+
+2026-10-05, decision 12 on the lax-website side (`axiomfree` 3217abc9c8).
+The loader admits `pending` (only `true`) and requires a certificate
+exactly when some proof is not pending; the proof network never fires a
+pending edge. Its telescope shows as any other, marked "pending (proof
+contains sorry)" on its card (in place of the certified chip), its proof
+page (pill and note, no certified line or rerun command), the concept
+page's proof buttons, and the network figure's details and edge tooltips;
+the record page counts pending edges beside the certificate. In the figure
+the proof and its incidences are dashed, with a legend entry — a class on
+the display node only, outside the layout input, so geometry and its
+cache key are unchanged and `ENGINE_VERSION` stays. There is no per-edge
+Challenge text to show: a pending edge is in no Challenge, which the pages
+say. `lax serve`'s own front page lists folders and draws no edges; its
+record pages are the renderer's, so they follow once the renderer is
+re-pinned. Coverage: loader cases, the projection/SVG (dashed classes,
+identical layout input), and a site test with a pending-only draft beside
+a mixed record.
