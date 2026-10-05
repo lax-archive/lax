@@ -809,9 +809,13 @@ Rules:
   its cone — the edge itself and every declaration of the proof package it
   uses, directly or transitively — and nowhere else: a ``sorry`` no edge
   reaches is still a violation, and a pending edge resting on any other
-  non-background axiom is refused as before. Certification judges only the
-  complete edges; a pending edge is no edge of the proof network and is
-  never certified. The website still shows its type — on its card and in
+  non-background axiom is refused as before. What Lean generated for a
+  declaration (an equation lemma, an abstracted nested proof) carries its
+  parent's ``sorry`` and is judged through its parent; a declaration with
+  no parent — a macro's hygienically named ``theorem … := sorry`` among
+  them — is judged itself. Certification judges only the complete edges;
+  a pending edge proves nothing in the proof network (it never fires) and
+  is never certified; ``lax generate-prooftree`` leaves it out. The website still shows its type — on its card and in
   the network figure, dashed and marked "pending (proof contains sorry)",
   with no certified mark — and never counts it toward a statement being
   proven. A draft may carry pending edges; registration refuses a

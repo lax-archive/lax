@@ -257,7 +257,8 @@ const SORRY = "sorryAx";
  * states nothing a reviewer reads, and admitting it would leave registration
  * a second thing to look for. What Lean generated carries its parent's
  * `sorry` (an equation lemma of a `sorry` def) and is judged through the
- * parent, so only authored declarations are named. */
+ * parent (`generatedFor`); everything else is named — a macro-scoped
+ * declaration has no parent to be judged through. */
 function checkPendingEdges(declarations: InspectorDeclaration[], proofs: ProofEntry[], findings: FindingCollector): void {
   const pending = proofs.filter((proof) => proof.pending === true).map((proof) => proof.id);
   const byName = new Map<string, InspectorDeclaration[]>();
@@ -271,7 +272,7 @@ function checkPendingEdges(declarations: InspectorDeclaration[], proofs: ProofEn
     for (const declaration of byName.get(name) ?? []) for (const used of declaration.usedConstants) if (byName.has(used)) queue.push(used);
   }
   for (const declaration of declarations) {
-    if (!declaration.axioms.includes(SORRY) || cone.has(declaration.name) || !isAuthoredOrigin(declaration)) continue;
+    if (!declaration.axioms.includes(SORRY) || cone.has(declaration.name) || generatedFor(declaration) !== undefined) continue;
     findings.violate(
       "axiom-free",
       `proof declaration ${display(declaration)} depends on axiom ${SORRY}, and no edge uses it; spec 2 admits only ` +

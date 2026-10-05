@@ -556,9 +556,12 @@ const CASES: Case[] = [
     proofs: [
       decl({ name: "Lax1Proofs.dead", axioms: ["sorryAx"] }),
       decl({ name: "Lax1Proofs.stub", telescope: chain([], [A]), axioms: ["sorryAx", "Lean.ofReduceBool"] }),
+      // a macro's hygienic `theorem … := sorry`: no parent to be judged through
+      decl({ name: "Lax1Proofs.t._@.Lax1Proofs.Basic._hyg.3", userName: undefined, nonCanonical: true, origin: { kind: "scoped", module: "Lax1Proofs.Basic" }, axioms: ["sorryAx"] }),
     ],
     violations: [
       ["axiom-free", "proof declaration Lax1Proofs.dead depends on axiom sorryAx, and no edge uses it; spec 2 admits only the background axioms"],
+      ["axiom-free", "proof declaration Lax1Proofs.t._@.Lax1Proofs.Basic._hyg.3 depends on axiom sorryAx, and no edge uses it"],
       ["axiom-free", "proof declaration Lax1Proofs.stub depends on axiom Lean.ofReduceBool"],
     ],
   },

@@ -1184,3 +1184,12 @@ guide as `lax print spec --env` picks the spec (the epoch's by default,
 `instructionsDocument` in `src/cli/spec.ts`); `assets/` already ships
 whole in the package. The draft's "Print" passage records the choice and
 drops its open note.
+
+2026-10-05, review of decision 12. The dead-`sorry` check exempted every
+non-authored declaration, so a macro-scoped one (no parent, never judged
+through one) could keep an unreachable `sorry` and still register; it now
+exempts only what `generatedFor` names a parent for, with a unit case. The
+draft's "Pending edges" now says a pending edge stays in the network but
+never fires (only `lax generate-prooftree` drops it) and states the
+generated-declaration exemption; the `metadataCandidate` docstring says
+"a proof that is not pending".

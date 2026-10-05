@@ -274,8 +274,8 @@ export function parseMetadataResubmissionArtifact(
  * The stored record a metadata resubmission writes: the published payload
  * with the new presentation inputs and the new source commit, in the
  * record's own shape (recorded-shape.ts) — the one serialization rule, so a
- * spec-2 record (telescopes only, no pins, a `certificate` when it has
- * proofs) takes the fast path exactly as a spec-1 one does, and the strict
+ * spec-2 record (telescopes only, no pins, a `certificate` when it has a
+ * proof that is not pending) takes the fast path exactly as a spec-1 one does, and the strict
  * published parser reads it back as it reads every record.
  */
 export function metadataCandidate(
