@@ -14,9 +14,16 @@ draft-dependency warning behind the same flag, strict default everywhere
 (spec.md "lax build" specifies both since 2026-09-19). Owed:
 
 - `lax serve` is unreachable for the whole render: `generateSite` blocks
-  the event loop for 14–21 s on the current database, so a link clicked
-  during a rebuild hangs until it finishes. Move the render to a worker or
-  a child process.
+  the event loop, so a link clicked during a rebuild hangs until it
+  finishes. Since 2026-10-07 the default scope (`--render this`) keeps a
+  render to a few seconds on the current database, so this bites only
+  `--render all` / `--database-only`; still, move the render to a worker
+  or a child process.
+- The `--render` scopes need the renderer release that carries the
+  `pages` option (lax-website branch `serve-render`): re-pin
+  `website-source.lock.json`, release the renderer, and release the CLI.
+  Until then the installed renderer ignores the option and renders
+  everything, as before.
 - A real round trip on two scratch drafts: iterate with `--nonstrict`,
   register the dependency, follow the printed git require, submit the
   dependent. The e2e (`cross-submission.test.ts`) covers the build; the

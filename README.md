@@ -339,7 +339,14 @@ line (`-v` prints them). The output directory under the system temp folder
 is removed when the preview ends, and stale ones from killed previews are
 swept a day later. The CLI and every generated page show a warning
 when the database is missing, stale, invalid, or cannot be checked. Pass
-`--database-only` to omit the local folder. A taken port is walked past — a
+`--database-only` to omit the local folder. The listings, graphs, sidebars
+and `index.json` always cover the whole archive copy, but by default only
+the folder and its siblings get their pages written (`--render this`): a
+link to another submission's page is redirected to the same page on
+laxarchive.org, so the preview costs the folder's pages, not the archive's
+thousands. `--render dependencies` writes the pages of the folder's
+transitive dependencies here too, `--render all` every record's;
+`--database-only` always renders everything. A taken port is walked past — a
 second preview binds the next free port above 8123 and prints it — and
 `--port` only changes where that walk starts.
 Paper surfaces ride along: the local folder's own `paper.pdf` and

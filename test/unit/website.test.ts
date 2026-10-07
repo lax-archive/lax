@@ -245,6 +245,8 @@ describe("the local preview", () => {
       `  http://localhost:${port}/`,
       "",
       "  lax-50 and 2 published submissions.",
+      "  Pages of other submissions open on laxarchive.org (--render dependencies renders this " +
+        "folder's dependencies here too, --render all everything).",
       "  Rebuilds when lax build writes a new result. Ctrl-C to stop.",
     ]);
 
@@ -267,6 +269,19 @@ describe("the local preview", () => {
     // The renderer is told the epoch this CLI's own table names, not the one
     // its config carried when it was released.
     expect(renderer.epochs).toEqual([epoch().id]);
+    // And, by default, to write pages for the folder alone: the archive's
+    // records stay in the model, their pages stay on the public site, and a
+    // generated link to one of them is sent there. A path that is no
+    // record's is still nobody's.
+    expect(renderer.pages).toEqual([{ ids: ["lax-50"], dependencies: false }]);
+    expect(frontText).toContain("Pages of other submissions open on laxarchive.org");
+    const away = await fetch(`http://localhost:${port}/lax-1/Lax1.Base.html`, { redirect: "manual" });
+    expect(away.status).toBe(302);
+    expect(away.headers.get("location")).toBe("https://laxarchive.org/lax-1/Lax1.Base.html");
+    const awayIndex = await fetch(`http://localhost:${port}/lax-2/`, { redirect: "manual" });
+    expect(awayIndex.headers.get("location")).toBe("https://laxarchive.org/lax-2/");
+    expect((await fetch(`http://localhost:${port}/lax-99/`)).status).toBe(404);
+    expect((await fetch(`http://localhost:${port}/lax-50/nothing.html`)).status).toBe(404);
 
     // A later render is one dim line, not a sentence.
     const rebuilt = capture();
@@ -413,6 +428,75 @@ describe("the local preview", () => {
       "  ! Your copy of the archive is missing.",
       "    Run lax sync.",
     ]);
+  });
+
+  it("renders the dependencies too, or everything, on request, and everything with --database-only", async () => {
+    currentDatabase(["lax-1", "lax-2"]);
+    const local = temporaryDirectory("lax-serve-local-");
+    fs.writeFileSync(
+      path.join(local, "build-output.json"),
+      JSON.stringify(localBuildOutput("lax-50", "Bounded gaps")),
+    );
+    const port = await freePort();
+    // Three previews in turn on one port; closed through a closure, which
+    // keeps the compiler from narrowing the handle to what it last saw.
+    const stop = async (): Promise<void> => {
+      await preview?.close();
+      preview = undefined;
+    };
+
+    let renderer = stubRenderer();
+    let output = capture();
+    try {
+      await serveWebsite(local, port, {
+        render: "dependencies",
+        renderer,
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+    expect(renderer.pages).toEqual([{ ids: ["lax-50"], dependencies: true }]);
+    expect(trimmed(output.lines)).toContain(
+      "  Pages of this folder's dependencies are rendered here too; other submissions open on " +
+        "laxarchive.org (--render all renders everything).",
+    );
+    expect(text(await (await fetch(`http://localhost:${port}/`)).text()))
+      .toContain("dependencies are rendered here too");
+    await stop();
+
+    renderer = stubRenderer();
+    output = capture();
+    try {
+      await serveWebsite(local, port, {
+        render: "all",
+        renderer,
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+    expect(renderer.pages).toEqual([undefined]);
+    expect(output.lines.join("\n")).not.toContain("laxarchive.org");
+    // Every record has its page here, so nothing is sent away.
+    expect((await fetch(`http://localhost:${port}/lax-1/`, { redirect: "manual" })).status).toBe(200);
+    expect((await fetch(`http://localhost:${port}/lax-1/missing.html`, { redirect: "manual" })).status).toBe(404);
+    await stop();
+
+    renderer = stubRenderer();
+    output = capture();
+    try {
+      await serveWebsite(local, port, {
+        databaseOnly: true,
+        render: "this",
+        renderer,
+        onListening: (live) => { preview = live; },
+      });
+    } finally {
+      output.restore();
+    }
+    expect(renderer.pages).toEqual([undefined]);
+    expect(output.lines.join("\n")).not.toContain("laxarchive.org");
   });
 
   it("keeps a failed render on the screen and stays up", async () => {
@@ -993,6 +1077,8 @@ interface StubRenderer extends PageBuilder {
   /** Records the stub drops at its per-record boundary, as the real
    * renderer does with a statement it cannot place. */
   skips: Map<string, string>;
+  /** The page selection of each render: absent when everything was asked for. */
+  pages: Array<{ ids: readonly string[]; dependencies?: boolean } | undefined>;
 }
 
 /** A renderer standing in for the pinned lax-website bundle, which only a
@@ -1004,10 +1090,12 @@ function stubRenderer(): StubRenderer {
     seen: [],
     epochs: [],
     skips: new Map(),
+    pages: [],
     generateSite: async (submissions, outDir, options) => {
       builder.renders += 1;
       const settings = typeof options === "string" ? { epoch: options } : options ?? {};
       builder.epochs.push(settings.epoch);
+      builder.pages.push(settings.pages);
       for (const [id, reason] of builder.skips) {
         if (submissions.some((submission) => submission.record.id === id)) settings.onSkip?.({ id, reason });
       }
@@ -1029,7 +1117,11 @@ function stubRenderer(): StubRenderer {
         path.join(outDir, "index.html"),
         "<!doctype html><html><head></head><body>rendered by the stub</body></html>",
       );
+      // Like the real generator, a page selection leaves the other
+      // records' directories unwritten (the stub knows no dependencies).
+      const selected = settings.pages === undefined ? undefined : new Set(settings.pages.ids);
       for (const submission of submissions as Array<{ record: { id: string } }>) {
+        if (selected !== undefined && !selected.has(submission.record.id)) continue;
         const directory = path.join(outDir, submission.record.id);
         fs.mkdirSync(directory, { recursive: true });
         fs.writeFileSync(

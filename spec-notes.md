@@ -7,6 +7,41 @@ file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22, 2026-08-07, 2026-09-14, 2026-09-15, and 2026-09-19
 and removed here; the folded text survives in git history.)
 
+## `lax serve` renders the folder's pages, not the archive's (2026-10-07)
+
+**Spec text:** "lax serve [folder] runs the site generator and serves the
+result locally", with the generated archive index at `/index.html` and
+the folder's own page at `/<id>/`.
+
+**Implemented:** the generator still runs over the complete local database
+copy — the index, the submissions listing, the proof network, the sidebars
+and `index.json` are a function of the whole archive and stay so — but by
+default it writes the per-record pages (`<id>/index.html`, the concept,
+proof and paper pages) only for the folder and its rendered siblings
+(`--render this`). A request for a page of a record left unwritten is
+answered with a redirect to the same path on the public site, where the
+relative links of the generated pages land it. `--render dependencies`
+adds the folder's transitive dependencies, as the generator resolves the
+requires; `--render all` writes every record's pages, and `--database-only`
+always does, having no folder to scope to.
+
+**Why:** the render's time is almost entirely the other records' pages —
+140 records make 3,579 pages, about half a second each, against about two
+seconds for everything the whole archive contributes. A preview that took
+over a minute per `lax build` now takes a few seconds, and what the author
+is iterating on is the folder; the other records' pages are the public
+site's, which is also where the authoritative copy lives (the local
+database copy can be behind it until `lax sync`). The cost accepted is
+that browsing other records from the preview needs the network.
+
+**Proposed spec change:** in "lax serve", after the sentence on the
+generated archive index, add: "By default only the folder's and its
+siblings' pages are generated; the listings and graphs still cover the
+whole database, and a link to another submission's page opens it on the
+public site. `--render dependencies` also generates the pages of the
+folder's transitive dependencies, `--render all` every submission's;
+`--database-only` generates every submission's."
+
 ## Concept dialect: second draft, advisory model (proposed, 2026-07-29)
 
 [spec_conceptdialect_draft.md](spec_conceptdialect_draft.md) is a proposed

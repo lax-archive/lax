@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { parseArchiveFiles } from "../shared/archive-schema.js";
-import { SUBMISSION_ID_PATTERN } from "../shared/constants.js";
+import { SUBMISSION_ID_PATTERN, WEBSITE_BASE_URL } from "../shared/constants.js";
 import { isObject, normalizeSubmissionId } from "../shared/validation.js";
 import { submissionIdForPackage } from "../submission-validation/contracts.js";
 import { epoch } from "../submission-validation/environments.js";
@@ -42,6 +42,16 @@ export interface SkippedRecord {
   reason: string;
 }
 
+/**
+ * Whose pages a preview renders. The model behind the pages — listings,
+ * graphs, sidebars, the machine index — always covers the whole archive
+ * copy; the scope decides which records get the pages under `<id>/`
+ * written, since those are what the render's time goes into. A link to a
+ * record left out is answered with a redirect to the public site.
+ */
+export const RENDER_SCOPES = ["this", "dependencies", "all"] as const;
+export type RenderScope = (typeof RENDER_SCOPES)[number];
+
 export interface GenerateOptions {
   /** The archive's epoch: the table the author's installed CLI actually
    * validates against, preferred by the renderer over the `EPOCH` its own
@@ -50,6 +60,10 @@ export interface GenerateOptions {
   /** Told of every record the renderer skipped; without it the renderer
    * says so on its console, which the preview keeps quiet. */
   onSkip?: (skipped: SkippedRecord) => void;
+  /** The records to write pages for, and whether their transitive
+   * dependencies join them; absent, every record. A renderer released
+   * before the option renders everything, which the preview tolerates. */
+  pages?: { ids: readonly string[]; dependencies?: boolean };
 }
 
 export interface PageBuilder {
@@ -68,6 +82,9 @@ const PORT_ATTEMPTS = 20;
 
 export interface ServeWebsiteOptions {
   databaseOnly?: boolean;
+  /** Default `this`: the folder and its built siblings. `--database-only`
+   * has no local record, so it renders everything whatever the scope. */
+  render?: RenderScope;
   /**
    * Handed the preview as soon as it is listening. The CLI ignores it — an
    * author stops a preview with Ctrl-C, which ends the process — but a test has
@@ -437,6 +454,7 @@ export async function serveWebsite(
   }
   const archive = databaseDirectory();
   const localFolder = options.databaseOnly ? undefined : path.resolve(folder);
+  const scope: RenderScope = localFolder === undefined ? "all" : options.render ?? "this";
   sweepStaleSites();
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "lax-site-"));
   // The output is this process's alone and is removed with it — on `close`,
@@ -494,6 +512,9 @@ export async function serveWebsite(
   const announcedSkips = new Set<string>();
   /** What the last rebuild saw of the local folders (localFingerprint). */
   let seen: string | undefined;
+  /** The archive records in the last render's model — the ids whose pages,
+   * when the scope left them unwritten, live on the public site. */
+  let archiveIds = new Set<string>();
   const pageBuilder = options.renderer === undefined
     ? loadPageBuilder()
     : Promise.resolve(options.renderer);
@@ -506,6 +527,7 @@ export async function serveWebsite(
     frontPageHtml({
       entries: currentEntries(),
       databaseOnly: localFolder === undefined,
+      scope,
       published: counts?.published,
       warning: bannerText(advice),
       failure,
@@ -531,6 +553,9 @@ export async function serveWebsite(
       if (localFolder !== undefined) {
         localPage = submissionPagePath(submissions.at(-1)?.record.id ?? LOCAL_SUBMISSION_ID);
       }
+      const localCount = localFolder === undefined ? 0 : siblings.length + 1;
+      const localIds = new Set(submissions.slice(submissions.length - localCount).map((entry) => entry.record.id));
+      archiveIds = new Set(submissions.slice(0, submissions.length - localCount).map((entry) => entry.record.id));
       await attachPaperFiles(submissions, failedPaperFetches);
       const builder = await pageBuilder;
       const skipped: SkippedRecord[] = [];
@@ -538,13 +563,15 @@ export async function serveWebsite(
         builder.generateSite(submissions, outDir, {
           epoch: epoch().id,
           onSkip: (record) => { skipped.push(record); },
+          ...(scope === "all"
+            ? {}
+            : { pages: { ids: [...localIds], dependencies: scope === "dependencies" } }),
         }));
       applyWebsiteWarning(outDir, bannerText(advice));
       // A skipped local record is the preview failing at what it is for,
       // even though the renderer finished: said like a failed rebuild, on
       // the first render too. A skipped archive record is the archive
       // copy's, and is said once.
-      const localIds = new Set(submissions.slice(-(siblings.length + 1)).map((entry) => entry.record.id));
       const localSkips = localFolder === undefined ? [] : skipped.filter((record) => localIds.has(record.id));
       skippedLocal = new Set(localSkips.map((record) => record.id));
       counts = previewCounts(submissions, entries[0], siblings.length, skippedLocal);
@@ -649,6 +676,7 @@ export async function serveWebsite(
       response.end(request.method === "HEAD" ? undefined : html);
       return;
     }
+    const requested = relative;
     if (relative.endsWith("/")) relative += "index.html";
     const file = path.resolve(outDir, relative);
     const inside = file === outDir || file.startsWith(`${outDir}${path.sep}`);
@@ -661,6 +689,20 @@ export async function serveWebsite(
         relative === `${linked}index.html`
       ) {
         response.writeHead(302, { location: `/${localPage}` });
+        response.end();
+        return;
+      }
+      // A page of an archive record the scope left unwritten: the generated
+      // pages link to it relatively, so the request lands here, and the
+      // public site has the page. Only whole records are sent on — a record
+      // rendered here answers for its own missing files with the 404.
+      const record = relative.split("/")[0] ?? "";
+      if (
+        inside &&
+        archiveIds.has(record) &&
+        !fs.existsSync(path.join(outDir, record, "index.html"))
+      ) {
+        response.writeHead(302, { location: `${WEBSITE_BASE_URL}/${encodeURI(requested)}` });
         response.end();
         return;
       }
@@ -716,6 +758,8 @@ export async function serveWebsite(
   opened = true;
   ui.blank();
   if (counts !== undefined) ui.line(submissionsLine(counts));
+  // Nothing is sent elsewhere while the archive copy has no records.
+  if (scope !== "all" && counts !== undefined && counts.published > 0) ui.line(scopeNote(scope));
   ui.line(
     localFolder === undefined
       ? "Rebuilds when your copy of the archive changes. Ctrl-C to stop."
@@ -829,6 +873,17 @@ function previewCounts(
   };
 }
 
+/** What a scope short of `all` means for the pages behind the listings:
+ * the terminal's line under the counts, and the front page's. */
+function scopeNote(scope: RenderScope): string {
+  const host = new URL(WEBSITE_BASE_URL).host;
+  return scope === "dependencies"
+    ? `Pages of this folder's dependencies are rendered here too; other submissions open on ${host}` +
+      " (--render all renders everything)."
+    : `Pages of other submissions open on ${host}` +
+      " (--render dependencies renders this folder's dependencies here too, --render all everything).";
+}
+
 /** `lax-50, sibling lax-7, and 1,204 published submissions.` — what the
  * preview is showing. */
 function submissionsLine(counts: PreviewCounts): string {
@@ -848,6 +903,7 @@ function submissionsLine(counts: PreviewCounts): string {
 interface FrontPageState {
   entries: readonly LocalEntry[];
   databaseOnly: boolean;
+  scope: RenderScope;
   /** Archive records in the last successful render; none before the first. */
   published?: number;
   warning?: string;
@@ -931,7 +987,7 @@ function frontPageHtml(state: FrontPageState): string {
       : state.published === 0
         ? "no published submissions in it yet"
         : `${ui.count(state.published)} published ${state.published === 1 ? "submission" : "submissions"}`
-  }.</p>`;
+  }.${state.scope === "all" || !state.published ? "" : ` ${escapeHtml(scopeNote(state.scope))}`}</p>`;
   // Reload while something is still to happen: the first render, a failure
   // to fix, or a row waiting for a build or a folder.
   const pending = state.entries.some((entry) => !entry.built || entry.missing !== undefined);

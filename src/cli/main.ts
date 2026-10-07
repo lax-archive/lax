@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { Command, Help } from "commander";
+import { Command, Help, Option } from "commander";
 import type { ValidationScope } from "../submission-validation/contracts.js";
 import { logout } from "./auth.js";
 import { buildSubmission } from "./build.js";
@@ -19,7 +19,7 @@ import { login } from "./login.js";
 import { printInstructions, printSpec } from "./spec.js";
 import * as ui from "./ui.js";
 import { updateCli } from "./update.js";
-import { serveWebsite } from "./website.js";
+import { RENDER_SCOPES, type RenderScope, serveWebsite } from "./website.js";
 import { checkForCliUpdate } from "./update-check.js";
 import { generateProofTree } from "./prooftree.js";
 import { portSubmission } from "./port.js";
@@ -219,6 +219,15 @@ program
   .argument("[folder]", "local submission folder", ".")
   .option("--port <port>", "local preview port", "8123")
   .option("--database-only", "render only the archive, without the local folder")
+  .addOption(
+    new Option(
+      "--render <scope>",
+      "whose pages to render locally: this folder and its siblings, those plus their dependencies, " +
+        "or every submission; links to a submission not rendered open on laxarchive.org",
+    )
+      .choices(RENDER_SCOPES)
+      .default("this"),
+  )
   .description(
     "preview the pages this submission generates; opens on a local front page that lists " +
       "this folder and the siblings its path requires reach, with a link to each",
@@ -227,8 +236,11 @@ program
     run(
       (
         folder: string,
-        options: { port: string; databaseOnly?: boolean },
-      ) => serveWebsite(folder, Number(options.port), { databaseOnly: options.databaseOnly }),
+        options: { port: string; databaseOnly?: boolean; render: RenderScope },
+      ) => serveWebsite(folder, Number(options.port), {
+        databaseOnly: options.databaseOnly,
+        render: options.render,
+      }),
     ),
   );
 
