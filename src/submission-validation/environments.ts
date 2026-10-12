@@ -83,6 +83,13 @@ const TABLE: readonly ArchiveEnvironment[] = [
     admittedAt: "2026-09-04",
     inspector: "inspector",
   },
+  {
+    id: "v4.34.0",
+    leanToolchain: "leanprover/lean4:v4.34.0",
+    mathlibCommit: "5ed2965256430c3649e86755f9576b54eca72435",
+    admittedAt: "2026-09-16",
+    inspector: "inspector",
+  },
 ];
 
 /**
