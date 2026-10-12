@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LoadedSubmission } from "../../src/shared/archive.js";
+import type { ArchiveSnapshot, LoadedSubmission } from "../../src/shared/archive.js";
 import {
   fileDigests,
   initialFiles,
@@ -29,6 +29,51 @@ const run = {
 };
 
 describe("metadata resubmission publisher", () => {
+  it("publishes overlapping metadata edits in request order using the exact classified baseline", async () => {
+    const base = loaded();
+    const harness = metadataHarness(base);
+    const olderArtifact = artifact(base);
+    olderArtifact.source = { ...nextSource, commit: "3".repeat(40) };
+    olderArtifact.inputs.abstract = "Earlier edit.\n";
+    const olderRequest = { ...request(base), commentId: 79, command: { action: "submit" as const, ...olderArtifact.source } };
+    await harness.publisher.publish(olderRequest, olderArtifact, run);
+    const older = afterPublication(base, harness.changes, "b".repeat(40));
+    harness.setCurrent(older);
+    await expect(harness.publisher.publish(request(base), artifact(base), run))
+      .resolves.toMatchObject({ kind: "committed" });
+    const newest = afterPublication(older, harness.changes, "c".repeat(40));
+    expect(newest.files.record.source).toEqual(nextSource);
+    expect(newest.files.buildOutput.lastSubmission?.previous.archiveSha).toBe(older.snapshot.sha);
+    expect(newest.files.buildOutput.inputs).toMatchObject({ abstract: "A better abstract.\n" });
+    expect(newest.files.buildOutput.capture).toMatchObject({ digest: "4".repeat(64), sourceCommit: nextSource.commit });
+    expect(newest.files.buildOutput.concepts).toEqual(base.files.buildOutput.concepts);
+  });
+
+  it("skips metadata for an older request after a newer revision has published", async () => {
+    const base = loaded();
+    const harness = metadataHarness(base);
+    await harness.publisher.publish({ ...request(base), commentId: 81 }, artifact(base), run);
+    const newest = afterPublication(base, harness.changes, "b".repeat(40));
+    harness.setCurrent(newest);
+    harness.writeFiles.mockClear();
+    await expect(harness.publisher.publish(request(base), artifact(base), run))
+      .resolves.toEqual({ kind: "no-op" });
+    expect(harness.writeFiles).not.toHaveBeenCalled();
+    expect(harness.control.postIssueComment).toHaveBeenCalledWith(issue.number, expect.stringContaining("superseded"));
+  });
+
+  it("keeps the strict metadata evidence checks while rebasing through an earlier publication", async () => {
+    const base = loaded();
+    const harness = metadataHarness(base);
+    await harness.publisher.publish({ ...request(base), commentId: 79 }, artifact(base), run);
+    const first = afterPublication(base, harness.changes, "b".repeat(40));
+    harness.setCurrent(first);
+    const forged = artifact(base);
+    forged.inputs.manifest = { ...(forged.inputs.manifest as Record<string, unknown>), unlisted: true };
+    await expect(harness.publisher.publish(request(base), forged, run))
+      .rejects.toThrow("outside title, authors, and abstract");
+  });
+
   it("reuses the exact capture and changes only record and build output presentation data", async () => {
     const current = loaded();
     const harness = metadataHarness(current);
@@ -117,6 +162,7 @@ function metadataHarness(current: LoadedSubmission, finished = false): {
   control: PublisherControl;
   writeFiles: ReturnType<typeof vi.fn>;
   readonly changes: ArchiveChanges;
+  setCurrent: (next: LoadedSubmission) => void;
 } {
   const control: PublisherControl = {
     resultExists: vi.fn(async () => finished),
@@ -127,13 +173,15 @@ function metadataHarness(current: LoadedSubmission, finished = false): {
     clearCommandProgress: vi.fn(),
   };
   let changes: ArchiveChanges = {};
+  let head = current;
+  const snapshots = new Map([[current.snapshot.sha, current]]);
   const writeFiles = vi.fn(async (args: Parameters<PublisherArchive["writeFiles"]>[0]) => {
-    changes = args.changes;
-    await args.validateCurrent(current);
+    await args.validateCurrent(head);
+    changes = args.changesAtSnapshot === undefined ? args.changes : await args.changesAtSnapshot(head);
     return "c".repeat(40);
   });
   const archive: PublisherArchive = {
-    load: vi.fn(async () => current),
+    load: vi.fn(async (_id: string, snapshot?: ArchiveSnapshot) => snapshot === undefined ? head : snapshots.get(snapshot.sha)),
     listDependents: vi.fn(async () => []),
     listRegisteredSuperseders: vi.fn(async () => []),
     writeFiles,
@@ -142,8 +190,15 @@ function metadataHarness(current: LoadedSubmission, finished = false): {
     publisher: new MetadataPublisher(control, archive, repositoryId),
     control,
     writeFiles,
+    setCurrent(next) { head = next; snapshots.set(next.snapshot.sha, next); },
     get changes() { return changes; },
   };
+}
+
+function afterPublication(previous: LoadedSubmission, changes: ArchiveChanges, sha: string): LoadedSubmission {
+  const texts = { ...previous.texts, ...changes } as Record<string, string>;
+  return { snapshot: { branch: "main", sha }, texts,
+    files: parseArchiveFiles("lax-42", texts), preconditions: fileDigests(texts) };
 }
 
 function loaded(): LoadedSubmission {

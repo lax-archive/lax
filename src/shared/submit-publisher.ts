@@ -9,7 +9,8 @@ import {
   type PublisherArchive,
   type PublisherControl,
 } from "./publisher.js";
-import { AUTHOR_MUTABLE_STATES, recordGateProblems, requireCurrentRecord } from "./record-gates.js";
+import { requireCurrentRecord } from "./record-gates.js";
+import { finishSupersededSubmission, submittedChanges, submissionBaseline, SupersededSubmission } from "./submission-order.js";
 import type { PublishRequest, SourceLocation } from "./types.js";
 import { ValidationError } from "./validation.js";
 import type {
@@ -47,6 +48,7 @@ export class SubmitPublisher {
   async preflight(
     untrustedRequest: PublishRequest,
     artifacts: SuccessfulValidationArtifacts,
+    run?: WorkflowRunRef,
   ): Promise<{ kind: "no-op" } | { kind: "ready"; request: PublishRequest }> {
     const request = await this.canonicalRequest(untrustedRequest);
     if (await this.control.resultExists(
@@ -58,7 +60,12 @@ export class SubmitPublisher {
       return { kind: "no-op" };
     }
     const current = await this.archive.load(request.id);
-    await this.validateCurrent(request, artifacts, current);
+    try {
+      await this.validateCurrent(request, artifacts, current);
+    } catch (error) {
+      if (error instanceof SupersededSubmission) return finishSupersededSubmission(this.control, request, error, run);
+      throw error;
+    }
     return { kind: "ready", request };
   }
 
@@ -77,8 +84,26 @@ export class SubmitPublisher {
     paperPdfPath?: string,
     paperWebPath?: string,
   ): Promise<SubmitPublishResult> {
+    try {
+      return await this.publishCurrent(untrustedRequest, artifacts, capturePath, run, paperPdfPath, paperWebPath);
+    } catch (error) {
+      if (error instanceof SupersededSubmission) {
+        return finishSupersededSubmission(this.control, parsePublishRequest(untrustedRequest, this.repositoryId), error, run);
+      }
+      throw error;
+    }
+  }
+
+  private async publishCurrent(
+    untrustedRequest: PublishRequest,
+    artifacts: SuccessfulValidationArtifacts,
+    capturePath: string,
+    run: WorkflowRunRef,
+    paperPdfPath?: string,
+    paperWebPath?: string,
+  ): Promise<SubmitPublishResult> {
     if (this.captureStore === undefined) throw new Error("submit publisher has no capture store");
-    const ready = await this.preflight(untrustedRequest, artifacts);
+    const ready = await this.preflight(untrustedRequest, artifacts, run);
     if (ready.kind === "no-op") return { kind: "no-op" };
     const request = ready.request;
     const loaded = await this.archive.load(request.id);
@@ -128,6 +153,10 @@ export class SubmitPublisher {
       changes,
       message: commitMessage(request, run.url),
       validateCurrent: async (latest) => this.validateCurrent(request, artifacts, latest),
+      changesAtSnapshot: (latest) => constructSubmitChanges(
+        request, requireCurrentRecord(request.id, latest), artifacts.buildOutput,
+        promoted.capture, promoted.paperBlob, promoted.paperWebBlob,
+      ),
     });
     return {
       kind: "committed",
@@ -158,16 +187,15 @@ export class SubmitPublisher {
     loaded: LoadedSubmission | undefined,
   ): Promise<void> {
     const current = requireCurrentRecord(request.id, loaded);
-    // The route job's binding, actor, state, and stale-write gates, repeated
-    // on the canonical actor and the record at the CAS snapshot (trust rule
-    // 2). A validated write reads record.json and build-output.json only:
-    // the owner list may change underneath it, and the current numeric
-    // ownership is what the gate rechecks.
-    const problems = recordGateProblems(request, current, {
-      authorStates: AUTHOR_MUTABLE_STATES,
-      relevantPreconditions: ["record", "buildOutput"],
-      admins: this.admins,
-    });
+    // Repeat binding, ownership, lifecycle, and ordered stale-write checks at
+    // every CAS snapshot. Revalidation retains the strict digest gate.
+    const problems: string[] = [];
+    try {
+      await submissionBaseline(this.archive, request, current, this.admins);
+    } catch (error) {
+      if (!(error instanceof ValidationError)) throw error;
+      problems.push(error.message);
+    }
     // The validate artifact is untrusted input to this job. Repeat the
     // environment-closure gate against the freshly loaded record before any
     // registry or database credential is used, just as we repeat its source,
@@ -342,9 +370,12 @@ function constructSubmitChanges(
     capture: publishedCapture,
     ...(publishedPaper === undefined ? {} : { paper: publishedPaper }),
   };
-  const changes: ArchiveChanges = {
+  const buildOutputText = `${JSON.stringify(buildOutput, null, 2)}\n`;
+  const changes: ArchiveChanges = request.action === "submit"
+    ? submittedChanges(request, current, commandSource, buildOutputText)
+    : {
     "record.json": `${JSON.stringify(record, null, 2)}\n`,
-    "build-output.json": `${JSON.stringify(buildOutput, null, 2)}\n`,
+    "build-output.json": buildOutputText,
   };
   parseArchiveFiles(request.id, { ...current.texts, ...changes } as Record<string, string>);
   return changes;

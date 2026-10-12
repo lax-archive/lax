@@ -25,6 +25,16 @@ export interface ArchiveRecord {
   deletedAt?: string;
 }
 
+export interface SubmissionReceipt {
+  commentId: number;
+  eventCreatedAt: string;
+  /** Digests of this publication (build output excludes this receipt). */
+  record: string;
+  buildOutput: string;
+  /** The actual CAS predecessor, not merely the route job's older snapshot. */
+  previous: { archiveSha: string; record: string; buildOutput: string };
+}
+
 export interface IssueBinding {
   repositoryId: number;
   number: number;
@@ -34,6 +44,8 @@ export interface BuildOutput {
   specVersion: "1";
   id: string;
   issue: IssueBinding;
+  /** Trusted publication receipt; absent on legacy records and after lifecycle/admin changes. */
+  lastSubmission?: SubmissionReceipt;
   [key: string]: unknown;
 }
 

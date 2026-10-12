@@ -98,12 +98,13 @@ describe("protected Archive publication", () => {
     expect(requests.some((request) => request.method === "DELETE")).toBe(true);
   });
 
-  it("rebases and revalidates after an unrelated publisher advances the branch", async () => {
+  it("rebases, revalidates, and rebuilds snapshot-dependent payloads after a ref race", async () => {
     const advancedSha = "b".repeat(40);
     const firstCandidate = "c".repeat(40);
     const secondCandidate = "d".repeat(40);
     const candidates = [firstCandidate, secondCandidate];
     const commitParents: string[][] = [];
+    const blobWrites: string[] = [];
     let branchSha = baseSha;
     let commitIndex = 0;
 
@@ -126,6 +127,7 @@ describe("protected Archive publication", () => {
         return json({ truncated: false, tree: [] });
       }
       if (method === "POST" && url.pathname === "/repos/example/database/git/blobs") {
+        blobWrites.push(Buffer.from(body.content, "base64").toString("utf8"));
         return json({ sha: `blob-${commitIndex}` });
       }
       if (method === "POST" && url.pathname === "/repos/example/database/git/trees") {
@@ -172,11 +174,16 @@ describe("protected Archive publication", () => {
       changes: files,
       message: "Initialize lax-42",
       validateCurrent,
+      changesAtSnapshot: () => ({ ...files, "build-output.json": JSON.stringify({
+        ...JSON.parse(files["build-output.json"]!), validatedAttempt: validateCurrent.mock.calls.length,
+      }) }),
     })).resolves.toBe(secondCandidate);
 
     expect(validateCurrent).toHaveBeenCalledTimes(2);
     expect(commitParents).toEqual([[baseSha], [advancedSha]]);
     expect(branchSha).toBe(secondCandidate);
+    expect(blobWrites.filter((text) => text.includes("validatedAttempt")).map((text) => JSON.parse(text).validatedAttempt))
+      .toEqual([1, 2]);
   });
 
   it("scans build outputs for registered superseders of a target, skipping drafts", async () => {

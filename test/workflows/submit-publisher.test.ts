@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LoadedSubmission } from "../../src/shared/archive.js";
+import type { ArchiveSnapshot, LoadedSubmission } from "../../src/shared/archive.js";
+import { parseWorkflowComment } from "../../src/shared/workflow-comments.js";
 import {
   fileDigests,
   initialFiles,
@@ -61,6 +62,91 @@ function webArtifacts(): SuccessfulValidationArtifacts {
 }
 
 describe("trusted submit publisher", () => {
+  it("publishes a newer validated revision after an overlapping earlier submit completes", async () => {
+    const base = loaded();
+    const values = new Map([["lax-42", base]]);
+    const harness = submitHarness(values);
+    await harness.publisher.publish(request(base), successfulArtifacts(), "/capture.tar", run);
+    const first = afterPublication(base, harness.changes, "b".repeat(40));
+    values.set("lax-42", first);
+    history(harness, values, base, first);
+    const newer = { ...request(base), commentId: 81,
+      command: { action: "submit" as const, ...TEST_SOURCE, commit: "2".repeat(40) } };
+    const artifacts = artifactsAt("2".repeat(40));
+    await expect(harness.publisher.publish(newer, artifacts, "/new-capture.tar", run))
+      .resolves.toMatchObject({ kind: "committed" });
+    const published = afterPublication(first, harness.changes, "c".repeat(40));
+    expect(published.files.record.source?.commit).toBe("2".repeat(40));
+    expect(published.files.buildOutput.lastSubmission?.commentId).toBe(81);
+    expect(published.files.buildOutput.lastSubmission?.previous.archiveSha).toBe(first.snapshot.sha);
+    expect(published.files.buildOutput.capture).toMatchObject({ sourceCommit: "2".repeat(40) });
+  });
+
+  it("reports a late older job as superseded without promoting, writing, or claiming publication", async () => {
+    const base = loaded();
+    const values = new Map([["lax-42", base]]);
+    const harness = submitHarness(values);
+    const newer = { ...request(base), commentId: 81 };
+    await harness.publisher.publish(newer, successfulArtifacts(), "/capture.tar", run);
+    const newest = afterPublication(base, harness.changes, "b".repeat(40));
+    values.set("lax-42", newest);
+    harness.captureStore.promote.mockClear();
+    harness.writeFiles.mockClear();
+    await expect(harness.publisher.publish(request(base), successfulArtifacts(), "/old.tar", run))
+      .resolves.toEqual({ kind: "no-op" });
+    expect(values.get("lax-42")).toBe(newest);
+    expect(harness.captureStore.promote).not.toHaveBeenCalled();
+    expect(harness.writeFiles).not.toHaveBeenCalled();
+    const body = vi.mocked(harness.control.postIssueComment).mock.calls[0]![1];
+    expect(body).toContain("superseded");
+    expect(body).toContain("#issuecomment-81");
+    expect(parseWorkflowComment(body)).toMatchObject({ resultCommentId: 80, runId: run.id, outcome: "success" });
+    expect(harness.control.completeCommand).toHaveBeenCalledWith(80);
+  });
+
+  it("stops an older job if the newer revision lands during capture promotion", async () => {
+    const base = loaded();
+    const newerHarness = submitHarness(new Map([["lax-42", base]]));
+    await newerHarness.publisher.publish({ ...request(base), commentId: 81 }, successfulArtifacts(), "/new.tar", run);
+    const newest = afterPublication(base, newerHarness.changes, "b".repeat(40));
+    const values = new Map([["lax-42", base]]);
+    const older = submitHarness(values);
+    const promote = older.captureStore.promote.getMockImplementation()! as SubmitCaptureStore["promote"];
+    older.captureStore.promote.mockImplementation(async (...args: Parameters<SubmitCaptureStore["promote"]>) => {
+      values.set("lax-42", newest);
+      return promote(...args);
+    });
+    await expect(older.publisher.publish(request(base), successfulArtifacts(), "/old.tar", run))
+      .resolves.toEqual({ kind: "no-op" });
+    expect(values.get("lax-42")).toBe(newest);
+    expect(older.changes).toEqual({});
+    expect(older.control.postIssueComment).toHaveBeenCalledWith(issue.number, expect.stringContaining("superseded"));
+  });
+
+  it("reconstructs the receipt against the actual CAS predecessor after an earlier job wins a race", async () => {
+    const base = loaded();
+    const earlier = submitHarness(new Map([["lax-42", base]]));
+    await earlier.publisher.publish(request(base), successfulArtifacts(), "/old.tar", run);
+    const first = afterPublication(base, earlier.changes, "b".repeat(40));
+    const values = new Map([["lax-42", base]]);
+    const newer = submitHarness(values);
+    history(newer, values, base, first);
+    let changes: ArchiveChanges = {};
+    newer.writeFiles.mockImplementation(async (args: Parameters<PublisherArchive["writeFiles"]>[0]) => {
+      await args.validateCurrent(base);
+      await args.changesAtSnapshot!(base); // First candidate loses its ref race.
+      values.set("lax-42", first);
+      await args.validateCurrent(first);
+      changes = await args.changesAtSnapshot!(first);
+      return "c".repeat(40);
+    });
+    await newer.publisher.publish({ ...request(base), commentId: 81 }, successfulArtifacts(), "/new.tar", run);
+    const final = afterPublication(first, changes, "c".repeat(40));
+    expect(final.files.buildOutput.lastSubmission?.previous).toEqual({
+      archiveSha: first.snapshot.sha, record: first.preconditions.record, buildOutput: first.preconditions.buildOutput,
+    });
+  });
+
   it("accepts v4.30 only for records which existed before that environment closed", async () => {
     const legacy = environmentById("v4.30.0")!;
     const artifacts = successfulArtifacts("lax-42", testRuntimeFor(legacy));
@@ -353,6 +439,26 @@ describe("trusted submit publisher", () => {
   });
 });
 
+function afterPublication(previous: LoadedSubmission, changes: ArchiveChanges, sha: string): LoadedSubmission {
+  const current = loaded({ ...previous.texts, ...changes } as Record<string, string>);
+  current.snapshot.sha = sha;
+  return current;
+}
+
+function history(harness: ReturnType<typeof submitHarness>, values: Map<string, LoadedSubmission>, ...snapshots: LoadedSubmission[]): void {
+  harness.load.mockImplementation(async (id: string, snapshot?: ArchiveSnapshot) =>
+    snapshot === undefined ? values.get(id) : snapshots.find((entry) => entry.snapshot.sha === snapshot.sha));
+}
+
+function artifactsAt(commit: string): SuccessfulValidationArtifacts {
+  const artifacts = successfulArtifacts();
+  artifacts.report.request.source = { ...TEST_SOURCE, commit };
+  for (const capture of [artifacts.report.capture, artifacts.buildOutput.capture, artifacts.report.buildOutput.capture]) {
+    capture.sourceCommit = commit;
+  }
+  return artifacts;
+}
+
 describe("maintainer revalidation", () => {
   const maintainers = new Set([alice.githubId]);
   /** lax-42 registered with the very source the test artifacts were validated from. */
@@ -455,8 +561,8 @@ function submitHarness(
   const load = vi.fn(async (id: string) => values.get(id));
   let changes: ArchiveChanges = {};
   const writeFiles = vi.fn(async (args: Parameters<PublisherArchive["writeFiles"]>[0]) => {
-    changes = args.changes;
     await args.validateCurrent(values.get(args.id));
+    changes = args.changesAtSnapshot === undefined ? args.changes : await args.changesAtSnapshot(values.get(args.id));
     return "c".repeat(40);
   });
   const listRegisteredSuperseders = vi.fn(async () => registeredSuperseders);
@@ -468,8 +574,8 @@ function submitHarness(
     registryBlob: `ghcr.io/lax-archive/lax-captures@sha256:${TEST_CAPTURE.digest}`,
   };
   const captureStore = {
-    promote: vi.fn(async (_id, _source, _manifest, _capturePath, paper, paperWeb) => ({
-      capture: publishedCapture,
+    promote: vi.fn(async (_id, _source, manifest, _capturePath, paper, paperWeb) => ({
+      capture: { ...publishedCapture, ...manifest },
       ...(paper === undefined ? {} : { paperBlob: `ghcr.io/lax-archive/lax-captures@sha256:${paper.digest}` }),
       ...(paperWeb === undefined ? {} : { paperWebBlob: `ghcr.io/lax-archive/lax-captures@sha256:${paperWeb.digest}` }),
     })),

@@ -8,6 +8,7 @@ import type {
   IssueBinding,
   OwnerList,
   SourceLocation,
+  SubmissionReceipt,
 } from "./types.js";
 import {
   isObject,
@@ -87,6 +88,34 @@ export function parseRecord(value: unknown, id: string): ArchiveRecord {
   };
 }
 
+function parseSubmissionReceipt(value: unknown): SubmissionReceipt {
+  if (!isObject(value)) throw new ValidationError("build-output.json.lastSubmission must be an object");
+  requireExactKeys(value, ["commentId", "eventCreatedAt", "record", "buildOutput", "previous"], "lastSubmission");
+  if (!Number.isSafeInteger(value.commentId) || (value.commentId as number) <= 0) {
+    throw new ValidationError("lastSubmission.commentId must be a positive integer");
+  }
+  const eventCreatedAt = timestamp(value.eventCreatedAt, "lastSubmission.eventCreatedAt");
+  if (!isObject(value.previous)) throw new ValidationError("lastSubmission.previous must be an object");
+  requireExactKeys(value.previous, ["archiveSha", "record", "buildOutput"], "lastSubmission.previous");
+  validateCommit(value.previous.archiveSha);
+  for (const [label, digest] of [
+    ["record", value.record], ["buildOutput", value.buildOutput],
+    ["previous.record", value.previous.record], ["previous.buildOutput", value.previous.buildOutput],
+  ]) {
+    if (typeof digest !== "string" || !/^[0-9a-f]{64}$/u.test(digest)) {
+      throw new ValidationError(`lastSubmission.${label} must be a lowercase SHA-256 digest`);
+    }
+  }
+  return {
+    commentId: value.commentId as number, eventCreatedAt,
+    record: value.record as string, buildOutput: value.buildOutput as string,
+    previous: {
+      archiveSha: value.previous.archiveSha as string,
+      record: value.previous.record as string, buildOutput: value.previous.buildOutput as string,
+    },
+  };
+}
+
 export function parseBuildOutput(value: unknown, id: string): BuildOutput {
   if (!isObject(value)) throw new ValidationError("build-output.json must be an object");
   const problems = new ValidationCollector();
@@ -95,6 +124,7 @@ export function parseBuildOutput(value: unknown, id: string): BuildOutput {
     problems.add("build-output.json must not duplicate lifecycle state or status");
   }
   const issue = problems.capture(() => parseIssueBinding(value.issue));
+  if ("lastSubmission" in value) problems.capture(() => parseSubmissionReceipt(value.lastSubmission));
   problems.throwIfAny();
   return { ...value, specVersion: "1", id, issue: issue! } as BuildOutput;
 }
@@ -256,6 +286,9 @@ export function registeredFiles(id: string, current: Record<string, string>): Re
     ...current,
     "record.json": jsonFile({ ...parsed.record, state: "registered" }),
   };
+  // End the submit lineage, including across a later reset-draft. Older
+  // clients still read the ordinary record schema and ignore output extensions.
+  clearSubmissionReceipt(next, parsed.buildOutput);
   parseArchiveFiles(id, next);
   return next;
 }
@@ -277,8 +310,15 @@ export function redraftedFiles(id: string, current: Record<string, string>): Rec
     ...current,
     "record.json": jsonFile({ ...parsed.record, state: "draft" }),
   };
+  clearSubmissionReceipt(next, parsed.buildOutput);
   parseArchiveFiles(id, next);
   return next;
+}
+
+function clearSubmissionReceipt(texts: Record<string, string>, output: BuildOutput): void {
+  if (output.lastSubmission === undefined) return;
+  const { lastSubmission: _receipt, ...rest } = output;
+  texts["build-output.json"] = jsonFile(rest);
 }
 
 /**

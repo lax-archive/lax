@@ -98,6 +98,23 @@ may run concurrently. Each advances the shared database branch without force
 and, on a concurrent advance, re-reads and revalidates the latest head before
 retrying.
 
+You may submit another revision while validation is still running. Successful
+submissions are ordered by the originating comment's creation time, with the
+comment id breaking ties within one second. A newer validated revision can
+publish after an earlier submission changed the draft; an older job finishing
+late reports that it was superseded and keeps the newer published revision.
+A newer request that fails validation does not prevent an earlier valid one
+from publishing. This also applies to presentation-only resubmissions, whose
+evidence remains bound to their original validated baseline.
+
+The publisher records a digest-bound `lastSubmission` receipt in
+`build-output.json`, linking to its actual database predecessor. Rebase is
+allowed only through intact ordinary-submission receipts. Registration and
+maintainer revalidation end that lineage; dependency, issue-binding, lifecycle,
+and current-ownership checks still apply. Existing records need no migration.
+Issue-title synchronization reads the latest published title and repairs a
+concurrent change; Website dispatches already rebuild the latest database head.
+
 ## Trust model
 
 The router runs with the repository-scoped `GITHUB_TOKEN`, reads a pinned

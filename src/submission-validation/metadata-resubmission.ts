@@ -290,6 +290,7 @@ export function parseCurrentBuildOutput(
     "concepts",
     "proofs",
     "capture",
+    ...(output.lastSubmission === undefined ? [] : ["lastSubmission"]),
     ...(output.paper === undefined ? [] : ["paper"]),
   ];
   requireExactKeys(output, expectedKeys, "published build-output.json");
@@ -306,7 +307,7 @@ export function parseCurrentBuildOutput(
   }
   const runtime = configuredRuntime(selected);
   const payloadValue = Object.fromEntries(
-    Object.entries(output).filter(([key]) => !["specVersion", "id", "issue"].includes(key)),
+    Object.entries(output).filter(([key]) => !["specVersion", "id", "issue", "lastSubmission"].includes(key)),
   );
   const payload = parsePublishedBuildOutputPayload(
     payloadValue,
