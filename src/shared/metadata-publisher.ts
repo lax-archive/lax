@@ -8,7 +8,8 @@ import {
   type PublisherArchive,
   type PublisherControl,
 } from "./publisher.js";
-import { AUTHOR_MUTABLE_STATES, recordGateProblems, requireCurrentRecord } from "./record-gates.js";
+import { requireCurrentRecord } from "./record-gates.js";
+import { finishSupersededSubmission, submittedChanges, submissionBaseline, SupersededSubmission } from "./submission-order.js";
 import type { PublishRequest } from "./types.js";
 import { ValidationError } from "./validation.js";
 import type { WorkflowRunRef } from "./workflow-comments.js";
@@ -42,6 +43,7 @@ export class MetadataPublisher {
   async preflight(
     untrustedRequest: PublishRequest,
     untrustedArtifact: ParsedMetadataResubmissionArtifact,
+    run?: WorkflowRunRef,
   ): Promise<{ kind: "no-op" } | { kind: "ready"; request: PublishRequest }> {
     const request = await this.canonicalRequest(untrustedRequest);
     if (await this.control.resultExists(
@@ -54,7 +56,12 @@ export class MetadataPublisher {
     }
     const artifact = parseMetadataResubmissionArtifact(untrustedArtifact, request);
     const current = await this.archive.load(request.id);
-    await this.validateCurrent(request, artifact, current);
+    try {
+      await this.validateCurrent(request, artifact, current);
+    } catch (error) {
+      if (error instanceof SupersededSubmission) return finishSupersededSubmission(this.control, request, error, run);
+      throw error;
+    }
     return { kind: "ready", request };
   }
 
@@ -63,7 +70,22 @@ export class MetadataPublisher {
     untrustedArtifact: ParsedMetadataResubmissionArtifact,
     run: WorkflowRunRef,
   ): Promise<MetadataPublishResult> {
-    const ready = await this.preflight(untrustedRequest, untrustedArtifact);
+    try {
+      return await this.publishCurrent(untrustedRequest, untrustedArtifact, run);
+    } catch (error) {
+      if (error instanceof SupersededSubmission) {
+        return finishSupersededSubmission(this.control, parsePublishRequest(untrustedRequest, this.repositoryId), error, run);
+      }
+      throw error;
+    }
+  }
+
+  private async publishCurrent(
+    untrustedRequest: PublishRequest,
+    untrustedArtifact: ParsedMetadataResubmissionArtifact,
+    run: WorkflowRunRef,
+  ): Promise<MetadataPublishResult> {
+    const ready = await this.preflight(untrustedRequest, untrustedArtifact, run);
     if (ready.kind === "no-op") return ready;
     const request = ready.request;
     const artifact = parseMetadataResubmissionArtifact(untrustedArtifact, request);
@@ -76,6 +98,11 @@ export class MetadataPublisher {
       message: commitMessage(request, run.url),
       validateCurrent: async (latest) => {
         await this.validateCurrent(request, artifact, latest);
+      },
+      changesAtSnapshot: async (latest) => {
+        const current = requireCurrentRecord(request.id, latest);
+        const plan = await this.validateCurrent(request, artifact, current);
+        return constructMetadataChanges(request, current, plan.payload);
       },
     });
     return {
@@ -102,15 +129,12 @@ export class MetadataPublisher {
     loaded: LoadedSubmission | undefined,
   ): Promise<MetadataPlan> {
     const current = requireCurrentRecord(request.id, loaded);
-    const problems = recordGateProblems(request, current, {
-      authorStates: AUTHOR_MUTABLE_STATES,
-      relevantPreconditions: ["record", "buildOutput"],
-      admins: this.admins,
-    });
-    if (artifact.previousBuildOutput !== current.preconditions.buildOutput) {
+    const baseline = await submissionBaseline(this.archive, request, current, this.admins);
+    const problems: string[] = [];
+    if (artifact.previousBuildOutput !== baseline.preconditions.buildOutput) {
       problems.push("metadata comparison does not describe the current build output");
     }
-    if (JSON.stringify(current.files.record.source ?? null) !== JSON.stringify(artifact.previousSource)) {
+    if (JSON.stringify(baseline.files.record.source ?? null) !== JSON.stringify(artifact.previousSource)) {
       problems.push("metadata comparison does not describe the current recorded source");
     }
     if (request.command?.action !== "submit" || JSON.stringify(request.command) !== JSON.stringify({
@@ -122,7 +146,7 @@ export class MetadataPublisher {
 
     let plan: MetadataPlan | undefined;
     try {
-      const published = parseCurrentBuildOutput(current, artifact.previousSource);
+      const published = parseCurrentBuildOutput(baseline, artifact.previousSource);
       const candidateValue = {
         ...published.payload,
         inputs: artifact.inputs,
@@ -168,23 +192,14 @@ function constructMetadataChanges(
     commit: request.command.commit,
     folder: request.command.folder,
   };
-  const record = {
-    specVersion: "1",
-    id: request.id,
-    state: "draft",
-    createdAt: current.files.record.createdAt,
-    source,
-  };
   const buildOutput = {
     specVersion: "1",
     id: request.id,
     issue: current.files.buildOutput.issue,
     ...payload,
   };
-  const changes: ArchiveChanges = {
-    "record.json": `${JSON.stringify(record, null, 2)}\n`,
-    "build-output.json": `${JSON.stringify(buildOutput, null, 2)}\n`,
-  };
+  const buildOutputText = `${JSON.stringify(buildOutput, null, 2)}\n`;
+  const changes = submittedChanges(request, current, source, buildOutputText);
   parseArchiveFiles(request.id, { ...current.texts, ...changes } as Record<string, string>);
   return changes;
 }

@@ -11,7 +11,7 @@ import {
   type ArchiveChanges,
   type ArchiveFilename,
 } from "./archive-schema.js";
-import type { ArchiveSnapshot, LoadedSubmission } from "./archive.js";
+import type { ArchiveRepository, ArchiveSnapshot, LoadedSubmission } from "./archive.js";
 import { compareSubmissionIds, requiredSubmissionIds } from "../submission-validation/contracts.js";
 import { ADMIN_GITHUB_IDS, WEBSITE_REPOSITORY } from "./constants.js";
 import { repositoryPath } from "./github.js";
@@ -55,12 +55,7 @@ export interface PublisherArchive {
   load(id: string, snapshot?: ArchiveSnapshot): Promise<LoadedSubmission | undefined>;
   listDependents(id: string, snapshot: ArchiveSnapshot): Promise<string[]>;
   listRegisteredSuperseders(targetId: string, snapshot: ArchiveSnapshot): Promise<string[]>;
-  writeFiles(args: {
-    id: string;
-    changes: ArchiveChanges;
-    message: string;
-    validateCurrent: (loaded: LoadedSubmission | undefined) => void | Promise<void>;
-  }): Promise<string>;
+  writeFiles: ArchiveRepository["writeFiles"];
 }
 
 export interface PublisherWebsite {
@@ -188,7 +183,8 @@ export class Publisher {
       const files = registeredFiles(request.id, current.texts);
       return {
         mode: "update",
-        changes: selectChanges(files, ["record.json"]),
+        changes: selectChanges(files, files["build-output.json"] !== current.texts["build-output.json"]
+          ? ["record.json", "build-output.json"] : ["record.json"]),
         relevantPreconditions: ["record", "buildOutput", "ownerList"],
       };
     }
@@ -196,7 +192,8 @@ export class Publisher {
       const files = redraftedFiles(request.id, current.texts);
       return {
         mode: "update",
-        changes: selectChanges(files, ["record.json"]),
+        changes: selectChanges(files, files["build-output.json"] !== current.texts["build-output.json"]
+          ? ["record.json", "build-output.json"] : ["record.json"]),
         relevantPreconditions: ["record", "buildOutput", "ownerList"],
       };
     }

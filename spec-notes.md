@@ -7,6 +7,41 @@ file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22, 2026-08-07, 2026-09-14, 2026-09-15, and 2026-09-19
 and removed here; the folded text survives in git history.)
 
+## Overlapping resubmissions (2026-10-13)
+
+**Spec text:** publication repeats stale-write preconditions before advancing
+the database without force. It does not define which overlapping submissions
+should win when validation completes out of order.
+
+**Implemented:** ordinary submissions, including presentation-only ones, may
+rebase over earlier ordinary submissions. Successful publications are ordered
+by the command event's creation timestamp and then numeric comment id. A job
+that finishes after a newer request has already published reports a successful
+superseded result and performs no database, title, or Website mutation. Failed
+newer validations leave earlier valid submissions eligible to publish.
+
+Each ordinary publication adds a trusted `lastSubmission` receipt to
+`build-output.json`: command id/time, hashes of the record and build output
+(excluding the receipt), and its actual CAS predecessor's archive commit and
+file hashes. The publisher follows and verifies that immutable chain to the
+routed baseline before accepting a stale request, and reconstructs the receipt
+on every CAS retry. Metadata evidence is verified against that exact baseline,
+not against an unrelated newer payload. Authorization and dependency checks
+continue to use the current CAS snapshot. Registration/reset-draft clear the
+receipt (changing build output only when needed), and revalidation replaces it
+with an unstamped payload; pending submissions cannot rebase across those
+boundaries. Legacy records and record.json keep their existing shapes.
+
+Issue titles are synchronized from the current archive and checked after each
+PATCH, repairing a publication that raced the title update. Website rebuilds
+already check out the latest database head rather than the dispatch's older
+commit. Existing records need no migration. Jobs started on the previous code
+retain its strict stale-write behavior during rollout.
+
+**Proposed spec change:** document overlapping-submit ordering, the optional
+publication receipt, and the receipt removal during lifecycle transitions.
+Keep strict stale-write rejection for maintainer and non-submit commands.
+
 ## `lax serve` renders the folder's pages, not the archive's (2026-10-07)
 
 **Spec text:** "lax serve [folder] runs the site generator and serves the

@@ -9,6 +9,7 @@ import { safeInline, safeInlineEnds } from "../shared/comment-format.js";
 import { ControlPlane } from "../shared/control-plane.js";
 import { GitHubClient, repositoryPath } from "../shared/github.js";
 import { MetadataPublisher } from "../shared/metadata-publisher.js";
+import { synchronizeSubmissionTitle } from "../shared/submission-title.js";
 import {
   dispatchWebsiteAndReport,
   parsePublishRequest,
@@ -342,7 +343,7 @@ export async function prepareMetadata(): Promise<void> {
       new ArchiveRepository(client),
       authoritativeRepositoryId,
     );
-    const result = await publisher.preflight(request, artifact);
+    const result = await publisher.preflight(request, artifact, workflowRun());
     writeOutput("should_publish", result.kind === "ready" ? "true" : "false");
   } catch (error) {
     await postPublicationFailure(control, request, error);
@@ -372,11 +373,7 @@ export async function publishMetadata(): Promise<void> {
     if (result.kind === "no-op") return;
     archiveCommit = result.archiveCommit;
     try {
-      await controlClient.request(
-        "PATCH",
-        `${repositoryPath(CONTROL_REPOSITORY)}/issues/${request.issue.number}`,
-        { title: result.acceptedTitle },
-      );
+      await synchronizeSubmissionTitle(new ArchiveRepository(controlClient), controlClient, request);
     } catch (error) {
       const message = safeInline((error as Error).message, 300);
       titleSyncError = message || "unknown title synchronization failure";
@@ -412,7 +409,7 @@ export async function prepareSubmit(): Promise<void> {
       undefined,
       authoritativeRepositoryId,
     );
-    const result = await publisher.preflight(request, artifacts);
+    const result = await publisher.preflight(request, artifacts, workflowRun());
     writeOutput("should_publish", result.kind === "ready" ? "true" : "false");
   } catch (error) {
     await postPublicationFailure(control, request, error);
@@ -454,11 +451,7 @@ export async function publishSubmit(): Promise<void> {
     if (result.kind === "no-op") return;
     archiveCommit = result.archiveCommit;
     try {
-      await controlClient.request(
-        "PATCH",
-        `${repositoryPath(CONTROL_REPOSITORY)}/issues/${request.issue.number}`,
-        { title: result.acceptedTitle },
-      );
+      await synchronizeSubmissionTitle(new ArchiveRepository(controlClient), controlClient, request);
     } catch (error) {
       const message = safeInline((error as Error).message, 300);
       titleSyncError = message || "unknown title synchronization failure";

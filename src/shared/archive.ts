@@ -197,6 +197,8 @@ export class ArchiveRepository {
   async writeFiles(args: {
     id: string;
     changes: ArchiveChanges;
+    /** Reconstruct snapshot-dependent payloads after validation on every CAS attempt. */
+    changesAtSnapshot?: (loaded: LoadedSubmission | undefined) => ArchiveChanges | Promise<ArchiveChanges>;
     message: string;
     validateCurrent: (loaded: LoadedSubmission | undefined) => void | Promise<void>;
   }): Promise<string> {
@@ -216,16 +218,21 @@ export class ArchiveRepository {
       const currentSnapshot = await this.snapshot();
       const current = await this.load(args.id, currentSnapshot);
       await args.validateCurrent(current);
-      const finalTexts = { ...(current?.texts ?? {}), ...args.changes };
+      const changes = args.changesAtSnapshot === undefined ? args.changes : await args.changesAtSnapshot(current);
+      const snapshotNames = Object.keys(changes) as ArchiveFilename[];
+      if (snapshotNames.length === 0 || snapshotNames.some((name) =>
+        !ARCHIVE_FILENAMES.includes(name) || typeof changes[name] !== "string"
+      )) throw new ValidationError("publication must change one or more known Archive files");
+      const finalTexts = { ...(current?.texts ?? {}), ...changes };
       parseArchiveFiles(args.id, finalTexts);
       const parent = await this.github.request<GitCommit>(
         "GET",
         `${this.base}/git/commits/${currentSnapshot.sha}`,
       );
       const entries: Array<{ path: string; mode: "100644"; type: "blob"; sha: string }> = [];
-      for (const name of changedNames) {
+      for (const name of snapshotNames) {
         const blob = await this.github.request<{ sha: string }>("POST", `${this.base}/git/blobs`, {
-          content: Buffer.from(args.changes[name]!, "utf8").toString("base64"),
+          content: Buffer.from(changes[name]!, "utf8").toString("base64"),
           encoding: "base64",
         });
         entries.push({ path: `${args.id}/${name}`, mode: "100644", type: "blob", sha: blob.sha });
