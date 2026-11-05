@@ -47,6 +47,7 @@ export function containerPaperCompiler(
     const result = await runner.run({
       label: "paper-compile",
       image,
+      execTmp: true,
       args: ["latexmk", ...args],
       mounts: [
         { source: cwd, target: PAPER_CONTAINER_PATHS.work, writable: true },

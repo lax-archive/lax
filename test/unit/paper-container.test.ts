@@ -46,6 +46,7 @@ describe("container paper compiler", () => {
     const invocation = runner.calls[1] as ContainerInvocation;
     expect(invocation).toEqual({
       label: "paper-compile",
+      execTmp: true,
       image: { image: PAPER_IMAGE, imageDigest: PAPER_IMAGE_DIGEST },
       args: ["latexmk", ...args],
       mounts: [

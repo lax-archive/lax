@@ -36,6 +36,12 @@ export interface ContainerInvocation {
    * have passed verifyImage() first.
    */
   image?: ContainerImage;
+  /**
+   * Allow execution from /tmp, which Docker otherwise mounts noexec. biber is
+   * a self-extracting binary that unpacks itself there, so a paper's compile
+   * needs this; nothing that runs Lean does.
+   */
+  execTmp?: true;
   timeoutMs: number;
   maxOutputBytes: number;
 }
@@ -196,7 +202,7 @@ export class ContainerRunner implements ValidationRunner {
       `--memory-swap=${this.limits.memoryBytes}`,
       `--cpus=${this.limits.cpuCount}`,
       `--pids-limit=${this.limits.pids}`,
-      "--tmpfs=/tmp:rw,nosuid,nodev,size=1073741824",
+      `--tmpfs=/tmp:rw,${invocation.execTmp === true ? "exec," : ""}nosuid,nodev,size=1073741824`,
     ];
     if (process.getuid !== undefined && process.getgid !== undefined) {
       args.push(`--user=${process.getuid()}:${process.getgid()}`);
