@@ -128,10 +128,10 @@ jobs:
     runs-on: ubuntu-latest
     # Every phase has its own cap (config.ts) and the pipeline never waits
     # on anything unbounded; this is the backstop for a hung runner, well
-    # above the longest observed validation (~30 min) plus a cold image pull.
-    # Expiry ends the job as `cancelled`, not `failure`, which is why the
-    # reporter below accepts both.
-    timeout-minutes: 180
+    # above the largest expected validation (Lax185574, about two hours) plus
+    # a cold image pull. Expiry ends the job as `cancelled`, not `failure`,
+    # which is why the reporter below accepts both.
+    timeout-minutes: 300
     permissions:
       contents: read
     steps:
