@@ -984,6 +984,7 @@ export function containerWebDeriver(
     const compile = await runner.run({
       label: "paper-web-compile",
       image,
+      execTmp: true,
       args: ["latexmk", ...webLatexmkArguments(paper.manifest.main)],
       mounts: [
         { source: webSrc, target: PAPER_CONTAINER_PATHS.work, writable: true },

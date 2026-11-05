@@ -346,7 +346,7 @@ function fixtures(): SmokeFixture[] {
         assert.equal(createHash("sha256").update(bytes).digest("hex"), paper.pdf.digest);
         assert.deepEqual(
           report.capture!.files.filter((file) => file.path.startsWith("paper/")).map((file) => file.path),
-          ["paper/main.tex"],
+          ["paper/main.tex", "paper/references.bib"],
           "the paper sources were not captured",
         );
       },
@@ -635,12 +635,22 @@ theorem claim : 0 = 0 := rfl
 
 end Lax44Proofs
 `,
+    // biblatex, so the fixture exercises biber, which unpacks itself into /tmp
+    // and runs from there: it fails in a container whose /tmp is noexec.
+    "paper/references.bib": `@misc{claim,
+  author = {Author, An},
+  title = {A claim},
+  year = {2026},
+}
+`,
     "paper/main.tex": `\\documentclass{article}
 \\usepackage{amsthm}
+\\usepackage{biblatex}
+\\addbibresource{references.bib}
 \\newtheorem{theorem}{Theorem}
 \\begin{document}
 % lax begin Lax44.Claim
-\\begin{theorem}
+\\begin{theorem}[\\cite{claim}]
   $0 = 0$.
 \\end{theorem}
 % lax end
@@ -649,6 +659,7 @@ end Lax44Proofs
   By reflexivity.
 \\end{proof}
 % lax end
+\\printbibliography
 \\end{document}
 `,
   };
