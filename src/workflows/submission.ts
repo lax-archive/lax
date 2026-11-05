@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { ArchiveRepository } from "../shared/archive.js";
 import { GhcrCaptureStore } from "../shared/capture-store.js";
-import { CONTROL_REPOSITORY } from "../shared/constants.js";
+import { ARCHIVE_OPERATORS, CONTROL_REPOSITORY } from "../shared/constants.js";
 import { safeInline, safeInlineEnds } from "../shared/comment-format.js";
 import { ControlPlane } from "../shared/control-plane.js";
 import { GitHubClient, repositoryPath } from "../shared/github.js";
@@ -194,27 +194,35 @@ export async function reportValidation(): Promise<void> {
     }
   }
   const marker = resultMarker(context.commentId);
+  // Everything but a content verdict is the Archive's problem, not the author's.
+  const archiveFault =
+    report === undefined ||
+    report.ok ||
+    report.failure?.kind === "infrastructure" ||
+    report.failure?.kind === "resource-limit";
+  const cc = ARCHIVE_OPERATORS.map((login) => `@${login}`).join(" ");
+  const footer = `${archiveFault ? `\n\ncc ${cc}` : ""}\n\n${marker}`;
   const body = report === undefined
     ? `Validation infrastructure failed for **${context.id}**; no trustworthy report was produced. ` +
-      `lax-database was not changed.\n\n${marker}`
+      `lax-database was not changed.${footer}`
     : report.ok
       ? `Submission validation passed for **${context.id}**, but the validation job failed before trusted ` +
-        `publication could start. lax-database was not changed.\n\n${marker}`
+        `publication could start. lax-database was not changed.${footer}`
       : report.failure?.kind === "infrastructure"
         ? `Validation infrastructure failed for **${context.id}**; the submission did not receive a content ` +
           `verdict and lax-database was not changed.\n${validationFailureSummary(report)}\n` +
           (report.failure.retryable
             ? "This failure appears transient; retrying the unchanged submission may succeed."
             : "Inspect this workflow run; if the failure persists, report it as an Archive problem.") +
-          `\n\n${marker}`
+          `${footer}`
         : report.failure?.kind === "resource-limit"
           ? `Validation for **${context.id}** reached an Archive resource limit; the submission was not rejected ` +
             `on content and lax-database was not changed.\n${validationFailureSummary(report)}\n` +
-            `Reduce the submission's resource use before retrying.\n\n${marker}`
+            `Reduce the submission's resource use before retrying.${footer}`
           : `Submission validation failed for **${context.id}**; lax-database was not changed.\n` +
             `${firstViolation(report)}\n` +
             `The complete findings are in this run's artifacts, where \`lax submit\` reads them.` +
-            `\n\n${marker}`;
+            `${footer}`;
   await clearCommandProgress(control, context.commentId);
   await control.postIssueComment(
     context.issueNumber,

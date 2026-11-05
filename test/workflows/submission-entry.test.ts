@@ -193,6 +193,7 @@ describe("report-validation entry point", () => {
     expect(state.comments).toHaveLength(1);
     const body = state.comments[0]!.body;
     expect(body).toContain("Validation infrastructure failed for **lax-42**");
+    expect(body).toContain("cc @jan3er @clemenskuske @EdouardBonnet");
     expect(body).toContain(resultMarker(commentId));
     expect(parseWorkflowComment(body)).toMatchObject({ resultCommentId: commentId, runId: "777" });
 
@@ -232,6 +233,7 @@ describe("report-validation entry point", () => {
     await reportValidation();
 
     const body = state.comments[0]!.body;
+    expect(body).not.toContain("cc @");
     expect(body).toContain("Submission validation failed for **lax-42**; lax-database was not changed.");
     // One line, folded, and carrying the error rather than stopping at the
     // progress line in front of it.
@@ -322,6 +324,7 @@ describe("report-validation entry point", () => {
 
     const body = state.comments[0]!.body;
     expect(body).toContain("Validation infrastructure failed for **lax-42**");
+    expect(body).toContain("cc @jan3er @clemenskuske @EdouardBonnet");
     expect(body).toContain("did not receive a content verdict");
     // Folded onto the one line, end included: an operational failure's detail
     // is as much in its tail as a compile finding's.
@@ -330,6 +333,7 @@ describe("report-validation entry point", () => {
     );
     expect(body).toContain("retrying the unchanged submission may succeed");
     expect(body).not.toContain("Submission validation failed");
+    expect(body).toContain("cc @jan3er @clemenskuske @EdouardBonnet");
     expect(body).not.toContain("```");
   });
 
@@ -367,6 +371,7 @@ describe("report-validation entry point", () => {
     expect(body).toContain("reached an Archive resource limit");
     expect(body).toContain("was not rejected on content");
     expect(body).toContain("Reduce the submission's resource use before retrying");
+    expect(body).toContain("cc @jan3er @clemenskuske @EdouardBonnet");
   });
 });
 
