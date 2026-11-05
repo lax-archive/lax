@@ -96,9 +96,10 @@ export const PAPER_CAPS = {
 export const DEFAULT_LIMITS: ValidationLimits = {
   fetchTimeoutMs: 10 * 60_000,
   // Lax185574 (730 proof modules, 164k lines) needs about 70 minutes of clean
-  // `lake build` on 4 CPUs, and about 32 of replay at `leanThreads`.
+  // `lake build` on 4 CPUs locally and 54 on the runner. Its replay takes about
+  // 32 locally but ran past 60 on the runner, for a reason not yet established.
   compileTimeoutMs: 120 * 60_000,
-  checkTimeoutMs: 60 * 60_000,
+  checkTimeoutMs: 150 * 60_000,
   maxOutputBytes: 8 * 1024 * 1024,
   inspectorReportBytes: 256 * 1024 * 1024,
   maxWorkspaceBytes: 20 * 1024 * 1024 * 1024,
