@@ -132,3 +132,8 @@ export function splitRepository(value: string): { owner: string; repository: str
   if (match === null) throw new Error(`invalid GitHub repository name: ${value}`);
   return { owner: match[1]!, repository: match[2]! };
 }
+
+/** The GitHub logins mentioned on validation failures that are the Archive's
+ * to look at (resource limits, infrastructure), so its operators get an email
+ * whichever author's submission hit them. */
+export const ARCHIVE_OPERATORS = ["jan3er", "clemenskuske", "EdouardBonnet"];
