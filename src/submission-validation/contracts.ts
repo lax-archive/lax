@@ -2,10 +2,12 @@ import type { IssueBinding, SourceLocation } from "../shared/types.js";
 import {
   isObject,
   requireExactKeys,
+  THREAD_CAP_KEYS,
   validateCommit,
   validateFolder,
   validateRepositoryUrl,
   validateSubmissionId,
+  validateThreadCaps,
   ValidationError,
 } from "../shared/validation.js";
 
@@ -32,6 +34,10 @@ export interface ValidationRequest {
   issue?: IssueBinding;
   /** Narrow migration flag for commands emitted by an issue-number-based CLI. */
   legacyManifestWithoutIssue?: true;
+  /** Lowers `compileLeanThreads` for this run (`limitsFor`). */
+  maxCompileThreads?: number;
+  /** Lowers `leanThreads` for this run (`limitsFor`). */
+  maxReplayThreads?: number;
 }
 
 export interface ValidationFinding {
@@ -456,6 +462,7 @@ export function validationRequestFromUnknown(value: unknown): ValidationRequest 
       ...(Object.hasOwn(value, "legacyManifestWithoutIssue")
         ? ["legacyManifestWithoutIssue"]
         : []),
+      ...THREAD_CAP_KEYS.filter((key) => Object.hasOwn(value, key)),
     ],
     "validation request",
   );
@@ -502,6 +509,7 @@ export function validationRequestFromUnknown(value: unknown): ValidationRequest 
     archiveSha,
     ...(issue === undefined ? {} : { issue }),
     ...(legacyManifestWithoutIssue === undefined ? {} : { legacyManifestWithoutIssue }),
+    ...validateThreadCaps(value),
   };
 }
 

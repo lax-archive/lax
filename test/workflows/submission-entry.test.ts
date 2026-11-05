@@ -415,6 +415,42 @@ describe("prepare-submit entry point", () => {
     }
   });
 
+  it.each([
+    ["a report that kept the caps", { maxReplayThreads: 1 }, true],
+    ["a report that dropped the caps", {}, false],
+  ])("publication gate on a capped submit with %s", async (_label, reportCaps, accepted) => {
+    const texts = initialFiles("lax-42", { repositoryId, number: issueNumber }, alice, "2026-07-30T10:00:00Z");
+    const directory = workDirectory();
+    const captureBytes = Buffer.from("lax capture fixture bytes");
+    const artifacts = successfulArtifacts();
+    artifacts.report.request.issue = { repositoryId, number: issueNumber };
+    Object.assign(artifacts.report.request, reportCaps);
+    const digest = createHash("sha256").update(captureBytes).digest("hex");
+    artifacts.report.capture.digest = digest;
+    artifacts.report.buildOutput.capture.digest = digest;
+    artifacts.buildOutput.capture.digest = digest;
+    fs.writeFileSync(path.join(directory, "validation-report.json"), JSON.stringify(artifacts.report));
+    fs.writeFileSync(path.join(directory, "generated-build-output.json"), JSON.stringify(artifacts.buildOutput));
+    fs.writeFileSync(path.join(directory, "capture.tar"), captureBytes);
+    const base = submitRequest(fileDigests(texts));
+    stubWorkflowEnv({
+      GITHUB_OUTPUT: path.join(directory, "github-output"),
+      PUBLISH_REQUEST: encode({
+        ...base,
+        command: { ...base.command, maxReplayThreads: 1 },
+      }),
+      VALIDATION_REPORT_PATH: path.join(directory, "validation-report.json"),
+      GENERATED_BUILD_OUTPUT_PATH: path.join(directory, "generated-build-output.json"),
+      VALIDATION_CAPTURE_PATH: path.join(directory, "capture.tar"),
+      VALIDATION_PAPER_PATH: path.join(directory, "paper.pdf"),
+      VALIDATION_PAPER_WEB_PATH: path.join(directory, "paper-web.tar"),
+    });
+    installIssueFetch({ comments: [], reactions: [] }, texts);
+
+    if (accepted) await prepareSubmit();
+    else await expect(prepareSubmit()).rejects.toThrow("does not match the authorized submit request");
+  });
+
   it("refuses a report from an environment the table does not admit, before anything is minted", async () => {
     // The report's environment id is untrusted output of the validate job and
     // only ever a table key: an id the table does not hold is a hard

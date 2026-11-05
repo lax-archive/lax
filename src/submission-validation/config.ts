@@ -6,6 +6,7 @@ import {
 } from "./pins.js";
 import type { ValidationRuntimeIdentity } from "./contracts.js";
 import type { ArchiveEnvironment } from "./environments.js";
+import type { ThreadCaps } from "../shared/types.js";
 import { ValidationError } from "../shared/validation.js";
 
 export interface ValidationLimits {
@@ -190,7 +191,13 @@ export function configuredRuntime(
  * entry's own measured overrides on top. A new environment's admission run
  * records its replay/inspect peak, so a heavier mathlib carries its own
  * thread and memory budget instead of forcing every environment down to it.
+ * An author's `caps` can only lower the thread budgets, never raise them.
  */
-export function limitsFor(environment: ArchiveEnvironment): ValidationLimits {
-  return { ...DEFAULT_LIMITS, ...environment.limits };
+export function limitsFor(environment: ArchiveEnvironment, caps: ThreadCaps = {}): ValidationLimits {
+  const limits = { ...DEFAULT_LIMITS, ...environment.limits };
+  return {
+    ...limits,
+    compileLeanThreads: Math.min(limits.compileLeanThreads, caps.maxCompileThreads ?? Infinity),
+    leanThreads: Math.min(limits.leanThreads, caps.maxReplayThreads ?? Infinity),
+  };
 }

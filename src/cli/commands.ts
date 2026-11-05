@@ -26,7 +26,7 @@ import {
   validateNewSubmissionId,
   validateRepositoryUrl,
 } from "../shared/validation.js";
-import type { GitHubIdentity, IssueBinding, SourceLocation } from "../shared/types.js";
+import type { GitHubIdentity, IssueBinding, SourceLocation, ThreadCaps } from "../shared/types.js";
 import { requiredSubmissionIds, type ValidationFinding } from "../submission-validation/contracts.js";
 import { BUILD_OUTPUT } from "../submission-validation/generated-files.js";
 import { environments } from "../submission-validation/environments.js";
@@ -219,6 +219,7 @@ export async function submitExplicitSource(
   repositoryInput: string,
   commitInput: string,
   folderInput: string,
+  caps: ThreadCaps = {},
 ): Promise<void> {
   const source = {
     repository: validateRepositoryUrl(repositoryInput),
@@ -240,7 +241,7 @@ export async function submitExplicitSource(
       detail: describeSource(source),
     });
     await withResumeHint(reference, () =>
-      postCommand(github, target, `/lax submit ${id} ${JSON.stringify(source)}`, submit.follow()));
+      postCommand(github, target, `/lax submit ${id} ${JSON.stringify({ ...source, ...caps })}`, submit.follow()));
     submit.succeed();
   } finally {
     submit.steps.finish();
@@ -249,7 +250,7 @@ export async function submitExplicitSource(
 
 export async function submitFolder(
   folder: string,
-  options: { allowDirty?: boolean; force?: boolean } = {},
+  options: { allowDirty?: boolean; force?: boolean; caps?: ThreadCaps } = {},
 ): Promise<void> {
   await signInIfNeeded();
   const root = path.resolve(folder);
@@ -283,7 +284,7 @@ export async function submitFolder(
     }
     const github = await client();
     await withResumeHint(folder, () =>
-      postCommand(github, target, `/lax submit ${id} ${JSON.stringify(source)}`, submit.follow()));
+      postCommand(github, target, `/lax submit ${id} ${JSON.stringify({ ...source, ...options.caps })}`, submit.follow()));
     submit.succeed();
   } finally {
     submit.steps.finish();

@@ -30,7 +30,9 @@ import {
   requireExactKeys,
   validateCommit,
   validateIdentity,
+  THREAD_CAP_KEYS,
   validateSource,
+  validateThreadCaps,
   validateSubmissionId,
   ValidationCollector,
   ValidationError,
@@ -621,14 +623,24 @@ function trustedCommand(value: unknown, expectedAction: Exclude<PublishAction, "
   if (expectedAction === "submit") {
     requireExactKeys(
       value,
-      ["action", "repository", "commit", "folder"],
+      [
+        "action",
+        "repository",
+        "commit",
+        "folder",
+        ...THREAD_CAP_KEYS.filter((key) => Object.hasOwn(value, key)),
+      ],
       "publication submit command",
     );
-    return { action: "submit", ...validateSource({
-      repository: value.repository,
-      commit: value.commit,
-      folder: value.folder,
-    }) };
+    return {
+      action: "submit",
+      ...validateSource({
+        repository: value.repository,
+        commit: value.commit,
+        folder: value.folder,
+      }),
+      ...validateThreadCaps(value),
+    };
   }
   if (expectedAction === "revalidate") {
     requireExactKeys(value, ["action", "admin", "source"], "publication revalidate command");
