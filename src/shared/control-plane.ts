@@ -472,8 +472,10 @@ function submitPreview(id: string, command: Extract<ParsedCommand, { action: "su
     `Submit preview for **${id}**:\n\n` +
     `- Repository: \`${command.repository}\`\n` +
     `- Commit: \`${command.commit}\`\n` +
-    `- Folder: \`${command.folder}\`\n\n` +
-    previewMarker(commentId)
+    `- Folder: \`${command.folder}\`\n` +
+    (command.maxCompileThreads === undefined ? "" : `- Max compile threads: ${command.maxCompileThreads}\n`) +
+    (command.maxReplayThreads === undefined ? "" : `- Max replay threads: ${command.maxReplayThreads}\n`) +
+    `\n${previewMarker(commentId)}`
   );
 }
 

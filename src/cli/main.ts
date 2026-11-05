@@ -23,6 +23,7 @@ import { RENDER_SCOPES, type RenderScope, serveWebsite } from "./website.js";
 import { checkForCliUpdate } from "./update-check.js";
 import { generateProofTree } from "./prooftree.js";
 import { portSubmission } from "./port.js";
+import { validateThreadCaps } from "../shared/validation.js";
 
 const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
 // The background release probe caches its result in ~/.lax/update-check.json,
@@ -143,6 +144,8 @@ program
   .option("--repository <url>", "public HTTPS repository URL of an explicit source")
   .option("--commit <sha>", "full commit SHA of an explicit source")
   .option("--folder <path>", "folder relative to the repository root (with --repository)")
+  .option("--max-compile-threads <n>", "lower the archive's Lean threads for compile (1-4)", Number)
+  .option("--max-replay-threads <n>", "lower the archive's Lean threads for replay and inspect (1-4)", Number)
   .description("send the pushed commit to the archive as a replaceable draft")
   .action(
     run((
@@ -154,11 +157,17 @@ program
         repository?: string;
         commit?: string;
         folder?: string;
+        maxCompileThreads?: number;
+        maxReplayThreads?: number;
       },
     ) => {
       const explicit = options.repository !== undefined || options.commit !== undefined;
+      const caps = validateThreadCaps({
+        ...(options.maxCompileThreads === undefined ? {} : { maxCompileThreads: options.maxCompileThreads }),
+        ...(options.maxReplayThreads === undefined ? {} : { maxReplayThreads: options.maxReplayThreads }),
+      });
       if (options.resume === true) {
-        if (explicit || options.allowDirty === true || options.force === true) {
+        if (explicit || options.allowDirty === true || options.force === true || Object.keys(caps).length > 0) {
           throw new Error("--resume takes no other options: it reattaches to what was already sent");
         }
         return resumeSubmit(folder);
@@ -176,13 +185,13 @@ program
         if (options.force === true) {
           throw new Error("--force applies to the Git-derived form; an explicit triple never builds locally");
         }
-        return submitExplicitSource(folder, options.repository, options.commit, options.folder ?? ".");
+        return submitExplicitSource(folder, options.repository, options.commit, options.folder ?? ".", caps);
       }
       if (options.folder !== undefined) {
         throw new Error("--folder belongs to the explicit triple; pass the folder as the argument");
       }
       preflight(["git"]);
-      return submitFolder(folder, { allowDirty: options.allowDirty, force: options.force });
+      return submitFolder(folder, { allowDirty: options.allowDirty, force: options.force, caps });
     },
     ),
   );

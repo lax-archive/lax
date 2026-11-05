@@ -10,7 +10,7 @@ import {
   PLACEHOLDER_SUBMISSION_ID_PATTERN,
   SUBMISSION_ID_PATTERN,
 } from "./constants.js";
-import type { GitHubIdentity, SourceLocation } from "./types.js";
+import type { GitHubIdentity, SourceLocation, ThreadCaps } from "./types.js";
 
 interface SourceRepositoryHostPolicy {
   minPathSegments: number;
@@ -314,6 +314,31 @@ export function validateSource(value: unknown): SourceLocation {
     commit: commit!,
     folder: folder!,
   };
+}
+
+/** No archive budget is above this, so a larger cap could only ever be a no-op. */
+export const MAX_THREAD_CAP = 4;
+export const THREAD_CAP_KEYS = ["maxCompileThreads", "maxReplayThreads"] as const;
+
+/** The caps present on an object; absent keys stay absent. */
+export function validateThreadCaps(value: Record<string, unknown>): ThreadCaps {
+  const caps: ThreadCaps = {};
+  for (const key of THREAD_CAP_KEYS) {
+    if (!Object.hasOwn(value, key)) continue;
+    const cap = value[key];
+    if (typeof cap !== "number" || !Number.isSafeInteger(cap) || cap < 1 || cap > MAX_THREAD_CAP) {
+      throw new ValidationError(`${key} must be an integer from 1 to ${MAX_THREAD_CAP}`);
+    }
+    caps[key] = cap;
+  }
+  return caps;
+}
+
+/** A `/lax submit` argument: a source, plus optional caps for this run. */
+export function validateSubmitArgument(value: unknown): SourceLocation & ThreadCaps {
+  if (!isObject(value)) throw new ValidationError("submit argument must be a JSON object");
+  const { maxCompileThreads: _compile, maxReplayThreads: _replay, ...source } = value;
+  return { ...validateSource(source), ...validateThreadCaps(value) };
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {

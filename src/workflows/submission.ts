@@ -656,6 +656,12 @@ function validationRequest(request: PublishRequest): ValidationRequest {
     ...(request.legacyManifestWithoutIssue === undefined
       ? {}
       : { legacyManifestWithoutIssue: request.legacyManifestWithoutIssue }),
+    ...(command?.action === "submit" && command.maxCompileThreads !== undefined
+      ? { maxCompileThreads: command.maxCompileThreads }
+      : {}),
+    ...(command?.action === "submit" && command.maxReplayThreads !== undefined
+      ? { maxReplayThreads: command.maxReplayThreads }
+      : {}),
   };
 }
 

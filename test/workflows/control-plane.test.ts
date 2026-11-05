@@ -32,6 +32,27 @@ describe("submission control-plane routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("carries an author's thread caps into the request and shows them in the preview", async () => {
+    installArchiveFetch();
+    const control = controlPlane();
+    const result = await control.route(
+      "issue_comment",
+      commentEvent(
+        `/lax submit ${JSON.stringify({
+          repository: "https://github.com/alice/formalization",
+          commit: "0123456789abcdef0123456789abcdef01234567",
+          folder: ".",
+          maxReplayThreads: 1,
+        })}`,
+        alice,
+      ),
+    );
+    if (result.kind !== "validate") throw new Error("unexpected route result");
+    expect(result.request.command).toMatchObject({ action: "submit", maxReplayThreads: 1 });
+    expect(result.preview).toContain("- Max replay threads: 1");
+    expect(result.preview).not.toContain("Max compile threads");
+  });
+
   it("authorizes and routes validated submit requests", async () => {
     const fetchMock = installArchiveFetch();
     const control = controlPlane();

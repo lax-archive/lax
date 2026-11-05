@@ -16,6 +16,18 @@ export interface SourceLocation {
   folder: string;
 }
 
+/**
+ * Caps an author may put on one submit's Lean worker threads. They can only
+ * lower the archive's budgets, and they belong to the run: they are never part
+ * of the recorded source.
+ */
+export interface ThreadCaps {
+  /** Caps Compile (`lake build`). */
+  maxCompileThreads?: number;
+  /** Caps Replay and Inspect, which share one budget. */
+  maxReplayThreads?: number;
+}
+
 export interface ArchiveRecord {
   specVersion: "1";
   id: string;
@@ -65,7 +77,7 @@ export interface ArchiveFiles {
  */
 export type ParsedCommand =
   | { action: "owners"; owners: GitHubIdentity[]; admin?: true }
-  | ({ action: "submit" } & SourceLocation)
+  | ({ action: "submit" } & SourceLocation & ThreadCaps)
   | { action: "delete"; admin?: true }
   | { action: "register" }
   | { action: "revalidate"; admin: true; source?: SourceLocation }

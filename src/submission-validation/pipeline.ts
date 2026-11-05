@@ -566,7 +566,7 @@ async function prepareValidation(
   // From here the run carries the environment the manifest selected.
   environment = staticCheck.environment;
   runtime = staticCheck.runtime;
-  limits = limitsFor(environment);
+  limits = limitsFor(environment, request);
   warnings.push(...staticCheck.findings.warnings);
   violations.push(...staticCheck.findings.violations);
   if (staticCheck.findings.failed || staticCheck.result.concepts === undefined || staticCheck.result.proofs === undefined)

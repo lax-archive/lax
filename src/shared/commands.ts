@@ -7,7 +7,7 @@ import {
   parseJson,
   requireExactKeys,
   validateIdentity,
-  validateSource,
+  validateSubmitArgument,
   ValidationCollector,
   ValidationError,
 } from "./validation.js";
@@ -95,7 +95,7 @@ export function parseCommand(body: string): ParsedCommand {
   const rawJson = body.slice(prefix.length).trim();
   if (rawJson === "") throw new ValidationError(`${action} requires a JSON argument`);
   const value = parseJson(rawJson, `${action} argument`);
-  if (action === "submit") return { action: "submit", ...validateSource(value) };
+  if (action === "submit") return { action: "submit", ...validateSubmitArgument(value) };
   if (!Array.isArray(value)) throw new ValidationError("owners must be a JSON array");
   const problems = new ValidationCollector();
   if (value.length === 0 || value.length > MAX_OWNERS) {

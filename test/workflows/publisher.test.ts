@@ -579,6 +579,31 @@ describe("trusted Archive publisher modes", () => {
     expect(harness.website.request).not.toHaveBeenCalled();
   });
 
+  it("keeps a submit's thread caps and bounds them", () => {
+    const command = {
+      action: "submit" as const,
+      repository: "https://github.com/alice/formalization",
+      commit: "0123456789abcdef0123456789abcdef01234567",
+      folder: ".",
+    };
+    const parse = (extra: object) => parsePublishRequest(
+      request({
+        action: "submit",
+        commentId: 77,
+        command: { ...command, ...extra } as PublishRequest["command"],
+        preconditions: {
+          record: "a".repeat(64),
+          buildOutput: "b".repeat(64),
+          ownerList: "c".repeat(64),
+        },
+      }),
+      issue.repositoryId,
+    ).command;
+    expect(parse({ maxReplayThreads: 1 })).toEqual({ ...command, maxReplayThreads: 1 });
+    expect(() => parse({ maxReplayThreads: 0 })).toThrow("must be an integer");
+    expect(() => parse({ extra: 1 })).toThrow();
+  });
+
   it("rejects inexact, cross-boundary, and mismatched trusted requests", () => {
     const initial = initialFiles("lax-42", issue, alice, "2026-07-30T10:00:00Z");
     expect(() =>

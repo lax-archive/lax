@@ -7,6 +7,20 @@ file is not normative. (Entries of earlier milestones were folded into
 spec.md on 2026-07-22, 2026-08-07, 2026-09-14, 2026-09-15, and 2026-09-19
 and removed here; the folded text survives in git history.)
 
+## Submit thread caps (2026-11-05)
+
+`lax submit` takes `--max-compile-threads <n>` and `--max-replay-threads <n>`
+(1-4). They travel as optional `maxCompileThreads` and `maxReplayThreads` keys
+of the `/lax submit` JSON and of the validation request, and lower
+`compileLeanThreads` and `leanThreads` for that run. Replay and Inspect share
+the second cap.
+
+The caps can only lower the archive's budgets. They are separate because the
+pressure is: lax-185574 compiles comfortably at four threads, but its replay
+runs out of time at two. They belong to the run, not to the submission, so they
+stay out of `source` and the record. The validation report echoes them, and
+publication refuses a report whose request differs from the authorized one.
+
 ## Overlapping resubmissions (2026-10-13)
 
 **Spec text:** publication repeats stale-write preconditions before advancing
