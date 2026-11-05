@@ -80,10 +80,13 @@ export const PAPER_IMAGE = `${PAPER_IMAGE_NAME}@sha256:${PAPER_IMAGE_DIGEST}`;
  * records the page an included picture shows, and carries footnote
  * references, footnote ordinals and the paragraph band width in the wire
  * format (`fnref`, `footnote_ref`, `Paragraph.width`, `Paragraph.footnote`
- * — the surface `reflowtex/fetch.mjs` asserts).
+ * — the surface `reflowtex/fetch.mjs` asserts). It also carries hyperlinks
+ * (`link`, `dest`, `dest_item`), builds virtual fonts from a composition
+ * (`<name>.compose.json`, see paper/web-container.ts) and records a finite
+ * `\\leftskip` in the paragraph band.
  */
 export const REFLOWTEX_URL = "https://github.com/lax-archive/reflowtex";
-export const REFLOWTEX_REV = "907fe6243edbe166dcf56f691fce51dedad7de07";
+export const REFLOWTEX_REV = "8469d226d6309dbb22086988a6bfc6ad9a01353a";
 
 /**
  * PyMuPDF, the paper web view's picture converter (TODO.md, "Transparency in

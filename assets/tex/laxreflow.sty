@@ -159,6 +159,28 @@
 \AddToHook{begindocument/before}{%
   \ifdefined\tikzexternalenable\tikzexternalenable\fi}
 
+%% Citations inside externalized pictures. The main run collects a picture's
+%% body without executing it, so a \cite there is never recorded, and the
+%% sub-run that does execute it looks for a .bbl under the picture's own
+%% jobname and prints the raw key. The host seeds the web copy from the PDF
+%% compile (web.ts, seedWebBibliography): lax-web-nocite.tex replays every
+%% key the PDF compile saw, at the end of the document so that numbered
+%% styles keep the order of the body, and the seeded .bbl exists before the
+%% first pass exports the pictures. A sub-run reads that same file, under the
+%% real jobname. \jobname is restored at once: nothing else may see it moved.
+\AddToHook{begindocument/before}{%
+  \ifdefined\tikzexternalrealjob
+    \ifdefined\blx@bblfile
+      \let\laxreflow@blx@bblfile\blx@bblfile
+      \def\blx@bblfile{%
+        \let\laxreflow@jobname\jobname
+        \let\jobname\tikzexternalrealjob
+        \laxreflow@blx@bblfile
+        \let\jobname\laxreflow@jobname}%
+    \fi
+  \fi}
+\AtEndDocument{\InputIfFileExists{lax-web-nocite.tex}{}{}}
+
 %% tikz-cd under externalization. \begin{tikzcd} is \tikzpicture[...] plus a
 %% \matrix, with \endtikzcd closing both -- so the environment's end token is
 %% \end{tikzcd}, and the external library's LaTeX-dialect collector, which

@@ -19,13 +19,10 @@ import { latexmkArguments } from "../../src/submission-validation/paper/compile.
 import { PAPER_CONTAINER_PATHS } from "../../src/submission-validation/paper/container.js";
 import {
   containerWebDeriver,
-  encodingFile,
   normalizePictureBoxes,
-  outlineEncoding,
-  parseEncoding,
   pictureAtOrigin,
   resolveVirtualFonts,
-  sharedSlots,
+  virtualComposition,
   assignIncludedPictureSlots,
   dropUnconvertedPictures,
   includedPictureName,
@@ -945,9 +942,9 @@ describe("export helpers", () => {
     expect(script).toContain("kpsewhich pdftex.map");
     expect(script).toContain("'$1 == n { print; exit }'");
     expect(script).toContain('*.enc) enc="$f"');
-    expect(script).toContain('[ -n "$pfb" ] || pfb="$name.pfb"');
-    expect(script).toContain(`'${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}/'"$name.enc"`);
-    expect(script).toContain(`'${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}/'"$name.pfb"`);
+    expect(script).toContain('[ -n "$pfb" ] || pfb="$1.pfb"');
+    expect(script).toContain(`'${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}/'"$1.enc"`);
+    expect(script).toContain(`'${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}/'"$1.pfb"`);
     // The vector is copied before the outline: a re-encoded face whose
     // vector does not resolve exports neither file.
     expect(script.indexOf('cp -- "$esrc"')).toBeLessThan(script.lastIndexOf('cp -- "$src"'));
@@ -959,14 +956,13 @@ describe("export helpers", () => {
     for (const retired of ["dvisvgm", "eps2write", "NOTRANSPARENCY", "mktemp"]) {
       expect(script).not.toContain(retired);
     }
-    // A face pdftex.map does not name may be virtual: it is followed to the
-    // base font it draws from, whose outline is exported under the virtual
-    // name with the program and the base's vector beside it for the host.
+    // A face pdftex.map does not name may be virtual: its program is exported
+    // beside every real font it maps in, each under its own name, for the host.
     expect(script).toContain("vftovp");
     expect(script).toContain('kpsewhich "$name.vf"');
-    expect(script).toContain("(MAPFONT D 0");
-    expect(script).toContain("8a.enc");
-    expect(script).toContain("t1disasm");
+    expect(script).toContain("\\(MAPFONT/");
+    expect(script).toContain('export_outline "$base"');
+    expect(script).toContain('*[!A-Za-z0-9_-]*) continue');
     expect(script).toContain(`${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_FONTS_DIR}`);
   });
 
@@ -995,122 +991,114 @@ describe("export helpers", () => {
     expect(webExportProblem(webSrc, [FONT, "missing.otf"], DEFAULT_LIMITS)?.rule).toBe("web-font-export");
   });
 
-  it("keeps only the slots a virtual font shares with the outline it is drawn from", () => {
-    // vftovp's text form, in the shape BOONDOX-r-cal has: letters drawn from
-    // the base font at their own code (a move for the side bearing), digits
-    // borrowed from a second mapped font, and a slot remapped to another
-    // code — which no base-font glyph may answer.
-    const vpl = `(VTITLE test)
+  it("reads a virtual font's program into a composition over its sources", () => {
+    // vftovp's text form, in the shape mathpazo's zplmr7m has: each slot is
+    // drawn from whichever mapped font holds it, at its own code, scaled and
+    // moved; `cmmi10` is mapped at 1.042.
+    const vpl = `(DESIGNSIZE R 10.0)
 (MAPFONT D 0
-   (FONTNAME zxxrw7z)
+   (FONTNAME fplmri)
+   (FONTAT R 1.0)
+   (FONTDSIZE R 10.0)
    )
 (MAPFONT D 1
-   (FONTNAME cmr10)
+   (FONTNAME cmmi10)
+   (FONTAT R 1.042)
+   (FONTDSIZE R 10.0)
    )
-(CHARACTER C P
-   (CHARWD R 0.88)
+(MAPFONT D 2
+   (FONTNAME gone)
+   (FONTDSIZE R 10.0)
+   )
+(CHARACTER O 13
+   (CHARWD R 0.553)
    (MAP
-      (SETCHAR C P)
-      (MOVERIGHT R -0.03)
+      (MOVERIGHT R 0.0125)
+      (SETCHAR C a)
+      (MOVERIGHT R 0.0125)
       )
    )
-(CHARACTER C Q
-   (CHARWD R 0.88)
+(CHARACTER C a
+   (CHARWD R 0.484)
    (MAP
-      (SETCHAR C Q)
-      )
-   )
-(CHARACTER C 0
-   (CHARWD R 0.5)
-   (MAP
+      (MOVELEFT R 0.01)
+      (MOVEUP R 0.02)
       (SELECTFONT D 1)
-      (SETCHAR C 0)
+      (SETCHAR C a)
       )
    )
-(CHARACTER O 100
-   (CHARWD R 0.5)
+(CHARACTER C b
+   (CHARWD R 0.484)
    (MAP
-      (SETCHAR C Z)
+      (SELECTFONT D 2)
+      (SETCHAR C b)
+      )
+   )
+(CHARACTER C c
+   (CHARWD R 0.484)
+   (MAP
+      (SETCHAR C c)
+      (SETCHAR C d)
       )
    )
 `;
-    const shared = sharedSlots(vpl);
-    expect([...shared].sort((a, b) => a - b)).toEqual(["P".codePointAt(0), "Q".codePointAt(0)]);
-    expect(shared.has("0".codePointAt(0)!)).toBe(false); // borrowed from cmr10
-    expect(shared.has(0o100)).toBe(false); // drawn at another code
-
-    const names = parseEncoding("% a vector\n/BaseEncoding [\n/.notdef /A\n] def\n")!;
-    expect(names[0]).toBeUndefined();
-    expect(names[1]).toBe("A");
-    expect(parseEncoding("/NoArray def")).toBeUndefined();
-
-    const enc = encodingFile("BOONDOX-r-cal", parseEncoding(`/Base [${Array.from({ length: 256 }, (_, slot) => `/g${slot}`).join(" ")}] def`)!, shared);
-    expect(enc).toContain("/BOONDOX-r-cal [");
-    expect(enc).toContain(`/g${"P".codePointAt(0)}`);
-    expect(enc).not.toContain(`/g${"0".codePointAt(0)}`); // the borrowed slot stays a box
-    expect(enc.match(/\/g\d+/gu)).toHaveLength(2);
-
-    // A Type1 outline's own vector, when the export left no base one.
-    const pfb = Buffer.from("%!PS\ndup 80 /P put\ndup 81 /.notdef put\neexec\ndup 82 /R put\n", "latin1");
-    const own = outlineEncoding(pfb)!;
-    expect(own[80]).toBe("P");
-    expect(own[81]).toBeUndefined();
-    expect(own[82]).toBeUndefined(); // past eexec: encrypted, not the vector
-    expect(outlineEncoding(Buffer.from("%!PS\n/Encoding StandardEncoding def\n", "latin1"))).toBeUndefined();
+    const composition = virtualComposition(vpl, (name) => name !== "gone");
+    expect(composition.sources).toEqual([{ name: "fplmri", at: 1 }, { name: "cmmi10", at: 1.042 }]);
+    expect(composition.slots).toEqual({
+      "11": [0, "a".codePointAt(0), 0.0125, 0], // the Greek alpha, drawn as `a`; the move after it is advance
+      [String("a".codePointAt(0))]: [1, "a".codePointAt(0), -0.01, 0.02],
+    });
+    // `b` draws from a font the export could not resolve and `c` from two
+    // characters: both keep their metric boxes.
+    expect(composition.slots[String("b".codePointAt(0))]).toBeUndefined();
+    expect(composition.slots[String("c".codePointAt(0))]).toBeUndefined();
   });
 
-  it("finishes a virtual face the export followed, and refuses one it cannot read", () => {
+  it("finishes a virtual face the export followed, and refuses one nothing can draw", () => {
     const webSrc = tmpDir("lax-web-vf-");
     const fonts = path.join(webSrc, WEB_EXPORT_FONTS_DIR);
     fs.mkdirSync(fonts, { recursive: true });
-    const vpl = (body: string) => `(MAPFONT D 0\n   (FONTNAME base)\n   )\n${body}`;
-    const character = `(CHARACTER C P\n   (CHARWD R 0.5)\n   (MAP\n      (SETCHAR C P)\n      )\n   )\n`;
+    const vpl = (source: string) =>
+      `(MAPFONT D 0\n   (FONTNAME ${source})\n   )\n(CHARACTER C P\n   (CHARWD R 0.5)\n   (MAP\n      (SETCHAR C Z)\n      )\n   )\n`;
 
-    // Followed, with the base's own vector beside it: filtered and kept.
-    fs.writeFileSync(path.join(fonts, "Good.vpl"), vpl(character));
-    fs.writeFileSync(path.join(fonts, "Good.base-enc"), `/Base [${Array.from({ length: 256 }, (_, slot) => `/g${slot}`).join(" ")}] def`);
-    fs.writeFileSync(path.join(fonts, "Good.pfb"), "%!PS");
-    // No vector at all, and none in the outline: the outline goes rather
-    // than address slots by guesswork.
-    fs.writeFileSync(path.join(fonts, "Blind.vpl"), vpl(character));
-    fs.writeFileSync(path.join(fonts, "Blind.pfb"), "%!PS\n/Encoding StandardEncoding def\n");
-    // A program sharing nothing with its base is no better than no outline.
-    fs.writeFileSync(path.join(fonts, "Alien.vpl"), vpl(`(CHARACTER C P\n   (CHARWD R 0.5)\n   (MAP\n      (SETCHAR C Z)\n      )\n   )\n`));
-    fs.writeFileSync(path.join(fonts, "Alien.base-enc"), "/Base [/A] def");
-    fs.writeFileSync(path.join(fonts, "Alien.pfb"), "%!PS");
+    fs.writeFileSync(path.join(fonts, "base.pfb"), "%!PS");
+    fs.writeFileSync(path.join(fonts, "Good.vpl"), vpl("base"));
+    fs.writeFileSync(path.join(fonts, "Blind.vpl"), vpl("missing"));
+    // A link is no source: the fork would read through it.
+    fs.symlinkSync(path.join(fonts, "base.pfb"), path.join(fonts, "linked.pfb"));
+    fs.writeFileSync(path.join(fonts, "Linked.vpl"), vpl("linked"));
 
-    expect(resolveVirtualFonts(webSrc)).toEqual({ resolved: ["Good"], refused: ["Alien", "Blind"] });
-    expect(fs.readFileSync(path.join(fonts, "Good.enc"), "utf8")).toContain(`/g${"P".codePointAt(0)}`);
-    expect(fs.existsSync(path.join(fonts, "Good.pfb"))).toBe(true);
-    expect(fs.existsSync(path.join(fonts, "Blind.pfb"))).toBe(false);
-    expect(fs.existsSync(path.join(fonts, "Alien.pfb"))).toBe(false);
-    // Neither the program nor the unfiltered vector belongs in the export set.
-    expect(fs.readdirSync(fonts).filter((name) => /\.(?:vpl|base-enc)$/u.test(name))).toEqual([]);
+    expect(resolveVirtualFonts(webSrc)).toEqual({ resolved: ["Good"], refused: ["Blind", "Linked"] });
+    expect(JSON.parse(fs.readFileSync(path.join(fonts, "Good.compose.json"), "utf8"))).toEqual({
+      sources: [{ name: "base", at: 1 }],
+      slots: { [String("P".codePointAt(0))]: [0, "Z".codePointAt(0), 0, 0] },
+    });
+    expect(fs.existsSync(path.join(fonts, "Blind.compose.json"))).toBe(false);
+    // The program does not belong in the export set.
+    expect(fs.readdirSync(fonts).filter((name) => name.endsWith(".vpl"))).toEqual([]);
     expect(resolveVirtualFonts(tmpDir("lax-web-vf-none-"))).toEqual({ resolved: [], refused: [] });
   });
 
-  it("finishes a virtual face past a symlink standing at its encoding's name", () => {
+  it("finishes a virtual face past a symlink standing at its composition's name", () => {
     // Nothing plants one here today — the fonts directory is re-made empty
     // before the export step fills it inside the container — but the rule is
     // the write's, not the caller's knowledge of who made the entry: a host
     // write into the compile's copy never follows what it finds.
-    const outside = path.join(tmpDir("lax-web-vf-outside-"), "elsewhere.enc");
-    fs.writeFileSync(outside, "not the encoding\n");
+    const outside = path.join(tmpDir("lax-web-vf-outside-"), "elsewhere.json");
+    fs.writeFileSync(outside, "not the composition\n");
     const webSrc = tmpDir("lax-web-vf-link-");
     const fonts = path.join(webSrc, WEB_EXPORT_FONTS_DIR);
     fs.mkdirSync(fonts, { recursive: true });
+    fs.writeFileSync(path.join(fonts, "base.pfb"), "%!PS");
     fs.writeFileSync(
       path.join(fonts, "Good.vpl"),
       `(MAPFONT D 0\n   (FONTNAME base)\n   )\n(CHARACTER C P\n   (CHARWD R 0.5)\n   (MAP\n      (SETCHAR C P)\n      )\n   )\n`,
     );
-    fs.writeFileSync(path.join(fonts, "Good.base-enc"), "/Base [/A] def");
-    fs.writeFileSync(path.join(fonts, "Good.pfb"), "%!PS");
-    fs.symlinkSync(outside, path.join(fonts, "Good.enc"));
+    fs.symlinkSync(outside, path.join(fonts, "Good.compose.json"));
 
     expect(resolveVirtualFonts(webSrc)).toEqual({ resolved: ["Good"], refused: [] });
-    expect(fs.readFileSync(outside, "utf8")).toBe("not the encoding\n");
-    expect(fs.lstatSync(path.join(fonts, "Good.enc")).isSymbolicLink()).toBe(false);
-    expect(fs.readFileSync(path.join(fonts, "Good.enc"), "utf8")).toContain("/Good [");
+    expect(fs.readFileSync(outside, "utf8")).toBe("not the composition\n");
+    expect(fs.lstatSync(path.join(fonts, "Good.compose.json")).isSymbolicLink()).toBe(false);
   });
 
   it("moves a picture's box to the origin, which EPS input never puts there", () => {

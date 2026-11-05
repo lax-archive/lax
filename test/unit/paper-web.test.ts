@@ -36,6 +36,11 @@ import {
   parseEncodeReport,
   parseStreamReport,
 } from "../../src/submission-validation/paper/web.js";
+import {
+  compiledCiteKeys,
+  seedWebBibliography,
+  WEB_NOCITE_FILE,
+} from "../../src/submission-validation/paper/web.js";
 import { tmpDir } from "../support/host.js";
 
 // ── a real minimal PDF, so the phase's pdf.js extraction genuinely runs ────
@@ -583,6 +588,51 @@ describe("deterministic bundle tar", () => {
     expect(() =>
       writeDeterministicTar([{ name: `fonts/${"x".repeat(120)}.otf`, content: Buffer.alloc(1) }]),
     ).toThrow("over 100 bytes");
+  });
+});
+
+describe("the bibliography the web compile starts from", () => {
+  const cap = DEFAULT_LIMITS;
+  const bcf = `<bcf:section number="0">
+  <bcf:citekey order="1" intorder="1">flippers</bcf:citekey>
+  <bcf:citekey order="2" intorder="1">DBLP:conf/lics/Bonnet22</bcf:citekey>
+  <bcf:citekey order="3" intorder="1">flippers</bcf:citekey>
+  <bcf:citekey order="4" intorder="1">a}\\input{x</bcf:citekey>
+  <bcf:citekey order="5" intorder="1">*</bcf:citekey>
+</bcf:section>`;
+
+  it("reads the keys of biblatex and BibTeX, once each, and drops what TeX would act on", () => {
+    expect(compiledCiteKeys(bcf, undefined)).toEqual(["flippers", "DBLP:conf/lics/Bonnet22"]);
+    expect(compiledCiteKeys(undefined, "\\relax\n\\citation{a, b}\n\\citation{*}\n\\newlabel{x}{}\n")).toEqual(["a", "b"]);
+    expect(compiledCiteKeys(undefined, undefined)).toEqual([]);
+  });
+
+  it("seeds the keys and the .bbl, and leaves a paper without citations alone", () => {
+    const pdfSrc = tmpDir("lax-web-bib-pdf-");
+    const webSrc = tmpDir("lax-web-bib-web-");
+    seedWebBibliography(pdfSrc, webSrc, "main", cap);
+    expect(fs.readdirSync(webSrc)).toEqual([]);
+
+    fs.writeFileSync(path.join(pdfSrc, "main.bcf"), bcf);
+    fs.writeFileSync(path.join(pdfSrc, "main.bbl"), "% bibliography\n");
+    seedWebBibliography(pdfSrc, webSrc, "main", cap);
+    expect(fs.readFileSync(path.join(webSrc, WEB_NOCITE_FILE), "utf8")).toBe(
+      "\\nocite{flippers}\n\\nocite{DBLP:conf/lics/Bonnet22}\n",
+    );
+    expect(fs.readFileSync(path.join(webSrc, "main.bbl"), "utf8")).toBe("% bibliography\n");
+  });
+
+  it("never reads through a link the PDF compile left", () => {
+    const outside = path.join(tmpDir("lax-web-bib-out-"), "secret");
+    fs.writeFileSync(outside, "<bcf:citekey order=\"1\">secret</bcf:citekey>");
+    const pdfSrc = tmpDir("lax-web-bib-pdf-");
+    const webSrc = tmpDir("lax-web-bib-web-");
+    fs.symlinkSync(outside, path.join(pdfSrc, "main.bcf"));
+    fs.symlinkSync(outside, path.join(pdfSrc, "main.bbl"));
+    fs.writeFileSync(path.join(pdfSrc, "main.aux"), "\\citation{real}\n");
+    seedWebBibliography(pdfSrc, webSrc, "main", cap);
+    expect(fs.readFileSync(path.join(webSrc, WEB_NOCITE_FILE), "utf8")).toBe("\\nocite{real}\n");
+    expect(fs.existsSync(path.join(webSrc, "main.bbl"))).toBe(false);
   });
 });
 

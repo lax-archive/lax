@@ -197,6 +197,19 @@ export function webExportScript(): string {
     "    esac",
     "  done",
     "}",
+    "# A face's Type1 outline under its TeX name, and the vector the map line",
+    "# re-encodes it through. Run after map_files, which leaves both in pfb/enc.",
+    "export_outline() {",
+    "  [ -n \"$pfb\" ] || pfb=\"$1.pfb\"",
+    "  src=\"$(kpsewhich \"$pfb\" || true)\"",
+    "  [ -n \"$src\" ] && [ -f \"$src\" ] || return 0",
+    "  if [ -n \"$enc\" ]; then",
+    "    esrc=\"$(kpsewhich \"$enc\" || true)\"",
+    "    [ -n \"$esrc\" ] && [ -f \"$esrc\" ] || return 0",
+    `    cp -- "$esrc" '${fontsDir}/'"$1.enc"`,
+    "  fi",
+    `  cp -- "$src" '${fontsDir}/'"$1.pfb"`,
+    "}",
     "while IFS= read -r name; do",
     "  [ -n \"$name\" ] || continue",
     "  src=\"$(kpsewhich \"$name\" || true)\"",
@@ -209,46 +222,24 @@ export function webExportScript(): string {
     "  [ -n \"$name\" ] || continue",
     "  map_files \"$name\"",
     "  # A face pdftex.map does not name may be a *virtual* font: TeX's own",
-    "  # indirection, drawing most of its slots from one real font (the",
-    "  # calligraphic BOONDOX-r-cal every lipics paper's \\mathcal reaches",
-    "  # for is zxxrw7z) and borrowing the rest elsewhere. Follow it to that",
-    "  # base font and export its outline under the *virtual* name, with the",
-    "  # program (vpl) and the base's encoding beside it: the host keeps only",
-    "  # the slots the two share, so a borrowed slot stays a metric box",
-    "  # rather than becoming the base font's glyph for that slot.",
+    "  # indirection, whose program (vpl) draws each slot from one of the real",
+    "  # fonts it maps in. Export the program and every one of those fonts;",
+    "  # the host reads the two together (resolveVirtualFonts).",
     "  if [ -z \"$pfb\" ]; then",
     "    vf=\"$(kpsewhich \"$name.vf\" || true)\"",
     "    tfm=\"$(kpsewhich \"$name.tfm\" || true)\"",
     `    vpl='${fontsDir}/'"$name.vpl"`,
     "    if [ -n \"$vf\" ] && [ -n \"$tfm\" ] && vftovp \"$vf\" \"$tfm\" \"$vpl\" >/dev/null 2>&1; then",
-    "      base=\"$(awk '/^\\(MAPFONT D 0/ { getline; gsub(/[()]/, \"\"); sub(/^ *FONTNAME */, \"\"); print; exit }' \"$vpl\")\"",
-    "      if [ -n \"$base\" ]; then map_files \"$base\"; fi",
-    "      if [ -z \"$pfb\" ]; then rm -f \"$vpl\"; fi",
-    "    else",
-    "      rm -f \"$vpl\"",
+    "      for base in $(awk '/^\\(MAPFONT/ { getline; gsub(/[()]/, \"\"); sub(/^ *FONTNAME */, \"\"); print }' \"$vpl\"); do",
+    "        case \"$base\" in *[!A-Za-z0-9_-]*) continue ;; esac",
+    "        map_files \"$base\"",
+    "        export_outline \"$base\"",
+    "      done",
+    "      continue",
     "    fi",
+    "    rm -f \"$vpl\"",
     "  fi",
-    "  [ -n \"$pfb\" ] || pfb=\"$name.pfb\"",
-    "  src=\"$(kpsewhich \"$pfb\" || true)\"",
-    "  [ -n \"$src\" ] && [ -f \"$src\" ] || continue",
-    "  if [ -n \"$enc\" ]; then",
-    "    esrc=\"$(kpsewhich \"$enc\" || true)\"",
-    "    [ -n \"$esrc\" ] && [ -f \"$esrc\" ] || continue",
-    `    cp -- "$esrc" '${fontsDir}/'"$name.enc"`,
-    "  fi",
-    `  if [ -f '${fontsDir}/'"$name.vpl" ]; then`,
-    "    # The base's slot names, for the host to filter: its own vector",
-    "    # where the map line names one, else 8a.enc where the outline says",
-    "    # StandardEncoding (the same table under TeX's name for it); an",
-    "    # outline that carries its own vector is read from the pfb itself.",
-    `    if [ -f '${fontsDir}/'"$name.enc" ]; then`,
-    `      mv '${fontsDir}/'"$name.enc" '${fontsDir}/'"$name.base-enc"`,
-    "    elif t1disasm \"$src\" 2>/dev/null | grep -q '^/Encoding StandardEncoding def'; then",
-    "      std=\"$(kpsewhich 8a.enc || true)\"",
-    `      [ -n "$std" ] && cp -- "$std" '${fontsDir}/'"$name.base-enc"`,
-    "    fi",
-    "  fi",
-    `  cp -- "$src" '${fontsDir}/'"$name.pfb"`,
+    "  export_outline \"$name\"",
     `done < '${PAPER_CONTAINER_PATHS.work}/${WEB_EXPORT_PFB_LIST}'`,
     "# The picture converter (PyMuPDF): every externalized tikz PDF and every",
     "# listed \\includegraphics file, straight to SVG. Per-file failures are",
@@ -485,30 +476,32 @@ for entry in listed:
 `;
 }
 
-// ── virtual fonts ──────────────────────────────────────────────────────────
+// ── virtual fonts ───────────────────────────────────────────────────────
 //
 // A virtual font is a program: per slot, a little list of instructions over
-// the real fonts it maps in. The export follows it to the font it draws most
-// of its slots from (MAPFONT 0) and exports that outline under the virtual
-// name; what is left is deciding which slots the two actually share.
+// the real fonts it maps in. mathpazo's zplmr7m draws its alpha as `a` from
+// PazoMath-Italic, its Latin from Palatino and the rest of its Greek from
+// cmmi10 at 1.042, so no one outline can stand in for it. The export hands
+// over the program and every font it maps in; this reads the program into a
+// composition, and the fork's converter draws each slot from its own source.
 //
-// A slot is shared when its program draws exactly one character, from the
-// base font, at its own code — moves are ignored, since the advance a
-// reflowed line uses is the one TeX recorded in the node list, not the
-// outline's. A slot drawn from another mapped font (BOONDOX-r-cal takes its
-// digits from cmr10, having none of its own) or drawn at a different code is
-// not shared, and keeps the metric box it has today: the encoding written
-// here names the base's glyph for shared slots and `.notdef` for the rest,
-// so no slot can quietly become the base font's glyph for a code the
-// virtual font meant for someone else.
+// A slot is composed when its program draws exactly one character: moves
+// before it become the glyph's offset, moves after it only reach the advance
+// a reflowed line already has from TeX. A slot built from two characters (an
+// accent) has no single source and keeps its metric box, as does a slot
+// drawn from a font the export could not resolve.
 
 /** A character in a vpl (vftovp's text form of a virtual font). */
 const VPL_CHARACTER = /\(CHARACTER\s+([CDOH])\s+(\S+?)\s*\n(.*?)\n {3}\)/gsu;
+/** A mapped font in a vpl, with its name and the scale it is used at. */
+const VPL_MAPFONT = /\(MAPFONT\s+([CDOH])\s+(\S+?)\s*\n(.*?)\n {3}\)/gsu;
+const VPL_FONTNAME = /\(FONTNAME\s+(\S+?)\)/u;
+const VPL_FONTAT = /\(FONTAT\s+R\s+(-?[\d.]+)\)/u;
 /** The instructions of that character's MAP, innermost list only. */
 const VPL_MAP = /\(MAP\s*(.*?)\s*\)\s*$/su;
 const VPL_SETCHAR = /^\(SETCHAR\s+([CDOH])\s+(\S+?)\s*\)$/u;
 const VPL_SELECTFONT = /^\(SELECTFONT\s+([CDOH])\s+(\S+?)\s*\)$/u;
-const VPL_MOVE = /^\((?:MOVERIGHT|MOVELEFT|MOVEUP|MOVEDOWN)\s/u;
+const VPL_MOVE = /^\((MOVERIGHT|MOVELEFT|MOVEUP|MOVEDOWN)\s+R\s+(-?[\d.]+)\s*\)$/u;
 
 /** A vpl number: `C x` a character, `D n` decimal, `O n` octal, `H n` hex. */
 function vplNumber(kind: string, value: string): number | undefined {
@@ -517,87 +510,81 @@ function vplNumber(kind: string, value: string): number | undefined {
   return Number.isInteger(parsed) && parsed >= 0 && parsed < 256 ? parsed : undefined;
 }
 
-/** The slots a virtual font draws from its base font at their own code. */
-export function sharedSlots(vpl: string): Set<number> {
-  const shared = new Set<number>();
+export interface VirtualSource {
+  name: string;
+  at: number;
+}
+
+/** What the fork's `_compose` reads: `slots` is slot -> [index into
+ * `sources`, code in that source, dx, dy], offsets in design-size units. */
+export interface FontComposition {
+  sources: VirtualSource[];
+  slots: Record<string, [number, number, number, number]>;
+}
+
+/** The slot's single draw, or undefined when the program is anything else. */
+function composedSlot(instructions: string): [number, number, number, number] | undefined {
+  let font = 0;
+  let dx = 0;
+  let dy = 0;
+  let drawn: [number, number, number, number] | undefined;
+  for (const raw of instructions.split("\n")) {
+    const instruction = raw.trim();
+    if (instruction === "") continue;
+    const move = VPL_MOVE.exec(instruction);
+    if (move !== null) {
+      const amount = Number(move[2]);
+      if (move[1] === "MOVERIGHT") dx += amount;
+      else if (move[1] === "MOVELEFT") dx -= amount;
+      else if (move[1] === "MOVEUP") dy += amount;
+      else dy -= amount;
+      continue;
+    }
+    const select = VPL_SELECTFONT.exec(instruction);
+    if (select !== null) {
+      const index = vplNumber(select[1]!, select[2]!);
+      if (index === undefined) return undefined;
+      font = index;
+      continue;
+    }
+    const setchar = VPL_SETCHAR.exec(instruction);
+    const code = setchar === null ? undefined : vplNumber(setchar[1]!, setchar[2]!);
+    if (code === undefined || drawn !== undefined) return undefined;
+    drawn = [font, code, dx, dy];
+  }
+  return drawn;
+}
+
+/** A virtual font's program as a composition over `available` fonts: mapped
+ * fonts it cannot have are dropped, with the slots they draw. */
+export function virtualComposition(vpl: string, available: (name: string) => boolean): FontComposition {
+  const sources: VirtualSource[] = [];
+  const position = new Map<number, number>();
+  for (const mapped of vpl.matchAll(VPL_MAPFONT)) {
+    const index = vplNumber(mapped[1]!, mapped[2]!);
+    const name = VPL_FONTNAME.exec(mapped[3]!)?.[1];
+    if (index === undefined || name === undefined || !available(name)) continue;
+    position.set(index, sources.length);
+    sources.push({ name, at: Number(VPL_FONTAT.exec(mapped[3]!)?.[1] ?? 1) });
+  }
+  const slots: FontComposition["slots"] = {};
   for (const character of vpl.matchAll(VPL_CHARACTER)) {
     const slot = vplNumber(character[1]!, character[2]!);
-    if (slot === undefined) continue;
     const map = VPL_MAP.exec(character[3]!);
-    if (map === null) continue;
-    let base = true;
-    let drawn: number | undefined;
-    for (const raw of map[1]!.split("\n")) {
-      const instruction = raw.trim();
-      if (instruction === "" || VPL_MOVE.test(instruction)) continue;
-      const font = VPL_SELECTFONT.exec(instruction);
-      if (font !== null) {
-        base = vplNumber(font[1]!, font[2]!) === 0;
-        continue;
-      }
-      const setchar = VPL_SETCHAR.exec(instruction);
-      if (setchar === null || drawn !== undefined) {
-        drawn = undefined; // anything else drawn, or a second glyph: not shared
-        break;
-      }
-      drawn = base ? vplNumber(setchar[1]!, setchar[2]!) : undefined;
-      if (drawn === undefined) break;
-    }
-    if (drawn === slot) shared.add(slot);
+    if (slot === undefined || map === null) continue;
+    const drawn = composedSlot(map[1]!);
+    const source = drawn === undefined ? undefined : position.get(drawn[0]);
+    if (drawn !== undefined && source !== undefined) slots[String(slot)] = [source, drawn[1], drawn[2], drawn[3]];
   }
-  return shared;
-}
-
-/** The 256 slot names of a dvips/pdftex `.enc` vector — `/Name [ /g … ] def`,
- * `%` comments stripped — or undefined when the text is not one. */
-export function parseEncoding(text: string): (string | undefined)[] | undefined {
-  const body = /\[([^\]]*)\]/su.exec(text.replace(/%[^\n]*/gu, ""));
-  if (body === null) return undefined;
-  const names = [...body[1]!.matchAll(/\/([^\s/[\]{}()<>]+)/gu)].map((name) => name[1]!);
-  if (names.length === 0 || names.length > 256) return undefined;
-  return Array.from({ length: 256 }, (_, slot) => {
-    const name = names[slot];
-    return name === undefined || name === ".notdef" ? undefined : name;
-  });
-}
-
-/** A Type1 outline's own encoding, from the `dup <slot> /<name> put` lines of
- * its cleartext header — undefined when it names a standard vector instead
- * (the export leaves that one beside it) or carries none. */
-export function outlineEncoding(pfb: Buffer): (string | undefined)[] | undefined {
-  const header = pfb.subarray(0, 16_384).toString("latin1");
-  const eexec = header.indexOf("eexec");
-  const cleartext = eexec === -1 ? header : header.slice(0, eexec);
-  const names: (string | undefined)[] = Array.from({ length: 256 }, () => undefined);
-  let found = false;
-  for (const entry of cleartext.matchAll(/\bdup\s+(\d{1,3})\s*\/([^\s/[\]{}()<>]+)\s+put/gu)) {
-    const slot = Number(entry[1]);
-    if (slot < 0 || slot > 255 || entry[2] === ".notdef") continue;
-    names[slot] = entry[2];
-    found = true;
-  }
-  return found ? names : undefined;
-}
-
-/** The `.enc` text naming `names` at the slots in `shared`, `.notdef`
- * elsewhere — the vector the encode addresses the outline through. */
-export function encodingFile(vector: string, names: (string | undefined)[], shared: ReadonlySet<number>): string {
-  const slots = Array.from({ length: 256 }, (_, slot) => {
-    const name = shared.has(slot) ? names[slot] : undefined;
-    return `/${name ?? ".notdef"}`;
-  });
-  const lines: string[] = [];
-  for (let slot = 0; slot < 256; slot += 8) lines.push(`  ${slots.slice(slot, slot + 8).join(" ")}`);
-  return `% written by lax: the slots ${vector} shares with the outline it is drawn from.\n/${vector} [\n${lines.join("\n")}\n] def\n`;
+  return { sources, slots };
 }
 
 /**
- * Every virtual face the export followed to a base outline, finished: its
- * encoding filtered to the slots the two share. A face whose program or
- * base encoding cannot be read loses its outline instead — metric boxes, as
- * before, never another font's glyphs — and is named in the return value.
- * The vpl and the unfiltered vector are removed either way; neither belongs
- * in the export set the caps count.
+ * Every virtual face the export followed, finished: its program read into
+ * `<name>.compose.json` beside the real fonts it draws from. A face none of
+ * whose slots can be drawn gets no composition, so it keeps metric boxes as
+ * before, and is named in the return value. The vpl is removed either way;
+ * it does not belong in the export set the caps count.
  */
 export function resolveVirtualFonts(webSrc: string): { resolved: string[]; refused: string[] } {
   const fontsDir = path.join(webSrc, WEB_EXPORT_FONTS_DIR);
@@ -608,23 +595,16 @@ export function resolveVirtualFonts(webSrc: string): { resolved: string[]; refus
     if (!entry.endsWith(".vpl")) continue;
     const name = entry.slice(0, -".vpl".length);
     const vpl = path.join(fontsDir, entry);
-    const baseEnc = path.join(fontsDir, `${name}.base-enc`);
-    const pfb = path.join(fontsDir, `${name}.pfb`);
-    const shared = sharedSlots(fs.readFileSync(vpl, "utf8"));
-    const names = fs.existsSync(baseEnc)
-      ? parseEncoding(fs.readFileSync(baseEnc, "utf8"))
-      : fs.existsSync(pfb)
-        ? outlineEncoding(fs.readFileSync(pfb))
-        : undefined;
-    if (names === undefined || shared.size === 0) {
-      fs.rmSync(pfb, { force: true });
+    const composition = virtualComposition(fs.readFileSync(vpl, "utf8"), (source) =>
+      fs.lstatSync(path.join(fontsDir, `${source}.pfb`), { throwIfNoEntry: false })?.isFile() === true,
+    );
+    if (Object.keys(composition.slots).length === 0) {
       refused.push(name);
     } else {
-      writeIntoWebCopy(path.join(fontsDir, `${name}.enc`), encodingFile(name, names, shared));
+      writeIntoWebCopy(path.join(fontsDir, `${name}.compose.json`), JSON.stringify(composition));
       resolved.push(name);
     }
     fs.rmSync(vpl, { force: true });
-    fs.rmSync(baseEnc, { force: true });
   }
   return { resolved, refused };
 }

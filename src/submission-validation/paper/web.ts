@@ -114,6 +114,11 @@ export function probeReflowtex(root = reflowtexDirectory()): ReflowtexInstallati
   return installation;
 }
 
+/** The citation replay laxreflow.sty inputs at the end of the document. The
+ * name is reserved the way the export's files are: the host writes it after
+ * the fresh copy, so an author's file of that name loses. */
+export const WEB_NOCITE_FILE = "lax-web-nocite.tex";
+
 /** The web compile's latexmk invocation (paper-web-plan.md, "Derivation
  * model"): always lualatex regardless of the manifest engine, with
  * `-shell-escape` for tikz's external library — the one deviation from the
@@ -378,7 +383,54 @@ export function prepareWebSource(
   fs.copyFileSync(serializer, path.join(webSrc, "serializer.lua"));
   fs.mkdirSync(path.join(webSrc, "pics"), { recursive: true });
   fs.mkdirSync(webOut, { recursive: true, mode: 0o700 });
+  seedWebBibliography(path.join(input.jobDir, "paper", "src"), webSrc, paperJobName(input.paper.manifest.main), input.limits);
   return { webSrc, webOut };
+}
+
+/** Citation keys the file form below can carry: nothing TeX would act on. */
+const WEB_CITE_KEY = /^[^\s{}\\%#~,&<>]+$/u;
+
+/** The citation keys a finished compile recorded: biblatex's control file
+ * and BibTeX's `\citation` lines, in that order, deduplicated. */
+export function compiledCiteKeys(bcf: string | undefined, aux: string | undefined): string[] {
+  const keys = new Set<string>();
+  for (const match of (bcf ?? "").matchAll(/<bcf:citekey\b[^>]*>([^<]*)<\/bcf:citekey>/gu)) keys.add(match[1] as string);
+  for (const match of (aux ?? "").matchAll(/^\\citation\{([^}]*)\}/gmu)) {
+    for (const key of (match[1] as string).split(",")) keys.add(key.trim());
+  }
+  return [...keys].filter((key) => key !== "*" && WEB_CITE_KEY.test(key));
+}
+
+/** A compile output as text, or undefined unless it is a plain file within
+ * `cap`. The PDF compile's directory is the author's sandbox output, so a
+ * link here must never read through to a host file. */
+function compileOutput(filename: string, cap: number): string | undefined {
+  const stat = fs.lstatSync(filename, { throwIfNoEntry: false });
+  if (stat === undefined || !stat.isFile() || stat.size > cap) return undefined;
+  return fs.readFileSync(filename, "utf8");
+}
+
+/**
+ * Carry the PDF compile's bibliography into the web copy. tikz's external
+ * library never executes a picture's body in the main run, so a \cite that
+ * lives only inside a tikzpicture reaches neither the web run's citation
+ * list nor, in the sub-run that does execute it, any bibliography: the
+ * entry drops out of the references and the figure prints the raw key. The
+ * PDF compile has already resolved all of this, so its keys are replayed as
+ * \nocite at the end of the document (laxreflow.sty) and its `.bbl` is in
+ * place before the first pass, when the pictures are exported. Both files
+ * are optional and a paper without citations gets neither.
+ */
+export function seedWebBibliography(pdfSrc: string, webSrc: string, job: string, limits: ValidationLimits): void {
+  const cap = limits.paperWebOutputJsonBytes;
+  const keys = compiledCiteKeys(
+    compileOutput(path.join(pdfSrc, `${job}.bcf`), cap),
+    compileOutput(path.join(pdfSrc, `${job}.aux`), cap),
+  );
+  if (keys.length === 0) return;
+  fs.writeFileSync(path.join(webSrc, WEB_NOCITE_FILE), keys.map((key) => `\\nocite{${key}}\n`).join(""));
+  const bbl = compileOutput(path.join(pdfSrc, `${job}.bbl`), cap);
+  if (bbl !== undefined) fs.writeFileSync(path.join(webSrc, `${job}.bbl`), bbl);
 }
 
 /**
