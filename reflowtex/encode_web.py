@@ -41,7 +41,7 @@ because the encode host has no TeX installation to resolve them from.
 
 Legacy 8-bit fonts (filename "unknown") carry slot codepoints, not
 Unicode; the linearizer decodes the token-relevant subset — OT1 text
-ligatures/letters, OML (cmmi) greek and punctuation, capital letters of
+ligatures/letters, OML (cmmi, mathpazo) greek and punctuation, capital letters of
 the symbol fonts — and drops the rest, mirroring what the TypeScript
 tokenizer keeps. Everything here treats the compile's output as data.
 """
@@ -71,8 +71,13 @@ OML_GREEK = {
     0x1B: "σ", 0x1C: "τ", 0x1D: "υ", 0x1E: "φ",
     0x1F: "χ", 0x20: "ψ", 0x21: "ω", 0x22: "ε",
     0x23: "θ", 0x24: "π", 0x25: "ρ", 0x26: "σ",
-    0x27: "φ",
+    0x27: "φ", 0x60: "ℓ",
 }
+
+# OML-encoded math italics: cmmi and its Latin Modern and mathpazo siblings.
+# mathpazo's are virtual fonts over fplmri, cmmi10 and pplr8r that keep the
+# OML slot layout, so the table above reads them as it reads cmmi.
+OML_FONT_PREFIXES = ("cmmi", "lmmi", "zplmr7m", "zplmb7m")
 
 SYMBOL_FONT_PREFIXES = (
     "cmsy", "cmex", "cmbsy", "msam", "msbm", "lasy", "wasy", "stmary",
@@ -108,7 +113,7 @@ def decode_glyph(char: int, info: dict | None, text: str | None = None) -> str:
         # (calligraphic/fraktur alphabets); everything else is a symbol the
         # tokenizer would drop on the PDF side too.
         return chr(char) if 0x41 <= char <= 0x5A else ""
-    if name.startswith(("cmmi", "cmmib")):
+    if name.startswith(OML_FONT_PREFIXES):
         if char in OML_GREEK:
             return OML_GREEK[char]
         if char == 0x3A:

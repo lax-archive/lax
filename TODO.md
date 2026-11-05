@@ -335,12 +335,6 @@ and rendering defects that one fixture could not reach. What remains:
   their *text* reaches the stream while the frame, a pgf literal, does
   not. A callout therefore reads as plain body text. Carrying the frame
   would mean giving the walk a box-decoration concept.
-- **Nothing in the reflow surface is a link.** `pdf_dest` / `pdf_annot`
-  whatsits are dropped by `strip_unsupported_nodes`, so `\ref`, `\cite`
-  and bibliography URLs render as dead text — often still in hyperref
-  blue, which advertises a link that is not there. (The pdf.js surface
-  renders no annotation layer either, so the regression is against the
-  downloadable PDF.)
 - **[Jan] The fixed-measure column at wide viewports** — a site CSS
   decision, not a defect: the reflow band is ~576 px at an 1100 px
   viewport and ~544 px at 700 px, so nearly half a wide window is empty.
@@ -356,12 +350,12 @@ and rendering defects that one fixture could not reach. What remains:
   `jan3er/lax-paper-roundtrip-20260902` from the lax-61 stage-3 round trip
   (`history/paper-roundtrip-20260902.md`): `gh auth refresh -h github.com
   -s delete_repo`, then `gh repo delete … --yes`.
-- **Virtual fonts that compose** keep metric boxes: the export follows a
-  nameless virtual face to the outline its program draws from and keeps
-  only the slots the two share (landed 2026-09-03 for `BOONDOX-r-cal`,
-  lipics `\mathcal`), but a slot built from two glyphs (an accent) has no
-  single source and stays a box. BOONDOX bold / fraktur / doublestruck
-  are untested.
+- **Virtual fonts with composed slots** keep metric boxes: the export reads
+  a virtual font's program and draws each slot from the real font it names
+  (`resolveVirtualFonts`, the fork's `_compose`), but a slot built from two
+  glyphs (an accent) has no single source and stays a box. Links and
+  citations inside an externalized tikz picture are not links in the reflow
+  view: the picture arrives as an SVG.
 - **Cache the PyMuPDF wheel in the Validate job** (optional): `npm run
   reflowtex:fetch` now downloads 25 MB per paper-bearing run. The existing
   `actions/cache` pair covers `reflowtex/venv`, keyed on
